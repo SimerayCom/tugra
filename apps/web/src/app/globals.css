@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+/* ── Tugra theme tokens ─────────────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  --c-bg: #0d0d11;
+  --c-sb: #121218;
+  --c-sur: #17171f;
+  --c-el: #1c1c24;
+  --c-bd: #28282f;
+  --c-tx: #f6f3ec;
+  --c-tx2: #b8b4ac;
+  --c-tx3: #76747c;
+  --c-a: #c9a84c; /* gold — the seal */
+  --c-ad: rgba(201, 168, 76, 0.15);
+  --c-lapis: #3d6fe5;
+  --c-g: #2fbf71;
+  --c-am: #f5a524;
+  --c-r: #e5484d;
+  --r1: 8px;
+  --r2: 12px;
+  --r3: 16px;
+  --font: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+[data-theme="light"] {
+  --c-bg: #f6f3ec;
+  --c-sb: #ffffff;
+  --c-sur: #efeae0;
+  --c-el: #ffffff;
+  --c-bd: #e3ddcd;
+  --c-tx: #1a1a1f;
+  --c-tx2: #4a4843;
+  --c-tx3: #8a8779;
+  --c-a: #9a7b1e;
+  --c-ad: rgba(154, 123, 30, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+body {
+  background: var(--c-bg);
+  color: var(--c-tx);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible {
+  outline: 2px solid var(--c-a);
+  outline-offset: 2px;
+}
+.mono {
+  font-family: var(--font-mono);
+}
