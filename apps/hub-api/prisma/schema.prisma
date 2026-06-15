@@ -1,0 +1,93 @@
+// Tugra hub — Prisma schema v0 (Faz 0)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  VIEWER
+}
+
+enum ServerStatus {
+  PENDING
+  ONLINE
+  OFFLINE
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  password     String
+  name         String?
+  twoFaSecret  String?
+  twoFaEnabled Boolean      @default(false)
+  memberships  Membership[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Team {
+  id          String       @id @default(cuid())
+  name        String
+  memberships Membership[]
+  servers     Server[]
+  createdAt   DateTime     @default(now())
+}
+
+model Membership {
+  id     String @id @default(cuid())
+  role   Role   @default(VIEWER)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId String
+
+  @@unique([userId, teamId])
+}
+
+model Server {
+  id          String       @id @default(cuid())
+  name        String
+  // "Sunucu Tuğrası" — the server's unique signed identity.
+  seal        String       @unique
+  status      ServerStatus @default(PENDING)
+  enrollToken String       @unique
+  lastSeenAt  DateTime?
+  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  metrics     Metric[]
+  createdAt   DateTime     @default(now())
+}
+
+model Metric {
+  id        String   @id @default(cuid())
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId  String
+  ts        DateTime @default(now())
+  cpu       Float
+  memUsed   BigInt
+  memTotal  BigInt
+  diskUsed  BigInt
+  diskTotal BigInt
+  netRx     BigInt
+  netTx     BigInt
+
+  @@index([serverId, ts])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  target    String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
