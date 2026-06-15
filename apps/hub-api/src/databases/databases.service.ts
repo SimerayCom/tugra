@@ -42,6 +42,9 @@ export interface DatabaseView {
   username: string | null;
   password: string | null;
   database: string | null;
+  backupEnabled: boolean;
+  backupIntervalHours: number | null;
+  backupRetention: number;
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -193,6 +196,9 @@ export class DatabasesService {
       username: conn?.username ?? null,
       password: conn?.password ?? null,
       database: conn?.database ?? null,
+      backupEnabled: db.backupEnabled,
+      backupIntervalHours: db.backupIntervalHours,
+      backupRetention: db.backupRetention,
       role,
       canWrite,
       createdAt: db.createdAt,

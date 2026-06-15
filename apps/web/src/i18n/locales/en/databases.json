@@ -21,5 +21,16 @@
   "password": "Password",
   "database": "Database",
   "port": "Port",
-  "copy": "Copy"
+  "copy": "Copy",
+  "backups": "Backups",
+  "backupsDesc": "Dumps are written to the server's disk. Restoring overwrites the current data.",
+  "backupNow": "Backup now",
+  "backingUp": "Backing up…",
+  "restore": "Restore",
+  "restoreConfirm": "Restore this backup? It overwrites the current database.",
+  "schedule": "Scheduled backups",
+  "every": "Every (hours)",
+  "keep": "Keep last",
+  "save": "Save",
+  "noBackups": "No backups yet."
 }

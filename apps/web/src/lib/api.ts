@@ -1,6 +1,7 @@
 import type {
   Application,
   BulkOperation,
+  Backup,
   Channel,
   Database,
   Deployment,
@@ -318,5 +319,25 @@ export const api = {
   },
   deleteDatabase(id: string) {
     return apiFetch<{ ok: true }>(`/databases/${id}`, { method: "DELETE" });
+  },
+
+  // ── database backups ──
+  listBackups(dbId: string) {
+    return apiFetch<Backup[]>(`/databases/${dbId}/backups`);
+  },
+  backupNow(dbId: string) {
+    return apiFetch<Backup>(`/databases/${dbId}/backups`, { method: "POST" });
+  },
+  restoreBackup(dbId: string, backupId: string) {
+    return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}/restore`, { method: "POST" });
+  },
+  deleteBackup(dbId: string, backupId: string) {
+    return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}`, { method: "DELETE" });
+  },
+  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
+    return apiFetch<{ ok: true }>(`/databases/${dbId}/backup-config`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
   },
 };
