@@ -96,3 +96,29 @@ export interface BulkOperation {
   command: string;
   tasks: BulkTask[];
 }
+
+export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+
+export interface Application {
+  id: string;
+  name: string;
+  image: string;
+  serverId: string;
+  teamId: string;
+  status: AppStatus;
+  hostPort: number | null;
+  containerPort: number | null;
+  role: Role;
+  canWrite: boolean;
+  createdAt: string;
+}
+
+export type DeploymentStatus = "RUNNING" | "SUCCESS" | "FAILED";
+
+export interface Deployment {
+  id: string;
+  status: DeploymentStatus;
+  logs: string | null;
+  exitCode: number | null;
+  createdAt: string;
+}
