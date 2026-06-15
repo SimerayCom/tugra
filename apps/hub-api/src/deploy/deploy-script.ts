@@ -1,15 +1,23 @@
 /**
  * Pure builders for the shell scripts the agent runs to deploy an app and to
- * run the Traefik reverse-proxy. v1: Docker image → container, optional domain
- * with Traefik + Let's Encrypt (HTTP-01). (Git/Nixpacks build = later.)
+ * run the Traefik reverse-proxy. Supports IMAGE (docker pull) and GIT
+ * (clone + Nixpacks/Dockerfile build) sources, optional domain (Traefik + SSL).
  */
 
 export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
+export type Source = "IMAGE" | "GIT";
+export type BuildKind = "NIXPACKS" | "DOCKERFILE";
+
 export interface AppSpec {
   id: string;
-  image: string;
+  source?: Source;
+  image?: string | null;
+  gitUrl?: string | null;
+  gitBranch?: string | null;
+  buildType?: BuildKind;
+  dockerfilePath?: string | null;
   env: Record<string, string>;
   hostPort: number | null;
   containerPort: number | null;
@@ -20,12 +28,15 @@ export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
 }
 
-/** Single-quote a value for safe shell embedding. */
+/** The image to run: a locally-built tag for GIT, the pulled image for IMAGE. */
+export function imageRef(app: AppSpec): string {
+  return app.source === "GIT" ? `${containerName(app)}:latest` : app.image ?? "";
+}
+
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
-/** Traefik labels that publish the container behind the proxy (empty if no domain). */
 export function traefikLabels(app: AppSpec): string[] {
   if (!app.domain) return [];
   const r = containerName(app);
@@ -43,8 +54,33 @@ export function traefikLabels(app: AppSpec): string[] {
   ];
 }
 
+/** Build the prep steps (pull, or clone + build) for the app's source. */
+function prepSteps(app: AppSpec): string[] {
+  const name = containerName(app);
+  if (app.source === "GIT") {
+    const bd = `/etc/tugra/builds/${app.id}`;
+    const branch = app.gitBranch || "main";
+    const steps = [
+      `rm -rf ${bd} && mkdir -p ${bd}`,
+      `git clone --depth 1 --branch ${shq(branch)} ${shq(app.gitUrl ?? "")} ${bd}`,
+    ];
+    if (app.buildType === "DOCKERFILE") {
+      const df = app.dockerfilePath || "Dockerfile";
+      steps.push(`docker build -t ${name}:latest -f ${bd}/${df} ${bd}`);
+    } else {
+      steps.push(
+        "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
+        `nixpacks build ${bd} --name ${name}`,
+      );
+    }
+    return steps;
+  }
+  return [`docker pull ${shq(imageRef(app))}`];
+}
+
 export function buildRunScript(app: AppSpec): string {
   const name = containerName(app);
+  const ref = imageRef(app);
   const env = app.env && typeof app.env === "object" ? app.env : {};
   const envFlags = Object.entries(env)
     .map(([k, v]) => `-e ${shq(`${k}=${v}`)}`)
@@ -69,14 +105,14 @@ export function buildRunScript(app: AppSpec): string {
     "--restart unless-stopped",
     envFlags,
     netExpose.trim(),
-    shq(app.image),
+    shq(ref),
   ]
     .filter(Boolean)
     .join(" ");
 
   return [
     "set -e",
-    `docker pull ${shq(app.image)}`,
+    ...prepSteps(app),
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,
     `docker ps --filter name=${name} --format '{{.Status}}'`,

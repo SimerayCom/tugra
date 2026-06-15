@@ -202,6 +202,16 @@ enum AppStatus {
   FAILED
 }
 
+enum AppSource {
+  IMAGE
+  GIT
+}
+
+enum BuildType {
+  NIXPACKS
+  DOCKERFILE
+}
+
 enum DeploymentStatus {
   RUNNING
   SUCCESS
@@ -212,15 +222,20 @@ model Application {
   id            String       @id @default(cuid())
   team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId        String
-  serverId      String
-  name          String
-  image         String
-  env           Json
-  hostPort      Int?
-  containerPort Int?         @default(80)
-  domain        String?
-  https         Boolean      @default(true)
-  status        AppStatus    @default(NEW)
+  serverId       String
+  name           String
+  source         AppSource    @default(IMAGE)
+  image          String?
+  gitUrl         String?
+  gitBranch      String?      @default("main")
+  buildType      BuildType    @default(NIXPACKS)
+  dockerfilePath String?
+  env            Json
+  hostPort       Int?
+  containerPort  Int?         @default(80)
+  domain         String?
+  https          Boolean      @default(true)
+  status         AppStatus    @default(NEW)
   deployments   Deployment[]
   createdAt     DateTime     @default(now())
 }

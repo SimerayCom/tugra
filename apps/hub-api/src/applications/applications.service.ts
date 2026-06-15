@@ -18,12 +18,16 @@ import {
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
-const DEPLOY_TIMEOUT_MS = 60_000;
+const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 
 export interface AppView {
   id: string;
   name: string;
-  image: string;
+  source: "IMAGE" | "GIT";
+  image: string | null;
+  gitUrl: string | null;
+  gitBranch: string | null;
+  buildType: "NIXPACKS" | "DOCKERFILE";
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -57,7 +61,12 @@ export class ApplicationsService {
     const app = await this.prisma.application.create({
       data: {
         name: dto.name,
-        image: dto.image,
+        source: dto.source ?? "IMAGE",
+        image: dto.image ?? null,
+        gitUrl: dto.gitUrl ?? null,
+        gitBranch: dto.gitBranch ?? "main",
+        buildType: dto.buildType ?? "NIXPACKS",
+        dockerfilePath: dto.dockerfilePath ?? null,
         serverId: dto.serverId,
         teamId: server.teamId,
         env: (dto.env ?? {}) as Prisma.InputJsonValue,
@@ -162,7 +171,12 @@ export class ApplicationsService {
   private toSpec(app: Application): AppSpec {
     return {
       id: app.id,
+      source: app.source,
       image: app.image,
+      gitUrl: app.gitUrl,
+      gitBranch: app.gitBranch,
+      buildType: app.buildType,
+      dockerfilePath: app.dockerfilePath,
       env: (app.env as Record<string, string>) ?? {},
       hostPort: app.hostPort,
       containerPort: app.containerPort,
@@ -190,7 +204,11 @@ export class ApplicationsService {
     return {
       id: app.id,
       name: app.name,
+      source: app.source,
       image: app.image,
+      gitUrl: app.gitUrl,
+      gitBranch: app.gitBranch,
+      buildType: app.buildType,
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,

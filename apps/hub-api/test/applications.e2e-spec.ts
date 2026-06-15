@@ -120,4 +120,25 @@ describe("Applications / deploy (e2e)", () => {
     expect(commands.some((c) => c.includes("Host(`site.example.com`)"))).toBe(true);
     expect(commands.some((c) => c.includes("--network tugra-proxy"))).toBe(true);
   });
+
+  it("deploys a GIT app → clone + nixpacks build", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "gitapp", serverId, source: "GIT", gitUrl: "https://github.com/u/r.git", gitBranch: "main" })
+      .expect(201);
+    expect(appRes.body.source).toBe("GIT");
+
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/apps/${appRes.body.id}/deploy`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(300);
+
+    const all = commands.join("\n");
+    expect(all).toContain("git clone");
+    expect(all).toContain("nixpacks build");
+    expect(all).not.toContain("docker pull");
+  });
 });
