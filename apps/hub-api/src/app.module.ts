@@ -15,6 +15,7 @@ import { NotificationsModule } from "./notifications/notifications.module";
 import { MonitorsModule } from "./monitors/monitors.module";
 import { BulkModule } from "./bulk/bulk.module";
 import { ApplicationsModule } from "./applications/applications.module";
+import { DatabasesModule } from "./databases/databases.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
@@ -32,6 +33,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     MonitorsModule,
     BulkModule,
     ApplicationsModule,
+    DatabasesModule,
     WebhooksModule,
   ],
   controllers: [HealthController],
