@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import { appColor, deploymentColor } from "../../../../lib/apps";
+import { appColor, appSourceSummary, deploymentColor } from "../../../../lib/apps";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 
@@ -45,7 +45,7 @@ export default function AppDetailPage() {
         <span style={{ fontSize: 12, color: appColor(appData.status), fontWeight: 600 }}>{appData.status}</span>
       </div>
       <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 6px" }}>
-        {appData.image}
+        {appSourceSummary(appData)}
         {appData.hostPort ? ` · :${appData.hostPort}→${appData.containerPort}` : ""}
       </p>
       {appData.url && (

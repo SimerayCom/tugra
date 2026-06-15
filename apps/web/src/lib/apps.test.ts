@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appUrl, deploymentColor } from "./apps";
+import { appColor, appSourceSummary, appUrl, deploymentColor } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -19,5 +19,10 @@ describe("app helpers", () => {
     expect(appUrl({ domain: "x.com", https: true })).toBe("https://x.com");
     expect(appUrl({ domain: "x.com", https: false })).toBe("http://x.com");
     expect(appUrl({ domain: null, https: true })).toBeNull();
+  });
+
+  it("summarizes the app source", () => {
+    expect(appSourceSummary({ source: "IMAGE", image: "nginx", gitBranch: null })).toBe("nginx");
+    expect(appSourceSummary({ source: "GIT", image: null, gitBranch: "dev" })).toBe("git:dev");
   });
 });

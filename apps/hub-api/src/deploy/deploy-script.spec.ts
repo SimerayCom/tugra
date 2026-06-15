@@ -59,4 +59,32 @@ describe("deploy-script", () => {
   it("builds a remove script", () => {
     expect(buildRemoveScript({ id: "abc" })).toContain("docker rm -f tugra_abc");
   });
+
+  it("GIT + Nixpacks: clones, builds with nixpacks, runs local image, no pull", () => {
+    const s = buildRunScript({
+      ...base,
+      source: "GIT",
+      image: null,
+      gitUrl: "https://github.com/u/r.git",
+      gitBranch: "dev",
+      buildType: "NIXPACKS",
+    });
+    expect(s).toContain("git clone --depth 1 --branch 'dev' 'https://github.com/u/r.git'");
+    expect(s).toContain("nixpacks build /etc/tugra/builds/abc --name tugra_abc");
+    expect(s).not.toContain("docker pull");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:latest'");
+  });
+
+  it("GIT + Dockerfile: docker build -f", () => {
+    const s = buildRunScript({
+      ...base,
+      source: "GIT",
+      image: null,
+      gitUrl: "https://x/r.git",
+      buildType: "DOCKERFILE",
+      dockerfilePath: "docker/Dockerfile",
+    });
+    expect(s).toContain("docker build -t tugra_abc:latest -f /etc/tugra/builds/abc/docker/Dockerfile");
+    expect(s).not.toContain("nixpacks");
+  });
 });

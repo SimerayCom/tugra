@@ -16,3 +16,12 @@ export function deploymentColor(s: DeploymentStatus): string {
 export function appUrl(app: { domain: string | null; https: boolean }): string | null {
   return app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null;
 }
+
+/** Short source label for lists: image ref or git:branch. */
+export function appSourceSummary(app: {
+  source: "IMAGE" | "GIT";
+  image: string | null;
+  gitBranch: string | null;
+}): string {
+  return app.source === "GIT" ? `git:${app.gitBranch ?? "main"}` : (app.image ?? "");
+}

@@ -257,7 +257,11 @@ export const api = {
   createApp(input: {
     name: string;
     serverId: string;
-    image: string;
+    source?: "IMAGE" | "GIT";
+    image?: string;
+    gitUrl?: string;
+    gitBranch?: string;
+    buildType?: "NIXPACKS" | "DOCKERFILE";
     hostPort?: number;
     containerPort?: number;
     domain?: string;

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
-import { appColor } from "../../../lib/apps";
+import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Card, Spinner } from "../../../components/ui";
 
@@ -30,9 +30,12 @@ export default function AppsPage() {
 
   const [name, setName] = useState("");
   const [serverId, setServerId] = useState("");
+  const [source, setSource] = useState<"IMAGE" | "GIT">("IMAGE");
   const [image, setImage] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitBranch, setGitBranch] = useState("");
+  const [buildType, setBuildType] = useState<"NIXPACKS" | "DOCKERFILE">("NIXPACKS");
   const [hostPort, setHostPort] = useState("");
-
   const [domain, setDomain] = useState("");
 
   const create = useMutation({
@@ -40,13 +43,19 @@ export default function AppsPage() {
       api.createApp({
         name,
         serverId: serverId || servers[0]?.id,
-        image,
+        source,
+        image: source === "IMAGE" ? image : undefined,
+        gitUrl: source === "GIT" ? gitUrl : undefined,
+        gitBranch: source === "GIT" ? gitBranch || undefined : undefined,
+        buildType: source === "GIT" ? buildType : undefined,
         hostPort: hostPort ? Number(hostPort) : undefined,
         domain: domain || undefined,
       }),
     onSuccess: () => {
       setName("");
       setImage("");
+      setGitUrl("");
+      setGitBranch("");
       setHostPort("");
       setDomain("");
       qc.invalidateQueries({ queryKey: ["apps"] });
@@ -71,7 +80,22 @@ export default function AppsPage() {
             <option value="">{servers[0]?.name ?? t("apps.server")}</option>
             {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.image")} value={image} onChange={(e) => setImage(e.target.value)} required />
+          <select style={field} value={source} onChange={(e) => setSource(e.target.value as "IMAGE" | "GIT")}>
+            <option value="IMAGE">{t("apps.sourceImage")}</option>
+            <option value="GIT">{t("apps.sourceGit")}</option>
+          </select>
+          {source === "IMAGE" ? (
+            <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.image")} value={image} onChange={(e) => setImage(e.target.value)} required />
+          ) : (
+            <>
+              <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.gitUrl")} value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} required />
+              <input style={{ ...field, width: 110 }} placeholder={t("apps.branch")} value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} />
+              <select style={field} value={buildType} onChange={(e) => setBuildType(e.target.value as "NIXPACKS" | "DOCKERFILE")}>
+                <option value="NIXPACKS">{t("apps.nixpacks")}</option>
+                <option value="DOCKERFILE">{t("apps.dockerfile")}</option>
+              </select>
+            </>
+          )}
           <input style={{ ...field, width: 130 }} placeholder={t("apps.hostPort")} value={hostPort} onChange={(e) => setHostPort(e.target.value)} type="number" />
           <input style={{ ...field, flex: 1, minWidth: 150 }} placeholder={t("apps.domain")} value={domain} onChange={(e) => setDomain(e.target.value)} />
           <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
@@ -90,7 +114,7 @@ export default function AppsPage() {
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: appColor(a.status) }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{a.image}</div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{appSourceSummary(a)}</div>
               </div>
               <span style={{ fontSize: 12, color: appColor(a.status), fontWeight: 600 }}>{a.status}</span>
             </Link>
