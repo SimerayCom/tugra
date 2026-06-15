@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, deploymentColor } from "./apps";
+import { appColor, appUrl, deploymentColor } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -13,5 +13,11 @@ describe("app helpers", () => {
     expect(deploymentColor("SUCCESS")).toContain("--c-g");
     expect(deploymentColor("FAILED")).toContain("--c-r");
     expect(deploymentColor("RUNNING")).toContain("--c-am");
+  });
+
+  it("builds the app url from domain + https", () => {
+    expect(appUrl({ domain: "x.com", https: true })).toBe("https://x.com");
+    expect(appUrl({ domain: "x.com", https: false })).toBe("http://x.com");
+    expect(appUrl({ domain: null, https: true })).toBeNull();
   });
 });

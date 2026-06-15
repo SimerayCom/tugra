@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { ProxyService } from "./proxy.service";
 import {
   buildRemoveScript,
   buildRunScript,
@@ -28,6 +29,9 @@ export interface AppView {
   status: AppStatus;
   hostPort: number | null;
   containerPort: number | null;
+  domain: string | null;
+  https: boolean;
+  url: string | null;
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -40,6 +44,7 @@ export class ApplicationsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
+    private readonly proxy: ProxyService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -58,6 +63,8 @@ export class ApplicationsService {
         env: (dto.env ?? {}) as Prisma.InputJsonValue,
         hostPort: dto.hostPort ?? null,
         containerPort: dto.containerPort ?? 80,
+        domain: dto.domain ?? null,
+        https: dto.https ?? true,
       },
     });
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
@@ -88,6 +95,7 @@ export class ApplicationsService {
       data: { appId: id, status: "RUNNING" },
     });
     try {
+      if (app.domain) await this.proxy.ensureProxy(app.serverId);
       const r = await this.agentWs.sendCommand(
         app.serverId,
         buildRunScript(this.toSpec(app)),
@@ -158,6 +166,7 @@ export class ApplicationsService {
       env: (app.env as Record<string, string>) ?? {},
       hostPort: app.hostPort,
       containerPort: app.containerPort,
+      domain: app.domain,
     };
   }
 
@@ -187,6 +196,9 @@ export class ApplicationsService {
       status: app.status,
       hostPort: app.hostPort,
       containerPort: app.containerPort,
+      domain: app.domain,
+      https: app.https,
+      url: app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null,
       role,
       canWrite: WRITE.includes(role),
       createdAt: app.createdAt,

@@ -6,6 +6,8 @@
   "server": "Server",
   "image": "Image (e.g. nginx:alpine)",
   "hostPort": "Host port (optional)",
+  "domain": "Domain (optional, auto-SSL)",
+  "open": "Open ↗",
   "create": "Create",
   "empty": "No apps yet.",
   "deploy": "Deploy",

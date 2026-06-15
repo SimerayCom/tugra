@@ -18,6 +18,8 @@ describe("Applications / deploy (e2e)", () => {
   let teamId = "";
   let token = "";
   let agent: WebSocket;
+  let serverId = "";
+  const commands: string[] = [];
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -47,7 +49,7 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "deploy-node", teamId })
       .expect(201);
-    const serverId = created.body.server.id;
+    serverId = created.body.server.id;
     const enrollToken = created.body.enrollToken;
     const { publicKey } = generateKeyPairSync("ed25519");
     const spkiB64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
@@ -62,7 +64,8 @@ describe("Applications / deploy (e2e)", () => {
         } else if (msg.type === "enrolled") {
           resolve();
         } else if (msg.type === "command") {
-          // simulate a successful docker deploy
+          // capture + simulate a successful docker deploy
+          commands.push(msg.command);
           agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: 0, output: "Up 2 seconds" }));
         }
       });
@@ -94,5 +97,27 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(detail.body.status).toBe("RUNNING");
+  });
+
+  it("deploys an app with a domain → proxy setup + Traefik labels", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "site", serverId, image: "nginx:alpine", domain: "site.example.com" })
+      .expect(201);
+    expect(appRes.body.domain).toBe("site.example.com");
+    expect(appRes.body.url).toBe("https://site.example.com");
+
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/apps/${appRes.body.id}/deploy`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(300);
+
+    // proxy setup + run-with-labels were sent to the agent
+    expect(commands.some((c) => c.includes("traefik:v3.1"))).toBe(true);
+    expect(commands.some((c) => c.includes("Host(`site.example.com`)"))).toBe(true);
+    expect(commands.some((c) => c.includes("--network tugra-proxy"))).toBe(true);
   });
 });

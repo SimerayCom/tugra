@@ -12,3 +12,7 @@ export function deploymentColor(s: DeploymentStatus): string {
   if (s === "FAILED") return "var(--c-r)";
   return "var(--c-am)";
 }
+
+export function appUrl(app: { domain: string | null; https: boolean }): string | null {
+  return app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null;
+}

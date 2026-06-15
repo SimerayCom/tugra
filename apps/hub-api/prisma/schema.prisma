@@ -218,6 +218,8 @@ model Application {
   env           Json
   hostPort      Int?
   containerPort Int?         @default(80)
+  domain        String?
+  https         Boolean      @default(true)
   status        AppStatus    @default(NEW)
   deployments   Deployment[]
   createdAt     DateTime     @default(now())

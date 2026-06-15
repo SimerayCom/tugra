@@ -44,10 +44,17 @@ export default function AppDetailPage() {
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{appData.name}</h1>
         <span style={{ fontSize: 12, color: appColor(appData.status), fontWeight: 600 }}>{appData.status}</span>
       </div>
-      <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 18px" }}>
+      <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 6px" }}>
         {appData.image}
         {appData.hostPort ? ` · :${appData.hostPort}→${appData.containerPort}` : ""}
       </p>
+      {appData.url && (
+        <p style={{ margin: "0 0 18px" }}>
+          <a href={appData.url} target="_blank" rel="noreferrer" style={{ color: "var(--c-lapis)", fontSize: 13 }}>
+            {appData.url} {t("apps.open")}
+          </a>
+        </p>
+      )}
 
       {appData.canWrite && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
