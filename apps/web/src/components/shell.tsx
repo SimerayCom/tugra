@@ -11,7 +11,13 @@ export const NAV: {
   group: string;
   items: { label: string; href: string; impl?: boolean }[];
 }[] = [
-  { group: "Monitor", items: [{ label: "Dashboard", href: "/dashboard", impl: true }] },
+  {
+    group: "Monitor",
+    items: [
+      { label: "Dashboard", href: "/dashboard", impl: true },
+      { label: "Uptime", href: "/monitors", impl: true },
+    ],
+  },
   {
     group: "Resources",
     items: [

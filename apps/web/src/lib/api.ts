@@ -1,5 +1,8 @@
 import type {
+  Channel,
+  Heartbeat,
   MetricsSample,
+  Monitor,
   PublicUser,
   ServerView,
   Team,
@@ -172,5 +175,61 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, teamId }),
     });
+  },
+
+  // ── monitors ──
+  listMonitors() {
+    return apiFetch<Monitor[]>("/monitors");
+  },
+  getMonitor(id: string) {
+    return apiFetch<Monitor>(`/monitors/${id}`);
+  },
+  createMonitor(input: {
+    name: string;
+    type: "HTTP" | "TCP";
+    target: string;
+    teamId: string;
+    channelIds?: string[];
+  }) {
+    return apiFetch<Monitor>("/monitors", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  checkMonitor(id: string) {
+    return apiFetch<{ status: string; ms: number; msg: string }>(
+      `/monitors/${id}/check`,
+      { method: "POST" },
+    );
+  },
+  getHeartbeats(id: string, limit = 60) {
+    return apiFetch<Heartbeat[]>(`/monitors/${id}/heartbeats?limit=${limit}`);
+  },
+  getUptime(id: string) {
+    return apiFetch<{ percent: number; total: number }>(
+      `/monitors/${id}/uptime`,
+    );
+  },
+
+  // ── notification channels ──
+  listChannels() {
+    return apiFetch<Channel[]>("/channels");
+  },
+  createChannel(input: {
+    name: string;
+    type: string;
+    teamId: string;
+    config: Record<string, unknown>;
+  }) {
+    return apiFetch<Channel>("/channels", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  testChannel(id: string) {
+    return apiFetch<{ ok: true }>(`/channels/${id}/test`, { method: "POST" });
+  },
+  deleteChannel(id: string) {
+    return apiFetch<{ ok: true }>(`/channels/${id}`, { method: "DELETE" });
   },
 };

@@ -42,3 +42,36 @@ export interface TokenPair {
   accessToken: string;
   refreshToken: string;
 }
+
+export type MonitorType = "HTTP" | "TCP";
+export type MonitorStatus = "UP" | "DOWN" | "PENDING";
+
+export interface Monitor {
+  id: string;
+  name: string;
+  type: MonitorType;
+  target: string;
+  status: MonitorStatus;
+  intervalSec: number;
+  enabled: boolean;
+  teamId: string;
+  role: Role;
+  canWrite: boolean;
+  createdAt: string;
+}
+
+export interface Heartbeat {
+  ts: number;
+  status: MonitorStatus;
+  ms: number;
+  msg: string | null;
+  important: boolean;
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  type: string;
+  teamId: string;
+  enabled: boolean;
+}

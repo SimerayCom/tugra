@@ -25,6 +25,7 @@
     "@prisma/client": "^6.0.0",
     "@tugra/shared": "workspace:*",
     "argon2": "^0.44.0",
+    "bullmq": "^5.78.1",
     "ioredis": "^5.11.1",
     "libsodium-wrappers": "^0.8.4",
     "otplib": "^12.0.1",

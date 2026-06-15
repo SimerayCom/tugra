@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { Btn, Card } from "../../../components/ui";
+import { ChannelsCard } from "../../../components/channels-card";
 
 export default function SettingsPage() {
   const { user, reload } = useAuth();
@@ -62,6 +63,8 @@ export default function SettingsPage() {
         )}
         {msg && <div style={{ marginTop: 12, fontSize: 13, color: "var(--c-a)" }}>{msg}</div>}
       </Card>
+
+      <ChannelsCard />
     </div>
   );
 }
