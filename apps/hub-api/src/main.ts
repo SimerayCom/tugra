@@ -3,7 +3,8 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody is needed to verify HMAC webhook signatures over the exact payload bytes.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.enableCors();
   const port = process.env.HUB_PORT ? Number(process.env.HUB_PORT) : 3000;
   await app.listen(port);

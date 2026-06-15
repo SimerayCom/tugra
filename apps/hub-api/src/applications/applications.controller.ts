@@ -49,6 +49,12 @@ export class ApplicationsController {
     return this.apps.deploy(user.userId, id);
   }
 
+  @Post(":id/webhook/regenerate")
+  @HttpCode(200)
+  regenerateWebhook(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.regenerateWebhook(user.userId, id);
+  }
+
   @Post(":id/stop")
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param("id") id: string) {

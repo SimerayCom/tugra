@@ -118,6 +118,8 @@ export interface Application {
   domain: string | null;
   https: boolean;
   url: string | null;
+  webhookToken: string | null;
+  webhookSecret: string | null;
   role: Role;
   canWrite: boolean;
   createdAt: string;

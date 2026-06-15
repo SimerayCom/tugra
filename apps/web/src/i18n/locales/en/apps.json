@@ -23,5 +23,13 @@
   "deployments": "Deployments",
   "noDeployments": "No deployments yet.",
   "deploying": "Deploying…",
-  "exit": "exit {code}"
+  "exit": "exit {code}",
+  "webhooks": "Auto-deploy webhook",
+  "webhookDesc": "Add this URL + secret to your repository (GitHub: Settings → Webhooks; GitLab: Settings → Webhooks). A push to {branch} redeploys automatically.",
+  "webhookUrl": "Payload URL",
+  "webhookSecret": "Secret",
+  "copy": "Copy",
+  "copied": "Copied",
+  "regenerate": "Regenerate",
+  "regenerateConfirm": "Regenerate the webhook secret? The old one stops working."
 }

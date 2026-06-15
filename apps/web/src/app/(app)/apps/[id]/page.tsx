@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import { appColor, appSourceSummary, deploymentColor } from "../../../../lib/apps";
+import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 
@@ -33,6 +33,10 @@ export default function AppDetailPage() {
   const del = useMutation({
     mutationFn: () => api.deleteApp(id),
     onSuccess: () => router.replace("/apps"),
+  });
+  const regen = useMutation({
+    mutationFn: () => api.regenerateWebhook(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
@@ -67,6 +71,32 @@ export default function AppDetailPage() {
         </div>
       )}
 
+      {appData.canWrite && appData.webhookToken && (
+        <Card style={{ padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.webhooks")}</div>
+          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+            {t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <CopyRow label={t("apps.webhookUrl")} value={webhookUrl(appData.webhookToken)} copy={t("apps.copy")} />
+            {appData.webhookSecret && (
+              <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
+            )}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Btn
+              variant="ghost"
+              disabled={regen.isPending}
+              onClick={() => {
+                if (confirm(t("apps.regenerateConfirm"))) regen.mutate();
+              }}
+            >
+              {t("apps.regenerate")}
+            </Btn>
+          </div>
+        </Card>
+      )}
+
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("apps.deployments")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -86,6 +116,31 @@ export default function AppDetailPage() {
           {deployments.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.noDeployments")}</div>}
         </div>
       </Card>
+    </div>
+  );
+}
+
+function CopyRow({ label, value, copy, secret }: { label: string; value: string; copy: string; secret?: boolean }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontSize: 11, color: "var(--c-tx3)", width: 80, flexShrink: 0 }}>{label}</span>
+      <code
+        className="mono"
+        style={{
+          flex: 1,
+          fontSize: 12,
+          background: "var(--c-el)",
+          border: "1px solid var(--c-bd)",
+          borderRadius: "var(--r1)",
+          padding: "6px 10px",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {secret ? "•".repeat(Math.min(value.length, 32)) : value}
+      </code>
+      <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(value)}>{copy}</Btn>
     </div>
   );
 }

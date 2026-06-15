@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import {
   buildRemoveScript,
@@ -15,6 +16,10 @@ import {
   buildStopScript,
   type AppSpec,
 } from "../deploy/deploy-script";
+import {
+  generateWebhookSecret,
+  generateWebhookToken,
+} from "../webhooks/webhook-verify";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -36,6 +41,8 @@ export interface AppView {
   domain: string | null;
   https: boolean;
   url: string | null;
+  webhookToken: string | null;
+  webhookSecret: string | null;
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -49,6 +56,7 @@ export class ApplicationsService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly proxy: ProxyService,
+    private readonly crypto: CryptoService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -74,6 +82,8 @@ export class ApplicationsService {
         containerPort: dto.containerPort ?? 80,
         domain: dto.domain ?? null,
         https: dto.https ?? true,
+        webhookToken: generateWebhookToken(),
+        webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
       },
     });
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
@@ -100,8 +110,24 @@ export class ApplicationsService {
 
   async deploy(userId: string, id: string) {
     const app = await this.requireWrite(userId, id);
+    return this.runDeploy(app, userId);
+  }
+
+  /**
+   * Deploy triggered by a verified git webhook — no interactive user, so the
+   * role check is skipped (the webhook secret is the authorization). Fire this
+   * without awaiting; builds can take minutes.
+   */
+  async deployFromWebhook(appId: string) {
+    const app = await this.prisma.application.findUnique({ where: { id: appId } });
+    if (!app) throw new NotFoundException("application not found");
+    return this.runDeploy(app, "webhook");
+  }
+
+  /** Core deploy: build/run on the agent and record the Deployment. */
+  private async runDeploy(app: Application, actor: string) {
     const dep = await this.prisma.deployment.create({
-      data: { appId: id, status: "RUNNING" },
+      data: { appId: app.id, status: "RUNNING" },
     });
     try {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
@@ -120,7 +146,7 @@ export class ApplicationsService {
         },
       });
       await this.prisma.application.update({
-        where: { id },
+        where: { id: app.id },
         data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
       });
     } catch (e) {
@@ -129,12 +155,30 @@ export class ApplicationsService {
         data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed" },
       });
       await this.prisma.application.update({
-        where: { id },
+        where: { id: app.id },
         data: { status: AppStatus.FAILED },
       });
     }
-    await this.audit.log({ actor: userId, action: "app.deploy", target: id });
+    await this.audit.log({ actor, action: "app.deploy", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  async regenerateWebhook(userId: string, id: string): Promise<AppView> {
+    const app = await this.requireWrite(userId, id);
+    const updated = await this.prisma.application.update({
+      where: { id },
+      data: {
+        webhookToken: generateWebhookToken(),
+        webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
+      },
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "app.webhook.regenerate",
+      target: id,
+    });
+    const role = (await this.access.teamRole(userId, app.teamId))!;
+    return this.view(updated, role);
   }
 
   async stop(userId: string, id: string): Promise<void> {
@@ -201,6 +245,7 @@ export class ApplicationsService {
   }
 
   private view(app: Application, role: Role): AppView {
+    const canWrite = WRITE.includes(role);
     return {
       id: app.id,
       name: app.name,
@@ -217,8 +262,12 @@ export class ApplicationsService {
       domain: app.domain,
       https: app.https,
       url: app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null,
+      // Webhook credentials are only exposed to members who can deploy.
+      webhookToken: canWrite ? app.webhookToken : null,
+      webhookSecret:
+        canWrite && app.webhookSecret ? this.crypto.decrypt(app.webhookSecret) : null,
       role,
-      canWrite: WRITE.includes(role),
+      canWrite,
       createdAt: app.createdAt,
     };
   }
