@@ -42,6 +42,14 @@ type Heartbeat struct {
 	Ts   int64  `json:"ts"`
 }
 
+// CommandResult: Agent -> Hub, reply to a Command.
+type CommandResult struct {
+	Type     string `json:"type"`
+	ReqID    string `json:"reqId"`
+	ExitCode int    `json:"exitCode"`
+	Output   string `json:"output"`
+}
+
 // Hub -> Agent (one struct covers all; unused fields stay empty)
 type ServerMsg struct {
 	Type     string `json:"type"`
@@ -49,4 +57,6 @@ type ServerMsg struct {
 	ServerID string `json:"serverId"`
 	Seal     string `json:"seal"`
 	Message  string `json:"message"`
+	ReqID    string `json:"reqId"`
+	Command  string `json:"command"`
 }

@@ -163,3 +163,33 @@ model MonitorChannel {
 
   @@id([monitorId, channelId])
 }
+
+enum BulkTaskStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  SKIPPED
+}
+
+model BulkOperation {
+  id        String     @id @default(cuid())
+  actorId   String
+  command   String
+  tasks     BulkTask[]
+  createdAt DateTime   @default(now())
+}
+
+model BulkTask {
+  id         String         @id @default(cuid())
+  operation  BulkOperation  @relation(fields: [opId], references: [id], onDelete: Cascade)
+  opId       String
+  serverId   String
+  status     BulkTaskStatus @default(PENDING)
+  exitCode   Int?
+  output     String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  @@index([opId])
+}

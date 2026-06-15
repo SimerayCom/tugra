@@ -1,4 +1,5 @@
 import type {
+  BulkOperation,
   Channel,
   Heartbeat,
   MetricsSample,
@@ -231,5 +232,16 @@ export const api = {
   },
   deleteChannel(id: string) {
     return apiFetch<{ ok: true }>(`/channels/${id}`, { method: "DELETE" });
+  },
+
+  // ── bulk ops ──
+  runBulk(serverIds: string[], command: string) {
+    return apiFetch<{ opId: string }>("/bulk", {
+      method: "POST",
+      body: JSON.stringify({ serverIds, command }),
+    });
+  },
+  getBulk(id: string) {
+    return apiFetch<BulkOperation>(`/bulk/${id}`);
   },
 };

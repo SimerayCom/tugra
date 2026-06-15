@@ -6,5 +6,6 @@ import { AgentWsServer } from "./agent-ws.server";
 @Module({
   imports: [ServersModule, MetricsModule],
   providers: [AgentWsServer],
+  exports: [AgentWsServer],
 })
 export class AgentGatewayModule {}

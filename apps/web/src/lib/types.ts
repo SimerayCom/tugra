@@ -75,3 +75,24 @@ export interface Channel {
   teamId: string;
   enabled: boolean;
 }
+
+export type BulkTaskStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "DONE"
+  | "FAILED"
+  | "SKIPPED";
+
+export interface BulkTask {
+  id: string;
+  serverId: string;
+  status: BulkTaskStatus;
+  exitCode: number | null;
+  output: string | null;
+}
+
+export interface BulkOperation {
+  id: string;
+  command: string;
+  tasks: BulkTask[];
+}

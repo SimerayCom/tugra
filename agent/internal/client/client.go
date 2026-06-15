@@ -5,26 +5,39 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/mrcandev/tugra/agent/internal/config"
+	"github.com/mrcandev/tugra/agent/internal/exec"
 	"github.com/mrcandev/tugra/agent/internal/keys"
 	"github.com/mrcandev/tugra/agent/internal/metrics"
 	"github.com/mrcandev/tugra/agent/internal/protocol"
 )
 
-const metricsInterval = 5 * time.Second
+const (
+	metricsInterval = 5 * time.Second
+	commandTimeout  = 20 * time.Second
+)
 
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics
-// + heartbeats until the context is cancelled or the connection drops.
+// + heartbeats and executes commands until the context is cancelled.
 func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store) error {
 	conn, _, err := websocket.Dial(ctx, cfg.HubURL, nil)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "bye")
+
+	// Writes from the metrics loop and command handlers must be serialized.
+	var writeMu sync.Mutex
+	send := func(v any) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return wsjson.Write(ctx, conn, v)
+	}
 
 	var challenge protocol.ServerMsg
 	if err := wsjson.Read(ctx, conn, &challenge); err != nil {
@@ -35,7 +48,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	}
 
 	if store.ServerID != "" {
-		if err := wsjson.Write(ctx, conn, protocol.Auth{
+		if err := send(protocol.Auth{
 			Type:      "auth",
 			Protocol:  protocol.Version,
 			ServerID:  store.ServerID,
@@ -49,7 +62,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			return err
 		}
 		host, _ := os.Hostname()
-		if err := wsjson.Write(ctx, conn, protocol.Enroll{
+		if err := send(protocol.Enroll{
 			Type:         "enroll",
 			Protocol:     protocol.Version,
 			Token:        cfg.Token,
@@ -77,12 +90,23 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		return fmt.Errorf("authentication rejected: %s", resp.Message)
 	}
 
-	// Drain any further hub messages so control frames are processed.
+	// Reader: handle commands from the hub.
 	go func() {
 		for {
 			var m protocol.ServerMsg
 			if err := wsjson.Read(ctx, conn, &m); err != nil {
 				return
+			}
+			if m.Type == "command" {
+				go func(reqID, command string) {
+					r := exec.Run(ctx, command, commandTimeout)
+					_ = send(protocol.CommandResult{
+						Type:     "command_result",
+						ReqID:    reqID,
+						ExitCode: r.ExitCode,
+						Output:   r.Output,
+					})
+				}(m.ReqID, m.Command)
 			}
 		}
 	}()
@@ -95,14 +119,11 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			return ctx.Err()
 		case <-ticker.C:
 			if sample, err := metrics.Collect(); err == nil {
-				if err := wsjson.Write(ctx, conn, protocol.Metrics{Type: "metrics", Sample: sample}); err != nil {
+				if err := send(protocol.Metrics{Type: "metrics", Sample: sample}); err != nil {
 					return err
 				}
 			}
-			if err := wsjson.Write(ctx, conn, protocol.Heartbeat{
-				Type: "heartbeat",
-				Ts:   time.Now().UnixMilli(),
-			}); err != nil {
+			if err := send(protocol.Heartbeat{Type: "heartbeat", Ts: time.Now().UnixMilli()}); err != nil {
 				return err
 			}
 		}

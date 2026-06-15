@@ -1,0 +1,12 @@
+{
+  "runCommand": "Run command",
+  "title": "Run command on {n} server(s)",
+  "command": "Command (sh -c)",
+  "placeholder": "e.g. uptime",
+  "summary": "{writable} will run · {skipped} skipped (read-only)",
+  "run": "Run",
+  "close": "Close",
+  "exit": "exit {code}",
+  "running": "Running…",
+  "noOutput": "(no output)"
+}

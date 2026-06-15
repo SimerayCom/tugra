@@ -78,5 +78,30 @@ export interface HeartbeatMsg {
   ts: number;
 }
 
-export type AgentMessage = EnrollMsg | AuthMsg | MetricsMsg | HeartbeatMsg;
-export type HubMessage = ChallengeMsg | EnrolledMsg | AuthOkMsg | ErrorMsg;
+/** Hub -> Agent: run a shell command (bulk ops / exec). */
+export interface CommandMsg {
+  type: "command";
+  reqId: string;
+  command: string;
+}
+
+/** Agent -> Hub: result of a command. */
+export interface CommandResultMsg {
+  type: "command_result";
+  reqId: string;
+  exitCode: number;
+  output: string;
+}
+
+export type AgentMessage =
+  | EnrollMsg
+  | AuthMsg
+  | MetricsMsg
+  | HeartbeatMsg
+  | CommandResultMsg;
+export type HubMessage =
+  | ChallengeMsg
+  | EnrolledMsg
+  | AuthOkMsg
+  | ErrorMsg
+  | CommandMsg;

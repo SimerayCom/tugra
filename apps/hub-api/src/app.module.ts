@@ -13,6 +13,7 @@ import { ServersModule } from "./servers/servers.module";
 import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { MonitorsModule } from "./monitors/monitors.module";
+import { BulkModule } from "./bulk/bulk.module";
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { MonitorsModule } from "./monitors/monitors.module";
     AgentGatewayModule,
     NotificationsModule,
     MonitorsModule,
+    BulkModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

@@ -18,15 +18,24 @@ interface ConnState {
   authed: boolean;
 }
 
+interface Pending {
+  resolve: (r: { exitCode: number; output: string }) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
 /**
  * Raw WebSocket server for agents. Agents dial OUT to /agent (zero inbound port
  * on managed servers). Protocol is the JSON contract in @tugra/shared.
+ * Also sends commands to agents (bulk ops / exec) and correlates results.
  */
 @Injectable()
 export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(AgentWsServer.name);
   private wss?: WebSocketServer;
   private readonly state = new WeakMap<WebSocket, ConnState>();
+  private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
+  private readonly pending = new Map<string, Pending>(); // reqId → resolver
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -50,12 +59,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     this.state.set(socket, { nonce, authed: false });
     this.send(socket, { type: "challenge", nonce });
 
-    socket.on("message", (raw) => {
-      void this.onMessage(socket, raw.toString());
-    });
+    socket.on("message", (raw) => void this.onMessage(socket, raw.toString()));
     socket.on("close", () => {
       const st = this.state.get(socket);
       if (st?.authed && st.serverId) {
+        if (this.sockets.get(st.serverId) === socket) {
+          this.sockets.delete(st.serverId);
+        }
         void this.servers.markOffline(st.serverId);
       }
     });
@@ -84,6 +94,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           });
           st.serverId = serverId;
           st.authed = true;
+          this.sockets.set(serverId, socket);
           return this.send(socket, { type: "enrolled", serverId, seal });
         }
         case "auth": {
@@ -95,6 +106,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           if (!ok) return this.fail(socket, "auth failed");
           st.serverId = msg.serverId;
           st.authed = true;
+          this.sockets.set(msg.serverId, socket);
           return this.send(socket, { type: "auth_ok", serverId: msg.serverId });
         }
         case "metrics": {
@@ -106,6 +118,15 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           if (st.authed && st.serverId) await this.servers.touch(st.serverId);
           return;
         }
+        case "command_result": {
+          const p = this.pending.get(msg.reqId);
+          if (p) {
+            clearTimeout(p.timer);
+            this.pending.delete(msg.reqId);
+            p.resolve({ exitCode: msg.exitCode, output: msg.output });
+          }
+          return;
+        }
         default:
           return;
       }
@@ -114,10 +135,29 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     }
   }
 
-  private send(socket: WebSocket, msg: object): void {
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(msg));
+  /** Send a command to a connected agent and await its result. */
+  sendCommand(
+    serverId: string,
+    command: string,
+    timeoutMs = 20_000,
+  ): Promise<{ exitCode: number; output: string }> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("agent offline"));
     }
+    const reqId = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(reqId);
+        reject(new Error("command timed out"));
+      }, timeoutMs);
+      this.pending.set(reqId, { resolve, reject, timer });
+      this.send(socket, { type: "command", reqId, command });
+    });
+  }
+
+  private send(socket: WebSocket, msg: object): void {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
   }
 
   private fail(socket: WebSocket, message: string): void {
@@ -125,7 +165,6 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     socket.close();
   }
 
-  // exposed for tests / health
   get protocolVersion(): number {
     return PROTOCOL_VERSION;
   }
