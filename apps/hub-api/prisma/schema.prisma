@@ -233,6 +233,13 @@ enum DbStatus {
   FAILED
 }
 
+enum BackupStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
 model Application {
   id            String       @id @default(cuid())
   team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -282,7 +289,26 @@ model Database {
   hostPort    Int?
   credentials String
   status      DbStatus @default(NEW)
+  backupEnabled       Boolean  @default(false)
+  backupIntervalHours Int?
+  backupRetention     Int      @default(7)
+  backups     Backup[]
   createdAt   DateTime @default(now())
 
   @@index([teamId])
+}
+
+model Backup {
+  id          String       @id @default(cuid())
+  database    Database     @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  databaseId  String
+  status      BackupStatus @default(PENDING)
+  filename    String
+  path        String
+  sizeBytes   BigInt?
+  createdBy   String
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+
+  @@index([databaseId])
 }

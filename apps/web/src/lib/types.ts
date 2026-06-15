@@ -153,7 +153,22 @@ export interface Database {
   username: string | null;
   password: string | null;
   database: string | null;
+  backupEnabled: boolean;
+  backupIntervalHours: number | null;
+  backupRetention: number;
   role: Role;
   canWrite: boolean;
   createdAt: string;
+}
+
+export type BackupStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+
+export interface Backup {
+  id: string;
+  status: BackupStatus;
+  filename: string;
+  sizeBytes: string | null;
+  createdBy: string;
+  createdAt: string;
+  completedAt: string | null;
 }
