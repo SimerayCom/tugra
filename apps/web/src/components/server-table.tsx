@@ -6,6 +6,7 @@ import type { ServerView } from "../lib/types";
 import { relativeTime, statusCounts, writableIds } from "../lib/fleet";
 import { useT } from "../i18n/provider";
 import { Badge, Btn, StatusDot } from "./ui";
+import { BulkRunModal } from "./bulk-run-modal";
 
 const TEAM_COLORS = ["#C9A84C", "#3D6FE5", "#2FBF71", "#E5484D", "#A855F7", "#F5A524"];
 function teamColor(teamId: string): string {
@@ -17,6 +18,7 @@ function teamColor(teamId: string): string {
 export function ServerTable({ servers }: { servers: ServerView[] }) {
   const t = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showBulk, setShowBulk] = useState(false);
   const counts = useMemo(() => statusCounts(servers), [servers]);
   const writable = writableIds(servers, selected);
   const skipped = selected.size - writable.length;
@@ -31,12 +33,6 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
   };
 
   const cell: React.CSSProperties = { padding: "10px 14px", fontSize: 13 };
-
-  const bulkActions = [
-    { key: "bulkUpdate", label: t("servers.bulkUpdate") },
-    { key: "restart", label: t("servers.restart") },
-    { key: "deploy", label: t("servers.deploy") },
-  ];
 
   return (
     <div>
@@ -106,12 +102,14 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
             {skipped > 0 && <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}> {t("servers.skipped", { n: skipped })}</span>}
           </span>
           <div style={{ flex: 1 }} />
-          {bulkActions.map((a) => (
-            <Btn key={a.key} variant="ghost" onClick={() => alert(t("servers.bulkSoon", { action: a.label }))} disabled={writable.length === 0}>
-              {a.label}
-            </Btn>
-          ))}
+          <Btn onClick={() => setShowBulk(true)} disabled={writable.length === 0}>
+            {t("bulk.runCommand")}
+          </Btn>
         </div>
+      )}
+
+      {showBulk && (
+        <BulkRunModal servers={servers} selectedIds={[...selected]} onClose={() => setShowBulk(false)} />
       )}
     </div>
   );
