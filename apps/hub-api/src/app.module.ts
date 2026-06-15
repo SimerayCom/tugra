@@ -15,6 +15,7 @@ import { NotificationsModule } from "./notifications/notifications.module";
 import { MonitorsModule } from "./monitors/monitors.module";
 import { BulkModule } from "./bulk/bulk.module";
 import { ApplicationsModule } from "./applications/applications.module";
+import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ApplicationsModule } from "./applications/applications.module";
     MonitorsModule,
     BulkModule,
     ApplicationsModule,
+    WebhooksModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

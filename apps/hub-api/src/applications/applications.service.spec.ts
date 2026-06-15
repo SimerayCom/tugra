@@ -5,8 +5,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { CryptoService } from "../crypto/crypto.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
+const crypto = {
+  encrypt: (s: string) => `enc(${s})`,
+  decrypt: (s: string) => s,
+} as unknown as CryptoService;
 
 function make(
   prisma: Partial<PrismaService>,
@@ -19,6 +24,7 @@ function make(
     audit,
     agentWs as AgentWsServer,
     { ensureProxy: jest.fn() } as unknown as import("./proxy.service").ProxyService,
+    crypto,
   );
 }
 

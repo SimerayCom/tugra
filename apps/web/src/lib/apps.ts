@@ -1,4 +1,5 @@
 import type { AppStatus, DeploymentStatus } from "./types";
+import { API_BASE } from "./api";
 
 export function appColor(s: AppStatus): string {
   if (s === "RUNNING") return "var(--c-g)";
@@ -24,4 +25,9 @@ export function appSourceSummary(app: {
   gitBranch: string | null;
 }): string {
   return app.source === "GIT" ? `git:${app.gitBranch ?? "main"}` : (app.image ?? "");
+}
+
+/** The public webhook URL a user pastes into GitHub/GitLab for auto-deploy. */
+export function webhookUrl(token: string): string {
+  return `${API_BASE}/webhooks/deploy/${token}`;
 }

@@ -236,6 +236,8 @@ model Application {
   domain         String?
   https          Boolean      @default(true)
   status         AppStatus    @default(NEW)
+  webhookToken   String?      @unique
+  webhookSecret  String?
   deployments   Deployment[]
   createdAt     DateTime     @default(now())
 }
