@@ -8,6 +8,31 @@ on:
 jobs:
   node:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tugra
+          POSTGRES_PASSWORD: tugra
+          POSTGRES_DB: tugra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tugra" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tugra:tugra@localhost:5432/tugra?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-access-secret-0123456789
+      JWT_REFRESH_SECRET: ci-refresh-secret-0123456789
+      SECRETS_ENCRYPTION_KEY: ci-secrets-key-0123456789
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -21,6 +46,8 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm --filter @tugra/hub-api exec prisma migrate deploy
+      - run: pnpm --filter @tugra/hub-api test:e2e
 
   agent:
     runs-on: ubuntu-latest
