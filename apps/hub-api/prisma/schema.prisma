@@ -52,17 +52,22 @@ model Membership {
 }
 
 model Server {
-  id          String       @id @default(cuid())
-  name        String
-  // "Sunucu Tuğrası" — the server's unique signed identity.
-  seal        String       @unique
-  status      ServerStatus @default(PENDING)
-  enrollToken String       @unique
-  lastSeenAt  DateTime?
-  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId      String
-  metrics     Metric[]
-  createdAt   DateTime     @default(now())
+  id                   String       @id @default(cuid())
+  name                 String
+  // "Sunucu Tuğrası" — the server's unique signed identity (set at enrollment).
+  seal                 String?      @unique
+  status               ServerStatus @default(PENDING)
+  enrollToken          String       @unique
+  enrollTokenExpiresAt DateTime?
+  // ed25519 public key the agent generated on-box (private key never leaves it).
+  agentPublicKey       String?
+  agentVersion         String?
+  hostname             String?
+  lastSeenAt           DateTime?
+  team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId               String
+  metrics              Metric[]
+  createdAt            DateTime     @default(now())
 }
 
 model Metric {

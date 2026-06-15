@@ -24,9 +24,11 @@ describe("shared protocol", () => {
     const msg: EnrollMsg = {
       type: "enroll",
       protocol: PROTOCOL_VERSION,
-      token: "tugra_ob_test",
+      token: "tugra_en_test",
+      publicKey: "base64spki",
       agentVersion: "0.0.0",
       hostname: "host-1",
+      fingerprint: "fp",
     };
     expect(msg.type).toBe("enroll");
     expect(msg.protocol).toBe(1);

@@ -1,12 +1,22 @@
 // Tugra agent — a single Go binary that runs on each managed server.
-// Faz 0: skeleton only. Enrollment + metrics streaming land in Ay 2.
+// It dials OUT to the hub over WebSocket (no inbound port), enrolls, and
+// streams metrics.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/mrcandev/tugra/agent/internal/client"
+	"github.com/mrcandev/tugra/agent/internal/config"
+	"github.com/mrcandev/tugra/agent/internal/keys"
 )
 
 // Version is overridden at build time via -ldflags "-X main.Version=...".
@@ -16,8 +26,8 @@ var Version = "0.0.0-dev"
 const protocolVersion = 1
 
 func main() {
-	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com")
-	token := flag.String("token", envOr("TUGRA_TOKEN", ""), "enrollment token")
+	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com/agent")
+	token := flag.String("token", envOr("TUGRA_TOKEN", ""), "enrollment token (first run only)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -25,16 +35,45 @@ func main() {
 		fmt.Printf("tugra-agent %s (protocol %d)\n", Version, protocolVersion)
 		return
 	}
-
-	log.Printf("tugra-agent %s starting (protocol %d)", Version, protocolVersion)
-
-	if *hub == "" || *token == "" {
-		log.Println("no --hub/--token provided; nothing to do yet (Faz 0 skeleton)")
+	if *hub == "" {
+		log.Println("no --hub provided; nothing to do")
 		return
 	}
 
-	// TODO(Ay2): connect to hub, enroll, stream metrics + heartbeat, reconnect.
-	log.Printf("would connect to %s and enroll", *hub)
+	home, _ := os.UserHomeDir()
+	cfg := config.Config{
+		HubURL:    *hub,
+		Token:     *token,
+		Version:   Version,
+		KeyPath:   filepath.Join(home, ".tugra", "agent.key"),
+		StatePath: filepath.Join(home, ".tugra", "agent.json"),
+	}
+
+	kp, err := keys.LoadOrCreate(cfg.KeyPath)
+	if err != nil {
+		log.Fatalf("key error: %v", err)
+	}
+	store, _ := config.LoadStore(cfg.StatePath)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	log.Printf("tugra-agent %s connecting to %s", Version, cfg.HubURL)
+	backoff := time.Second
+	for ctx.Err() == nil {
+		if err := client.Run(ctx, cfg, kp, store); err != nil && ctx.Err() == nil {
+			log.Printf("connection error: %v; retrying in %s", err, backoff)
+			select {
+			case <-ctx.Done():
+			case <-time.After(backoff):
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		backoff = time.Second
+	}
 }
 
 func envOr(key, fallback string) string {

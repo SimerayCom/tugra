@@ -1,6 +1,6 @@
 /**
  * @tugra/shared — types shared between the hub and the agent.
- * The agent (Go) mirrors these shapes; keep them in sync.
+ * The agent (Go) mirrors these shapes (same JSON field names); keep them in sync.
  */
 
 export const PROTOCOL_VERSION = 1;
@@ -19,33 +19,64 @@ export interface MetricsSample {
   netTx: number; // bytes/s
 }
 
-/** Agent -> Hub: first message after the socket opens. */
+// ---- Hub -> Agent --------------------------------------------------------
+
+/** Sent right after the socket opens; the agent signs `nonce` to authenticate. */
+export interface ChallengeMsg {
+  type: "challenge";
+  nonce: string;
+}
+
+/** Enrollment result: the server's id + its signed identity ("seal"). */
+export interface EnrolledMsg {
+  type: "enrolled";
+  serverId: string;
+  seal: string;
+}
+
+/** Re-auth (reconnect) accepted. */
+export interface AuthOkMsg {
+  type: "auth_ok";
+  serverId: string;
+}
+
+export interface ErrorMsg {
+  type: "error";
+  message: string;
+}
+
+// ---- Agent -> Hub --------------------------------------------------------
+
+/** First-time enrollment, using a one-time enroll token. */
 export interface EnrollMsg {
   type: "enroll";
   protocol: number;
   token: string;
+  publicKey: string; // base64(SPKI DER) of the agent's ed25519 public key
   agentVersion: string;
   hostname: string;
+  fingerprint: string;
 }
 
-/** Agent -> Hub: periodic metrics. */
+/** Reconnect of an already-enrolled agent: signs the challenge nonce. */
+export interface AuthMsg {
+  type: "auth";
+  protocol: number;
+  serverId: string;
+  signature: string; // base64(ed25519 signature over the challenge nonce)
+}
+
+/** Periodic metrics. */
 export interface MetricsMsg {
   type: "metrics";
   sample: MetricsSample;
 }
 
-/** Agent -> Hub: liveness ping. */
+/** Liveness ping. */
 export interface HeartbeatMsg {
   type: "heartbeat";
   ts: number;
 }
 
-/** Hub -> Agent: enrollment result + the server's signed identity ("seal"). */
-export interface EnrolledMsg {
-  type: "enrolled";
-  serverId: string;
-  seal: string; // the server's unique signed identity ("Sunucu Tuğrası")
-}
-
-export type AgentMessage = EnrollMsg | MetricsMsg | HeartbeatMsg;
-export type HubMessage = EnrolledMsg;
+export type AgentMessage = EnrollMsg | AuthMsg | MetricsMsg | HeartbeatMsg;
+export type HubMessage = ChallengeMsg | EnrolledMsg | AuthOkMsg | ErrorMsg;
