@@ -24,6 +24,7 @@ export interface ServerView {
   hostname: string | null;
   lastSeenAt: Date | null;
   createdAt: Date;
+  seal: string | null;
   role: Role;
   canWrite: boolean;
 }
@@ -65,6 +66,21 @@ export class ServersService {
       enrollToken,
       installCommand: `tugra-agent --hub <YOUR_HUB_URL>/agent --token ${enrollToken}`,
     };
+  }
+
+  /** The teams the user belongs to (for team pickers, command-center scoping). */
+  async listTeamsForUser(
+    userId: string,
+  ): Promise<{ id: string; name: string; role: Role }[]> {
+    const memberships = await this.prisma.membership.findMany({
+      where: { userId },
+      include: { team: true },
+    });
+    return memberships.map((m) => ({
+      id: m.team.id,
+      name: m.team.name,
+      role: m.role,
+    }));
   }
 
   /** Cross-team: every server across ALL the user's team memberships. */
@@ -224,6 +240,7 @@ export class ServersService {
       hostname: string | null;
       lastSeenAt: Date | null;
       createdAt: Date;
+      seal: string | null;
     },
     role: Role,
   ): ServerView {
@@ -235,6 +252,7 @@ export class ServersService {
       hostname: s.hostname,
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,
+      seal: s.seal,
       role,
       canWrite: WRITE_ROLES.includes(role),
     };
