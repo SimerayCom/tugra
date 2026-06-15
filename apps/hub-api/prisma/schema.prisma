@@ -35,11 +35,12 @@ model User {
 model Team {
   id          String       @id @default(cuid())
   name        String
-  memberships Membership[]
-  servers     Server[]
-  monitors    Monitor[]
-  channels    NotificationChannel[]
-  createdAt   DateTime     @default(now())
+  memberships  Membership[]
+  servers      Server[]
+  monitors     Monitor[]
+  channels     NotificationChannel[]
+  applications Application[]
+  createdAt    DateTime     @default(now())
 }
 
 model Membership {
@@ -192,4 +193,44 @@ model BulkTask {
   finishedAt DateTime?
 
   @@index([opId])
+}
+
+enum AppStatus {
+  NEW
+  RUNNING
+  STOPPED
+  FAILED
+}
+
+enum DeploymentStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model Application {
+  id            String       @id @default(cuid())
+  team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId        String
+  serverId      String
+  name          String
+  image         String
+  env           Json
+  hostPort      Int?
+  containerPort Int?         @default(80)
+  status        AppStatus    @default(NEW)
+  deployments   Deployment[]
+  createdAt     DateTime     @default(now())
+}
+
+model Deployment {
+  id          String           @id @default(cuid())
+  application Application      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId       String
+  status      DeploymentStatus @default(RUNNING)
+  logs        String?
+  exitCode    Int?
+  createdAt   DateTime         @default(now())
+
+  @@index([appId])
 }

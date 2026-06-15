@@ -1,6 +1,8 @@
 import type {
+  Application,
   BulkOperation,
   Channel,
+  Deployment,
   Heartbeat,
   MetricsSample,
   Monitor,
@@ -243,5 +245,38 @@ export const api = {
   },
   getBulk(id: string) {
     return apiFetch<BulkOperation>(`/bulk/${id}`);
+  },
+
+  // ── applications (deploy) ──
+  listApps() {
+    return apiFetch<Application[]>("/apps");
+  },
+  getApp(id: string) {
+    return apiFetch<Application>(`/apps/${id}`);
+  },
+  createApp(input: {
+    name: string;
+    serverId: string;
+    image: string;
+    hostPort?: number;
+    containerPort?: number;
+    env?: Record<string, string>;
+  }) {
+    return apiFetch<Application>("/apps", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  deployApp(id: string) {
+    return apiFetch<Deployment>(`/apps/${id}/deploy`, { method: "POST" });
+  },
+  stopApp(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/stop`, { method: "POST" });
+  },
+  deleteApp(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}`, { method: "DELETE" });
+  },
+  getDeployments(id: string) {
+    return apiFetch<Deployment[]>(`/apps/${id}/deployments`);
   },
 };

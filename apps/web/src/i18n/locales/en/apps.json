@@ -1,0 +1,18 @@
+{
+  "title": "Apps",
+  "subtitle": "Deploy a Docker image to a server.",
+  "add": "+ Add App",
+  "name": "Name",
+  "server": "Server",
+  "image": "Image (e.g. nginx:alpine)",
+  "hostPort": "Host port (optional)",
+  "create": "Create",
+  "empty": "No apps yet.",
+  "deploy": "Deploy",
+  "stop": "Stop",
+  "status": "Status",
+  "deployments": "Deployments",
+  "noDeployments": "No deployments yet.",
+  "deploying": "Deploying…",
+  "exit": "exit {code}"
+}

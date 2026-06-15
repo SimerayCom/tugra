@@ -2,6 +2,7 @@
   "dashboard": "Dashboard",
   "uptime": "Uptime",
   "servers": "Servers",
+  "apps": "Apps",
   "appStore": "App Store",
   "backups": "Backups",
   "domains": "Domains & SSL",
