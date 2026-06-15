@@ -11,6 +11,7 @@ export const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(16, "JWT_ACCESS_SECRET must be at least 16 chars"),
   JWT_REFRESH_SECRET: z.string().min(16, "JWT_REFRESH_SECRET must be at least 16 chars"),
   SECRETS_ENCRYPTION_KEY: z.string().min(16, "SECRETS_ENCRYPTION_KEY must be at least 16 chars"),
+  ACME_EMAIL: z.string().email().optional(), // Let's Encrypt account email (deploy SSL)
 });
 
 export type Env = z.infer<typeof envSchema>;

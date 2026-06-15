@@ -33,6 +33,8 @@ export default function AppsPage() {
   const [image, setImage] = useState("");
   const [hostPort, setHostPort] = useState("");
 
+  const [domain, setDomain] = useState("");
+
   const create = useMutation({
     mutationFn: () =>
       api.createApp({
@@ -40,11 +42,13 @@ export default function AppsPage() {
         serverId: serverId || servers[0]?.id,
         image,
         hostPort: hostPort ? Number(hostPort) : undefined,
+        domain: domain || undefined,
       }),
     onSuccess: () => {
       setName("");
       setImage("");
       setHostPort("");
+      setDomain("");
       qc.invalidateQueries({ queryKey: ["apps"] });
     },
   });
@@ -69,6 +73,7 @@ export default function AppsPage() {
           </select>
           <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.image")} value={image} onChange={(e) => setImage(e.target.value)} required />
           <input style={{ ...field, width: 130 }} placeholder={t("apps.hostPort")} value={hostPort} onChange={(e) => setHostPort(e.target.value)} type="number" />
+          <input style={{ ...field, flex: 1, minWidth: 150 }} placeholder={t("apps.domain")} value={domain} onChange={(e) => setDomain(e.target.value)} />
           <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
             {create.isPending ? "…" : t("apps.create")}
           </button>

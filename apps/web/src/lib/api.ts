@@ -260,6 +260,7 @@ export const api = {
     image: string;
     hostPort?: number;
     containerPort?: number;
+    domain?: string;
     env?: Record<string, string>;
   }) {
     return apiFetch<Application>("/apps", {

@@ -108,6 +108,9 @@ export interface Application {
   status: AppStatus;
   hostPort: number | null;
   containerPort: number | null;
+  domain: string | null;
+  https: boolean;
+  url: string | null;
   role: Role;
   canWrite: boolean;
   createdAt: string;

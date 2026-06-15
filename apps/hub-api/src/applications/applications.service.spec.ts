@@ -18,6 +18,7 @@ function make(
     access as TeamAccessService,
     audit,
     agentWs as AgentWsServer,
+    { ensureProxy: jest.fn() } as unknown as import("./proxy.service").ProxyService,
   );
 }
 

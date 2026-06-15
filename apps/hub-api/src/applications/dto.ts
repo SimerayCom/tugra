@@ -7,5 +7,7 @@ export const CreateAppSchema = z.object({
   env: z.record(z.string()).optional(),
   hostPort: z.number().int().min(1).max(65535).optional(),
   containerPort: z.number().int().min(1).max(65535).optional(),
+  domain: z.string().min(1).optional(),
+  https: z.boolean().optional(),
 });
 export type CreateAppInput = z.infer<typeof CreateAppSchema>;
