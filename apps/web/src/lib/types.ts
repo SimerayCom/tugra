@@ -134,3 +134,26 @@ export interface Deployment {
   exitCode: number | null;
   createdAt: string;
 }
+
+export type DbEngine = "POSTGRES" | "MYSQL" | "REDIS" | "MONGO";
+export type DbStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+
+export interface Database {
+  id: string;
+  name: string;
+  engine: DbEngine;
+  version: string;
+  serverId: string;
+  teamId: string;
+  status: DbStatus;
+  port: number;
+  hostPort: number | null;
+  connectionUri: string | null;
+  internalHost: string | null;
+  username: string | null;
+  password: string | null;
+  database: string | null;
+  role: Role;
+  canWrite: boolean;
+  createdAt: string;
+}

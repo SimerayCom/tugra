@@ -27,6 +27,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { key: "servers", href: "/servers", impl: true },
       { key: "apps", href: "/apps", impl: true },
+      { key: "databases", href: "/databases", impl: true },
       { key: "appStore", href: "/coming-soon?f=App%20Store" },
       { key: "backups", href: "/coming-soon?f=Backups" },
       { key: "domains", href: "/coming-soon?f=Domains" },

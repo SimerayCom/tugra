@@ -3,12 +3,13 @@ import auth from "./auth.json";
 import bulk from "./bulk.json";
 import common from "./common.json";
 import dashboard from "./dashboard.json";
+import databases from "./databases.json";
 import monitors from "./monitors.json";
 import nav from "./nav.json";
 import servers from "./servers.json";
 import settings from "./settings.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, auth, bulk, common, dashboard, monitors, nav, servers, settings };
+const en = { apps, auth, bulk, common, dashboard, databases, monitors, nav, servers, settings };
 
 export default en;

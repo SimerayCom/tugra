@@ -2,6 +2,7 @@ import type {
   Application,
   BulkOperation,
   Channel,
+  Database,
   Deployment,
   Heartbeat,
   MetricsSample,
@@ -288,5 +289,34 @@ export const api = {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
       method: "POST",
     });
+  },
+
+  // ── databases ──
+  listDatabases() {
+    return apiFetch<Database[]>("/databases");
+  },
+  getDatabase(id: string) {
+    return apiFetch<Database>(`/databases/${id}`);
+  },
+  createDatabase(input: {
+    name: string;
+    serverId: string;
+    engine: "POSTGRES" | "MYSQL" | "REDIS" | "MONGO";
+    version?: string;
+    hostPort?: number;
+  }) {
+    return apiFetch<Database>("/databases", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  provisionDatabase(id: string) {
+    return apiFetch<Database>(`/databases/${id}/provision`, { method: "POST" });
+  },
+  stopDatabase(id: string) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/stop`, { method: "POST" });
+  },
+  deleteDatabase(id: string) {
+    return apiFetch<{ ok: true }>(`/databases/${id}`, { method: "DELETE" });
   },
 };
