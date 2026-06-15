@@ -1,0 +1,9 @@
+{
+  "title": "Command Center",
+  "subtitle": "All your teams' servers at a glance.",
+  "totalServers": "Total servers",
+  "online": "Online",
+  "pending": "Pending",
+  "offline": "Offline",
+  "goToFleet": "Go to fleet table →"
+}

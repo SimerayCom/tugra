@@ -4,43 +4,47 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "../lib/auth";
+import { useT } from "../i18n/provider";
 import { Spinner } from "./ui";
 import { CommandPalette, type CommandDest } from "./command-palette";
 
-export const NAV: {
-  group: string;
-  items: { label: string; href: string; impl?: boolean }[];
-}[] = [
+interface NavItem {
+  key: string; // i18n key under "nav"
+  href: string;
+  impl?: boolean;
+}
+
+export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Monitor",
     items: [
-      { label: "Dashboard", href: "/dashboard", impl: true },
-      { label: "Uptime", href: "/monitors", impl: true },
+      { key: "dashboard", href: "/dashboard", impl: true },
+      { key: "uptime", href: "/monitors", impl: true },
     ],
   },
   {
     group: "Resources",
     items: [
-      { label: "Servers", href: "/servers", impl: true },
-      { label: "App Store", href: "/coming-soon?f=App%20Store" },
-      { label: "Backups", href: "/coming-soon?f=Backups" },
-      { label: "Domains & SSL", href: "/coming-soon?f=Domains" },
-      { label: "Terminal", href: "/coming-soon?f=Terminal" },
-      { label: "Migration", href: "/coming-soon?f=Migration" },
+      { key: "servers", href: "/servers", impl: true },
+      { key: "appStore", href: "/coming-soon?f=App%20Store" },
+      { key: "backups", href: "/coming-soon?f=Backups" },
+      { key: "domains", href: "/coming-soon?f=Domains" },
+      { key: "terminal", href: "/coming-soon?f=Terminal" },
+      { key: "migration", href: "/coming-soon?f=Migration" },
     ],
   },
   {
     group: "Account",
     items: [
-      { label: "Teams", href: "/coming-soon?f=Teams" },
-      { label: "Settings", href: "/settings", impl: true },
+      { key: "teams", href: "/coming-soon?f=Teams" },
+      { key: "settings", href: "/settings", impl: true },
     ],
   },
 ];
 
 export const DESTS: CommandDest[] = NAV.flatMap((g) =>
-  g.items.map((i) => ({ label: i.label, href: i.href })),
-).concat([{ label: "Add Server", href: "/servers/new" }]);
+  g.items.map((i) => ({ labelKey: `nav.${i.key}`, href: i.href })),
+).concat([{ labelKey: "nav.addServer", href: "/servers/new" }]);
 
 export function useTheme(): [string, () => void] {
   const [theme, setTheme] = useState("dark");
@@ -60,14 +64,7 @@ export function useTheme(): [string, () => void] {
 
 export function CenteredSpinner() {
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
+    <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <Spinner />
     </div>
   );
@@ -77,6 +74,7 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
   const pathname = usePathname();
   const { logout } = useAuth();
   const router = useRouter();
+  const t = useT();
   return (
     <aside
       style={{
@@ -93,81 +91,33 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
     >
       <div style={{ padding: "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 7,
-              background: "var(--c-a)",
-              color: "#0d0d11",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 800,
-            }}
-          >
-            T
-          </div>
+          <div style={{ width: 28, height: 28, borderRadius: 7, background: "var(--c-a)", color: "#0d0d11", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>T</div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>Tugra</div>
         </div>
         <button
           onClick={openPalette}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            padding: "6px 10px",
-            background: "var(--c-el)",
-            border: "1px solid var(--c-bd)",
-            borderRadius: "var(--r1)",
-            cursor: "pointer",
-            color: "var(--c-tx3)",
-            fontSize: 12,
-            fontFamily: "inherit",
-          }}
+          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", cursor: "pointer", color: "var(--c-tx3)", fontSize: 12, fontFamily: "inherit" }}
         >
-          <span style={{ flex: 1, textAlign: "left" }}>Search…</span>
-          <kbd className="mono" style={{ fontSize: 10, background: "var(--c-bd)", borderRadius: 3, padding: "1px 5px" }}>
-            ⌘K
-          </kbd>
+          <span style={{ flex: 1, textAlign: "left" }}>{t("nav.search")}</span>
+          <kbd className="mono" style={{ fontSize: 10, background: "var(--c-bd)", borderRadius: 3, padding: "1px 5px" }}>⌘K</kbd>
         </button>
       </div>
 
       <nav style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
         {NAV.map((g) => (
           <div key={g.group}>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: "var(--c-tx3)",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                padding: "10px 10px 3px",
-              }}
-            >
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "10px 10px 3px" }}>
               {g.group}
             </div>
             {g.items.map((it) => {
               const active = pathname === it.href.split("?")[0];
               return (
                 <Link
-                  key={it.label}
+                  key={it.key}
                   href={it.href}
-                  style={{
-                    display: "block",
-                    padding: "6px 10px",
-                    borderRadius: "var(--r1)",
-                    marginBottom: 1,
-                    fontSize: 13,
-                    textDecoration: "none",
-                    background: active ? "var(--c-ad)" : "transparent",
-                    color: active ? "var(--c-a)" : "var(--c-tx2)",
-                    fontWeight: active ? 600 : 400,
-                  }}
+                  style={{ display: "block", padding: "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
                 >
-                  {it.label}
+                  {t(`nav.${it.key}`)}
                 </Link>
               );
             })}
@@ -181,19 +131,9 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
             await logout();
             router.replace("/login");
           }}
-          style={{
-            width: "100%",
-            padding: "6px 10px",
-            background: "transparent",
-            border: "none",
-            color: "var(--c-tx3)",
-            fontSize: 13,
-            cursor: "pointer",
-            textAlign: "left",
-            fontFamily: "inherit",
-          }}
+          style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
         >
-          Logout
+          {t("nav.logout")}
         </button>
       </div>
     </aside>
@@ -204,33 +144,8 @@ function TopHeader() {
   const { user } = useAuth();
   const [theme, toggle] = useTheme();
   return (
-    <header
-      style={{
-        height: 52,
-        flexShrink: 0,
-        borderBottom: "1px solid var(--c-bd)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "flex-end",
-        gap: 14,
-        padding: "0 18px",
-        background: "var(--c-bg)",
-      }}
-    >
-      <button
-        onClick={toggle}
-        title="Toggle theme"
-        style={{
-          background: "var(--c-el)",
-          border: "1px solid var(--c-bd)",
-          borderRadius: "var(--r1)",
-          padding: "5px 10px",
-          cursor: "pointer",
-          color: "var(--c-tx2)",
-          fontSize: 12,
-          fontFamily: "inherit",
-        }}
-      >
+    <header style={{ height: 52, flexShrink: 0, borderBottom: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 14, padding: "0 18px", background: "var(--c-bg)" }}>
+      <button onClick={toggle} title="Toggle theme" style={{ background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "5px 10px", cursor: "pointer", color: "var(--c-tx2)", fontSize: 12, fontFamily: "inherit" }}>
         {theme === "dark" ? "☾" : "☀"}
       </button>
       <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{user?.email}</span>
