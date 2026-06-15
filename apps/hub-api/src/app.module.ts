@@ -7,9 +7,12 @@ import { HealthController } from "./health/health.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
+import { TeamAccessModule } from "./common/team-access.module";
 import { AuthModule } from "./auth/auth.module";
 import { ServersModule } from "./servers/servers.module";
 import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
+import { NotificationsModule } from "./notifications/notifications.module";
+import { MonitorsModule } from "./monitors/monitors.module";
 
 @Module({
   imports: [
@@ -18,9 +21,12 @@ import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
     PrismaModule,
     RedisModule,
     AuditModule,
+    TeamAccessModule,
     AuthModule,
     ServersModule,
     AgentGatewayModule,
+    NotificationsModule,
+    MonitorsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

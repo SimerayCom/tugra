@@ -37,6 +37,8 @@ model Team {
   name        String
   memberships Membership[]
   servers     Server[]
+  monitors    Monitor[]
+  channels    NotificationChannel[]
   createdAt   DateTime     @default(now())
 }
 
@@ -95,4 +97,69 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+enum MonitorType {
+  HTTP
+  TCP
+}
+
+enum MonitorStatus {
+  UP
+  DOWN
+  PENDING
+}
+
+model Monitor {
+  id          String        @id @default(cuid())
+  team        Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  name        String
+  type        MonitorType
+  target      String // url (HTTP) or host:port (TCP)
+  intervalSec Int           @default(30)
+  retries     Int           @default(1)
+  timeoutMs   Int           @default(10000)
+  resendEvery Int           @default(0) // re-notify every N consecutive down beats (0 = off)
+  status      MonitorStatus @default(PENDING)
+  failCount   Int           @default(0) // consecutive failures (for retry → DOWN)
+  downCount   Int           @default(0) // consecutive down beats (for resend)
+  enabled     Boolean       @default(true)
+  heartbeats  Heartbeat[]
+  channels    MonitorChannel[]
+  createdAt   DateTime      @default(now())
+}
+
+model Heartbeat {
+  id        String        @id @default(cuid())
+  monitor   Monitor       @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  monitorId String
+  status    MonitorStatus
+  ms        Int // latency
+  msg       String?
+  important Boolean       @default(false)
+  ts        DateTime      @default(now())
+
+  @@index([monitorId, ts])
+}
+
+model NotificationChannel {
+  id        String           @id @default(cuid())
+  team      Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String
+  name      String
+  type      String // webhook | telegram | ntfy | discord | slack
+  config    Json
+  enabled   Boolean          @default(true)
+  monitors  MonitorChannel[]
+  createdAt DateTime         @default(now())
+}
+
+model MonitorChannel {
+  monitor   Monitor             @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  monitorId String
+  channel   NotificationChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channelId String
+
+  @@id([monitorId, channelId])
 }
