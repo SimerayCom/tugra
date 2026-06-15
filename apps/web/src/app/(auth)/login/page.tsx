@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
+import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 
 const field: React.CSSProperties = {
@@ -22,6 +23,7 @@ const field: React.CSSProperties = {
 export default function LoginPage() {
   const router = useRouter();
   const { reload } = useAuth();
+  const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
@@ -34,11 +36,7 @@ export default function LoginPage() {
     setErr("");
     setBusy(true);
     try {
-      const out = await api.login(
-        email,
-        password,
-        step === "2fa" ? totp : undefined,
-      );
+      const out = await api.login(email, password, step === "2fa" ? totp : undefined);
       if ("twoFaRequired" in out) {
         setStep("2fa");
       } else {
@@ -46,7 +44,7 @@ export default function LoginPage() {
         router.replace("/dashboard");
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Giriş başarısız");
+      setErr(e instanceof Error ? e.message : t("auth.loginFailed"));
     }
     setBusy(false);
   };
@@ -54,24 +52,24 @@ export default function LoginPage() {
   return (
     <Card style={{ padding: 24 }}>
       <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 16px" }}>
-        {step === "creds" ? "Giriş yap" : "İki adımlı doğrulama"}
+        {step === "creds" ? t("auth.signInTitle") : t("auth.twoFaTitle")}
       </h1>
       <form onSubmit={submit}>
         {step === "creds" ? (
           <>
-            <input style={field} type="email" placeholder="E-posta" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            <input style={field} type="password" placeholder="Parola" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <input style={field} type="email" placeholder={t("auth.email")} value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input style={field} type="password" placeholder={t("auth.password")} value={password} onChange={(e) => setPassword(e.target.value)} required />
           </>
         ) : (
           <input style={{ ...field, letterSpacing: "0.3em", textAlign: "center" }} className="mono" placeholder="000000" value={totp} onChange={(e) => setTotp(e.target.value)} maxLength={6} autoFocus />
         )}
         {err && <div style={{ color: "var(--c-r)", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <Btn type="submit" disabled={busy} style={{ width: "100%" }}>
-          {busy ? "…" : step === "creds" ? "Giriş" : "Doğrula"}
+          {busy ? "…" : step === "creds" ? t("auth.login") : t("auth.verify")}
         </Btn>
       </form>
       <div style={{ marginTop: 14, fontSize: 13, color: "var(--c-tx3)", textAlign: "center" }}>
-        Hesabın yok mu? <Link href="/register" style={{ color: "var(--c-a)" }}>Kayıt ol</Link>
+        {t("auth.noAccount")} <Link href="/register" style={{ color: "var(--c-a)" }}>{t("auth.register")}</Link>
       </div>
     </Card>
   );

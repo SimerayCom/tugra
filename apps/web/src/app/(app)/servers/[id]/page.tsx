@@ -4,12 +4,13 @@ import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { pct } from "../../../../lib/fleet";
+import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { Badge, Card, Spinner, StatusDot } from "../../../../components/ui";
 
 export default function ServerDetailPage() {
-  const params = useParams();
-  const id = String(params.id);
+  const t = useT();
+  const id = String(useParams().id);
 
   const { data: server, isLoading } = useQuery({
     queryKey: ["server", id],
@@ -39,20 +40,18 @@ export default function ServerDetailPage() {
       </p>
 
       <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
-        <Info label="Durum" value={server.status} />
-        <Info label="Takım" value={server.teamId.slice(0, 8)} />
-        <Info label="🏛️ Tuğra (seal)" value={server.seal ? "✓ damgalandı" : "—"} />
-        <Info label="Son görülme" value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
+        <Info label={t("servers.status")} value={server.status} />
+        <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
+        <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
+        <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
       </Card>
 
       {metrics.length === 0 ? (
-        <Card style={{ padding: 24, color: "var(--c-tx3)" }}>
-          Henüz metrik yok — agent bağlanınca canlı akış başlar.
-        </Card>
+        <Card style={{ padding: 24, color: "var(--c-tx3)" }}>{t("servers.noMetrics")}</Card>
       ) : (
         <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1fr 1fr" }}>
-          <MetricChart data={cpu} label="CPU" unit="%" color="var(--c-a)" />
-          <MetricChart data={ram} label="RAM" unit="%" color="var(--c-lapis)" />
+          <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
+          <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
         </div>
       )}
     </div>

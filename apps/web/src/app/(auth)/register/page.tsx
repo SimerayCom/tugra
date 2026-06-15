@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
+import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 
 const field: React.CSSProperties = {
@@ -22,6 +23,7 @@ const field: React.CSSProperties = {
 export default function RegisterPage() {
   const router = useRouter();
   const { reload } = useAuth();
+  const t = useT();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,25 +39,25 @@ export default function RegisterPage() {
       await reload();
       router.replace("/dashboard");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Kayıt başarısız");
+      setErr(e instanceof Error ? e.message : t("auth.registerFailed"));
     }
     setBusy(false);
   };
 
   return (
     <Card style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 16px" }}>Kayıt ol</h1>
+      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 16px" }}>{t("auth.registerTitle")}</h1>
       <form onSubmit={submit}>
-        <input style={field} placeholder="İsim (opsiyonel)" value={name} onChange={(e) => setName(e.target.value)} />
-        <input style={field} type="email" placeholder="E-posta" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <input style={field} type="password" placeholder="Parola (min 8)" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
+        <input style={field} placeholder={t("auth.name")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={field} type="email" placeholder={t("auth.email")} value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <input style={field} type="password" placeholder={t("auth.passwordMin")} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
         {err && <div style={{ color: "var(--c-r)", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <Btn type="submit" disabled={busy} style={{ width: "100%" }}>
-          {busy ? "…" : "Hesap oluştur"}
+          {busy ? "…" : t("auth.createAccount")}
         </Btn>
       </form>
       <div style={{ marginTop: 14, fontSize: 13, color: "var(--c-tx3)", textAlign: "center" }}>
-        Zaten hesabın var mı? <Link href="/login" style={{ color: "var(--c-a)" }}>Giriş yap</Link>
+        {t("auth.haveAccount")} <Link href="/login" style={{ color: "var(--c-a)" }}>{t("auth.login")}</Link>
       </div>
     </Card>
   );

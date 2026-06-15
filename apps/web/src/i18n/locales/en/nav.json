@@ -1,0 +1,15 @@
+{
+  "dashboard": "Dashboard",
+  "uptime": "Uptime",
+  "servers": "Servers",
+  "appStore": "App Store",
+  "backups": "Backups",
+  "domains": "Domains & SSL",
+  "terminal": "Terminal",
+  "migration": "Migration",
+  "teams": "Teams",
+  "settings": "Settings",
+  "logout": "Log out",
+  "search": "Search…",
+  "addServer": "Add Server"
+}
