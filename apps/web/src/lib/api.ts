@@ -2,6 +2,7 @@ import type {
   Application,
   BulkOperation,
   Backup,
+  BackupDestination,
   Channel,
   Database,
   Deployment,
@@ -334,10 +335,35 @@ export const api = {
   deleteBackup(dbId: string, backupId: string) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}`, { method: "DELETE" });
   },
-  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
+  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; retention?: number; destinationId?: string | null }) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backup-config`, {
       method: "PUT",
       body: JSON.stringify(cfg),
     });
+  },
+
+  // ── backup destinations ──
+  listDestinations() {
+    return apiFetch<BackupDestination[]>("/backup-destinations");
+  },
+  createDestination(input: {
+    teamId: string;
+    name: string;
+    type: "S3";
+    s3Bucket: string;
+    s3Region?: string;
+    s3Endpoint: string;
+    s3AccessKey: string;
+    s3SecretKey: string;
+    s3Prefix?: string;
+    encryptionEnabled?: boolean;
+  }) {
+    return apiFetch<BackupDestination>("/backup-destinations", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  deleteDestination(id: string) {
+    return apiFetch<{ ok: true }>(`/backup-destinations/${id}`, { method: "DELETE" });
   },
 };

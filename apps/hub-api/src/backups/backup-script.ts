@@ -1,11 +1,11 @@
 /**
  * Pure builders for the shell scripts the agent runs to dump / restore a managed
- * database to/from a file on the server's own disk.
+ * database to/from a backup destination (the server's own disk, or an S3 bucket).
  *
- * IMPORTANT: the agent exec channel caps combined output at 64KB, so a dump can
- * never be streamed back through it. Instead the agent writes the dump to a file
- * and the script prints only the byte size (`stat -c %s`). Restore reads from
- * that on-disk file. (Off-site/S3 upload is a follow-up; it also runs server-side.)
+ * Every engine dumps to stdout, then a uniform pipeline applies: gzip → optional
+ * gpg (AES-256 symmetric) → sink (a local file, or `mc pipe` to S3). The dump is
+ * never returned through the agent exec channel (which caps output at 64KB) — it
+ * streams straight to the destination; only a small size line comes back.
  */
 
 import {
@@ -13,6 +13,11 @@ import {
   type DbEngine,
   type DbSpec,
 } from "../databases/database-script";
+import {
+  mcHostEnv,
+  mcTarget,
+  type DestinationSpec,
+} from "./destination";
 
 export const BACKUP_DIR = "/etc/tugra/backups";
 
@@ -27,70 +32,117 @@ export function backupDir(dbId: string): string {
   return `${BACKUP_DIR}/${dbId}`;
 }
 
-export function backupFilename(engine: DbEngine, ts: string): string {
-  return `${ts}.${EXT[engine]}`;
-}
-
 export function backupPath(dbId: string, filename: string): string {
   return `${backupDir(dbId)}/${filename}`;
+}
+
+/** Final filename including the pipeline suffixes (.gz always, .gpg if encrypted). */
+export function backupFilename(engine: DbEngine, ts: string, dest: DestinationSpec): string {
+  let f = `${ts}.${EXT[engine]}.gz`;
+  if (dest.encryption.enabled) f += ".gpg";
+  return f;
 }
 
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
-/** Engine-specific dump command writing to `file` (stdout redirected, or docker cp). */
-function dumpCmd(db: DbSpec, file: string): string {
+const MC_INSTALL =
+  "command -v mc >/dev/null 2>&1 || { curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc; }";
+
+/** Engine-specific command that writes the raw dump to stdout. */
+function dumpToStdout(db: DbSpec): string {
   const name = dbContainerName(db);
   const { username, password, database } = db.credentials;
   switch (db.engine) {
     case "POSTGRES":
-      return `docker exec -e PGPASSWORD=${shq(password)} ${name} pg_dump -U ${shq(username)} ${shq(database)} > ${file}`;
+      return `docker exec -e PGPASSWORD=${shq(password)} ${name} pg_dump -U ${shq(username)} ${shq(database)}`;
     case "MYSQL":
-      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump -u${shq(username)} ${shq(database)} > ${file}`;
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump -u${shq(username)} ${shq(database)}`;
     case "MONGO":
-      return `docker exec ${name} mongodump --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive > ${file}`;
+      return `docker exec ${name} mongodump --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive`;
     case "REDIS":
-      return `docker exec ${name} redis-cli -a ${shq(password)} --no-auth-warning SAVE && docker cp ${name}:/data/dump.rdb ${file}`;
+      return `docker exec ${name} sh -c ${shq(`redis-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
   }
 }
 
-export function buildBackupScript(db: DbSpec, filename: string): string {
-  const dir = backupDir(db.id);
-  const file = backupPath(db.id, filename);
-  return [
-    "set -e",
-    `mkdir -p ${dir}`,
-    dumpCmd(db, file),
-    `stat -c %s ${file}`,
-  ].join("\n");
+// Quote a value that is embedded inside an already single-quoted `sh -c` string.
+function shqInner(v: string): string {
+  return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
-/** Engine-specific restore command reading from the on-disk `file`. */
-function restoreCmd(db: DbSpec, file: string): string {
+function gpgEncrypt(dest: DestinationSpec): string {
+  return `gpg --batch --yes --passphrase ${shq(dest.encryption.key)} --symmetric --cipher-algo AES256`;
+}
+
+function gpgDecrypt(dest: DestinationSpec): string {
+  return `gpg --batch --yes --passphrase ${shq(dest.encryption.key)} --decrypt`;
+}
+
+export function buildBackupScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
+  const lines = ["set -e", "set -o pipefail"];
+  const pipe = [dumpToStdout(db), "gzip"];
+  if (dest.encryption.enabled) pipe.push(gpgEncrypt(dest));
+
+  if (dest.type === "S3" && dest.s3) {
+    lines.push(MC_INSTALL);
+    const target = mcTarget(dest.s3, db.id, filename);
+    lines.push(`${mcHostEnv(dest.s3)} sh -c ${shq(`${pipe.join(" | ")} | mc pipe ${target}`)}`);
+    // size of the uploaded object
+    lines.push(`${mcHostEnv(dest.s3)} mc stat --json ${target}`);
+  } else {
+    const dir = backupDir(db.id);
+    const file = backupPath(db.id, filename);
+    lines.push(`mkdir -p ${dir}`);
+    lines.push(`${pipe.join(" | ")} > ${file}`);
+    lines.push(`stat -c %s ${file}`);
+  }
+  return lines.join("\n");
+}
+
+export function buildRestoreScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
   const name = dbContainerName(db);
   const { username, password, database } = db.credentials;
+
+  // source → [gpg -d] → gunzip → restore
+  let source: string;
+  if (dest.type === "S3" && dest.s3) {
+    source = `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, db.id, filename)}`;
+  } else {
+    source = `cat ${backupPath(db.id, filename)}`;
+  }
+  const decode = [source];
+  if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
+  decode.push("gunzip");
+
+  const lines = ["set -e", "set -o pipefail"];
   switch (db.engine) {
     case "POSTGRES":
-      return `cat ${file} | docker exec -i -e PGPASSWORD=${shq(password)} ${name} psql -U ${shq(username)} -d ${shq(database)}`;
+      lines.push(`${decode.join(" | ")} | docker exec -i -e PGPASSWORD=${shq(password)} ${name} psql -U ${shq(username)} -d ${shq(database)}`);
+      break;
     case "MYSQL":
-      return `cat ${file} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} ${shq(database)}`;
+      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} ${shq(database)}`);
+      break;
     case "MONGO":
-      return `docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop < ${file}`;
+      lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop`);
+      break;
     case "REDIS":
-      return [
-        `docker cp ${file} ${name}:/data/dump.rdb`,
-        `docker restart ${name}`,
-      ].join(" && ");
+      lines.push(`${decode.join(" | ")} > /tmp/${name}.rdb`);
+      lines.push(`docker cp /tmp/${name}.rdb ${name}:/data/dump.rdb`);
+      lines.push(`docker restart ${name}`);
+      lines.push(`rm -f /tmp/${name}.rdb`);
+      break;
   }
+  return lines.join("\n");
 }
 
-export function buildRestoreScript(db: DbSpec, filename: string): string {
-  const file = backupPath(db.id, filename);
-  return ["set -e", restoreCmd(db, file)].join("\n");
-}
-
-/** Delete a single backup file (used when pruning / removing). */
-export function buildDeleteBackupScript(dbId: string, filename: string): string {
+export function buildDeleteBackupScript(
+  dbId: string,
+  filename: string,
+  dest: DestinationSpec,
+): string {
+  if (dest.type === "S3" && dest.s3) {
+    return `${mcHostEnv(dest.s3)} mc rm ${mcTarget(dest.s3, dbId, filename)} 2>/dev/null || true`;
+  }
   return `rm -f ${backupPath(dbId, filename)} 2>/dev/null || true`;
 }

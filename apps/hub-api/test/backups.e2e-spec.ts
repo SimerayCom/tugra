@@ -86,7 +86,7 @@ describe("Database backups (e2e)", () => {
       .expect(201);
     expect(res.body.status).toBe("SUCCESS");
     expect(res.body.sizeBytes).toBe("20480");
-    expect(res.body.filename).toMatch(/\.sql$/);
+    expect(res.body.filename).toMatch(/\.sql\.gz$/);
     await sleep(50);
 
     const sent = commands.join("\n");

@@ -1,0 +1,16 @@
+{
+  "title": "Backup Storage",
+  "subtitle": "Off-site destinations (S3 / R2) where database backups are stored.",
+  "team": "Team",
+  "name": "Name",
+  "bucket": "Bucket",
+  "endpoint": "Endpoint (s3.amazonaws.com)",
+  "region": "Region",
+  "accessKey": "Access key",
+  "secretKey": "Secret key",
+  "prefix": "Prefix (optional)",
+  "encrypt": "Encrypt (AES-256)",
+  "create": "Add",
+  "delete": "Delete",
+  "empty": "No backup destinations yet — backups stay on the server's disk."
+}

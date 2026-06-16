@@ -56,9 +56,10 @@ export class BackupsService {
     const db = await this.requireWrite(userId, dbId);
     const backup = await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: dbId } });
     if (!backup) throw new NotFoundException("backup not found");
+    const dest = await this.runner.destinationSpec(db);
     await this.agentWs.sendCommand(
       db.serverId,
-      buildRestoreScript(this.runner.toSpec(db), backup.filename),
+      buildRestoreScript(this.runner.toSpec(db), backup.filename, dest),
       300_000,
     );
     await this.audit.log({ actor: userId, action: "database.restore", target: dbId, meta: { backupId } });
@@ -68,8 +69,9 @@ export class BackupsService {
     const db = await this.requireWrite(userId, dbId);
     const backup = await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: dbId } });
     if (!backup) throw new NotFoundException("backup not found");
+    const dest = await this.runner.destinationSpec(db);
     await this.agentWs
-      .sendCommand(db.serverId, buildDeleteBackupScript(dbId, backup.filename))
+      .sendCommand(db.serverId, buildDeleteBackupScript(dbId, backup.filename, dest))
       .catch(() => undefined);
     await this.prisma.backup.delete({ where: { id: backup.id } });
     await this.audit.log({ actor: userId, action: "database.backup.remove", target: dbId });
@@ -83,6 +85,7 @@ export class BackupsService {
         backupEnabled: cfg.enabled,
         backupIntervalHours: cfg.intervalHours ?? null,
         backupRetention: cfg.retention ?? undefined,
+        ...(cfg.destinationId !== undefined ? { backupDestinationId: cfg.destinationId || null } : {}),
       },
     });
     if (db.backupEnabled && db.backupIntervalHours) {

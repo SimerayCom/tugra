@@ -26,6 +26,10 @@ export default function DatabaseDetailPage() {
     queryFn: () => api.listBackups(id),
     refetchInterval: 5000,
   });
+  const { data: destinations = [] } = useQuery({
+    queryKey: ["destinations"],
+    queryFn: () => api.listDestinations(),
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["database", id] });
   const invalidateBackups = () => qc.invalidateQueries({ queryKey: ["backups", id] });
@@ -42,11 +46,13 @@ export default function DatabaseDetailPage() {
   const [schedEnabled, setSchedEnabled] = useState(false);
   const [interval, setIntervalH] = useState("24");
   const [retention, setRetention] = useState("7");
+  const [destinationId, setDestinationId] = useState("");
   useEffect(() => {
     if (db) {
       setSchedEnabled(db.backupEnabled);
       setIntervalH(String(db.backupIntervalHours ?? 24));
       setRetention(String(db.backupRetention));
+      setDestinationId(db.backupDestinationId ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db?.id]);
@@ -56,6 +62,7 @@ export default function DatabaseDetailPage() {
         enabled: schedEnabled,
         intervalHours: Number(interval) || 24,
         retention: Number(retention) || 7,
+        destinationId: destinationId || null,
       }),
     onSuccess: invalidate,
   });
@@ -120,6 +127,13 @@ export default function DatabaseDetailPage() {
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
               {t("databases.keep")}
               <input style={fieldSm} type="number" value={retention} onChange={(e) => setRetention(e.target.value)} />
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+              {t("databases.destination")}
+              <select style={{ ...fieldSm, width: "auto" }} value={destinationId} onChange={(e) => setDestinationId(e.target.value)}>
+                <option value="">{t("databases.localDisk")}</option>
+                {destinations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
             </label>
             <Btn variant="ghost" onClick={() => saveSchedule.mutate()} disabled={saveSchedule.isPending}>{t("databases.save")}</Btn>
           </div>
