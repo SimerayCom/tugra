@@ -83,4 +83,38 @@ describe("ApplicationsService", () => {
     );
     expect(dep?.status).toBe("SUCCESS");
   });
+
+  it("returns decrypted env vars to a writer", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, envEnc: '{"FOO":"bar"}' }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    expect(await svc.getEnv("u1", "app1")).toEqual({ FOO: "bar" });
+  });
+
+  it("forbids a non-writer from reading or setting env", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+    } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.getEnv("u1", "app1")).rejects.toThrow(/nope/);
+    await expect(svc.setEnv("u1", "app1", { A: "1" })).rejects.toThrow(/nope/);
+  });
+
+  it("stores env encrypted on setEnv", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setEnv("u1", "app1", { FOO: "bar" });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { envEnc: 'enc({"FOO":"bar"})' } }),
+    );
+  });
 });

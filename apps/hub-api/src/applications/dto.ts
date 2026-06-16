@@ -22,3 +22,8 @@ export const CreateAppSchema = z
     path: ["source"],
   });
 export type CreateAppInput = z.infer<typeof CreateAppSchema>;
+
+export const SetEnvSchema = z.object({
+  env: z.record(z.string()),
+});
+export type SetEnvInput = z.infer<typeof SetEnvSchema>;

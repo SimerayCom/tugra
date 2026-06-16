@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Put,
   UseGuards,
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -13,7 +14,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApplicationsService } from "./applications.service";
-import { CreateAppInput, CreateAppSchema } from "./dto";
+import { CreateAppInput, CreateAppSchema, SetEnvInput, SetEnvSchema } from "./dto";
 
 @Controller("apps")
 @UseGuards(JwtAuthGuard)
@@ -47,6 +48,22 @@ export class ApplicationsController {
   @HttpCode(200)
   deploy(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.deploy(user.userId, id);
+  }
+
+  @Get(":id/env")
+  getEnv(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.getEnv(user.userId, id);
+  }
+
+  @Put(":id/env")
+  @HttpCode(200)
+  async setEnv(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetEnvSchema)) body: SetEnvInput,
+  ) {
+    await this.apps.setEnv(user.userId, id, body.env);
+    return { ok: true };
   }
 
   @Post(":id/webhook/regenerate")

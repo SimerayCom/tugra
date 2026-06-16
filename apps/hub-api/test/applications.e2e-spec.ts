@@ -141,4 +141,40 @@ describe("Applications / deploy (e2e)", () => {
     expect(all).toContain("nixpacks build");
     expect(all).not.toContain("docker pull");
   });
+
+  it("manages env vars (encrypted) and injects them via --env-file on deploy", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "envapp", serverId, image: "nginx:alpine", hostPort: 8090 })
+      .expect(201);
+    const appId = appRes.body.id;
+    expect(appRes.body.envCount).toBe(0);
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/env`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ env: { FOO: "bar", SECRET: "s3cr3t" } })
+      .expect(200);
+
+    const got = await request(app.getHttpServer())
+      .get(`/apps/${appId}/env`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(got.body).toEqual({ FOO: "bar", SECRET: "s3cr3t" });
+
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/apps/${appId}/deploy`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(200);
+
+    const sent = commands.join("\n");
+    expect(sent).toContain("--env-file /etc/tugra/env/");
+    expect(sent).not.toContain("-e 'FOO"); // secrets not on the command line
+    const m = sent.match(/printf %s '([A-Za-z0-9+/=]+)'/);
+    expect(m).toBeTruthy();
+    expect(Buffer.from(m![1], "base64").toString()).toContain("SECRET=s3cr3t");
+  });
 });

@@ -43,6 +43,7 @@ export interface AppView {
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;
+  envCount: number;
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -77,7 +78,8 @@ export class ApplicationsService {
         dockerfilePath: dto.dockerfilePath ?? null,
         serverId: dto.serverId,
         teamId: server.teamId,
-        env: (dto.env ?? {}) as Prisma.InputJsonValue,
+        env: {} as Prisma.InputJsonValue,
+        envEnc: this.crypto.encrypt(JSON.stringify(dto.env ?? {})),
         hostPort: dto.hostPort ?? null,
         containerPort: dto.containerPort ?? 80,
         domain: dto.domain ?? null,
@@ -211,7 +213,33 @@ export class ApplicationsService {
     });
   }
 
+  /** Environment variables — sensitive, so writer-only. */
+  async getEnv(userId: string, id: string): Promise<Record<string, string>> {
+    const app = await this.requireWrite(userId, id);
+    return this.appEnv(app);
+  }
+
+  async setEnv(userId: string, id: string, env: Record<string, string>): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: { envEnc: this.crypto.encrypt(JSON.stringify(env)) },
+    });
+    await this.audit.log({ actor: userId, action: "app.env.update", target: id });
+  }
+
   // ── helpers ──
+  private appEnv(app: Application): Record<string, string> {
+    if (app.envEnc) {
+      try {
+        return JSON.parse(this.crypto.decrypt(app.envEnc)) as Record<string, string>;
+      } catch {
+        return {};
+      }
+    }
+    return (app.env as Record<string, string>) ?? {};
+  }
+
   private toSpec(app: Application): AppSpec {
     return {
       id: app.id,
@@ -221,7 +249,7 @@ export class ApplicationsService {
       gitBranch: app.gitBranch,
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
-      env: (app.env as Record<string, string>) ?? {},
+      env: this.appEnv(app),
       hostPort: app.hostPort,
       containerPort: app.containerPort,
       domain: app.domain,
@@ -266,6 +294,7 @@ export class ApplicationsService {
       webhookToken: canWrite ? app.webhookToken : null,
       webhookSecret:
         canWrite && app.webhookSecret ? this.crypto.decrypt(app.webhookSecret) : null,
+      envCount: Object.keys(this.appEnv(app)).length,
       role,
       canWrite,
       createdAt: app.createdAt,

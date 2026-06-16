@@ -120,6 +120,7 @@ export interface Application {
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;
+  envCount: number;
   role: Role;
   canWrite: boolean;
   createdAt: string;

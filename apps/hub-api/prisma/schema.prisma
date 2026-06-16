@@ -259,6 +259,7 @@ model Application {
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
   env            Json
+  envEnc         String?
   hostPort       Int?
   containerPort  Int?         @default(80)
   domain         String?
