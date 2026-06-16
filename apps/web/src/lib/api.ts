@@ -193,8 +193,11 @@ export const api = {
   },
   createMonitor(input: {
     name: string;
-    type: "HTTP" | "TCP";
-    target: string;
+    type: "HTTP" | "TCP" | "METRIC";
+    target?: string;
+    serverId?: string;
+    metric?: "DISK" | "CPU" | "MEM";
+    thresholdPct?: number;
     teamId: string;
     channelIds?: string[];
   }) {

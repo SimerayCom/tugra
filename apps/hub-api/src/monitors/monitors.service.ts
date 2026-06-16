@@ -19,6 +19,9 @@ export interface MonitorView {
   name: string;
   type: MonitorType;
   target: string;
+  serverId: string | null;
+  metric: string | null;
+  thresholdPct: number | null;
   status: MonitorStatus;
   intervalSec: number;
   enabled: boolean;
@@ -44,7 +47,10 @@ export class MonitorsService {
       data: {
         name: dto.name,
         type: dto.type as MonitorType,
-        target: dto.target,
+        target: dto.target ?? dto.metric ?? "",
+        serverId: dto.serverId ?? null,
+        metric: dto.metric ?? null,
+        thresholdPct: dto.thresholdPct ?? null,
         teamId: dto.teamId,
         intervalSec: dto.intervalSec ?? 30,
         retries: dto.retries ?? 1,
@@ -135,6 +141,9 @@ export class MonitorsService {
       name: m.name,
       type: m.type,
       target: m.target,
+      serverId: m.serverId,
+      metric: m.metric,
+      thresholdPct: m.thresholdPct,
       status: m.status,
       intervalSec: m.intervalSec,
       enabled: m.enabled,

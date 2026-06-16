@@ -27,14 +27,30 @@ export default function MonitorsPage() {
     refetchInterval: 10000,
   });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
 
   const [name, setName] = useState("");
-  const [type, setType] = useState<"HTTP" | "TCP">("HTTP");
+  const [type, setType] = useState<"HTTP" | "TCP" | "METRIC">("HTTP");
   const [target, setTarget] = useState("");
+  const [serverId, setServerId] = useState("");
+  const [metric, setMetric] = useState<"DISK" | "CPU" | "MEM">("DISK");
+  const [thresholdPct, setThresholdPct] = useState("80");
   const [teamId, setTeamId] = useState("");
 
   const create = useMutation({
-    mutationFn: () => api.createMonitor({ name, type, target, teamId: teamId || teams[0]?.id }),
+    mutationFn: () =>
+      api.createMonitor(
+        type === "METRIC"
+          ? {
+              name,
+              type,
+              serverId: serverId || servers[0]?.id,
+              metric,
+              thresholdPct: Number(thresholdPct) || 80,
+              teamId: teamId || teams[0]?.id,
+            }
+          : { name, type, target, teamId: teamId || teams[0]?.id },
+      ),
     onSuccess: () => {
       setName("");
       setTarget("");
@@ -56,11 +72,27 @@ export default function MonitorsPage() {
           style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
           <input style={{ ...field, flex: 1, minWidth: 120 }} placeholder={t("monitors.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-          <select style={field} value={type} onChange={(e) => setType(e.target.value as "HTTP" | "TCP")}>
+          <select style={field} value={type} onChange={(e) => setType(e.target.value as "HTTP" | "TCP" | "METRIC")}>
             <option value="HTTP">HTTP</option>
             <option value="TCP">TCP</option>
+            <option value="METRIC">{t("monitors.metric")}</option>
           </select>
-          <input style={{ ...field, flex: 2, minWidth: 180 }} placeholder={type === "HTTP" ? t("monitors.targetHttp") : t("monitors.targetTcp")} value={target} onChange={(e) => setTarget(e.target.value)} required />
+          {type === "METRIC" ? (
+            <>
+              <select style={field} value={serverId} onChange={(e) => setServerId(e.target.value)}>
+                <option value="">{servers[0]?.name ?? t("monitors.server")}</option>
+                {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <select style={field} value={metric} onChange={(e) => setMetric(e.target.value as "DISK" | "CPU" | "MEM")}>
+                <option value="DISK">{t("monitors.disk")}</option>
+                <option value="CPU">CPU</option>
+                <option value="MEM">{t("monitors.mem")}</option>
+              </select>
+              <input style={{ ...field, width: 110 }} type="number" placeholder={t("monitors.threshold")} value={thresholdPct} onChange={(e) => setThresholdPct(e.target.value)} />
+            </>
+          ) : (
+            <input style={{ ...field, flex: 2, minWidth: 180 }} placeholder={type === "HTTP" ? t("monitors.targetHttp") : t("monitors.targetTcp")} value={target} onChange={(e) => setTarget(e.target.value)} required />
+          )}
           <select style={field} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
             <option value="">{teams[0]?.name ?? t("common.pickTeam")}</option>
             {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}

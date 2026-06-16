@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { checkers } from "./checkers";
+import { checkers, metricCheckResult, type MetricKind } from "./checkers";
 import { nextState } from "./transition";
 
 export interface CheckOutcome {
@@ -22,8 +22,27 @@ export class MonitorRunnerService {
     const m = await this.prisma.monitor.findUnique({ where: { id: monitorId } });
     if (!m) return null;
 
-    const checker = checkers[m.type];
-    const r = await checker(m);
+    let r;
+    if (m.type === "METRIC") {
+      const row = m.serverId
+        ? await this.prisma.metric.findFirst({
+            where: { serverId: m.serverId },
+            orderBy: { ts: "desc" },
+          })
+        : null;
+      const sample = row
+        ? {
+            cpu: row.cpu,
+            memUsed: Number(row.memUsed),
+            memTotal: Number(row.memTotal),
+            diskUsed: Number(row.diskUsed),
+            diskTotal: Number(row.diskTotal),
+          }
+        : null;
+      r = metricCheckResult((m.metric as MetricKind) ?? "DISK", sample, m.thresholdPct ?? 90);
+    } else {
+      r = await checkers[m.type](m);
+    }
     const t = nextState(
       { status: m.status, failCount: m.failCount, downCount: m.downCount },
       r.up,
