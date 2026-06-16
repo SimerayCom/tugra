@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -19,6 +20,11 @@ import {
   type AppSpec,
 } from "../deploy/deploy-script";
 import {
+  buildComposeDownScript,
+  buildComposeStopScript,
+  buildComposeUpScript,
+} from "../deploy/compose-script";
+import {
   generateWebhookSecret,
   generateWebhookToken,
 } from "../webhooks/webhook-verify";
@@ -31,11 +37,12 @@ const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
 export interface AppView {
   id: string;
   name: string;
-  source: "IMAGE" | "GIT";
+  source: "IMAGE" | "GIT" | "COMPOSE";
   image: string | null;
   gitUrl: string | null;
   gitBranch: string | null;
   buildType: "NIXPACKS" | "DOCKERFILE";
+  composeFile: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -79,6 +86,7 @@ export class ApplicationsService {
         gitBranch: dto.gitBranch ?? "main",
         buildType: dto.buildType ?? "NIXPACKS",
         dockerfilePath: dto.dockerfilePath ?? null,
+        composeFile: dto.composeFile ?? null,
         serverId: dto.serverId,
         teamId: server.teamId,
         env: {} as Prisma.InputJsonValue,
@@ -135,12 +143,12 @@ export class ApplicationsService {
       data: { appId: app.id, status: "RUNNING" },
     });
     try {
-      if (app.domain) await this.proxy.ensureProxy(app.serverId);
-      const r = await this.agentWs.sendCommand(
-        app.serverId,
-        buildRunScript(this.toSpec(app), dep.id, true),
-        DEPLOY_TIMEOUT_MS,
-      );
+      const isCompose = app.source === "COMPOSE";
+      if (app.domain && !isCompose) await this.proxy.ensureProxy(app.serverId);
+      const command = isCompose
+        ? buildComposeUpScript(this.toSpec(app))
+        : buildRunScript(this.toSpec(app), dep.id, true);
+      const r = await this.agentWs.sendCommand(app.serverId, command, DEPLOY_TIMEOUT_MS);
       const ok = r.exitCode === 0;
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -148,14 +156,15 @@ export class ApplicationsService {
           status: ok ? "SUCCESS" : "FAILED",
           logs: r.output.slice(0, 65536),
           exitCode: r.exitCode,
-          imageTag: ok ? runTag(app, dep.id) : null,
+          // Compose stacks are multi-image → no single rollback tag.
+          imageTag: ok && !isCompose ? runTag(app, dep.id) : null,
         },
       });
       await this.prisma.application.update({
         where: { id: app.id },
         data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
       });
-      if (ok) await this.pruneImages(app);
+      if (ok && !isCompose) await this.pruneImages(app);
     } catch (e) {
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -173,6 +182,9 @@ export class ApplicationsService {
   /** Re-run a previous successful deployment's image without rebuilding/pulling. */
   async rollback(userId: string, id: string, targetDeploymentId: string) {
     const app = await this.requireWrite(userId, id);
+    if (app.source === "COMPOSE") {
+      throw new BadRequestException("rollback not supported for compose apps");
+    }
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
     });
@@ -259,9 +271,11 @@ export class ApplicationsService {
 
   async stop(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
-    await this.agentWs
-      .sendCommand(app.serverId, buildStopScript(app))
-      .catch(() => undefined);
+    const cmd =
+      app.source === "COMPOSE"
+        ? buildComposeStopScript(this.toSpec(app))
+        : buildStopScript(app);
+    await this.agentWs.sendCommand(app.serverId, cmd).catch(() => undefined);
     await this.prisma.application.update({
       where: { id },
       data: { status: AppStatus.STOPPED },
@@ -271,9 +285,11 @@ export class ApplicationsService {
 
   async remove(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
-    await this.agentWs
-      .sendCommand(app.serverId, buildRemoveScript(app))
-      .catch(() => undefined);
+    const cmd =
+      app.source === "COMPOSE"
+        ? buildComposeDownScript(this.toSpec(app), { volumes: true })
+        : buildRemoveScript(app);
+    await this.agentWs.sendCommand(app.serverId, cmd).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "app.remove", target: id });
   }
@@ -323,6 +339,7 @@ export class ApplicationsService {
       gitBranch: app.gitBranch,
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
+      composeFile: app.composeFile,
       env: this.appEnv(app),
       hostPort: app.hostPort,
       containerPort: app.containerPort,
@@ -356,6 +373,7 @@ export class ApplicationsService {
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
       buildType: app.buildType,
+      composeFile: canWrite ? app.composeFile : null,
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,

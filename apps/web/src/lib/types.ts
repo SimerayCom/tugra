@@ -99,7 +99,7 @@ export interface BulkOperation {
 
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
-export type AppSource = "IMAGE" | "GIT";
+export type AppSource = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildType = "NIXPACKS" | "DOCKERFILE";
 
 export interface Application {
@@ -110,6 +110,7 @@ export interface Application {
   gitUrl: string | null;
   gitBranch: string | null;
   buildType: BuildType;
+  composeFile: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
