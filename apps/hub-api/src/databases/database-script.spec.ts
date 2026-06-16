@@ -6,6 +6,7 @@ import {
   engineCommand,
   enginePort,
   resolveImage,
+  supportsBackup,
   type DbCredentials,
   type DbEngine,
   type DbSpec,
@@ -24,6 +25,51 @@ function spec(engine: DbEngine, over: Partial<DbSpec> = {}): DbSpec {
     ...over,
   };
 }
+
+describe("database-script — extra engines (Dilim 17)", () => {
+  it("resolves images/ports for the 4 new engines", () => {
+    expect(resolveImage("MARIADB")).toBe("mariadb:11");
+    expect(resolveImage("KEYDB")).toBe("eqalpha/keydb:latest");
+    expect(resolveImage("DRAGONFLY")).toBe("docker.dragonflydb.io/dragonflydb/dragonfly:latest");
+    expect(resolveImage("CLICKHOUSE")).toBe("clickhouse/clickhouse-server:24");
+    expect(enginePort("MARIADB")).toBe(3306);
+    expect(enginePort("CLICKHOUSE")).toBe(9000);
+  });
+
+  it("maps credentials per engine", () => {
+    expect(credentialEnv("MARIADB", creds)).toMatchObject({ MARIADB_ROOT_PASSWORD: "p@ss", MARIADB_USER: "tugra" });
+    expect(credentialEnv("CLICKHOUSE", creds)).toMatchObject({ CLICKHOUSE_PASSWORD: "p@ss", CLICKHOUSE_DB: "appdb" });
+    expect(credentialEnv("KEYDB", creds)).toEqual({});
+    expect(credentialEnv("DRAGONFLY", creds)).toEqual({});
+  });
+
+  it("server command per redis-family engine", () => {
+    expect(engineCommand("KEYDB", creds)).toContain("keydb-server --requirepass");
+    expect(engineCommand("DRAGONFLY", creds)).toContain("--requirepass");
+    expect(engineCommand("MARIADB", creds)).toBe("");
+  });
+
+  it("connection URIs: redis-family + clickhouse + mariadb", () => {
+    expect(connectionInfo(spec("KEYDB")).uri).toBe("redis://:p@ss@tugra_db_db1:6379");
+    expect(connectionInfo(spec("DRAGONFLY")).uri).toBe("redis://:p@ss@tugra_db_db1:6379");
+    expect(connectionInfo(spec("MARIADB")).uri).toBe("mysql://tugra:p@ss@tugra_db_db1:3306/appdb");
+    expect(connectionInfo(spec("CLICKHOUSE")).uri).toBe("clickhouse://tugra:p@ss@tugra_db_db1:9000/appdb");
+  });
+
+  it("supportsBackup: MariaDB/KeyDB yes, Dragonfly/ClickHouse no", () => {
+    expect(supportsBackup("MARIADB")).toBe(true);
+    expect(supportsBackup("KEYDB")).toBe(true);
+    expect(supportsBackup("DRAGONFLY")).toBe(false);
+    expect(supportsBackup("CLICKHOUSE")).toBe(false);
+  });
+
+  it("run script joins tugra-net + volume for a new engine", () => {
+    const s = buildDatabaseRunScript(spec("MARIADB"));
+    expect(s).toContain("--network tugra-net");
+    expect(s).toContain("-v tugra_dbv_db1:/var/lib/mysql");
+    expect(s).toContain("mariadb:11");
+  });
+});
 
 describe("database-script", () => {
   describe("resolveImage / enginePort", () => {

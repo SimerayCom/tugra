@@ -233,6 +233,10 @@ enum DbEngine {
   MYSQL
   REDIS
   MONGO
+  MARIADB
+  KEYDB
+  DRAGONFLY
+  CLICKHOUSE
 }
 
 enum DbStatus {

@@ -7,7 +7,15 @@
 
 export const DB_NET = "tugra-net";
 
-export type DbEngine = "POSTGRES" | "MYSQL" | "REDIS" | "MONGO";
+export type DbEngine =
+  | "POSTGRES"
+  | "MYSQL"
+  | "REDIS"
+  | "MONGO"
+  | "MARIADB"
+  | "KEYDB"
+  | "DRAGONFLY"
+  | "CLICKHOUSE";
 
 export interface EngineDef {
   imagePrefix: string; // e.g. "postgres" → image = "postgres:<version>"
@@ -23,7 +31,16 @@ export const ENGINES: Record<DbEngine, EngineDef> = {
   MYSQL: { imagePrefix: "mysql", port: 3306, dataDir: "/var/lib/mysql", scheme: "mysql", defaultVersion: "8" },
   REDIS: { imagePrefix: "redis", alpineSuffix: true, port: 6379, dataDir: "/data", scheme: "redis", defaultVersion: "7" },
   MONGO: { imagePrefix: "mongo", port: 27017, dataDir: "/data/db", scheme: "mongodb", defaultVersion: "7" },
+  MARIADB: { imagePrefix: "mariadb", port: 3306, dataDir: "/var/lib/mysql", scheme: "mysql", defaultVersion: "11" },
+  KEYDB: { imagePrefix: "eqalpha/keydb", port: 6379, dataDir: "/data", scheme: "redis", defaultVersion: "latest" },
+  DRAGONFLY: { imagePrefix: "docker.dragonflydb.io/dragonflydb/dragonfly", port: 6379, dataDir: "/data", scheme: "redis", defaultVersion: "latest" },
+  CLICKHOUSE: { imagePrefix: "clickhouse/clickhouse-server", port: 9000, dataDir: "/var/lib/clickhouse", scheme: "clickhouse", defaultVersion: "24" },
 };
+
+/** Whether a dump/restore backup pipeline exists for this engine (Dilim 17). */
+export function supportsBackup(engine: DbEngine): boolean {
+  return engine !== "DRAGONFLY" && engine !== "CLICKHOUSE";
+}
 
 export interface DbCredentials {
   username: string;
@@ -74,16 +91,36 @@ export function credentialEnv(engine: DbEngine, creds: DbCredentials): Record<st
         MYSQL_USER: creds.username,
         MYSQL_PASSWORD: creds.password,
       };
+    case "MARIADB":
+      return {
+        MARIADB_ROOT_PASSWORD: creds.password,
+        MARIADB_DATABASE: creds.database,
+        MARIADB_USER: creds.username,
+        MARIADB_PASSWORD: creds.password,
+      };
     case "MONGO":
       return { MONGO_INITDB_ROOT_USERNAME: creds.username, MONGO_INITDB_ROOT_PASSWORD: creds.password };
+    case "CLICKHOUSE":
+      return { CLICKHOUSE_USER: creds.username, CLICKHOUSE_PASSWORD: creds.password, CLICKHOUSE_DB: creds.database };
     case "REDIS":
+    case "KEYDB":
+    case "DRAGONFLY":
       return {};
   }
 }
 
-/** Redis carries its password as a server arg; other engines return "". */
+/** Redis-family engines carry their password as a server arg; others return "". */
 export function engineCommand(engine: DbEngine, creds: DbCredentials): string {
-  return engine === "REDIS" ? `redis-server --requirepass ${shq(creds.password)}` : "";
+  switch (engine) {
+    case "REDIS":
+      return `redis-server --requirepass ${shq(creds.password)}`;
+    case "KEYDB":
+      return `keydb-server --requirepass ${shq(creds.password)}`;
+    case "DRAGONFLY":
+      return `--requirepass ${shq(creds.password)}`; // image entrypoint is `dragonfly`
+    default:
+      return "";
+  }
 }
 
 export interface ConnectionInfo {
@@ -101,8 +138,9 @@ export function connectionInfo(db: DbSpec): ConnectionInfo {
   const host = dbContainerName(db);
   const { username, password, database } = db.credentials;
   const auth = username ? `${username}:${password}@` : `:${password}@`;
+  const redisFamily = db.engine === "REDIS" || db.engine === "KEYDB" || db.engine === "DRAGONFLY";
   let uri: string;
-  if (db.engine === "REDIS") {
+  if (redisFamily) {
     uri = `${scheme}://:${password}@${host}:${db.port}`;
   } else if (db.engine === "MONGO") {
     uri = `${scheme}://${auth}${host}:${db.port}`;

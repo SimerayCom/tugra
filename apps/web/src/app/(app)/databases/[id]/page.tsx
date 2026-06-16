@@ -105,7 +105,13 @@ export default function DatabaseDetailPage() {
         </Card>
       )}
 
-      {db.canWrite && (
+      {db.canWrite && !db.backupSupported && (
+        <Card style={{ padding: 16, marginTop: 16, color: "var(--c-tx3)", fontSize: 13 }}>
+          {t("databases.backupUnsupported")}
+        </Card>
+      )}
+
+      {db.canWrite && db.backupSupported && (
         <Card style={{ padding: 16, marginTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("databases.backups")}</div>

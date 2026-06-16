@@ -12,6 +12,10 @@ const LABELS: Record<DbEngine, string> = {
   MYSQL: "MySQL",
   REDIS: "Redis",
   MONGO: "MongoDB",
+  MARIADB: "MariaDB",
+  KEYDB: "KeyDB",
+  DRAGONFLY: "Dragonfly",
+  CLICKHOUSE: "ClickHouse",
 };
 
 export function engineLabel(engine: DbEngine): string {
@@ -23,8 +27,17 @@ const PORTS: Record<DbEngine, number> = {
   MYSQL: 3306,
   REDIS: 6379,
   MONGO: 27017,
+  MARIADB: 3306,
+  KEYDB: 6379,
+  DRAGONFLY: 6379,
+  CLICKHOUSE: 9000,
 };
 
 export function defaultPort(engine: DbEngine): number {
   return PORTS[engine];
+}
+
+/** Mirrors the hub's supportsBackup — Dragonfly/ClickHouse backup is not yet implemented. */
+export function engineSupportsBackup(engine: DbEngine): boolean {
+  return engine !== "DRAGONFLY" && engine !== "CLICKHOUSE";
 }

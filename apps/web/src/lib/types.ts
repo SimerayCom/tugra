@@ -145,7 +145,15 @@ export interface Deployment {
   createdAt: string;
 }
 
-export type DbEngine = "POSTGRES" | "MYSQL" | "REDIS" | "MONGO";
+export type DbEngine =
+  | "POSTGRES"
+  | "MYSQL"
+  | "REDIS"
+  | "MONGO"
+  | "MARIADB"
+  | "KEYDB"
+  | "DRAGONFLY"
+  | "CLICKHOUSE";
 export type DbStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export interface Database {
@@ -167,6 +175,7 @@ export interface Database {
   backupIntervalHours: number | null;
   backupRetention: number;
   backupDestinationId: string | null;
+  backupSupported: boolean;
   role: Role;
   canWrite: boolean;
   createdAt: string;

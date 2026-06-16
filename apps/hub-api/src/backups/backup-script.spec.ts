@@ -110,4 +110,24 @@ describe("backup-script", () => {
       expect(backupPath("db1", "t.sql.gz")).toBe("/etc/tugra/backups/db1/t.sql.gz");
     });
   });
+
+  describe("extra engines (Dilim 17)", () => {
+    it("MariaDB dumps via mariadb-dump and restores via mariadb client", () => {
+      expect(buildBackupScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb-dump -u'tugra'");
+      expect(buildRestoreScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb -u'tugra' 'appdb'");
+    });
+
+    it("KeyDB dumps via keydb-cli SAVE + rdb", () => {
+      const s = buildBackupScript(spec("KEYDB"), "t.rdb.gz", LOCAL_DEST);
+      // wrapped in `sh -c '...'` so inner quotes are escaped — assert tool + SAVE
+      expect(s).toContain("keydb-cli");
+      expect(s).toContain("--no-auth-warning SAVE");
+      expect(s).toContain("cat /data/dump.rdb");
+    });
+
+    it("Dragonfly / ClickHouse backup scripts throw (unsupported)", () => {
+      expect(() => buildBackupScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST)).toThrow(/not supported/);
+      expect(() => buildBackupScript(spec("CLICKHOUSE"), "t.sql.gz", LOCAL_DEST)).toThrow(/not supported/);
+    });
+  });
 });
