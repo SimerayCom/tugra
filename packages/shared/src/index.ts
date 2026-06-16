@@ -78,6 +78,23 @@ export interface HeartbeatMsg {
   ts: number;
 }
 
+/** Static-ish host inventory; refreshed on every (re)connect + periodically. */
+export interface HostInfo {
+  os: string; // platform, e.g. "ubuntu"
+  osVersion: string; // e.g. "24.04"
+  arch: string; // kernel arch, e.g. "x86_64"
+  kernel: string; // kernel version
+  cpuCores: number; // logical cores
+  memTotalBytes: number; // total RAM in bytes
+  bootTime: number; // unix seconds the host booted (uptime derived from this)
+}
+
+/** Agent -> Hub: host hardware/OS inventory. */
+export interface HostInfoMsg {
+  type: "host_info";
+  info: HostInfo;
+}
+
 /** Hub -> Agent: run a shell command (bulk ops / exec). */
 export interface CommandMsg {
   type: "command";
@@ -98,6 +115,7 @@ export type AgentMessage =
   | AuthMsg
   | MetricsMsg
   | HeartbeatMsg
+  | HostInfoMsg
   | CommandResultMsg;
 export type HubMessage =
   | ChallengeMsg

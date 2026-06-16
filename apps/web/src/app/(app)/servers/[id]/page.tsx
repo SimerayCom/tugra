@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import { pct } from "../../../../lib/fleet";
+import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { Badge, Card, Spinner, StatusDot } from "../../../../components/ui";
@@ -45,6 +45,17 @@ export default function ServerDetailPage() {
         <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
         <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
       </Card>
+
+      {(server.os || server.arch || server.cpuCores) && (
+        <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
+          <Info label={t("servers.os")} value={server.os ? `${server.os} ${server.osVersion ?? ""}`.trim() : "—"} />
+          <Info label={t("servers.arch")} value={server.arch ?? "—"} />
+          <Info label={t("servers.kernel")} value={server.kernel ?? "—"} />
+          <Info label={t("servers.cpuCores")} value={server.cpuCores != null ? String(server.cpuCores) : "—"} />
+          <Info label={t("servers.ramTotal")} value={fmtBytesStr(server.memTotalBytes)} />
+          <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />
+        </Card>
+      )}
 
       {metrics.length === 0 ? (
         <Card style={{ padding: 24, color: "var(--c-tx3)" }}>{t("servers.noMetrics")}</Card>

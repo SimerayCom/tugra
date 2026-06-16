@@ -118,6 +118,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           if (st.authed && st.serverId) await this.servers.touch(st.serverId);
           return;
         }
+        case "host_info": {
+          if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
+          await this.servers.saveHostInfo(st.serverId, msg.info);
+          return;
+        }
         case "command_result": {
           const p = this.pending.get(msg.reqId);
           if (p) {

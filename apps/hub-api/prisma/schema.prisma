@@ -68,6 +68,13 @@ model Server {
   agentPublicKey       String?
   agentVersion         String?
   hostname             String?
+  os                   String?
+  osVersion            String?
+  arch                 String?
+  kernel               String?
+  cpuCores             Int?
+  memTotalBytes        BigInt?
+  bootTime             DateTime?
   lastSeenAt           DateTime?
   team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId               String

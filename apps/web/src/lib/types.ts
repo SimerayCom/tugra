@@ -20,6 +20,13 @@ export interface ServerView {
   status: ServerStatus;
   teamId: string;
   hostname: string | null;
+  os: string | null;
+  osVersion: string | null;
+  arch: string | null;
+  kernel: string | null;
+  cpuCores: number | null;
+  memTotalBytes: string | null;
+  uptimeSeconds: number | null;
   lastSeenAt: string | null;
   createdAt: string;
   seal: string | null;
