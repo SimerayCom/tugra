@@ -115,6 +115,39 @@ describe("ServersService.enroll (token validation)", () => {
   });
 });
 
+describe("ServersService.saveHostInfo + uptime view", () => {
+  it("persists host inventory fields", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { server: { update } } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", {
+      os: "ubuntu",
+      osVersion: "24.04",
+      arch: "x86_64",
+      kernel: "6.8.0",
+      cpuCores: 4,
+      memTotalBytes: 8589934592,
+      bootTime: 1_700_000_000,
+    });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "s1" },
+        data: expect.objectContaining({ os: "ubuntu", arch: "x86_64", cpuCores: 4, memTotalBytes: 8589934592n }),
+      }),
+    );
+  });
+
+  it("derives uptimeSeconds from bootTime in the view", async () => {
+    const bootTime = new Date(Date.now() - 3600 * 1000); // 1h ago
+    const prisma = {
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+      server: { findUnique: jest.fn().mockResolvedValue({ ...row("s1", "teamA"), bootTime, memTotalBytes: 1024n }) },
+    } as unknown as PrismaService;
+    const view = await svcWith(prisma).getForUser("u1", "s1");
+    expect(view.uptimeSeconds).toBeGreaterThanOrEqual(3590);
+    expect(view.memTotalBytes).toBe("1024");
+  });
+});
+
 function row(id: string, teamId: string) {
   return {
     id,

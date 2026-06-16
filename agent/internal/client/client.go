@@ -12,14 +12,16 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/mrcandev/tugra/agent/internal/config"
 	"github.com/mrcandev/tugra/agent/internal/exec"
+	"github.com/mrcandev/tugra/agent/internal/hostinfo"
 	"github.com/mrcandev/tugra/agent/internal/keys"
 	"github.com/mrcandev/tugra/agent/internal/metrics"
 	"github.com/mrcandev/tugra/agent/internal/protocol"
 )
 
 const (
-	metricsInterval = 5 * time.Second
-	commandTimeout  = 20 * time.Second
+	metricsInterval  = 5 * time.Second
+	commandTimeout   = 20 * time.Second
+	hostInfoInterval = 12 * time.Hour // refresh hardware/OS inventory periodically
 )
 
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics
@@ -90,6 +92,17 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		return fmt.Errorf("authentication rejected: %s", resp.Message)
 	}
 
+	// Send host inventory right after auth, and refresh it periodically so it
+	// stays current across server upgrades / kernel patches on long sessions.
+	sendHostInfo := func() {
+		if info, err := hostinfo.Collect(); err == nil {
+			_ = send(protocol.HostInfoMsg{Type: "host_info", Info: info})
+		}
+	}
+	sendHostInfo()
+	hostTicker := time.NewTicker(hostInfoInterval)
+	defer hostTicker.Stop()
+
 	// Reader: handle commands from the hub.
 	go func() {
 		for {
@@ -117,6 +130,8 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-hostTicker.C:
+			sendHostInfo()
 		case <-ticker.C:
 			if sample, err := metrics.Collect(); err == nil {
 				if err := send(protocol.Metrics{Type: "metrics", Sample: sample}); err != nil {

@@ -51,3 +51,21 @@ export function fmtBytes(n: number): string {
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
   return `${n} B`;
 }
+
+/** Bytes from the API (BigInt serialized to string) → human size. */
+export function fmtBytesStr(s: string | null): string {
+  if (!s) return "—";
+  const n = Number(s);
+  return Number.isFinite(n) ? fmtBytes(n) : "—";
+}
+
+/** Seconds of uptime → compact "Nd Nh" / "Nh Nm" / "Nm". */
+export function formatUptime(sec: number | null): string {
+  if (sec == null || sec < 0) return "—";
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}

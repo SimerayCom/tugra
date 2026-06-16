@@ -120,6 +120,23 @@ describe("Servers + Agent (e2e)", () => {
         },
       }),
     );
+
+    // push host inventory (sent by the agent after auth)
+    const bootTime = Math.floor(Date.now() / 1000) - 3600; // booted 1h ago
+    ws.send(
+      JSON.stringify({
+        type: "host_info",
+        info: {
+          os: "ubuntu",
+          osVersion: "24.04",
+          arch: "x86_64",
+          kernel: "6.8.0-90-generic",
+          cpuCores: 4,
+          memTotalBytes: 8589934592,
+          bootTime,
+        },
+      }),
+    );
     await sleep(400);
 
     const detail = await request(app.getHttpServer())
@@ -127,6 +144,11 @@ describe("Servers + Agent (e2e)", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(200);
     expect(detail.body.status).toBe("ONLINE");
+    expect(detail.body.os).toBe("ubuntu");
+    expect(detail.body.arch).toBe("x86_64");
+    expect(detail.body.cpuCores).toBe(4);
+    expect(detail.body.memTotalBytes).toBe("8589934592");
+    expect(detail.body.uptimeSeconds).toBeGreaterThanOrEqual(3500);
 
     const metrics = await request(app.getHttpServer())
       .get(`/servers/${serverId}/metrics`)

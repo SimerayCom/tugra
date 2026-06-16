@@ -42,6 +42,22 @@ type Heartbeat struct {
 	Ts   int64  `json:"ts"`
 }
 
+// HostInfo is the host hardware/OS inventory (mirrors packages/shared HostInfo).
+type HostInfo struct {
+	OS            string `json:"os"`
+	OSVersion     string `json:"osVersion"`
+	Arch          string `json:"arch"`
+	Kernel        string `json:"kernel"`
+	CPUCores      int    `json:"cpuCores"`
+	MemTotalBytes uint64 `json:"memTotalBytes"`
+	BootTime      int64  `json:"bootTime"`
+}
+
+type HostInfoMsg struct {
+	Type string   `json:"type"`
+	Info HostInfo `json:"info"`
+}
+
 // CommandResult: Agent -> Hub, reply to a Command.
 type CommandResult struct {
 	Type     string `json:"type"`

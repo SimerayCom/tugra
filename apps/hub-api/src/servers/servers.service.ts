@@ -22,11 +22,28 @@ export interface ServerView {
   status: ServerStatus;
   teamId: string;
   hostname: string | null;
+  os: string | null;
+  osVersion: string | null;
+  arch: string | null;
+  kernel: string | null;
+  cpuCores: number | null;
+  memTotalBytes: string | null; // BigInt serialized
+  uptimeSeconds: number | null; // derived from bootTime
   lastSeenAt: Date | null;
   createdAt: Date;
   seal: string | null;
   role: Role;
   canWrite: boolean;
+}
+
+export interface HostInfoInput {
+  os: string;
+  osVersion: string;
+  arch: string;
+  kernel: string;
+  cpuCores: number;
+  memTotalBytes: number;
+  bootTime: number; // unix seconds
 }
 
 @Injectable()
@@ -199,6 +216,24 @@ export class ServersService {
       .catch(() => undefined);
   }
 
+  /** Store/refresh the host hardware+OS inventory (sent on every (re)connect). */
+  async saveHostInfo(serverId: string, info: HostInfoInput): Promise<void> {
+    await this.prisma.server
+      .update({
+        where: { id: serverId },
+        data: {
+          os: info.os || null,
+          osVersion: info.osVersion || null,
+          arch: info.arch || null,
+          kernel: info.kernel || null,
+          cpuCores: info.cpuCores || null,
+          memTotalBytes: info.memTotalBytes ? BigInt(Math.round(info.memTotalBytes)) : null,
+          bootTime: info.bootTime ? new Date(info.bootTime * 1000) : null,
+        },
+      })
+      .catch(() => undefined);
+  }
+
   // ---- helpers ------------------------------------------------------------
 
   private async roleByTeam(userId: string): Promise<Map<string, Role>> {
@@ -238,6 +273,13 @@ export class ServersService {
       status: ServerStatus;
       teamId: string;
       hostname: string | null;
+      os?: string | null;
+      osVersion?: string | null;
+      arch?: string | null;
+      kernel?: string | null;
+      cpuCores?: number | null;
+      memTotalBytes?: bigint | null;
+      bootTime?: Date | null;
       lastSeenAt: Date | null;
       createdAt: Date;
       seal: string | null;
@@ -250,6 +292,15 @@ export class ServersService {
       status: s.status,
       teamId: s.teamId,
       hostname: s.hostname,
+      os: s.os ?? null,
+      osVersion: s.osVersion ?? null,
+      arch: s.arch ?? null,
+      kernel: s.kernel ?? null,
+      cpuCores: s.cpuCores ?? null,
+      memTotalBytes: s.memTotalBytes != null ? s.memTotalBytes.toString() : null,
+      uptimeSeconds: s.bootTime
+        ? Math.max(0, Math.floor((Date.now() - s.bootTime.getTime()) / 1000))
+        : null,
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,
       seal: s.seal,

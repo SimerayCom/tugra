@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByTeam, statusCounts, writableIds, pct } from "./fleet";
+import { groupByTeam, statusCounts, writableIds, pct, formatUptime, fmtBytesStr } from "./fleet";
 import type { ServerView } from "./types";
 
 const s = (
@@ -13,6 +13,13 @@ const s = (
   status,
   teamId,
   hostname: null,
+  os: null,
+  osVersion: null,
+  arch: null,
+  kernel: null,
+  cpuCores: null,
+  memTotalBytes: null,
+  uptimeSeconds: null,
   lastSeenAt: null,
   createdAt: new Date().toISOString(),
   seal: null,
@@ -46,5 +53,17 @@ describe("fleet helpers", () => {
   it("computes percentage safely", () => {
     expect(pct(50, 200)).toBe(25);
     expect(pct(1, 0)).toBe(0);
+  });
+
+  it("formats uptime compactly", () => {
+    expect(formatUptime(null)).toBe("—");
+    expect(formatUptime(90061)).toBe("1d 1h"); // 1 day 1 hour 1 min
+    expect(formatUptime(3661)).toBe("1h 1m");
+    expect(formatUptime(120)).toBe("2m");
+  });
+
+  it("formats byte strings from the API", () => {
+    expect(fmtBytesStr(null)).toBe("—");
+    expect(fmtBytesStr(String(1 << 30))).toBe("1.0 GB");
   });
 });

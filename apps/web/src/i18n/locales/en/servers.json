@@ -34,5 +34,11 @@
   "sealed": "✓ sealed",
   "noMetrics": "No metrics yet — live stream starts when the agent connects.",
   "cpu": "CPU",
-  "ram": "RAM"
+  "ram": "RAM",
+  "os": "OS",
+  "arch": "Architecture",
+  "kernel": "Kernel",
+  "cpuCores": "CPU cores",
+  "ramTotal": "Total RAM",
+  "uptime": "Uptime"
 }
