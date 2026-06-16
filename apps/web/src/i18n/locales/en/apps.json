@@ -38,5 +38,7 @@
   "save": "Save",
   "showValues": "Show values",
   "hideValues": "Hide values",
-  "envRedeploy": "Saved — redeploy to apply the new values."
+  "envRedeploy": "Saved — redeploy to apply the new values.",
+  "rollback": "Rollback",
+  "rollbackConfirm": "Roll back to this deployment's image? The app will restart on the old version."
 }

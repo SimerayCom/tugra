@@ -177,4 +177,52 @@ describe("Applications / deploy (e2e)", () => {
     expect(m).toBeTruthy();
     expect(Buffer.from(m![1], "base64").toString()).toContain("SECRET=s3cr3t");
   });
+
+  it("rolls back to a previous deployment's image without rebuilding", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "rbapp", serverId, image: "nginx:alpine", hostPort: 8095 })
+      .expect(201);
+    const appId = appRes.body.id;
+
+    const deployOnce = async () => {
+      await request(app.getHttpServer()).post(`/apps/${appId}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+      await sleep(120);
+    };
+    await deployOnce(); // dep1
+    await deployOnce(); // dep2 (current)
+
+    const list = await request(app.getHttpServer())
+      .get(`/apps/${appId}/deployments`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    // newest first; the oldest is the rollback target
+    const target = list.body[list.body.length - 1];
+    expect(target.imageTag).toBeTruthy();
+
+    commands.length = 0;
+    const rb = await request(app.getHttpServer())
+      .post(`/apps/${appId}/rollback/${target.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(rb.body.status).toBe("SUCCESS");
+    await sleep(120);
+
+    const sent = commands.join("\n");
+    expect(sent).toContain(`tugra_${appId}:${target.id}`);
+    expect(sent).not.toContain("docker pull");
+  });
+
+  it("rejects rollback to an unknown deployment", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "rbapp2", serverId, image: "nginx:alpine" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/apps/${appRes.body.id}/rollback/nonexistent`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
+  });
 });

@@ -133,6 +133,7 @@ export interface Deployment {
   status: DeploymentStatus;
   logs: string | null;
   exitCode: number | null;
+  imageTag: string | null;
   createdAt: string;
 }
 

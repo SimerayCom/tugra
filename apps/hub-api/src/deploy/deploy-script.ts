@@ -28,9 +28,18 @@ export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
 }
 
-/** The image to run: a locally-built tag for GIT, the pulled image for IMAGE. */
+/**
+ * The versioned, locally-stored image tag a deployment runs. Every deploy (GIT
+ * build or IMAGE pull) is snapshotted to `tugra_<appId>:<version>` so a later
+ * rollback can re-run an old version without rebuilding or re-pulling.
+ */
+export function runTag(app: { id: string }, version: string): string {
+  return `${containerName(app)}:${version}`;
+}
+
+/** The upstream image to pull for an IMAGE-source app. */
 export function imageRef(app: AppSpec): string {
-  return app.source === "GIT" ? `${containerName(app)}:latest` : app.image ?? "";
+  return app.image ?? "";
 }
 
 function shq(v: string): string {
@@ -54,9 +63,9 @@ export function traefikLabels(app: AppSpec): string[] {
   ];
 }
 
-/** Build the prep steps (pull, or clone + build) for the app's source. */
-function prepSteps(app: AppSpec): string[] {
-  const name = containerName(app);
+/** Build the prep steps (clone+build, or pull) that produce `tugra_<appId>:<version>`. */
+function prepSteps(app: AppSpec, version: string): string[] {
+  const tag = runTag(app, version);
   if (app.source === "GIT") {
     const bd = `/etc/tugra/builds/${app.id}`;
     const branch = app.gitBranch || "main";
@@ -66,16 +75,20 @@ function prepSteps(app: AppSpec): string[] {
     ];
     if (app.buildType === "DOCKERFILE") {
       const df = app.dockerfilePath || "Dockerfile";
-      steps.push(`docker build -t ${name}:latest -f ${bd}/${df} ${bd}`);
+      steps.push(`docker build -t ${tag} -f ${bd}/${df} ${bd}`);
     } else {
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
-        `nixpacks build ${bd} --name ${name}`,
+        `nixpacks build ${bd} --name ${tag}`,
       );
     }
     return steps;
   }
-  return [`docker pull ${shq(imageRef(app))}`];
+  // IMAGE: pull upstream, then snapshot it to the versioned local tag.
+  return [
+    `docker pull ${shq(imageRef(app))}`,
+    `docker tag ${shq(imageRef(app))} ${tag}`,
+  ];
 }
 
 export const ENV_DIR = "/etc/tugra/env";
@@ -96,9 +109,14 @@ export function envFileB64(env: Record<string, string>): string {
   return Buffer.from(envFileContent(env), "utf8").toString("base64");
 }
 
-export function buildRunScript(app: AppSpec): string {
+/**
+ * Build the deploy script for a specific image version (= deployment id).
+ * `build=true` (normal deploy) produces the versioned image first; `build=false`
+ * (rollback) skips all prep and just runs the pre-existing versioned tag.
+ */
+export function buildRunScript(app: AppSpec, version: string, build = true): string {
   const name = containerName(app);
-  const ref = imageRef(app);
+  const ref = runTag(app, version);
   const env = app.env && typeof app.env === "object" ? app.env : {};
   const hasEnv = Object.keys(env).length > 0;
   const envPath = envFilePath(app);
@@ -140,12 +158,17 @@ export function buildRunScript(app: AppSpec): string {
 
   return [
     "set -e",
-    ...prepSteps(app),
+    ...(build ? prepSteps(app, version) : []),
     ...envPrelude,
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,
     `docker ps --filter name=${name} --format '{{.Status}}'`,
   ].join("\n");
+}
+
+/** Remove a versioned image (used when pruning old rollback points). */
+export function buildImageRemoveScript(app: { id: string }, version: string): string {
+  return `docker rmi ${runTag(app, version)} 2>/dev/null || true`;
 }
 
 /** Idempotent setup of the Traefik proxy on a server (Let's Encrypt HTTP-01). */

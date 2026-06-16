@@ -72,6 +72,16 @@ export class ApplicationsController {
     return this.apps.regenerateWebhook(user.userId, id);
   }
 
+  @Post(":id/rollback/:deploymentId")
+  @HttpCode(200)
+  rollback(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("deploymentId") deploymentId: string,
+  ) {
+    return this.apps.rollback(user.userId, id, deploymentId);
+  }
+
   @Post(":id/stop")
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param("id") id: string) {

@@ -39,6 +39,10 @@ export default function AppDetailPage() {
     mutationFn: () => api.regenerateWebhook(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
+  const rollback = useMutation({
+    mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
+    onSuccess: invalidate,
+  });
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
 
@@ -103,19 +107,32 @@ export default function AppDetailPage() {
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("apps.deployments")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {deployments.map((d) => (
+          {deployments.map((d) => {
+            const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
+            const canRollback = appData.canWrite && !!d.imageTag && d.id !== latestSuccessId;
+            return (
             <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
                 {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
                 <span style={{ flex: 1 }} />
                 <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
+                {canRollback && (
+                  <button
+                    onClick={() => { if (confirm(t("apps.rollbackConfirm"))) rollback.mutate(d.id); }}
+                    disabled={rollback.isPending}
+                    style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+                  >
+                    {t("apps.rollback")}
+                  </button>
+                )}
               </div>
               {d.logs && (
                 <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{d.logs}</pre>
               )}
             </div>
-          ))}
+            );
+          })}
           {deployments.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.noDeployments")}</div>}
         </div>
       </Card>

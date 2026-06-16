@@ -117,4 +117,46 @@ describe("ApplicationsService", () => {
       expect.objectContaining({ data: { envEnc: 'enc({"FOO":"bar"})' } }),
     );
   });
+
+  it("rejects rollback to a deployment without a retained image", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/rollbackable/);
+  });
+
+  it("rolls back by re-running the target image tag without rebuilding", async () => {
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:dep1" }),
+        create: jest.fn().mockResolvedValue({ id: "dep2" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
+      },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
+        sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "Up" });
+      }),
+    } as unknown as AgentWsServer;
+
+    const svc = make(prisma, access, agentWs);
+    await svc.rollback("u1", "app1", "dep1");
+
+    // re-runs the OLD image tag, with no rebuild/pull
+    expect(sentCmd).toContain("docker run -d --name tugra_app1");
+    expect(sentCmd).toContain("tugra_app1:dep1");
+    expect(sentCmd).not.toContain("docker pull");
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", imageTag: "tugra_app1:dep1" }) }),
+    );
+  });
 });
