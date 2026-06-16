@@ -156,6 +156,25 @@ export interface Database {
   backupEnabled: boolean;
   backupIntervalHours: number | null;
   backupRetention: number;
+  backupDestinationId: string | null;
+  role: Role;
+  canWrite: boolean;
+  createdAt: string;
+}
+
+export type DestType = "LOCAL" | "S3";
+
+export interface BackupDestination {
+  id: string;
+  name: string;
+  type: DestType;
+  teamId: string;
+  s3Bucket: string | null;
+  s3Region: string | null;
+  s3Endpoint: string | null;
+  s3Prefix: string | null;
+  encryptionEnabled: boolean;
+  hasCredentials: boolean;
   role: Role;
   canWrite: boolean;
   createdAt: string;

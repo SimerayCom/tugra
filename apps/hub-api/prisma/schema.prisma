@@ -41,6 +41,7 @@ model Team {
   channels     NotificationChannel[]
   applications Application[]
   databases    Database[]
+  backupDestinations BackupDestination[]
   createdAt    DateTime     @default(now())
 }
 
@@ -240,6 +241,11 @@ enum BackupStatus {
   FAILED
 }
 
+enum DestType {
+  LOCAL
+  S3
+}
+
 model Application {
   id            String       @id @default(cuid())
   team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -292,8 +298,28 @@ model Database {
   backupEnabled       Boolean  @default(false)
   backupIntervalHours Int?
   backupRetention     Int      @default(7)
+  backupDestinationId String?
   backups     Backup[]
   createdAt   DateTime @default(now())
+
+  @@index([teamId])
+}
+
+model BackupDestination {
+  id                String   @id @default(cuid())
+  team              Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId            String
+  name              String
+  type              DestType @default(S3)
+  s3Bucket          String?
+  s3Region          String?
+  s3Endpoint        String?
+  s3AccessKey       String?
+  s3SecretKey       String?
+  s3Prefix          String?
+  encryptionEnabled Boolean  @default(false)
+  encryptionKey     String?
+  createdAt         DateTime @default(now())
 
   @@index([teamId])
 }
@@ -305,6 +331,8 @@ model Backup {
   status      BackupStatus @default(PENDING)
   filename    String
   path        String
+  destinationId String?
+  objectKey   String?
   sizeBytes   BigInt?
   createdBy   String
   createdAt   DateTime     @default(now())

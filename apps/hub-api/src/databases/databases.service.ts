@@ -45,6 +45,7 @@ export interface DatabaseView {
   backupEnabled: boolean;
   backupIntervalHours: number | null;
   backupRetention: number;
+  backupDestinationId: string | null;
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -199,6 +200,7 @@ export class DatabasesService {
       backupEnabled: db.backupEnabled,
       backupIntervalHours: db.backupIntervalHours,
       backupRetention: db.backupRetention,
+      backupDestinationId: db.backupDestinationId,
       role,
       canWrite,
       createdAt: db.createdAt,

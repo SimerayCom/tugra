@@ -5,6 +5,7 @@ import {
   buildDeleteBackupScript,
   buildRestoreScript,
 } from "./backup-script";
+import { LOCAL_DEST, type DestinationSpec } from "./destination";
 import { resolveImage, enginePort, type DbEngine, type DbSpec } from "../databases/database-script";
 
 function spec(engine: DbEngine): DbSpec {
@@ -18,46 +19,95 @@ function spec(engine: DbEngine): DbSpec {
   };
 }
 
+const s3Dest: DestinationSpec = {
+  type: "S3",
+  s3: { bucket: "my-bucket", region: "us-east-1", endpoint: "s3.amazonaws.com", accessKey: "AK", secretKey: "SK", prefix: "tugra" },
+  encryption: { enabled: false, key: "" },
+};
+const s3Encrypted: DestinationSpec = { ...s3Dest, encryption: { enabled: true, key: "secretpass" } };
+
 describe("backup-script", () => {
-  describe("filenames / paths", () => {
-    it("uses an engine-specific extension and a per-db directory", () => {
-      expect(backupFilename("POSTGRES", "2026-06-16T10-00-00")).toBe("2026-06-16T10-00-00.sql");
-      expect(backupFilename("MONGO", "t")).toBe("t.archive");
-      expect(backupFilename("REDIS", "t")).toBe("t.rdb");
-      expect(backupPath("db1", "t.sql")).toBe("/etc/tugra/backups/db1/t.sql");
+  describe("backupFilename", () => {
+    it("adds .gz, and .gpg when the destination encrypts", () => {
+      expect(backupFilename("POSTGRES", "2026-06-16T10-00-00", LOCAL_DEST)).toBe("2026-06-16T10-00-00.sql.gz");
+      expect(backupFilename("POSTGRES", "t", s3Encrypted)).toBe("t.sql.gz.gpg");
+      expect(backupFilename("MONGO", "t", LOCAL_DEST)).toBe("t.archive.gz");
+      expect(backupFilename("REDIS", "t", LOCAL_DEST)).toBe("t.rdb.gz");
     });
   });
 
-  describe("buildBackupScript", () => {
-    it("dumps via docker exec into a file and prints only the byte size", () => {
-      const s = buildBackupScript(spec("POSTGRES"), "t.sql");
+  describe("buildBackupScript — LOCAL (regression)", () => {
+    it("dumps to a file on disk and prints the byte size", () => {
+      const s = buildBackupScript(spec("POSTGRES"), "t.sql.gz", LOCAL_DEST);
       expect(s).toContain("mkdir -p /etc/tugra/backups/db1");
-      expect(s).toContain("docker exec -e PGPASSWORD='pw' tugra_db_db1 pg_dump -U 'tugra' 'appdb'");
-      expect(s).toContain("> /etc/tugra/backups/db1/t.sql");
-      expect(s).toContain("stat -c %s /etc/tugra/backups/db1/t.sql");
+      expect(s).toContain("pg_dump -U 'tugra' 'appdb'");
+      expect(s).toContain("| gzip");
+      expect(s).toContain("> /etc/tugra/backups/db1/t.sql.gz");
+      expect(s).toContain("stat -c %s /etc/tugra/backups/db1/t.sql.gz");
+      expect(s).not.toContain("mc pipe");
+      expect(s).not.toContain("gpg");
+    });
+  });
+
+  describe("buildBackupScript — S3", () => {
+    it("streams the dump to S3 via mc pipe with creds in MC_HOST", () => {
+      const s = buildBackupScript(spec("POSTGRES"), "t.sql.gz", s3Dest);
+      expect(s).toContain("command -v mc"); // install-on-demand
+      expect(s).toContain("MC_HOST_tdest=");
+      expect(s).toContain("mc pipe tdest/my-bucket/tugra/db1/t.sql.gz");
+      expect(s).toContain("mc stat --json tdest/my-bucket/tugra/db1/t.sql.gz");
+      expect(s).not.toContain("gpg"); // encryption off
     });
 
-    it("uses the right dump tool per engine", () => {
-      expect(buildBackupScript(spec("MYSQL"), "t.sql")).toContain("mysqldump");
-      expect(buildBackupScript(spec("MONGO"), "t.archive")).toContain("mongodump --username");
-      const redis = buildBackupScript(spec("REDIS"), "t.rdb");
-      expect(redis).toContain("redis-cli -a 'pw' --no-auth-warning SAVE");
-      expect(redis).toContain("docker cp tugra_db_db1:/data/dump.rdb");
+    it("inserts a gpg AES-256 step when the destination encrypts", () => {
+      const s = buildBackupScript(spec("POSTGRES"), "t.sql.gz.gpg", s3Encrypted);
+      // pipeline is wrapped in `sh -c '...'`, so inner quotes are escaped — just
+      // assert the gpg symmetric AES-256 step and the passphrase are present.
+      expect(s).toContain("gpg --batch --yes --passphrase");
+      expect(s).toContain("--symmetric --cipher-algo AES256");
+      expect(s).toContain("mc pipe");
+    });
+
+    it("streams every engine to stdout (no temp dump file in the container)", () => {
+      expect(buildBackupScript(spec("MYSQL"), "t", s3Dest)).toContain("mysqldump");
+      expect(buildBackupScript(spec("MONGO"), "t", s3Dest)).toContain("mongodump --username");
+      expect(buildBackupScript(spec("REDIS"), "t", s3Dest)).toContain("redis-cli");
     });
   });
 
   describe("buildRestoreScript", () => {
-    it("restores from the on-disk file per engine", () => {
-      expect(buildRestoreScript(spec("POSTGRES"), "t.sql")).toContain("docker exec -i -e PGPASSWORD='pw' tugra_db_db1 psql -U 'tugra' -d 'appdb'");
-      expect(buildRestoreScript(spec("MYSQL"), "t.sql")).toContain("mysql -u'tugra' 'appdb'");
-      expect(buildRestoreScript(spec("MONGO"), "t.archive")).toContain("mongorestore");
-      expect(buildRestoreScript(spec("REDIS"), "t.rdb")).toContain("docker cp /etc/tugra/backups/db1/t.rdb tugra_db_db1:/data/dump.rdb");
+    it("LOCAL: cat file | gunzip | psql", () => {
+      const s = buildRestoreScript(spec("POSTGRES"), "t.sql.gz", LOCAL_DEST);
+      expect(s).toContain("cat /etc/tugra/backups/db1/t.sql.gz");
+      expect(s).toContain("gunzip");
+      expect(s).toContain("docker exec -i -e PGPASSWORD='pw' tugra_db_db1 psql -U 'tugra' -d 'appdb'");
+    });
+
+    it("S3 + encrypted: mc cat | gpg -d | gunzip | psql", () => {
+      const s = buildRestoreScript(spec("POSTGRES"), "t.sql.gz.gpg", s3Encrypted);
+      expect(s).toContain("mc cat tdest/my-bucket/tugra/db1/t.sql.gz.gpg");
+      expect(s).toContain("--decrypt");
+      expect(s).toContain("gunzip");
+      expect(s).toContain("psql -U 'tugra'");
+    });
+
+    it("Redis restore replaces the rdb file and restarts", () => {
+      const s = buildRestoreScript(spec("REDIS"), "t.rdb.gz", LOCAL_DEST);
+      expect(s).toContain("docker cp /tmp/tugra_db_db1.rdb tugra_db_db1:/data/dump.rdb");
+      expect(s).toContain("docker restart tugra_db_db1");
     });
   });
 
   describe("buildDeleteBackupScript", () => {
-    it("removes a single backup file", () => {
-      expect(buildDeleteBackupScript("db1", "t.sql")).toContain("rm -f /etc/tugra/backups/db1/t.sql");
+    it("removes a local file or an S3 object", () => {
+      expect(buildDeleteBackupScript("db1", "t.sql.gz", LOCAL_DEST)).toContain("rm -f /etc/tugra/backups/db1/t.sql.gz");
+      expect(buildDeleteBackupScript("db1", "t.sql.gz", s3Dest)).toContain("mc rm tdest/my-bucket/tugra/db1/t.sql.gz");
+    });
+  });
+
+  describe("backupPath", () => {
+    it("builds a per-db path", () => {
+      expect(backupPath("db1", "t.sql.gz")).toBe("/etc/tugra/backups/db1/t.sql.gz");
     });
   });
 });
