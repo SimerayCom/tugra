@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
@@ -97,6 +98,8 @@ export default function AppDetailPage() {
         </Card>
       )}
 
+      {appData.canWrite && <EnvCard id={id} />}
+
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("apps.deployments")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -142,5 +145,68 @@ function CopyRow({ label, value, copy, secret }: { label: string; value: string;
       </code>
       <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(value)}>{copy}</Btn>
     </div>
+  );
+}
+
+const envField: React.CSSProperties = {
+  padding: "6px 9px",
+  background: "var(--c-el)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 12,
+  fontFamily: "var(--font-mono, monospace)",
+};
+
+function EnvCard({ id }: { id: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: env } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
+  const [rows, setRows] = useState<{ key: string; value: string }[]>([]);
+  const [reveal, setReveal] = useState(false);
+  useEffect(() => {
+    if (env) setRows(Object.entries(env).map(([key, value]) => ({ key, value })));
+  }, [env]);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const map: Record<string, string> = {};
+      for (const r of rows) if (r.key.trim()) map[r.key.trim()] = r.value;
+      return api.setAppEnv(id, map);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["appEnv", id] });
+      qc.invalidateQueries({ queryKey: ["app", id] });
+    },
+  });
+
+  const setRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.env")}</div>
+        <button onClick={() => setReveal((v) => !v)} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
+          {reveal ? t("apps.hideValues") : t("apps.showValues")}
+        </button>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.envDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 6 }}>
+            <input style={{ ...envField, width: 200 }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} />
+            <input style={{ ...envField, flex: 1 }} type={reveal ? "text" : "password"} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
+            <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)" }}>✕</button>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "" }])}>{t("apps.envAdd")}</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
   );
 }

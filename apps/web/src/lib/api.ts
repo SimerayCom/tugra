@@ -292,6 +292,15 @@ export const api = {
       method: "POST",
     });
   },
+  getAppEnv(id: string) {
+    return apiFetch<Record<string, string>>(`/apps/${id}/env`);
+  },
+  setAppEnv(id: string, env: Record<string, string>) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/env`, {
+      method: "PUT",
+      body: JSON.stringify({ env }),
+    });
+  },
 
   // ── databases ──
   listDatabases() {

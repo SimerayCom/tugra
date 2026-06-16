@@ -78,13 +78,41 @@ function prepSteps(app: AppSpec): string[] {
   return [`docker pull ${shq(imageRef(app))}`];
 }
 
+export const ENV_DIR = "/etc/tugra/env";
+
+export function envFilePath(app: { id: string }): string {
+  return `${ENV_DIR}/${app.id}.env`;
+}
+
+/** docker --env-file body: one KEY=VALUE per line (values are literal). */
+export function envFileContent(env: Record<string, string>): string {
+  return Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+/** base64 of the env file, so it can be written on the host without quoting issues. */
+export function envFileB64(env: Record<string, string>): string {
+  return Buffer.from(envFileContent(env), "utf8").toString("base64");
+}
+
 export function buildRunScript(app: AppSpec): string {
   const name = containerName(app);
   const ref = imageRef(app);
   const env = app.env && typeof app.env === "object" ? app.env : {};
-  const envFlags = Object.entries(env)
-    .map(([k, v]) => `-e ${shq(`${k}=${v}`)}`)
-    .join(" ");
+  const hasEnv = Object.keys(env).length > 0;
+  const envPath = envFilePath(app);
+
+  // Secrets are injected via an --env-file written on the host (0600), not -e,
+  // so values never appear in the shell command / process list.
+  const envPrelude = hasEnv
+    ? [
+        `mkdir -p ${ENV_DIR}`,
+        `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
+        `chmod 600 ${envPath}`,
+      ]
+    : [];
+  const envArg = hasEnv ? `--env-file ${envPath}` : "";
 
   let netExpose: string;
   if (app.domain) {
@@ -103,7 +131,7 @@ export function buildRunScript(app: AppSpec): string {
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
-    envFlags,
+    envArg,
     netExpose.trim(),
     shq(ref),
   ]
@@ -113,6 +141,7 @@ export function buildRunScript(app: AppSpec): string {
   return [
     "set -e",
     ...prepSteps(app),
+    ...envPrelude,
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,
     `docker ps --filter name=${name} --format '{{.Status}}'`,

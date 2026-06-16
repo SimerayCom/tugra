@@ -31,5 +31,12 @@
   "copy": "Copy",
   "copied": "Copied",
   "regenerate": "Regenerate",
-  "regenerateConfirm": "Regenerate the webhook secret? The old one stops working."
+  "regenerateConfirm": "Regenerate the webhook secret? The old one stops working.",
+  "env": "Environment variables",
+  "envDesc": "Stored encrypted. Injected at deploy via an env-file (not the command line).",
+  "envAdd": "+ Add variable",
+  "save": "Save",
+  "showValues": "Show values",
+  "hideValues": "Hide values",
+  "envRedeploy": "Saved — redeploy to apply the new values."
 }

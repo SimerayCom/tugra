@@ -3,6 +3,8 @@ import {
   buildRemoveScript,
   buildRunScript,
   containerName,
+  envFileContent,
+  envFileB64,
   traefikLabels,
   type AppSpec,
 } from "./deploy-script";
@@ -27,11 +29,29 @@ describe("deploy-script", () => {
     expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'nginx:1.27'");
   });
 
-  it("adds env (-e) and port (-p) flags when no domain", () => {
+  it("injects env via an --env-file (0600) instead of -e, plus -p when no domain", () => {
     const s = buildRunScript({ ...base, env: { FOO: "bar baz" }, hostPort: 8080, containerPort: 3000 });
-    expect(s).toContain("-e 'FOO=bar baz'");
+    expect(s).toContain("--env-file /etc/tugra/env/abc.env");
+    expect(s).toContain("base64 -d > /etc/tugra/env/abc.env");
+    expect(s).toContain("chmod 600 /etc/tugra/env/abc.env");
+    expect(s).not.toContain("-e 'FOO"); // secrets not on the command line
     expect(s).toContain("-p 8080:3000");
     expect(s).not.toContain("tugra-proxy");
+    // the base64 blob decodes to the KEY=VALUE env file
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)'/);
+    expect(m).toBeTruthy();
+    expect(Buffer.from(m![1], "base64").toString()).toBe("FOO=bar baz");
+  });
+
+  it("writes no env-file when there are no env vars", () => {
+    const s = buildRunScript({ ...base, hostPort: 8080 });
+    expect(s).not.toContain("--env-file");
+    expect(s).not.toContain("/etc/tugra/env");
+  });
+
+  it("envFileContent / envFileB64 round-trip", () => {
+    expect(envFileContent({ A: "1", B: "two" })).toBe("A=1\nB=two");
+    expect(Buffer.from(envFileB64({ A: "1" }), "base64").toString()).toBe("A=1");
   });
 
   it("with a domain, joins the proxy network + Traefik labels, no -p", () => {
