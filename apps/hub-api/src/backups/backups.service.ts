@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -8,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { supportsBackup, type DbEngine } from "../databases/database-script";
 import { buildDeleteBackupScript, buildRestoreScript } from "./backup-script";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
@@ -37,7 +39,10 @@ export class BackupsService {
   ) {}
 
   async backupNow(userId: string, dbId: string): Promise<BackupView> {
-    await this.requireWrite(userId, dbId);
+    const db = await this.requireWrite(userId, dbId);
+    if (!supportsBackup(db.engine as DbEngine)) {
+      throw new BadRequestException(`backup not supported for ${db.engine} yet`);
+    }
     const backup = await this.runner.runBackup(dbId, userId);
     return this.view(backup);
   }

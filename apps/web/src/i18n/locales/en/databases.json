@@ -34,5 +34,6 @@
   "destination": "Store at",
   "localDisk": "Local disk",
   "save": "Save",
-  "noBackups": "No backups yet."
+  "noBackups": "No backups yet.",
+  "backupUnsupported": "Backups for this engine aren't available yet."
 }

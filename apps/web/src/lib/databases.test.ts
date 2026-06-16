@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dbColor, defaultPort, engineLabel } from "./databases";
+import { dbColor, defaultPort, engineLabel, engineSupportsBackup } from "./databases";
 
 describe("database helpers", () => {
   it("maps db status to a color", () => {
@@ -12,7 +12,17 @@ describe("database helpers", () => {
   it("labels engines and gives their default ports", () => {
     expect(engineLabel("POSTGRES")).toBe("PostgreSQL");
     expect(engineLabel("MONGO")).toBe("MongoDB");
+    expect(engineLabel("MARIADB")).toBe("MariaDB");
+    expect(engineLabel("CLICKHOUSE")).toBe("ClickHouse");
     expect(defaultPort("POSTGRES")).toBe(5432);
     expect(defaultPort("REDIS")).toBe(6379);
+    expect(defaultPort("CLICKHOUSE")).toBe(9000);
+  });
+
+  it("knows which engines support backup", () => {
+    expect(engineSupportsBackup("MARIADB")).toBe(true);
+    expect(engineSupportsBackup("KEYDB")).toBe(true);
+    expect(engineSupportsBackup("DRAGONFLY")).toBe(false);
+    expect(engineSupportsBackup("CLICKHOUSE")).toBe(false);
   });
 });

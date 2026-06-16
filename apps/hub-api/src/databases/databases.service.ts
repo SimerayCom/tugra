@@ -16,7 +16,9 @@ import {
   buildDbStopScript,
   connectionInfo,
   enginePort,
+  ENGINES,
   resolveImage,
+  supportsBackup,
   type DbCredentials,
   type DbEngine,
   type DbSpec,
@@ -46,6 +48,7 @@ export interface DatabaseView {
   backupIntervalHours: number | null;
   backupRetention: number;
   backupDestinationId: string | null;
+  backupSupported: boolean;
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -201,6 +204,7 @@ export class DatabasesService {
       backupIntervalHours: db.backupIntervalHours,
       backupRetention: db.backupRetention,
       backupDestinationId: db.backupDestinationId,
+      backupSupported: supportsBackup(db.engine as DbEngine),
       role,
       canWrite,
       createdAt: db.createdAt,
@@ -209,5 +213,5 @@ export class DatabasesService {
 }
 
 function defaultVersion(engine: DbEngine): string {
-  return { POSTGRES: "16", MYSQL: "8", REDIS: "7", MONGO: "7" }[engine];
+  return ENGINES[engine].defaultVersion;
 }

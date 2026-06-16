@@ -5,6 +5,7 @@ import type {
   BackupDestination,
   Channel,
   Database,
+  DbEngine,
   Deployment,
   Heartbeat,
   MetricsSample,
@@ -316,7 +317,7 @@ export const api = {
   createDatabase(input: {
     name: string;
     serverId: string;
-    engine: "POSTGRES" | "MYSQL" | "REDIS" | "MONGO";
+    engine: DbEngine;
     version?: string;
     hostPort?: number;
   }) {

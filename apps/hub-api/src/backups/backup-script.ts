@@ -24,8 +24,13 @@ export const BACKUP_DIR = "/etc/tugra/backups";
 const EXT: Record<DbEngine, string> = {
   POSTGRES: "sql",
   MYSQL: "sql",
+  MARIADB: "sql",
   REDIS: "rdb",
+  KEYDB: "rdb",
   MONGO: "archive",
+  // backup not supported yet (provision-only) — placeholders keep the map exhaustive
+  DRAGONFLY: "rdb",
+  CLICKHOUSE: "sql",
 };
 
 export function backupDir(dbId: string): string {
@@ -59,10 +64,17 @@ function dumpToStdout(db: DbSpec): string {
       return `docker exec -e PGPASSWORD=${shq(password)} ${name} pg_dump -U ${shq(username)} ${shq(database)}`;
     case "MYSQL":
       return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump -u${shq(username)} ${shq(database)}`;
+    case "MARIADB":
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mariadb-dump -u${shq(username)} ${shq(database)}`;
     case "MONGO":
       return `docker exec ${name} mongodump --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive`;
     case "REDIS":
       return `docker exec ${name} sh -c ${shq(`redis-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
+    case "KEYDB":
+      return `docker exec ${name} sh -c ${shq(`keydb-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
+    case "DRAGONFLY":
+    case "CLICKHOUSE":
+      throw new Error(`backup not supported for ${db.engine}`);
   }
 }
 
@@ -123,15 +135,22 @@ export function buildRestoreScript(db: DbSpec, filename: string, dest: Destinati
     case "MYSQL":
       lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} ${shq(database)}`);
       break;
+    case "MARIADB":
+      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mariadb -u${shq(username)} ${shq(database)}`);
+      break;
     case "MONGO":
       lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop`);
       break;
     case "REDIS":
+    case "KEYDB":
       lines.push(`${decode.join(" | ")} > /tmp/${name}.rdb`);
       lines.push(`docker cp /tmp/${name}.rdb ${name}:/data/dump.rdb`);
       lines.push(`docker restart ${name}`);
       lines.push(`rm -f /tmp/${name}.rdb`);
       break;
+    case "DRAGONFLY":
+    case "CLICKHOUSE":
+      throw new Error(`restore not supported for ${db.engine}`);
   }
   return lines.join("\n");
 }

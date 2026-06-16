@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import {
+  supportsBackup,
   type DbCredentials,
   type DbEngine,
   type DbSpec,
@@ -69,6 +70,9 @@ export class BackupRunnerService {
   async runBackup(databaseId: string, actor = "scheduler"): Promise<Backup> {
     const db = await this.prisma.database.findUnique({ where: { id: databaseId } });
     if (!db) throw new Error("database not found");
+    if (!supportsBackup(db.engine as DbEngine)) {
+      throw new Error(`backup not supported for ${db.engine}`);
+    }
 
     const dest = await this.destinationSpec(db);
     const ts = new Date().toISOString().replace(/[:.]/g, "-");

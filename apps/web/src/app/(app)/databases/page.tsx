@@ -19,7 +19,7 @@ const field: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
-const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "REDIS", "MONGO"];
+const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
 
 export default function DatabasesPage() {
   const t = useT();

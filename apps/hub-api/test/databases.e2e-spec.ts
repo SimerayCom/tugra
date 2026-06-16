@@ -109,4 +109,38 @@ describe("Databases (e2e)", () => {
       .send({ name: "x", serverId: "nonexistent-server", engine: "REDIS" })
       .expect(404);
   });
+
+  it("provisions a MariaDB database (new engine)", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "mariadb1", serverId, engine: "MARIADB" })
+      .expect(201);
+    expect(res.body.engine).toBe("MARIADB");
+    expect(res.body.backupSupported).toBe(true);
+    expect(res.body.connectionUri).toContain("mysql://");
+
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/databases/${res.body.id}/provision`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(80);
+    expect(commands.join("\n")).toContain("mariadb:11");
+  });
+
+  it("creates a ClickHouse database but refuses backup (provision-only)", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "ch1", serverId, engine: "CLICKHOUSE" })
+      .expect(201);
+    expect(res.body.engine).toBe("CLICKHOUSE");
+    expect(res.body.backupSupported).toBe(false);
+
+    await request(app.getHttpServer())
+      .post(`/databases/${res.body.id}/backups`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+  });
 });
