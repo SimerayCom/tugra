@@ -260,11 +260,12 @@ export const api = {
   createApp(input: {
     name: string;
     serverId: string;
-    source?: "IMAGE" | "GIT";
+    source?: "IMAGE" | "GIT" | "COMPOSE";
     image?: string;
     gitUrl?: string;
     gitBranch?: string;
     buildType?: "NIXPACKS" | "DOCKERFILE";
+    composeFile?: string;
     hostPort?: number;
     containerPort?: number;
     domain?: string;

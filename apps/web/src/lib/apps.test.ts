@@ -24,6 +24,7 @@ describe("app helpers", () => {
   it("summarizes the app source", () => {
     expect(appSourceSummary({ source: "IMAGE", image: "nginx", gitBranch: null })).toBe("nginx");
     expect(appSourceSummary({ source: "GIT", image: null, gitBranch: "dev" })).toBe("git:dev");
+    expect(appSourceSummary({ source: "COMPOSE", image: null, gitBranch: null })).toBe("compose");
   });
 
   it("builds the public webhook url from a token", () => {

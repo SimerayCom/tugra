@@ -30,11 +30,12 @@ export default function AppsPage() {
 
   const [name, setName] = useState("");
   const [serverId, setServerId] = useState("");
-  const [source, setSource] = useState<"IMAGE" | "GIT">("IMAGE");
+  const [source, setSource] = useState<"IMAGE" | "GIT" | "COMPOSE">("IMAGE");
   const [image, setImage] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("");
   const [buildType, setBuildType] = useState<"NIXPACKS" | "DOCKERFILE">("NIXPACKS");
+  const [composeFile, setComposeFile] = useState("");
   const [hostPort, setHostPort] = useState("");
   const [domain, setDomain] = useState("");
 
@@ -48,6 +49,7 @@ export default function AppsPage() {
         gitUrl: source === "GIT" ? gitUrl : undefined,
         gitBranch: source === "GIT" ? gitBranch || undefined : undefined,
         buildType: source === "GIT" ? buildType : undefined,
+        composeFile: source === "COMPOSE" ? composeFile : undefined,
         hostPort: hostPort ? Number(hostPort) : undefined,
         domain: domain || undefined,
       }),
@@ -56,6 +58,7 @@ export default function AppsPage() {
       setImage("");
       setGitUrl("");
       setGitBranch("");
+      setComposeFile("");
       setHostPort("");
       setDomain("");
       qc.invalidateQueries({ queryKey: ["apps"] });
@@ -80,13 +83,15 @@ export default function AppsPage() {
             <option value="">{servers[0]?.name ?? t("apps.server")}</option>
             {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select style={field} value={source} onChange={(e) => setSource(e.target.value as "IMAGE" | "GIT")}>
+          <select style={field} value={source} onChange={(e) => setSource(e.target.value as "IMAGE" | "GIT" | "COMPOSE")}>
             <option value="IMAGE">{t("apps.sourceImage")}</option>
             <option value="GIT">{t("apps.sourceGit")}</option>
+            <option value="COMPOSE">{t("apps.sourceCompose")}</option>
           </select>
-          {source === "IMAGE" ? (
+          {source === "IMAGE" && (
             <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.image")} value={image} onChange={(e) => setImage(e.target.value)} required />
-          ) : (
+          )}
+          {source === "GIT" && (
             <>
               <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.gitUrl")} value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} required />
               <input style={{ ...field, width: 110 }} placeholder={t("apps.branch")} value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} />
@@ -96,8 +101,21 @@ export default function AppsPage() {
               </select>
             </>
           )}
-          <input style={{ ...field, width: 130 }} placeholder={t("apps.hostPort")} value={hostPort} onChange={(e) => setHostPort(e.target.value)} type="number" />
-          <input style={{ ...field, flex: 1, minWidth: 150 }} placeholder={t("apps.domain")} value={domain} onChange={(e) => setDomain(e.target.value)} />
+          {source !== "COMPOSE" && (
+            <>
+              <input style={{ ...field, width: 130 }} placeholder={t("apps.hostPort")} value={hostPort} onChange={(e) => setHostPort(e.target.value)} type="number" />
+              <input style={{ ...field, flex: 1, minWidth: 150 }} placeholder={t("apps.domain")} value={domain} onChange={(e) => setDomain(e.target.value)} />
+            </>
+          )}
+          {source === "COMPOSE" && (
+            <textarea
+              style={{ ...field, flex: "1 1 100%", minHeight: 120, fontFamily: "var(--font-mono, monospace)", resize: "vertical" }}
+              placeholder={t("apps.composeFile")}
+              value={composeFile}
+              onChange={(e) => setComposeFile(e.target.value)}
+              required
+            />
+          )}
           <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
             {create.isPending ? "…" : t("apps.create")}
           </button>

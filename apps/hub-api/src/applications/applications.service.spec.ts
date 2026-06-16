@@ -128,6 +128,40 @@ describe("ApplicationsService", () => {
     await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/rollbackable/);
   });
 
+  it("deploys a COMPOSE app via docker compose, without setting an image tag", async () => {
+    const composeApp = { ...app, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx", env: {} };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+      },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let cmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, c: string) => { cmd = c; return Promise.resolve({ exitCode: 0, output: "ok" }); }),
+    } as unknown as AgentWsServer;
+    const svc = make(prisma, access, agentWs);
+    await svc.deploy("u1", "app1");
+    expect(cmd).toContain("docker compose -p tugra_app1");
+    expect(cmd).toContain("up -d --remove-orphans");
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", imageTag: null }) }),
+    );
+  });
+
+  it("refuses rollback for a compose app", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/compose/);
+  });
+
   it("rolls back by re-running the target image tag without rebuilding", async () => {
     const depUpdate = jest.fn().mockResolvedValue({});
     const prisma = {

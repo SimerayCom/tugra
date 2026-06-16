@@ -7,7 +7,7 @@
 export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
-export type Source = "IMAGE" | "GIT";
+export type Source = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildKind = "NIXPACKS" | "DOCKERFILE";
 
 export interface AppSpec {
@@ -18,6 +18,7 @@ export interface AppSpec {
   gitBranch?: string | null;
   buildType?: BuildKind;
   dockerfilePath?: string | null;
+  composeFile?: string | null;
   env: Record<string, string>;
   hostPort: number | null;
   containerPort: number | null;

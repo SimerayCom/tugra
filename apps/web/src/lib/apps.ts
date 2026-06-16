@@ -20,10 +20,11 @@ export function appUrl(app: { domain: string | null; https: boolean }): string |
 
 /** Short source label for lists: image ref or git:branch. */
 export function appSourceSummary(app: {
-  source: "IMAGE" | "GIT";
+  source: "IMAGE" | "GIT" | "COMPOSE";
   image: string | null;
   gitBranch: string | null;
 }): string {
+  if (app.source === "COMPOSE") return "compose";
   return app.source === "GIT" ? `git:${app.gitBranch ?? "main"}` : (app.image ?? "");
 }
 

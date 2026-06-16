@@ -225,4 +225,50 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(404);
   });
+
+  it("deploys a Docker Compose app as a project and stops it via compose", async () => {
+    const compose = "services:\n  web:\n    image: nginx:alpine\n    ports:\n      - 8099:80";
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "stack", serverId, source: "COMPOSE", composeFile: compose })
+      .expect(201);
+    const appId = appRes.body.id;
+    expect(appRes.body.source).toBe("COMPOSE");
+    expect(appRes.body.composeFile).toContain("services:");
+
+    commands.length = 0;
+    const dep = await request(app.getHttpServer())
+      .post(`/apps/${appId}/deploy`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(dep.body.status).toBe("SUCCESS");
+    expect(dep.body.imageTag).toBeNull(); // compose → no single rollback image
+    await sleep(150);
+
+    const sent = commands.join("\n");
+    expect(sent).toContain(`docker compose -p tugra_${appId}`);
+    expect(sent).toContain("up -d --remove-orphans");
+    expect(sent).not.toContain("docker run -d");
+
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/apps/${appId}/stop`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(80);
+    expect(commands.join("\n")).toContain(`docker compose -p tugra_${appId}`);
+  });
+
+  it("rejects rollback for a compose app", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "stack2", serverId, source: "COMPOSE", composeFile: "services: {}" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/apps/${appRes.body.id}/rollback/whatever`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+  });
 });

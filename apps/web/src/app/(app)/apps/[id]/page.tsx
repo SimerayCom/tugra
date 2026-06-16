@@ -102,6 +102,13 @@ export default function AppDetailPage() {
         </Card>
       )}
 
+      {appData.source === "COMPOSE" && appData.composeFile && (
+        <Card style={{ padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.compose")}</div>
+          <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}>{appData.composeFile}</pre>
+        </Card>
+      )}
+
       {appData.canWrite && <EnvCard id={id} />}
 
       <Card style={{ padding: 16 }}>
