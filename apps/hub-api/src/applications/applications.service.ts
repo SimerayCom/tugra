@@ -11,9 +11,11 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import {
+  buildImageRemoveScript,
   buildRemoveScript,
   buildRunScript,
   buildStopScript,
+  runTag,
   type AppSpec,
 } from "../deploy/deploy-script";
 import {
@@ -24,6 +26,7 @@ import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
+const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
 
 export interface AppView {
   id: string;
@@ -135,7 +138,7 @@ export class ApplicationsService {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
       const r = await this.agentWs.sendCommand(
         app.serverId,
-        buildRunScript(this.toSpec(app)),
+        buildRunScript(this.toSpec(app), dep.id, true),
         DEPLOY_TIMEOUT_MS,
       );
       const ok = r.exitCode === 0;
@@ -145,6 +148,55 @@ export class ApplicationsService {
           status: ok ? "SUCCESS" : "FAILED",
           logs: r.output.slice(0, 65536),
           exitCode: r.exitCode,
+          imageTag: ok ? runTag(app, dep.id) : null,
+        },
+      });
+      await this.prisma.application.update({
+        where: { id: app.id },
+        data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
+      });
+      if (ok) await this.pruneImages(app);
+    } catch (e) {
+      await this.prisma.deployment.update({
+        where: { id: dep.id },
+        data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed" },
+      });
+      await this.prisma.application.update({
+        where: { id: app.id },
+        data: { status: AppStatus.FAILED },
+      });
+    }
+    await this.audit.log({ actor, action: "app.deploy", target: app.id });
+    return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  /** Re-run a previous successful deployment's image without rebuilding/pulling. */
+  async rollback(userId: string, id: string, targetDeploymentId: string) {
+    const app = await this.requireWrite(userId, id);
+    const target = await this.prisma.deployment.findFirst({
+      where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
+    });
+    if (!target || !target.imageTag) {
+      throw new NotFoundException("no rollbackable deployment with that id");
+    }
+    const dep = await this.prisma.deployment.create({
+      data: { appId: app.id, status: "RUNNING" },
+    });
+    try {
+      if (app.domain) await this.proxy.ensureProxy(app.serverId);
+      const r = await this.agentWs.sendCommand(
+        app.serverId,
+        buildRunScript(this.toSpec(app), target.id, false),
+        DEPLOY_TIMEOUT_MS,
+      );
+      const ok = r.exitCode === 0;
+      await this.prisma.deployment.update({
+        where: { id: dep.id },
+        data: {
+          status: ok ? "SUCCESS" : "FAILED",
+          logs: `rolled back to ${target.id}\n${r.output.slice(0, 65000)}`,
+          exitCode: r.exitCode,
+          imageTag: ok ? target.imageTag : null,
         },
       });
       await this.prisma.application.update({
@@ -161,8 +213,30 @@ export class ApplicationsService {
         data: { status: AppStatus.FAILED },
       });
     }
-    await this.audit.log({ actor, action: "app.deploy", target: app.id });
+    await this.audit.log({
+      actor: userId,
+      action: "app.rollback",
+      target: id,
+      meta: { targetDeploymentId },
+    });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  /** Keep the newest DEPLOY_IMAGE_KEEP rollback images; remove older ones. */
+  private async pruneImages(app: Application): Promise<void> {
+    const kept = await this.prisma.deployment.findMany({
+      where: { appId: app.id, status: "SUCCESS", imageTag: { not: null } },
+      orderBy: { createdAt: "desc" },
+    });
+    for (const d of kept.slice(DEPLOY_IMAGE_KEEP)) {
+      await this.agentWs
+        .sendCommand(app.serverId, buildImageRemoveScript(app, d.id))
+        .catch(() => undefined);
+      await this.prisma.deployment.update({
+        where: { id: d.id },
+        data: { imageTag: null },
+      });
+    }
   }
 
   async regenerateWebhook(userId: string, id: string): Promise<AppView> {

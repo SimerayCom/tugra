@@ -278,6 +278,7 @@ model Deployment {
   status      DeploymentStatus @default(RUNNING)
   logs        String?
   exitCode    Int?
+  imageTag    String?
   createdAt   DateTime         @default(now())
 
   @@index([appId])

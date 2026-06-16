@@ -287,6 +287,9 @@ export const api = {
   getDeployments(id: string) {
     return apiFetch<Deployment[]>(`/apps/${id}/deployments`);
   },
+  rollbackApp(id: string, deploymentId: string) {
+    return apiFetch<Deployment>(`/apps/${id}/rollback/${deploymentId}`, { method: "POST" });
+  },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
       method: "POST",
