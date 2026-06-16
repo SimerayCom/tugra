@@ -60,6 +60,32 @@ describe("Monitors + Channels (e2e)", () => {
     expect(beats.body[beats.body.length - 1].status).toBe("UP");
   });
 
+  it("creates a METRIC (disk threshold) monitor and checks it", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/monitors")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "disk-watch", type: "METRIC", serverId: "any-server", metric: "DISK", thresholdPct: 80, teamId })
+      .expect(201);
+    expect(res.body.type).toBe("METRIC");
+    expect(res.body.metric).toBe("DISK");
+    expect(res.body.thresholdPct).toBe(80);
+
+    const check = await request(app.getHttpServer())
+      .post(`/monitors/${res.body.id}/check`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    // no metrics for this server yet → no false alarm
+    expect(check.body.status).toBe("UP");
+  });
+
+  it("rejects a METRIC monitor missing threshold", async () => {
+    await request(app.getHttpServer())
+      .post("/monitors")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "bad", type: "METRIC", serverId: "s", metric: "CPU", teamId })
+      .expect(400);
+  });
+
   it("lists monitors cross-team", async () => {
     const res = await request(app.getHttpServer())
       .get("/monitors")

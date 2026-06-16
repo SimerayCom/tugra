@@ -112,6 +112,7 @@ model AuditLog {
 enum MonitorType {
   HTTP
   TCP
+  METRIC
 }
 
 enum MonitorStatus {
@@ -126,7 +127,10 @@ model Monitor {
   teamId      String
   name        String
   type        MonitorType
-  target      String // url (HTTP) or host:port (TCP)
+  target      String // url (HTTP) or host:port (TCP); a label for METRIC
+  serverId    String?       // METRIC: which server's metrics to watch
+  metric      String?       // METRIC: DISK | CPU | MEM
+  thresholdPct Int?         // METRIC: alarm when usage >= this %
   intervalSec Int           @default(30)
   retries     Int           @default(1)
   timeoutMs   Int           @default(10000)

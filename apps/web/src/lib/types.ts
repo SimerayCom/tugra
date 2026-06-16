@@ -50,7 +50,7 @@ export interface TokenPair {
   refreshToken: string;
 }
 
-export type MonitorType = "HTTP" | "TCP";
+export type MonitorType = "HTTP" | "TCP" | "METRIC";
 export type MonitorStatus = "UP" | "DOWN" | "PENDING";
 
 export interface Monitor {
@@ -58,6 +58,9 @@ export interface Monitor {
   name: string;
   type: MonitorType;
   target: string;
+  serverId: string | null;
+  metric: string | null;
+  thresholdPct: number | null;
   status: MonitorStatus;
   intervalSec: number;
   enabled: boolean;

@@ -50,3 +50,36 @@ export const checkers: Record<string, Checker> = {
   HTTP: httpCheck,
   TCP: tcpCheck,
 };
+
+export type MetricKind = "DISK" | "CPU" | "MEM";
+
+export interface MetricSampleLite {
+  cpu: number;
+  memUsed: number;
+  memTotal: number;
+  diskUsed: number;
+  diskTotal: number;
+}
+
+/**
+ * Evaluate a server metric against a threshold. Pure (no DB) so it's unit-testable;
+ * the runner fetches the latest sample and passes it in. No sample → no alarm
+ * (UP), to avoid false positives before metrics arrive.
+ */
+export function metricCheckResult(
+  kind: MetricKind,
+  sample: MetricSampleLite | null,
+  thresholdPct: number,
+): CheckResult {
+  if (!sample) return { up: true, ms: 0, msg: "no metrics yet" };
+  let pct: number;
+  if (kind === "CPU") pct = sample.cpu;
+  else if (kind === "MEM") pct = sample.memTotal > 0 ? (sample.memUsed / sample.memTotal) * 100 : 0;
+  else pct = sample.diskTotal > 0 ? (sample.diskUsed / sample.diskTotal) * 100 : 0;
+  const rounded = Math.round(pct);
+  return {
+    up: rounded < thresholdPct,
+    ms: 0,
+    msg: `${kind} ${rounded}% (limit ${thresholdPct}%)`,
+  };
+}
