@@ -29,6 +29,10 @@ export interface ServerView {
   cpuCores: number | null;
   memTotalBytes: string | null; // BigInt serialized
   uptimeSeconds: number | null; // derived from bootTime
+  cleanupEnabled: boolean;
+  cleanupIntervalHours: number | null;
+  cleanupVolumes: boolean;
+  lastCleanupAt: Date | null;
   lastSeenAt: Date | null;
   createdAt: Date;
   seal: string | null;
@@ -280,6 +284,10 @@ export class ServersService {
       cpuCores?: number | null;
       memTotalBytes?: bigint | null;
       bootTime?: Date | null;
+      cleanupEnabled?: boolean;
+      cleanupIntervalHours?: number | null;
+      cleanupVolumes?: boolean;
+      lastCleanupAt?: Date | null;
       lastSeenAt: Date | null;
       createdAt: Date;
       seal: string | null;
@@ -301,6 +309,10 @@ export class ServersService {
       uptimeSeconds: s.bootTime
         ? Math.max(0, Math.floor((Date.now() - s.bootTime.getTime()) / 1000))
         : null,
+      cleanupEnabled: s.cleanupEnabled ?? false,
+      cleanupIntervalHours: s.cleanupIntervalHours ?? null,
+      cleanupVolumes: s.cleanupVolumes ?? false,
+      lastCleanupAt: s.lastCleanupAt ?? null,
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,
       seal: s.seal,

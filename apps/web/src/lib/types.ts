@@ -27,6 +27,10 @@ export interface ServerView {
   cpuCores: number | null;
   memTotalBytes: string | null;
   uptimeSeconds: number | null;
+  cleanupEnabled: boolean;
+  cleanupIntervalHours: number | null;
+  cleanupVolumes: boolean;
+  lastCleanupAt: string | null;
   lastSeenAt: string | null;
   createdAt: string;
   seal: string | null;

@@ -75,6 +75,10 @@ model Server {
   cpuCores             Int?
   memTotalBytes        BigInt?
   bootTime             DateTime?
+  cleanupEnabled       Boolean      @default(false)
+  cleanupIntervalHours Int?
+  cleanupVolumes       Boolean      @default(false)
+  lastCleanupAt        DateTime?
   lastSeenAt           DateTime?
   team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId               String

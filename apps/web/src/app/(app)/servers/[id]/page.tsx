@@ -1,12 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
+import type { ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
-import { Badge, Card, Spinner, StatusDot } from "../../../../components/ui";
+import { Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
 
 export default function ServerDetailPage() {
   const t = useT();
@@ -65,9 +67,73 @@ export default function ServerDetailPage() {
           <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
         </div>
       )}
+
+      {server.canWrite && <CleanupCard id={id} server={server} />}
     </div>
   );
 }
+
+function CleanupCard({ id, server }: { id: string; server: ServerView }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [enabled, setEnabled] = useState(false);
+  const [interval, setIntervalH] = useState("24");
+  const [volumes, setVolumes] = useState(false);
+  useEffect(() => {
+    setEnabled(server.cleanupEnabled);
+    setIntervalH(String(server.cleanupIntervalHours ?? 24));
+    setVolumes(server.cleanupVolumes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server.id]);
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["server", id] });
+  const clean = useMutation({ mutationFn: () => api.cleanupServer(id), onSuccess: invalidate });
+  const save = useMutation({
+    mutationFn: () => api.setCleanupConfig(id, { enabled, intervalHours: Number(interval) || 24, volumes }),
+    onSuccess: invalidate,
+  });
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("servers.cleanup")}</div>
+        <Btn onClick={() => clean.mutate()} disabled={clean.isPending}>
+          {clean.isPending ? t("servers.cleaning") : t("servers.cleanNow")}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+        {t("servers.cleanupDesc")}
+        {server.lastCleanupAt ? ` · ${t("servers.lastCleanup")}: ${new Date(server.lastCleanupAt).toLocaleString()}` : ""}
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          {t("servers.cleanupSchedule")}
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+          {t("servers.cleanupEvery")}
+          <input style={cleanupField} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={volumes} onChange={(e) => setVolumes(e.target.checked)} />
+          {t("servers.cleanupVolumes")}
+        </label>
+        <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
+      </div>
+    </Card>
+  );
+}
+
+const cleanupField: React.CSSProperties = {
+  width: 64,
+  padding: "5px 8px",
+  background: "var(--c-el)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 12,
+  fontFamily: "inherit",
+};
 
 function Info({ label, value }: { label: string; value: string }) {
   return (

@@ -40,5 +40,14 @@
   "kernel": "Kernel",
   "cpuCores": "CPU cores",
   "ramTotal": "Total RAM",
-  "uptime": "Uptime"
+  "uptime": "Uptime",
+  "cleanup": "Docker cleanup",
+  "cleanupDesc": "Removes unused images, containers, networks and build cache.",
+  "cleanNow": "Clean now",
+  "cleaning": "Cleaning…",
+  "cleanupSchedule": "Scheduled",
+  "cleanupEvery": "Every (hours)",
+  "cleanupVolumes": "Also unused volumes",
+  "lastCleanup": "Last",
+  "save": "Save"
 }

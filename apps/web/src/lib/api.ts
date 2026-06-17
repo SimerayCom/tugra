@@ -173,6 +173,16 @@ export const api = {
     return apiFetch<MetricsSample[]>(`/servers/${id}/metrics?limit=${limit}`);
   },
 
+  cleanupServer(id: string) {
+    return apiFetch<{ output: string }>(`/servers/${id}/cleanup`, { method: "POST" });
+  },
+  setCleanupConfig(id: string, cfg: { enabled: boolean; intervalHours?: number; volumes?: boolean }) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/cleanup-config`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
+
   createServer(name: string, teamId: string) {
     return apiFetch<{
       server: ServerView;
