@@ -188,6 +188,15 @@ export interface Database {
   createdAt: string;
 }
 
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
 export type DestType = "LOCAL" | "S3";
 
 export interface BackupDestination {

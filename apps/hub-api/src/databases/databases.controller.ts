@@ -10,13 +10,13 @@ import {
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { DatabasesService } from "./databases.service";
 import { CreateDatabaseInput, CreateDatabaseSchema } from "./dto";
 
 @Controller("databases")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard)
 export class DatabasesController {
   constructor(private readonly databases: DatabasesService) {}
 

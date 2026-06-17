@@ -1,4 +1,5 @@
 import type {
+  ApiToken,
   Application,
   BulkOperation,
   Backup,
@@ -392,5 +393,19 @@ export const api = {
   },
   deleteDestination(id: string) {
     return apiFetch<{ ok: true }>(`/backup-destinations/${id}`, { method: "DELETE" });
+  },
+
+  // ── API tokens ──
+  listApiTokens() {
+    return apiFetch<ApiToken[]>("/api-tokens");
+  },
+  createApiToken(name: string, expiresInDays?: number) {
+    return apiFetch<{ token: string; view: ApiToken }>("/api-tokens", {
+      method: "POST",
+      body: JSON.stringify({ name, expiresInDays }),
+    });
+  },
+  deleteApiToken(id: string) {
+    return apiFetch<{ ok: true }>(`/api-tokens/${id}`, { method: "DELETE" });
   },
 };

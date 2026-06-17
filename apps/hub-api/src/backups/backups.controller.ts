@@ -11,13 +11,13 @@ import {
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BackupsService } from "./backups.service";
 import { BackupConfigInput, BackupConfigSchema } from "./dto";
 
 @Controller("databases/:id")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard)
 export class BackupsController {
   constructor(private readonly backups: BackupsService) {}
 

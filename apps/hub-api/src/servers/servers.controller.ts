@@ -12,14 +12,14 @@ import {
 import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { ServersService } from "./servers.service";
 import { CreateServerInput, CreateServerSchema } from "./dto/servers.schemas";
 
 @Controller("servers")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard)
 export class ServersController {
   constructor(
     private readonly servers: ServersService,
