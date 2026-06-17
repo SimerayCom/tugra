@@ -11,13 +11,13 @@ import {
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MonitorsService } from "./monitors.service";
 import { CreateMonitorInput, CreateMonitorSchema } from "./dto";
 
 @Controller("monitors")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard)
 export class MonitorsController {
   constructor(private readonly monitors: MonitorsService) {}
 

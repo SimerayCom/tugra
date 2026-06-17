@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
@@ -66,7 +67,74 @@ export default function SettingsPage() {
         {msg && <div style={{ marginTop: 12, fontSize: 13, color: "var(--c-a)" }}>{msg}</div>}
       </Card>
 
+      <ApiTokensCard />
+
       <ChannelsCard />
     </div>
+  );
+}
+
+function ApiTokensCard() {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: tokens = [] } = useQuery({ queryKey: ["apiTokens"], queryFn: () => api.listApiTokens() });
+  const [name, setName] = useState("");
+  const [fresh, setFresh] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: () => api.createApiToken(name),
+    onSuccess: (res) => {
+      setFresh(res.token);
+      setName("");
+      qc.invalidateQueries({ queryKey: ["apiTokens"] });
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.deleteApiToken(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["apiTokens"] }),
+  });
+
+  const field: React.CSSProperties = {
+    padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)",
+    borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit",
+  };
+
+  return (
+    <Card style={{ padding: 18, marginTop: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("settings.apiTokens")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("settings.apiTokensDesc")}</p>
+
+      <form onSubmit={(e) => { e.preventDefault(); create.mutate(); }} style={{ display: "flex", gap: 8 }}>
+        <input style={{ ...field, flex: 1 }} placeholder={t("settings.tokenName")} value={name} onChange={(e) => setName(e.target.value)} required />
+        <Btn onClick={() => create.mutate()} disabled={create.isPending || !name}>{t("settings.createToken")}</Btn>
+      </form>
+
+      {fresh && (
+        <div style={{ marginTop: 12, padding: 10, background: "var(--c-el)", border: "1px solid var(--c-a)", borderRadius: "var(--r1)" }}>
+          <div style={{ fontSize: 11, color: "var(--c-am)", marginBottom: 4 }}>{t("settings.tokenOnce")}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <code className="mono" style={{ flex: 1, fontSize: 12, wordBreak: "break-all" }}>{fresh}</code>
+            <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(fresh)}>{t("settings.copy")}</Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
+        {tokens.map((tk) => (
+          <div key={tk.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>{tk.name}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{tk.prefix}…</span>
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>
+              {tk.lastUsedAt ? `${t("settings.tokenUsed")} ${new Date(tk.lastUsedAt).toLocaleDateString()}` : t("settings.tokenUnused")}
+            </span>
+            <button onClick={() => revoke.mutate(tk.id)} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>
+              {t("settings.revoke")}
+            </button>
+          </div>
+        ))}
+        {tokens.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.noTokens")}</div>}
+      </div>
+    </Card>
   );
 }

@@ -9,7 +9,7 @@ import {
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BulkService } from "./bulk.service";
 
@@ -20,7 +20,7 @@ const RunSchema = z.object({
 type RunInput = z.infer<typeof RunSchema>;
 
 @Controller("bulk")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard)
 export class BulkController {
   constructor(private readonly bulk: BulkService) {}
 

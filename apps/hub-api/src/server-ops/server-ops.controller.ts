@@ -9,13 +9,13 @@ import {
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
 import { CleanupConfigInput, CleanupConfigSchema } from "./dto";
 
 @Controller("servers/:id")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard)
 export class ServerOpsController {
   constructor(private readonly cleanup: CleanupService) {}
 

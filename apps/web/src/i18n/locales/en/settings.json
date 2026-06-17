@@ -15,5 +15,15 @@
   "delete": "Delete",
   "noChannels": "No channels yet.",
   "testSent": "Test notification sent ✓",
-  "testFailed": "Test failed: {msg}"
+  "testFailed": "Test failed: {msg}",
+  "apiTokens": "API Tokens",
+  "apiTokensDesc": "Personal access tokens for the API/CLI. Use as a Bearer token.",
+  "tokenName": "Token name (e.g. ci-deploy)",
+  "createToken": "Create",
+  "tokenOnce": "Copy this token now — it won't be shown again.",
+  "copy": "Copy",
+  "tokenUsed": "used",
+  "tokenUnused": "never used",
+  "revoke": "Revoke",
+  "noTokens": "No API tokens yet."
 }
