@@ -18,6 +18,7 @@ import { ApplicationsModule } from "./applications/applications.module";
 import { DatabasesModule } from "./databases/databases.module";
 import { BackupsModule } from "./backups/backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
+import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
@@ -38,6 +39,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     DatabasesModule,
     BackupsModule,
     DestinationsModule,
+    ServerOpsModule,
     WebhooksModule,
   ],
   controllers: [HealthController],
