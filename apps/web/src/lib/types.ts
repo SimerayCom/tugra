@@ -197,6 +197,14 @@ export interface ApiToken {
   createdAt: string;
 }
 
+export interface SharedVariable {
+  id: string;
+  teamId: string;
+  key: string;
+  value: string | null;
+  createdAt: string;
+}
+
 export type DestType = "LOCAL" | "S3";
 
 export interface BackupDestination {

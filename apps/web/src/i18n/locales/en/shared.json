@@ -1,0 +1,12 @@
+{
+  "title": "Shared Variables",
+  "subtitle": "Team-wide environment variables, merged into every app at deploy (app values win).",
+  "team": "Team",
+  "key": "KEY",
+  "value": "value",
+  "add": "Add",
+  "empty": "No shared variables yet.",
+  "delete": "Delete",
+  "reveal": "Show values",
+  "hide": "Hide values"
+}

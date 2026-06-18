@@ -20,6 +20,7 @@ import { BackupsModule } from "./backups/backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
+import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
@@ -42,6 +43,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     DestinationsModule,
     ServerOpsModule,
     ApiTokensModule,
+    SharedVariablesModule,
     WebhooksModule,
   ],
   controllers: [HealthController],

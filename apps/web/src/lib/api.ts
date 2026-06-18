@@ -13,6 +13,7 @@ import type {
   Monitor,
   PublicUser,
   ServerView,
+  SharedVariable,
   Team,
   TokenPair,
 } from "./types";
@@ -407,5 +408,19 @@ export const api = {
   },
   deleteApiToken(id: string) {
     return apiFetch<{ ok: true }>(`/api-tokens/${id}`, { method: "DELETE" });
+  },
+
+  // ── shared variables (team-wide env) ──
+  listSharedVars(teamId: string) {
+    return apiFetch<SharedVariable[]>(`/shared-variables?teamId=${teamId}`);
+  },
+  setSharedVar(teamId: string, key: string, value: string) {
+    return apiFetch<SharedVariable>("/shared-variables", {
+      method: "POST",
+      body: JSON.stringify({ teamId, key, value }),
+    });
+  },
+  deleteSharedVar(id: string) {
+    return apiFetch<{ ok: true }>(`/shared-variables/${id}`, { method: "DELETE" });
   },
 };

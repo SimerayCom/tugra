@@ -65,6 +65,7 @@ describe("ApplicationsService", () => {
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
       },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
@@ -138,6 +139,7 @@ describe("ApplicationsService", () => {
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
       },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let cmd = "";
@@ -172,6 +174,7 @@ describe("ApplicationsService", () => {
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
       },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";

@@ -57,7 +57,20 @@ model Team {
   applications Application[]
   databases    Database[]
   backupDestinations BackupDestination[]
+  sharedVariables SharedVariable[]
   createdAt    DateTime     @default(now())
+}
+
+model SharedVariable {
+  id        String   @id @default(cuid())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String
+  key       String
+  valueEnc  String
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, key])
+  @@index([teamId])
 }
 
 model Membership {

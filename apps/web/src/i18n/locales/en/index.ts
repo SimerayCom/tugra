@@ -9,8 +9,9 @@ import monitors from "./monitors.json";
 import nav from "./nav.json";
 import servers from "./servers.json";
 import settings from "./settings.json";
+import shared from "./shared.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, auth, bulk, common, dashboard, databases, destinations, monitors, nav, servers, settings };
+const en = { apps, auth, bulk, common, dashboard, databases, destinations, monitors, nav, servers, settings, shared };
 
 export default en;
