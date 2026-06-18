@@ -260,6 +260,36 @@ describe("Applications / deploy (e2e)", () => {
     expect(commands.join("\n")).toContain(`docker compose -p tugra_${appId}`);
   });
 
+  it("applies resource limits + health-check at deploy", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "limapp", serverId, image: "nginx:alpine", hostPort: 8131 })
+      .expect(201);
+    const appId = appRes.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/limits`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ healthCmd: "curl -fsS http://localhost:80/ || exit 1", memoryMb: 256, cpus: 0.5 })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.memoryMb).toBe(256);
+    expect(detail.body.cpus).toBe(0.5);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${appId}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(150);
+    const sent = commands.join("\n");
+    expect(sent).toContain("--memory 256m");
+    expect(sent).toContain("--cpus 0.5");
+    expect(sent).toContain("--health-cmd");
+  });
+
   it("rejects rollback for a compose app", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

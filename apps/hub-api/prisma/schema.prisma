@@ -307,6 +307,9 @@ model Application {
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
   composeFile    String?
+  healthCmd      String?
+  memoryMb       Int?
+  cpus           Float?
   env            Json
   envEnc         String?
   hostPort       Int?

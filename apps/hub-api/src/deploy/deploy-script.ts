@@ -19,6 +19,9 @@ export interface AppSpec {
   buildType?: BuildKind;
   dockerfilePath?: string | null;
   composeFile?: string | null;
+  healthCmd?: string | null;
+  memoryMb?: number | null;
+  cpus?: number | null;
   env: Record<string, string>;
   hostPort: number | null;
   containerPort: number | null;
@@ -146,10 +149,25 @@ export function buildRunScript(app: AppSpec, version: string, build = true): str
       : "";
   }
 
+  // Optional resource limits + container health check.
+  const limitArgs: string[] = [];
+  if (app.memoryMb) limitArgs.push(`--memory ${app.memoryMb}m`);
+  if (app.cpus) limitArgs.push(`--cpus ${app.cpus}`);
+  if (app.healthCmd) {
+    limitArgs.push(
+      `--health-cmd ${shq(app.healthCmd)}`,
+      "--health-interval=30s",
+      "--health-timeout=5s",
+      "--health-retries=3",
+      "--health-start-period=10s",
+    );
+  }
+
   const runArgs = [
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
+    limitArgs.join(" "),
     envArg,
     netExpose.trim(),
     shq(ref),
