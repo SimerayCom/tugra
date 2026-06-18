@@ -64,8 +64,10 @@ describe("Applications / deploy (e2e)", () => {
         } else if (msg.type === "enrolled") {
           resolve();
         } else if (msg.type === "command") {
-          // capture + simulate a successful docker deploy
+          // capture + simulate a successful docker deploy, streaming a live log
+          // chunk before the final result (exercises command_log → SSE).
           commands.push(msg.command);
+          agent.send(JSON.stringify({ type: "command_log", reqId: msg.reqId, chunk: "live-build-line\n" }));
           agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: 0, output: "Up 2 seconds" }));
         }
       });
@@ -288,6 +290,32 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--memory 256m");
     expect(sent).toContain("--cpus 0.5");
     expect(sent).toContain("--health-cmd");
+  });
+
+  it("streams live build logs over SSE (agent command_log → hub → client)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logapp", serverId, image: "nginx:alpine", hostPort: 8132 })
+      .expect(201);
+    const appId = appRes.body.id;
+
+    // Deploy completes (agent replies); the stream entry is retained briefly so
+    // a subscriber replays the buffered chunks + the terminal done event.
+    await request(app.getHttpServer())
+      .post(`/apps/${appId}/deploy`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    const stream = await request(app.getHttpServer())
+      .get(`/apps/${appId}/deployments/stream`)
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .expect(200);
+
+    expect(stream.text).toContain("live-build-line");
+    expect(stream.text).toContain('"type":"done"');
+    expect(stream.text).toContain('"status":"SUCCESS"');
   });
 
   it("rejects rollback for a compose app", async () => {

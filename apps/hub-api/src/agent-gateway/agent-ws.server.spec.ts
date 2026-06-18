@@ -1,0 +1,60 @@
+import { AgentWsServer } from "./agent-ws.server";
+
+/**
+ * Unit-level coverage of command/log/result correlation. The full agent
+ * round-trip (real WebSocket) is exercised by the e2e suites.
+ */
+function harness() {
+  const servers = { markOffline: jest.fn() } as any;
+  const server = new AgentWsServer({} as any, servers, {} as any);
+  const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any; // 1 === WebSocket.OPEN
+  (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
+  (server as any).sockets.set("s1", socket);
+  const lastSent = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+  const deliver = (msg: object) => (server as any).onMessage(socket, JSON.stringify(msg));
+  return { server, socket, lastSent, deliver };
+}
+
+describe("AgentWsServer command streaming", () => {
+  it("routes command_log chunks to the sendCommand onChunk callback", async () => {
+    const { server, lastSent, deliver } = harness();
+    const chunks: string[] = [];
+    const p = server.sendCommand("s1", "echo hi", 5000, (c) => chunks.push(c));
+    const sent = lastSent();
+    expect(sent.type).toBe("command");
+    expect(sent.timeoutMs).toBe(5000); // per-command timeout sent to the agent
+    const reqId = sent.reqId;
+
+    await deliver({ type: "command_log", reqId, chunk: "building…\n" });
+    await deliver({ type: "command_log", reqId, chunk: "done\n" });
+    expect(chunks).toEqual(["building…\n", "done\n"]);
+
+    await deliver({ type: "command_result", reqId, exitCode: 0, output: "ok" });
+    await expect(p).resolves.toEqual({ exitCode: 0, output: "ok" });
+  });
+
+  it("swallows command_log for an unknown reqId", async () => {
+    const { deliver } = harness();
+    await expect(deliver({ type: "command_log", reqId: "bogus", chunk: "x" })).resolves.toBeUndefined();
+  });
+
+  it("stops delivering chunks after the result arrives (listener cleaned up)", async () => {
+    const { server, lastSent, deliver } = harness();
+    const chunks: string[] = [];
+    const p = server.sendCommand("s1", "echo", 5000, (c) => chunks.push(c));
+    const reqId = lastSent().reqId;
+    await deliver({ type: "command_result", reqId, exitCode: 0, output: "ok" });
+    await p;
+    await deliver({ type: "command_log", reqId, chunk: "late" });
+    expect(chunks).toEqual([]);
+  });
+
+  it("rejects pending commands when the agent disconnects mid-stream", async () => {
+    const { server } = harness();
+    const p = server.sendCommand("s1", "sleep 999", 300_000, () => undefined);
+    (server as any).rejectPendingFor("s1");
+    await expect(p).rejects.toThrow(/disconnected/);
+    expect((server as any).chunkListeners.size).toBe(0);
+    expect((server as any).pending.size).toBe(0);
+  });
+});

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
+import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 
@@ -43,6 +44,10 @@ export default function AppDetailPage() {
     mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
     onSuccess: invalidate,
   });
+
+  // Deployments come newest-first; a leading RUNNING one means a live deploy.
+  const deployActive = deployments[0]?.status === "RUNNING";
+  const live = useDeployLogStream(id, deployActive);
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
 
@@ -115,6 +120,8 @@ export default function AppDetailPage() {
 
       {appData.canWrite && <EnvCard id={id} />}
 
+      {deployActive && live.lines && <LiveLogCard lines={live.lines} />}
+
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("apps.deployments")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -148,6 +155,30 @@ export default function AppDetailPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function LiveLogCard({ lines }: { lines: string }) {
+  const t = useT();
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <Spinner />
+        <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.streaming")}</span>
+      </div>
+      <pre
+        ref={ref}
+        className="mono"
+        style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}
+      >
+        {lines}
+      </pre>
+    </Card>
   );
 }
 

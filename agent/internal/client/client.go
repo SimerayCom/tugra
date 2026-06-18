@@ -111,15 +111,25 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 				return
 			}
 			if m.Type == "command" {
-				go func(reqID, command string) {
-					r := exec.Run(ctx, command, commandTimeout)
+				go func(reqID, command string, timeoutMs int) {
+					to := commandTimeout
+					if timeoutMs > 0 {
+						to = time.Duration(timeoutMs) * time.Millisecond
+					}
+					r := exec.RunStreaming(ctx, command, to, func(chunk string) {
+						_ = send(protocol.CommandLog{
+							Type:  "command_log",
+							ReqID: reqID,
+							Chunk: chunk,
+						})
+					})
 					_ = send(protocol.CommandResult{
 						Type:     "command_result",
 						ReqID:    reqID,
 						ExitCode: r.ExitCode,
 						Output:   r.Output,
 					})
-				}(m.ReqID, m.Command)
+				}(m.ReqID, m.Command, m.TimeoutMs)
 			}
 		}
 	}()

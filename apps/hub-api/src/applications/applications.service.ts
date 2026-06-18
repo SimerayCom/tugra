@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import {
@@ -69,6 +71,7 @@ export class ApplicationsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
+    private readonly deployLogs: DeployLogHub,
     private readonly proxy: ProxyService,
     private readonly crypto: CryptoService,
   ) {}
@@ -126,7 +129,16 @@ export class ApplicationsService {
 
   async deploy(userId: string, id: string) {
     const app = await this.requireWrite(userId, id);
+    await this.ensureNoActiveDeploy(id);
     return this.runDeploy(app, userId);
+  }
+
+  /** One deploy per app at a time — keeps the live-log stream unambiguous. */
+  private async ensureNoActiveDeploy(appId: string): Promise<void> {
+    const running = await this.prisma.deployment.findFirst({
+      where: { appId, status: "RUNNING" },
+    });
+    if (running) throw new ConflictException("a deployment is already running");
   }
 
   /**
@@ -145,6 +157,7 @@ export class ApplicationsService {
     const dep = await this.prisma.deployment.create({
       data: { appId: app.id, status: "RUNNING" },
     });
+    this.deployLogs.begin(app.id);
     try {
       const isCompose = app.source === "COMPOSE";
       if (app.domain && !isCompose) await this.proxy.ensureProxy(app.serverId);
@@ -153,7 +166,12 @@ export class ApplicationsService {
       const command = isCompose
         ? buildComposeUpScript(spec)
         : buildRunScript(spec, dep.id, true);
-      const r = await this.agentWs.sendCommand(app.serverId, command, DEPLOY_TIMEOUT_MS);
+      const r = await this.agentWs.sendCommand(
+        app.serverId,
+        command,
+        DEPLOY_TIMEOUT_MS,
+        (chunk) => this.deployLogs.push(app.id, chunk),
+      );
       const ok = r.exitCode === 0;
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -169,6 +187,11 @@ export class ApplicationsService {
         where: { id: app.id },
         data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
       });
+      this.deployLogs.finish(app.id, {
+        status: ok ? "SUCCESS" : "FAILED",
+        exitCode: r.exitCode,
+        deploymentId: dep.id,
+      });
       if (ok && !isCompose) await this.pruneImages(app);
     } catch (e) {
       await this.prisma.deployment.update({
@@ -179,6 +202,7 @@ export class ApplicationsService {
         where: { id: app.id },
         data: { status: AppStatus.FAILED },
       });
+      this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
     }
     await this.audit.log({ actor, action: "app.deploy", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
@@ -199,6 +223,7 @@ export class ApplicationsService {
     const dep = await this.prisma.deployment.create({
       data: { appId: app.id, status: "RUNNING" },
     });
+    this.deployLogs.begin(app.id);
     try {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
@@ -207,6 +232,7 @@ export class ApplicationsService {
         app.serverId,
         buildRunScript(spec, target.id, false),
         DEPLOY_TIMEOUT_MS,
+        (chunk) => this.deployLogs.push(app.id, chunk),
       );
       const ok = r.exitCode === 0;
       await this.prisma.deployment.update({
@@ -222,6 +248,11 @@ export class ApplicationsService {
         where: { id: app.id },
         data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
       });
+      this.deployLogs.finish(app.id, {
+        status: ok ? "SUCCESS" : "FAILED",
+        exitCode: r.exitCode,
+        deploymentId: dep.id,
+      });
     } catch (e) {
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -231,6 +262,7 @@ export class ApplicationsService {
         where: { id: app.id },
         data: { status: AppStatus.FAILED },
       });
+      this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
     }
     await this.audit.log({
       actor: userId,
@@ -308,6 +340,16 @@ export class ApplicationsService {
       orderBy: { createdAt: "desc" },
       take: 20,
     });
+  }
+
+  /**
+   * Live build-log stream for the app's active deploy (replay-so-far + live).
+   * Returns null when there's no active stream → caller falls back to the
+   * persisted logs served by deployments().
+   */
+  async streamLogs(userId: string, id: string) {
+    await this.require(userId, id);
+    return this.deployLogs.subscribe(id);
   }
 
   /** Environment variables — sensitive, so writer-only. */

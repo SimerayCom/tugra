@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
@@ -13,16 +14,27 @@ const crypto = {
   decrypt: (s: string) => s,
 } as unknown as CryptoService;
 
+function makeDeployLogs(): DeployLogHub {
+  return {
+    begin: jest.fn(),
+    push: jest.fn(),
+    finish: jest.fn(),
+    subscribe: jest.fn(),
+  } as unknown as DeployLogHub;
+}
+
 function make(
   prisma: Partial<PrismaService>,
   access: Partial<TeamAccessService>,
   agentWs: Partial<AgentWsServer>,
+  deployLogs: DeployLogHub = makeDeployLogs(),
 ) {
   return new ApplicationsService(
     prisma as PrismaService,
     access as TeamAccessService,
     audit,
     agentWs as AgentWsServer,
+    deployLogs,
     { ensureProxy: jest.fn() } as unknown as import("./proxy.service").ProxyService,
     crypto,
   );
@@ -64,15 +76,21 @@ describe("ApplicationsService", () => {
         create: jest.fn().mockResolvedValue({ id: "d1" }),
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null), // no active deploy
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    // agent streams a chunk, then the command resolves
     const agentWs = {
-      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "deployed" }),
+      sendCommand: jest.fn().mockImplementation((_s, _c, _t, onChunk?: (c: string) => void) => {
+        onChunk?.("building…\n");
+        return Promise.resolve({ exitCode: 0, output: "deployed" });
+      }),
     } as unknown as AgentWsServer;
+    const deployLogs = makeDeployLogs();
 
-    const svc = make(prisma, access, agentWs);
+    const svc = make(prisma, access, agentWs, deployLogs);
     const dep = await svc.deploy("u1", "app1");
 
     expect(agentWs.sendCommand).toHaveBeenCalled();
@@ -82,7 +100,48 @@ describe("ApplicationsService", () => {
     expect(appUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: "RUNNING" } }),
     );
+    // live log stream: begin → push(chunk) → finish(SUCCESS)
+    expect(deployLogs.begin).toHaveBeenCalledWith("app1");
+    expect(deployLogs.push).toHaveBeenCalledWith("app1", "building…\n");
+    expect(deployLogs.finish).toHaveBeenCalledWith(
+      "app1",
+      expect.objectContaining({ status: "SUCCESS", exitCode: 0, deploymentId: "d1" }),
+    );
     expect(dep?.status).toBe("SUCCESS");
+  });
+
+  it("refuses a second deploy while one is already running (409)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: { findFirst: jest.fn().mockResolvedValue({ id: "running", status: "RUNNING" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).deploy("u1", "app1")).rejects.toThrow(
+      /already running/,
+    );
+  });
+
+  it("finishes the log stream as FAILED when the agent errors mid-deploy", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockRejectedValue(new Error("agent disconnected")),
+    } as unknown as AgentWsServer;
+    const deployLogs = makeDeployLogs();
+    await make(prisma, access, agentWs, deployLogs).deploy("u1", "app1");
+    expect(deployLogs.finish).toHaveBeenCalledWith(
+      "app1",
+      expect.objectContaining({ status: "FAILED", deploymentId: "d1" }),
+    );
   });
 
   it("returns decrypted env vars to a writer", async () => {
@@ -162,6 +221,7 @@ describe("ApplicationsService", () => {
         create: jest.fn().mockResolvedValue({ id: "d1" }),
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;

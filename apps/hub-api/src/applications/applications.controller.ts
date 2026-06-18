@@ -4,11 +4,14 @@ import {
   Delete,
   Get,
   HttpCode,
+  type MessageEvent,
   Param,
   Post,
   Put,
+  Sse,
   UseGuards,
 } from "@nestjs/common";
+import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -49,6 +52,18 @@ export class ApplicationsController {
   @Get(":id/deployments")
   deployments(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.deployments(user.userId, id);
+  }
+
+  /** Live build-log stream (SSE). Completes when no deploy is active. */
+  @Sse(":id/deployments/stream")
+  streamLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+  ): Observable<MessageEvent> {
+    return from(this.apps.streamLogs(user.userId, id)).pipe(
+      mergeMap((sub) => (sub ? concat(from(sub.replay), sub.live) : EMPTY)),
+      map((event) => ({ data: JSON.stringify(event) }) as MessageEvent),
+    );
   }
 
   @Post(":id/deploy")
