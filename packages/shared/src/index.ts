@@ -100,6 +100,15 @@ export interface CommandMsg {
   type: "command";
   reqId: string;
   command: string;
+  /** Per-command timeout in ms. When omitted the agent uses its default. */
+  timeoutMs?: number;
+}
+
+/** Agent -> Hub: a chunk of a running command's combined stdout+stderr. */
+export interface CommandLogMsg {
+  type: "command_log";
+  reqId: string;
+  chunk: string;
 }
 
 /** Agent -> Hub: result of a command. */
@@ -116,6 +125,7 @@ export type AgentMessage =
   | MetricsMsg
   | HeartbeatMsg
   | HostInfoMsg
+  | CommandLogMsg
   | CommandResultMsg;
 export type HubMessage =
   | ChallengeMsg

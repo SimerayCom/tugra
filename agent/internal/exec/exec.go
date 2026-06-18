@@ -3,9 +3,10 @@
 package exec
 
 import (
-	"bytes"
 	"context"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,21 +17,56 @@ type Result struct {
 	Output   string
 }
 
+// chunkWriter fans combined stdout+stderr out to a live callback (uncapped, for
+// real-time streaming) while also accumulating a capped copy for Result.Output.
+type chunkWriter struct {
+	mu      sync.Mutex
+	onChunk func(string)
+	buf     strings.Builder
+	total   int
+	capped  bool
+}
+
+func (w *chunkWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.onChunk != nil {
+		w.onChunk(string(p))
+	}
+	if w.total < maxOutput {
+		room := maxOutput - w.total
+		if len(p) <= room {
+			w.buf.Write(p)
+			w.total += len(p)
+		} else {
+			w.buf.Write(p[:room])
+			w.total += room
+			w.buf.WriteString("\n…(truncated)")
+			w.capped = true
+		}
+	}
+	return len(p), nil
+}
+
 // Run executes `command` via `sh -c`, capturing combined stdout+stderr.
 func Run(ctx context.Context, command string, timeout time.Duration) Result {
+	return RunStreaming(ctx, command, timeout, nil)
+}
+
+// RunStreaming is like Run but also invokes onChunk for each write of the
+// command's combined output as it is produced (live streaming). onChunk may be
+// nil. The returned Result.Output is capped at maxOutput; the live stream is not.
+func RunStreaming(ctx context.Context, command string, timeout time.Duration, onChunk func(string)) Result {
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(c, "sh", "-c", command)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	cw := &chunkWriter{onChunk: onChunk}
+	cmd.Stdout = cw
+	cmd.Stderr = cw
 
 	err := cmd.Run()
-	out := buf.String()
-	if len(out) > maxOutput {
-		out = out[:maxOutput] + "\n…(truncated)"
-	}
+	out := cw.buf.String()
 
 	code := 0
 	if err != nil {
@@ -38,7 +74,11 @@ func Run(ctx context.Context, command string, timeout time.Duration) Result {
 			code = ee.ExitCode()
 		} else {
 			code = -1
-			out += "\n" + err.Error()
+			tail := "\n" + err.Error()
+			out += tail
+			if onChunk != nil {
+				onChunk(tail)
+			}
 		}
 	}
 	return Result{ExitCode: code, Output: out}

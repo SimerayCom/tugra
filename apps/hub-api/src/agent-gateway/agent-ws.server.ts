@@ -19,6 +19,7 @@ interface ConnState {
 }
 
 interface Pending {
+  serverId: string;
   resolve: (r: { exitCode: number; output: string }) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
@@ -36,6 +37,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly state = new WeakMap<WebSocket, ConnState>();
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
+  private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -66,6 +68,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
         if (this.sockets.get(st.serverId) === socket) {
           this.sockets.delete(st.serverId);
         }
+        this.rejectPendingFor(st.serverId);
         void this.servers.markOffline(st.serverId);
       }
     });
@@ -123,11 +126,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           await this.servers.saveHostInfo(st.serverId, msg.info);
           return;
         }
+        case "command_log": {
+          this.chunkListeners.get(msg.reqId)?.(msg.chunk);
+          return;
+        }
         case "command_result": {
           const p = this.pending.get(msg.reqId);
           if (p) {
             clearTimeout(p.timer);
             this.pending.delete(msg.reqId);
+            this.chunkListeners.delete(msg.reqId);
             p.resolve({ exitCode: msg.exitCode, output: msg.output });
           }
           return;
@@ -140,11 +148,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     }
   }
 
-  /** Send a command to a connected agent and await its result. */
+  /**
+   * Send a command to a connected agent and await its result. When onChunk is
+   * given, the agent's live command_log chunks are delivered to it as they
+   * arrive (used for streaming build logs).
+   */
   sendCommand(
     serverId: string,
     command: string,
     timeoutMs = 20_000,
+    onChunk?: (chunk: string) => void,
   ): Promise<{ exitCode: number; output: string }> {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -154,11 +167,24 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(reqId);
+        this.chunkListeners.delete(reqId);
         reject(new Error("command timed out"));
       }, timeoutMs);
-      this.pending.set(reqId, { resolve, reject, timer });
-      this.send(socket, { type: "command", reqId, command });
+      this.pending.set(reqId, { serverId, resolve, reject, timer });
+      if (onChunk) this.chunkListeners.set(reqId, onChunk);
+      this.send(socket, { type: "command", reqId, command, timeoutMs });
     });
+  }
+
+  /** Reject (and clean up) every pending command for a server that went away. */
+  private rejectPendingFor(serverId: string): void {
+    for (const [reqId, p] of this.pending) {
+      if (p.serverId !== serverId) continue;
+      clearTimeout(p.timer);
+      this.pending.delete(reqId);
+      this.chunkListeners.delete(reqId);
+      p.reject(new Error("agent disconnected"));
+    }
   }
 
   private send(socket: WebSocket, msg: object): void {

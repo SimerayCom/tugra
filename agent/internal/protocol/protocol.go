@@ -58,6 +58,13 @@ type HostInfoMsg struct {
 	Info HostInfo `json:"info"`
 }
 
+// CommandLog: Agent -> Hub, a chunk of a running command's combined output.
+type CommandLog struct {
+	Type  string `json:"type"`
+	ReqID string `json:"reqId"`
+	Chunk string `json:"chunk"`
+}
+
 // CommandResult: Agent -> Hub, reply to a Command.
 type CommandResult struct {
 	Type     string `json:"type"`
@@ -68,11 +75,12 @@ type CommandResult struct {
 
 // Hub -> Agent (one struct covers all; unused fields stay empty)
 type ServerMsg struct {
-	Type     string `json:"type"`
-	Nonce    string `json:"nonce"`
-	ServerID string `json:"serverId"`
-	Seal     string `json:"seal"`
-	Message  string `json:"message"`
-	ReqID    string `json:"reqId"`
-	Command  string `json:"command"`
+	Type      string `json:"type"`
+	Nonce     string `json:"nonce"`
+	ServerID  string `json:"serverId"`
+	Seal      string `json:"seal"`
+	Message   string `json:"message"`
+	ReqID     string `json:"reqId"`
+	Command   string `json:"command"`
+	TimeoutMs int    `json:"timeoutMs"`
 }
