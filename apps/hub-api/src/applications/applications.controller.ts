@@ -14,7 +14,14 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApplicationsService } from "./applications.service";
-import { CreateAppInput, CreateAppSchema, SetEnvInput, SetEnvSchema } from "./dto";
+import {
+  CreateAppInput,
+  CreateAppSchema,
+  SetEnvInput,
+  SetEnvSchema,
+  SetLimitsInput,
+  SetLimitsSchema,
+} from "./dto";
 
 @Controller("apps")
 @UseGuards(ApiAuthGuard)
@@ -63,6 +70,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetEnvSchema)) body: SetEnvInput,
   ) {
     await this.apps.setEnv(user.userId, id, body.env);
+    return { ok: true };
+  }
+
+  @Put(":id/limits")
+  @HttpCode(200)
+  async setLimits(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetLimitsSchema)) body: SetLimitsInput,
+  ) {
+    await this.apps.setLimits(user.userId, id, body);
     return { ok: true };
   }
 

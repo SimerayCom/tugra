@@ -54,6 +54,24 @@ describe("deploy-script", () => {
     expect(Buffer.from(m![1], "base64").toString()).toBe("FOO=bar baz");
   });
 
+  it("adds resource limits + health-check flags when set", () => {
+    const s = buildRunScript(
+      { ...base, memoryMb: 512, cpus: 0.5, healthCmd: "curl -fsS http://localhost:80/ || exit 1" },
+      "v1",
+    );
+    expect(s).toContain("--memory 512m");
+    expect(s).toContain("--cpus 0.5");
+    expect(s).toContain("--health-cmd 'curl -fsS http://localhost:80/ || exit 1'");
+    expect(s).toContain("--health-interval=30s");
+  });
+
+  it("omits limit/health flags when unset (regression)", () => {
+    const s = buildRunScript(base, "v1");
+    expect(s).not.toContain("--memory");
+    expect(s).not.toContain("--cpus");
+    expect(s).not.toContain("--health-cmd");
+  });
+
   it("writes no env-file when there are no env vars", () => {
     const s = buildRunScript({ ...base, hostPort: 8080 }, "v1");
     expect(s).not.toContain("--env-file");

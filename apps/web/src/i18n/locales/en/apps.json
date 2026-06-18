@@ -43,5 +43,10 @@
   "hideValues": "Hide values",
   "envRedeploy": "Saved — redeploy to apply the new values.",
   "rollback": "Rollback",
-  "rollbackConfirm": "Roll back to this deployment's image? The app will restart on the old version."
+  "rollbackConfirm": "Roll back to this deployment's image? The app will restart on the old version.",
+  "limits": "Resources & health",
+  "limitsDesc": "Optional CPU/memory limits and a container health check. Applied on next deploy.",
+  "healthCmd": "Health check command (e.g. curl -fsS http://localhost:80/ || exit 1)",
+  "memoryMb": "Memory (MB)",
+  "cpus": "CPUs"
 }

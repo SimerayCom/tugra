@@ -109,6 +109,10 @@ export default function AppDetailPage() {
         </Card>
       )}
 
+      {appData.canWrite && appData.source !== "COMPOSE" && (
+        <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} />
+      )}
+
       {appData.canWrite && <EnvCard id={id} />}
 
       <Card style={{ padding: 16 }}>
@@ -228,6 +232,37 @@ function EnvCard({ id }: { id: string }) {
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "" }])}>{t("apps.envAdd")}</Btn>
         <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function LimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: string | null; memoryMb: number | null; cpus: number | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [hc, setHc] = useState(healthCmd ?? "");
+  const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
+  const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppLimits(id, {
+        healthCmd: hc.trim() || null,
+        memoryMb: mem ? Number(mem) : null,
+        cpus: cpu ? Number(cpu) : null,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.limits")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.limitsDesc")}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input style={{ ...envField, flex: "1 1 100%" }} placeholder={t("apps.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
+        <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
+        <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}

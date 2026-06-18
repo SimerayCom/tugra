@@ -119,6 +119,30 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("forbids a non-writer from setting resource limits", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+    } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256 }),
+    ).rejects.toThrow(/nope/);
+  });
+
+  it("persists resource limits for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { healthCmd: "ping", memoryMb: 256, cpus: 0.5 });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { healthCmd: "ping", memoryMb: 256, cpus: 0.5 } }),
+    );
+  });
+
   it("rejects rollback to a deployment without a retained image", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

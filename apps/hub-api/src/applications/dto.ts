@@ -36,3 +36,10 @@ export const SetEnvSchema = z.object({
   env: z.record(z.string()),
 });
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
+
+export const SetLimitsSchema = z.object({
+  healthCmd: z.string().min(1).nullable().optional(),
+  memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
+  cpus: z.number().min(0.1).max(64).nullable().optional(),
+});
+export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;

@@ -125,6 +125,9 @@ export interface Application {
   gitBranch: string | null;
   buildType: BuildType;
   composeFile: string | null;
+  healthCmd: string | null;
+  memoryMb: number | null;
+  cpus: number | null;
   serverId: string;
   teamId: string;
   status: AppStatus;

@@ -43,6 +43,9 @@ export interface AppView {
   gitBranch: string | null;
   buildType: "NIXPACKS" | "DOCKERFILE";
   composeFile: string | null;
+  healthCmd: string | null;
+  memoryMb: number | null;
+  cpus: number | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -322,6 +325,23 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.env.update", target: id });
   }
 
+  async setLimits(
+    userId: string,
+    id: string,
+    limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null },
+  ): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        healthCmd: limits.healthCmd ?? null,
+        memoryMb: limits.memoryMb ?? null,
+        cpus: limits.cpus ?? null,
+      },
+    });
+    await this.audit.log({ actor: userId, action: "app.limits.update", target: id });
+  }
+
   // ── helpers ──
   private appEnv(app: Application): Record<string, string> {
     if (app.envEnc) {
@@ -360,6 +380,9 @@ export class ApplicationsService {
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
       composeFile: app.composeFile,
+      healthCmd: app.healthCmd,
+      memoryMb: app.memoryMb,
+      cpus: app.cpus,
       env: this.appEnv(app),
       hostPort: app.hostPort,
       containerPort: app.containerPort,
@@ -394,6 +417,9 @@ export class ApplicationsService {
       gitBranch: app.gitBranch,
       buildType: app.buildType,
       composeFile: canWrite ? app.composeFile : null,
+      healthCmd: app.healthCmd,
+      memoryMb: app.memoryMb,
+      cpus: app.cpus,
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,
