@@ -5,6 +5,7 @@
   "apps": "Apps",
   "databases": "Databases",
   "destinations": "Backup Storage",
+  "sharedVars": "Shared Variables",
   "appStore": "App Store",
   "domains": "Domains & SSL",
   "terminal": "Terminal",

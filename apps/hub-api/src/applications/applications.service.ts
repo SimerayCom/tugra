@@ -145,9 +145,11 @@ export class ApplicationsService {
     try {
       const isCompose = app.source === "COMPOSE";
       if (app.domain && !isCompose) await this.proxy.ensureProxy(app.serverId);
+      const spec = this.toSpec(app);
+      spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       const command = isCompose
-        ? buildComposeUpScript(this.toSpec(app))
-        : buildRunScript(this.toSpec(app), dep.id, true);
+        ? buildComposeUpScript(spec)
+        : buildRunScript(spec, dep.id, true);
       const r = await this.agentWs.sendCommand(app.serverId, command, DEPLOY_TIMEOUT_MS);
       const ok = r.exitCode === 0;
       await this.prisma.deployment.update({
@@ -196,9 +198,11 @@ export class ApplicationsService {
     });
     try {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
+      const spec = this.toSpec(app);
+      spec.env = await this.resolvedEnv(app);
       const r = await this.agentWs.sendCommand(
         app.serverId,
-        buildRunScript(this.toSpec(app), target.id, false),
+        buildRunScript(spec, target.id, false),
         DEPLOY_TIMEOUT_MS,
       );
       const ok = r.exitCode === 0;
@@ -328,6 +332,22 @@ export class ApplicationsService {
       }
     }
     return (app.env as Record<string, string>) ?? {};
+  }
+
+  /** Env injected at deploy: team shared variables overlaid by app-specific ones. */
+  private async resolvedEnv(app: Application): Promise<Record<string, string>> {
+    const shared = await this.prisma.sharedVariable.findMany({
+      where: { teamId: app.teamId },
+    });
+    const merged: Record<string, string> = {};
+    for (const v of shared) {
+      try {
+        merged[v.key] = this.crypto.decrypt(v.valueEnc);
+      } catch {
+        /* skip unreadable */
+      }
+    }
+    return { ...merged, ...this.appEnv(app) }; // app-specific wins
   }
 
   private toSpec(app: Application): AppSpec {
