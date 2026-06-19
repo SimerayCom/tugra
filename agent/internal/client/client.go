@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/mrcandev/tugra/agent/internal/keys"
 	"github.com/mrcandev/tugra/agent/internal/metrics"
 	"github.com/mrcandev/tugra/agent/internal/protocol"
+	"github.com/mrcandev/tugra/agent/internal/terminal"
 )
 
 const (
@@ -103,14 +105,25 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	hostTicker := time.NewTicker(hostInfoInterval)
 	defer hostTicker.Stop()
 
-	// Reader: handle commands from the hub.
+	// Reader: handle commands + terminal sessions from the hub.
+	sessions := map[string]*terminal.Session{}
+	var sessMu sync.Mutex
 	go func() {
+		// On disconnect, tear down every live terminal (no zombie shells).
+		defer func() {
+			sessMu.Lock()
+			for _, s := range sessions {
+				s.Close()
+			}
+			sessMu.Unlock()
+		}()
 		for {
 			var m protocol.ServerMsg
 			if err := wsjson.Read(ctx, conn, &m); err != nil {
 				return
 			}
-			if m.Type == "command" {
+			switch m.Type {
+			case "command":
 				go func(reqID, command string, timeoutMs int) {
 					to := commandTimeout
 					if timeoutMs > 0 {
@@ -130,6 +143,53 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 						Output:   r.Output,
 					})
 				}(m.ReqID, m.Command, m.TimeoutMs)
+			case "term_start":
+				sid := m.SessionID
+				sess, err := terminal.Start(m.Target, m.Cols, m.Rows,
+					func(b []byte) {
+						_ = send(protocol.TermOutput{
+							Type:      "term_output",
+							SessionID: sid,
+							Data:      base64.StdEncoding.EncodeToString(b),
+						})
+					},
+					func(code int) {
+						sessMu.Lock()
+						delete(sessions, sid)
+						sessMu.Unlock()
+						_ = send(protocol.TermExit{Type: "term_exit", SessionID: sid, ExitCode: code})
+					},
+				)
+				if err != nil {
+					_ = send(protocol.TermExit{Type: "term_exit", SessionID: sid, ExitCode: -1})
+					continue
+				}
+				sessMu.Lock()
+				sessions[sid] = sess
+				sessMu.Unlock()
+			case "term_input":
+				sessMu.Lock()
+				sess := sessions[m.SessionID]
+				sessMu.Unlock()
+				if sess != nil {
+					if data, err := base64.StdEncoding.DecodeString(m.Data); err == nil {
+						_, _ = sess.Write(data)
+					}
+				}
+			case "term_resize":
+				sessMu.Lock()
+				sess := sessions[m.SessionID]
+				sessMu.Unlock()
+				if sess != nil {
+					_ = sess.Resize(m.Cols, m.Rows)
+				}
+			case "term_close":
+				sessMu.Lock()
+				sess := sessions[m.SessionID]
+				sessMu.Unlock()
+				if sess != nil {
+					sess.Close()
+				}
 			}
 		}
 	}()

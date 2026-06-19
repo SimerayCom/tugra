@@ -58,3 +58,29 @@ describe("AgentWsServer command streaming", () => {
     expect((server as any).pending.size).toBe(0);
   });
 });
+
+describe("AgentWsServer terminal relay", () => {
+  it("forwards term_output/term_exit to the terminal delegate", async () => {
+    const { server, deliver } = harness();
+    const delegate = { handleAgentTerminal: jest.fn(), handleServerDisconnect: jest.fn() };
+    server.setTerminalDelegate(delegate);
+    const out = { type: "term_output", sessionId: "x", data: "aGk=" };
+    await deliver(out);
+    expect(delegate.handleAgentTerminal).toHaveBeenCalledWith("s1", out);
+    const exit = { type: "term_exit", sessionId: "x", exitCode: 0 };
+    await deliver(exit);
+    expect(delegate.handleAgentTerminal).toHaveBeenCalledWith("s1", exit);
+  });
+
+  it("sendToAgent returns true when online, false when offline", () => {
+    const { server } = harness();
+    expect(server.sendToAgent("s1", { type: "term_close", sessionId: "x" })).toBe(true);
+    expect(server.sendToAgent("ghost", { type: "term_close", sessionId: "x" })).toBe(false);
+  });
+
+  it("isOnline reflects connected agents", () => {
+    const { server } = harness();
+    expect(server.isOnline("s1")).toBe(true);
+    expect(server.isOnline("ghost")).toBe(false);
+  });
+});

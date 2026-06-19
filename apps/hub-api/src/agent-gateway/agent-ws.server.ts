@@ -7,8 +7,17 @@ import {
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
-import type { AgentMessage } from "@tugra/shared";
+import type { AgentMessage, TermExitMsg, TermOutputMsg } from "@tugra/shared";
 import { PROTOCOL_VERSION } from "@tugra/shared";
+
+/**
+ * The terminal gateway registers a delegate so the agent socket can relay
+ * interactive-shell traffic without knowing anything about terminals.
+ */
+export interface TerminalDelegate {
+  handleAgentTerminal(serverId: string, msg: TermOutputMsg | TermExitMsg): void;
+  handleServerDisconnect(serverId: string): void;
+}
 import { MetricsService } from "../metrics/metrics.service";
 import { ServersService } from "../servers/servers.service";
 
@@ -38,6 +47,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
+  private terminalDelegate?: TerminalDelegate;
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -51,8 +61,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       this.logger.warn("no http server; agent WS not started");
       return;
     }
-    this.wss = new WebSocketServer({ server: httpServer, path: "/agent" });
+    // noServer + manual upgrade routing so a second WS server (the terminal
+    // gateway) can share this HTTP server without ws aborting each other's
+    // handshakes (two {server,path} servers destroy non-matching upgrades).
+    this.wss = new WebSocketServer({ noServer: true });
     this.wss.on("connection", (socket: WebSocket) => this.onConnection(socket));
+    httpServer.on("upgrade", (req: import("node:http").IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
+      const pathname = new URL(req.url ?? "", "ws://localhost").pathname;
+      if (pathname !== "/agent") return;
+      this.wss!.handleUpgrade(req, socket, head, (ws) => this.wss!.emit("connection", ws, req));
+    });
     this.logger.log("agent WS listening on /agent");
   }
 
@@ -69,6 +87,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           this.sockets.delete(st.serverId);
         }
         this.rejectPendingFor(st.serverId);
+        this.terminalDelegate?.handleServerDisconnect(st.serverId);
         void this.servers.markOffline(st.serverId);
       }
     });
@@ -130,6 +149,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           this.chunkListeners.get(msg.reqId)?.(msg.chunk);
           return;
         }
+        case "term_output":
+        case "term_exit": {
+          if (st.authed && st.serverId) {
+            this.terminalDelegate?.handleAgentTerminal(st.serverId, msg);
+          }
+          return;
+        }
         case "command_result": {
           const p = this.pending.get(msg.reqId);
           if (p) {
@@ -174,6 +200,25 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       if (onChunk) this.chunkListeners.set(reqId, onChunk);
       this.send(socket, { type: "command", reqId, command, timeoutMs });
     });
+  }
+
+  /** Register the terminal gateway as the relay for interactive-shell traffic. */
+  setTerminalDelegate(delegate: TerminalDelegate): void {
+    this.terminalDelegate = delegate;
+  }
+
+  /** Fire-and-forget a message to a connected agent. Returns false if offline. */
+  sendToAgent(serverId: string, msg: object): boolean {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    this.send(socket, msg);
+    return true;
+  }
+
+  /** Is an agent for this server currently connected? */
+  isOnline(serverId: string): boolean {
+    const socket = this.sockets.get(serverId);
+    return !!socket && socket.readyState === WebSocket.OPEN;
   }
 
   /** Reject (and clean up) every pending command for a server that went away. */
