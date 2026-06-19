@@ -67,6 +67,16 @@ export const SetEnvironmentSchema = z.object({
 });
 export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
 
+export const SetDomainOptionsSchema = z
+  .object({
+    domainRedirect: z.enum(["www", "root"]).nullable().optional(),
+    securityHeaders: z.boolean().optional(),
+  })
+  .refine((d) => d.domainRedirect !== undefined || d.securityHeaders !== undefined, {
+    message: "provide domainRedirect and/or securityHeaders",
+  });
+export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
+
 export const FromTemplateSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),

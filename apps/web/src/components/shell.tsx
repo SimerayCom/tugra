@@ -32,7 +32,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "destinations", href: "/destinations", impl: true },
       { key: "sharedVars", href: "/shared-variables", impl: true },
       { key: "appStore", href: "/coming-soon?f=App%20Store" },
-      { key: "domains", href: "/coming-soon?f=Domains" },
+      { key: "domains", href: "/domains", impl: true },
       { key: "terminal", href: "/coming-soon?f=Terminal" },
       { key: "migration", href: "/coming-soon?f=Migration" },
     ],

@@ -1,0 +1,14 @@
+{
+  "title": "Domains & SSL",
+  "subtitle": "Every app domain across your fleet with its live SSL certificate status.",
+  "empty": "No app domains yet. Add a domain to an app to see it here.",
+  "domain": "Domain",
+  "app": "App",
+  "ssl": "SSL",
+  "issuer": "Issuer",
+  "daysLeft": "{n}d left",
+  "expiring": "expiring",
+  "noCert": "no cert",
+  "redirect": "redirect",
+  "headers": "headers"
+}

@@ -26,6 +26,8 @@ import {
   SetCredentialsSchema,
   SetEnvInput,
   SetEnvSchema,
+  SetDomainOptionsInput,
+  SetDomainOptionsSchema,
   SetEnvironmentInput,
   SetEnvironmentSchema,
   SetLimitsInput,
@@ -48,6 +50,12 @@ export class ApplicationsController {
   @Get("templates")
   listTemplates() {
     return this.apps.listTemplates();
+  }
+
+  // Likewise precedes `@Get(":id")` — central domain + live SSL overview.
+  @Get("domains")
+  listDomains(@CurrentUser() user: AuthUser) {
+    return this.apps.listDomains(user.userId);
   }
 
   @Post("templates/:slug")
@@ -153,6 +161,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetEnvironmentSchema)) body: SetEnvironmentInput,
   ) {
     await this.apps.setEnvironment(user.userId, id, body.environmentId);
+    return { ok: true };
+  }
+
+  @Put(":id/domain-options")
+  @HttpCode(200)
+  async setDomainOptions(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDomainOptionsSchema)) body: SetDomainOptionsInput,
+  ) {
+    await this.apps.setDomainOptions(user.userId, id, body);
     return { ok: true };
   }
 

@@ -147,6 +147,22 @@ export interface Project {
   createdAt: string;
 }
 
+export interface DomainView {
+  id: string;
+  name: string;
+  domain: string;
+  https: boolean;
+  url: string | null;
+  domainRedirect: "www" | "root" | null;
+  securityHeaders: boolean;
+  ssl: {
+    state: "ok" | "expiring" | "error";
+    daysRemaining: number | null;
+    validTo: string | null;
+    issuer: string | null;
+  };
+}
+
 export interface Template {
   slug: string;
   name: string;
@@ -178,6 +194,8 @@ export interface Application {
   hostPort: number | null;
   containerPort: number | null;
   domain: string | null;
+  domainRedirect: "www" | "root" | null;
+  securityHeaders: boolean;
   https: boolean;
   url: string | null;
   webhookToken: string | null;

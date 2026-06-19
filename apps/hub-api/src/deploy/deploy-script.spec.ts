@@ -165,6 +165,35 @@ describe("deploy-script", () => {
     expect(traefikLabels({ ...base, domain: "x.com" }).length).toBeGreaterThan(0);
   });
 
+  it("plain domain has no canon/sec middleware (regression)", () => {
+    const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(s).toContain("Host(`x.com`)");
+    expect(s).not.toContain("-canon");
+    expect(s).not.toContain("-sec");
+  });
+
+  it("root redirect routes bare+www and redirects www→bare", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", domainRedirect: "root" }).join("\n");
+    expect(s).toContain("Host(`x.com`) || Host(`www.x.com`)");
+    expect(s).toContain("redirectregex.regex=^https://www\\.x\\.com/(.*)");
+    expect(s).toContain("redirectregex.replacement=https://x.com/${1}");
+    expect(s).toContain("redirectregex.permanent=true");
+    expect(s).toContain(`middlewares=tugra_${base.id}-canon`);
+  });
+
+  it("www redirect redirects bare→www", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", domainRedirect: "www" }).join("\n");
+    expect(s).toContain("redirectregex.regex=^https://x\\.com/(.*)");
+    expect(s).toContain("redirectregex.replacement=https://www.x.com/${1}");
+  });
+
+  it("security headers add a headers middleware to the router", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", securityHeaders: true }).join("\n");
+    expect(s).toContain("-sec.headers.stsSeconds=31536000");
+    expect(s).toContain("-sec.headers.frameDeny=true");
+    expect(s).toContain(`middlewares=tugra_${base.id}-sec`);
+  });
+
   it("proxy setup script runs Traefik with ACME", () => {
     const s = buildProxySetupScript("me@x.com");
     expect(s).toContain("docker network create tugra-proxy");

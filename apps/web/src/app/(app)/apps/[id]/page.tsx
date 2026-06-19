@@ -147,6 +147,16 @@ export default function AppDetailPage() {
         />
       )}
 
+      {appData.canWrite && appData.domain && (
+        <DomainOptionsCard
+          id={id}
+          domain={appData.domain}
+          https={appData.https}
+          domainRedirect={appData.domainRedirect}
+          securityHeaders={appData.securityHeaders}
+        />
+      )}
+
       {appData.canWrite && <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />}
 
       {appData.canWrite && <EnvCard id={id} />}
@@ -369,6 +379,56 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
           <div style={{ flex: 1 }} />
           <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
         </div>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function DomainOptionsCard({
+  id,
+  domain,
+  https,
+  domainRedirect,
+  securityHeaders,
+}: {
+  id: string;
+  domain: string;
+  https: boolean;
+  domainRedirect: "www" | "root" | null;
+  securityHeaders: boolean;
+}) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [redirect, setRedirect] = useState<string>(domainRedirect ?? "");
+  const [sec, setSec] = useState(securityHeaders);
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppDomainOptions(id, {
+        domainRedirect: redirect ? (redirect as "www" | "root") : null,
+        securityHeaders: sec,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.domainOptions")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.domainOptionsDesc")}</p>
+      <div className="mono" style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10 }}>
+        {https ? "https://" : "http://"}{domain}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select style={{ ...envField, minWidth: 200 }} value={redirect} onChange={(e) => setRedirect(e.target.value)}>
+          <option value="">{t("apps.redirectNone")}</option>
+          <option value="root">{t("apps.redirectRoot")}</option>
+          <option value="www">{t("apps.redirectWww")}</option>
+        </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={sec} onChange={(e) => setSec(e.target.checked)} />
+          {t("apps.securityHeaders")}
+        </label>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
