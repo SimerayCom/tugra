@@ -22,6 +22,8 @@ import {
   CreateAppSchema,
   FromTemplateInput,
   FromTemplateSchema,
+  SetCredentialsInput,
+  SetCredentialsSchema,
   SetEnvInput,
   SetEnvSchema,
   SetLimitsInput,
@@ -127,6 +129,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetVolumesSchema)) body: SetVolumesInput,
   ) {
     await this.apps.setVolumes(user.userId, id, body.volumes);
+    return { ok: true };
+  }
+
+  @Put(":id/credentials")
+  @HttpCode(200)
+  async setCredentials(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetCredentialsSchema)) body: SetCredentialsInput,
+  ) {
+    await this.apps.setCredentials(user.userId, id, body);
     return { ok: true };
   }
 

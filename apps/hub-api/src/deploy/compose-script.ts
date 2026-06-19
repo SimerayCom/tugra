@@ -5,7 +5,12 @@
  * the whole stack. The project name namespaces the stack so it can't collide.
  */
 
-import { envFileB64, type AppSpec } from "./deploy-script";
+import {
+  envFileB64,
+  registryLoginPrelude,
+  registryLogoutSteps,
+  type AppSpec,
+} from "./deploy-script";
 
 export const COMPOSE_DIR = "/etc/tugra/compose";
 
@@ -49,9 +54,12 @@ export function buildComposeUpScript(app: AppSpec): string {
       `chmod 600 ${envPath}`,
     );
   }
+  // Private registry: log in (isolated config) before pulling, log out after.
+  lines.push(...registryLoginPrelude(app.registryAuth));
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
   lines.push(
     `docker compose -p ${proj} -f ${file} ${envArg}up -d --remove-orphans`,
+    ...registryLogoutSteps(app.registryAuth),
     `docker compose -p ${proj} -f ${file} ps`,
   );
   return lines.join("\n");

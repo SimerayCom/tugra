@@ -230,6 +230,63 @@ describe("ApplicationsService", () => {
     expect(data.envEnc).toContain("DB_PASSWORD");
   });
 
+  it("forbids a non-writer from setting credentials", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+    } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setCredentials("u1", "app1", { gitToken: "t" }),
+    ).rejects.toThrow(/nope/);
+  });
+
+  it("encrypts a git token and a registry auth on setCredentials", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setCredentials("u1", "app1", {
+      gitToken: "ghp_abc",
+      registry: { url: "reg.io", user: "u", token: "p" },
+    });
+    const data = update.mock.calls[0][0].data;
+    expect(data.gitTokenEnc).toBe("enc(ghp_abc)");
+    expect(data.registryAuthEnc).toBe('enc({"url":"reg.io","user":"u","token":"p"})');
+  });
+
+  it("clears a credential when set to null", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setCredentials("u1", "app1", { gitToken: null });
+    expect(update.mock.calls[0][0].data).toEqual({ gitTokenEnc: null });
+  });
+
+  it("exposes credential presence in the view but never the secret token", async () => {
+    // the test crypto stub's decrypt is identity, so store plaintext-ish values
+    const withCreds = {
+      ...app,
+      gitTokenEnc: "ghp_abc",
+      registryAuthEnc: '{"url":"reg.io","user":"u","token":"p"}',
+    };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(withCreds) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+    expect(view.hasGitToken).toBe(true);
+    expect(view.registryUrl).toBe("reg.io");
+    expect(view.registryUser).toBe("u");
+    expect(JSON.stringify(view)).not.toContain("ghp_abc");
+    expect(JSON.stringify(view)).not.toContain('"token":"p"');
+  });
+
   it("forbids a non-writer from setting volumes", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

@@ -344,6 +344,15 @@ export const api = {
       body: JSON.stringify({ volumes }),
     });
   },
+  setAppCredentials(
+    id: string,
+    creds: { gitToken?: string | null; registry?: { url?: string; user: string; token: string } | null },
+  ) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/credentials`, {
+      method: "PUT",
+      body: JSON.stringify(creds),
+    });
+  },
 
   // ── databases ──
   listDatabases() {

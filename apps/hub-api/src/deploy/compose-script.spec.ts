@@ -41,6 +41,19 @@ describe("compose-script", () => {
     expect(s).toContain("chmod 600 /etc/tugra/compose/abc/.env");
   });
 
+  it("logs in to a private registry before up and out after (no raw token)", () => {
+    const s = buildComposeUpScript({ ...base, registryAuth: { url: "reg.io", user: "u", token: "secret123" } });
+    expect(s).toContain("--password-stdin");
+    expect(s).toContain('docker --config "$sd" login');
+    expect(s).toContain("logout");
+    expect(s.indexOf("login")).toBeLessThan(s.indexOf("up -d"));
+    expect(s).not.toContain("secret123");
+  });
+
+  it("no registry login when no auth is configured (regression)", () => {
+    expect(buildComposeUpScript(base)).not.toContain("docker --config");
+  });
+
   it("stop uses compose stop; down removes volumes + the dir", () => {
     expect(buildComposeStopScript(base)).toBe(
       "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml stop",
