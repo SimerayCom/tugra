@@ -65,6 +65,27 @@ describe("deploy-script", () => {
     expect(s).toContain("--health-interval=30s");
   });
 
+  it("mounts persistent volumes via -v before the image reference", () => {
+    const s = buildRunScript(
+      { ...base, volumes: [{ name: "data", path: "/app/data" }, { name: "logs", path: "/var/log/app" }] },
+      "v1",
+    );
+    expect(s).toContain("-v tugra_appv_abc_data:/app/data");
+    expect(s).toContain("-v tugra_appv_abc_logs:/var/log/app");
+    // volume flags precede the image reference in the run command
+    expect(s.indexOf("-v tugra_appv_abc_data")).toBeLessThan(s.indexOf("'tugra_abc:v1'"));
+  });
+
+  it("omits -v when no volumes are configured (regression)", () => {
+    expect(buildRunScript(base, "v1")).not.toContain("-v tugra_appv");
+  });
+
+  it("removing an app drops its named volumes too", () => {
+    const s = buildRemoveScript({ id: "abc" }, [{ name: "data", path: "/app/data" }]);
+    expect(s).toContain("docker rm -f tugra_abc");
+    expect(s).toContain("docker volume rm tugra_appv_abc_data");
+  });
+
   it("omits limit/health flags when unset (regression)", () => {
     const s = buildRunScript(base, "v1");
     expect(s).not.toContain("--memory");

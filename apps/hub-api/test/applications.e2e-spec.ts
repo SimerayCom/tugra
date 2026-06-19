@@ -292,6 +292,45 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--health-cmd");
   });
 
+  it("mounts a persistent volume at deploy", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "volapp", serverId, image: "nginx:alpine", hostPort: 8133 })
+      .expect(201);
+    const appId = appRes.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/volumes`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ volumes: [{ name: "data", path: "/app/data" }] })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.volumes).toEqual([{ name: "data", path: "/app/data" }]);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${appId}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(150);
+    expect(commands.join("\n")).toContain(`-v tugra_appv_${appId}_data:/app/data`);
+  });
+
+  it("rejects an invalid volume path (400)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "volapp2", serverId, image: "nginx:alpine" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/apps/${appRes.body.id}/volumes`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ volumes: [{ name: "data", path: "relative/path" }] })
+      .expect(400);
+  });
+
   it("streams live build logs over SSE (agent command_log → hub → client)", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

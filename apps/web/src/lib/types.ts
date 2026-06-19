@@ -116,6 +116,11 @@ export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 export type AppSource = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildType = "NIXPACKS" | "DOCKERFILE";
 
+export interface AppVolume {
+  name: string;
+  path: string;
+}
+
 export interface Application {
   id: string;
   name: string;
@@ -128,6 +133,7 @@ export interface Application {
   healthCmd: string | null;
   memoryMb: number | null;
   cpus: number | null;
+  volumes: AppVolume[];
   serverId: string;
   teamId: string;
   status: AppStatus;

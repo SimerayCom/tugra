@@ -50,5 +50,10 @@
   "limitsDesc": "Optional CPU/memory limits and a container health check. Applied on next deploy.",
   "healthCmd": "Health check command (e.g. curl -fsS http://localhost:80/ || exit 1)",
   "memoryMb": "Memory (MB)",
-  "cpus": "CPUs"
+  "cpus": "CPUs",
+  "volumes": "Persistent storage",
+  "volumesDesc": "Named volumes keep data across redeploys. Applied on next deploy.",
+  "volumeName": "Name (e.g. data)",
+  "volumePath": "Container path (e.g. /app/data)",
+  "addVolume": "+ Add volume"
 }

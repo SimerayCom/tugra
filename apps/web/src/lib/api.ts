@@ -1,6 +1,7 @@
 import type {
   ApiToken,
   Application,
+  AppVolume,
   BulkOperation,
   Backup,
   BackupDestination,
@@ -325,6 +326,12 @@ export const api = {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {
       method: "PUT",
       body: JSON.stringify(limits),
+    });
+  },
+  setAppVolumes(id: string, volumes: AppVolume[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/volumes`, {
+      method: "PUT",
+      body: JSON.stringify({ volumes }),
     });
   },
 

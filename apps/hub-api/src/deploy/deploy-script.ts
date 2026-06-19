@@ -22,14 +22,26 @@ export interface AppSpec {
   healthCmd?: string | null;
   memoryMb?: number | null;
   cpus?: number | null;
+  volumes?: AppVolume[] | null;
   env: Record<string, string>;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
 }
 
+/** A persistent named volume mounted into the app container. */
+export interface AppVolume {
+  name: string;
+  path: string;
+}
+
 export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
+}
+
+/** Docker volume name for an app's named volume (persists across redeploys). */
+export function appVolumeName(app: { id: string }, name: string): string {
+  return `tugra_appv_${app.id}_${name}`;
 }
 
 /**
@@ -163,6 +175,11 @@ export function buildRunScript(app: AppSpec, version: string, build = true): str
     );
   }
 
+  // Persistent named volumes (data survives redeploys; auto-created by docker).
+  const volArgs = (app.volumes ?? [])
+    .map((v) => `-v ${appVolumeName(app, v.name)}:${v.path}`)
+    .join(" ");
+
   const runArgs = [
     "docker run -d",
     `--name ${name}`,
@@ -170,6 +187,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true): str
     limitArgs.join(" "),
     envArg,
     netExpose.trim(),
+    volArgs,
     shq(ref),
   ]
     .filter(Boolean)
@@ -223,6 +241,10 @@ export function buildStopScript(app: { id: string }): string {
   return `docker stop ${containerName(app)} 2>/dev/null || true`;
 }
 
-export function buildRemoveScript(app: { id: string }): string {
-  return `docker rm -f ${containerName(app)} 2>/dev/null || true`;
+export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = []): string {
+  // Removing an app destroys its container and its named volumes (intentional).
+  return [
+    `docker rm -f ${containerName(app)} 2>/dev/null || true`,
+    ...volumes.map((v) => `docker volume rm ${appVolumeName(app, v.name)} 2>/dev/null || true`),
+  ].join("\n");
 }

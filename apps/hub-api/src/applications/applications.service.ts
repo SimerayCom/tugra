@@ -20,6 +20,7 @@ import {
   buildStopScript,
   runTag,
   type AppSpec,
+  type AppVolume,
 } from "../deploy/deploy-script";
 import {
   buildComposeDownScript,
@@ -48,6 +49,7 @@ export interface AppView {
   healthCmd: string | null;
   memoryMb: number | null;
   cpus: number | null;
+  volumes: AppVolume[];
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -327,7 +329,7 @@ export class ApplicationsService {
     const cmd =
       app.source === "COMPOSE"
         ? buildComposeDownScript(this.toSpec(app), { volumes: true })
-        : buildRemoveScript(app);
+        : buildRemoveScript(app, this.appVolumes(app));
     await this.agentWs.sendCommand(app.serverId, cmd).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "app.remove", target: id });
@@ -384,7 +386,20 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.limits.update", target: id });
   }
 
+  async setVolumes(userId: string, id: string, volumes: AppVolume[]): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: { volumes: volumes as unknown as Prisma.InputJsonValue },
+    });
+    await this.audit.log({ actor: userId, action: "app.volumes.update", target: id });
+  }
+
   // ── helpers ──
+  private appVolumes(app: Application): AppVolume[] {
+    return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
+  }
+
   private appEnv(app: Application): Record<string, string> {
     if (app.envEnc) {
       try {
@@ -425,6 +440,7 @@ export class ApplicationsService {
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      volumes: this.appVolumes(app),
       env: this.appEnv(app),
       hostPort: app.hostPort,
       containerPort: app.containerPort,
@@ -462,6 +478,7 @@ export class ApplicationsService {
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      volumes: this.appVolumes(app),
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,
