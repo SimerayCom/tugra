@@ -83,7 +83,7 @@ describe("ApplicationsService", () => {
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     // agent streams a chunk, then the command resolves
     const agentWs = {
-      sendCommand: jest.fn().mockImplementation((_s, _c, _t, onChunk?: (c: string) => void) => {
+      sendCommand: jest.fn().mockImplementation((_s, _c, _cap, _t, onChunk?: (c: string) => void) => {
         onChunk?.("building…\n");
         return Promise.resolve({ exitCode: 0, output: "deployed" });
       }),

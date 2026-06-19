@@ -134,8 +134,12 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			}
 			switch m.Type {
 			case "command":
-				if !protocol.VerifySig(hubPub, protocol.CanonicalCommand(m.ReqID, m.Command, m.TimeoutMs), m.Sig) {
+				if !protocol.VerifySig(hubPub, protocol.CanonicalCommand(m.ReqID, m.Command, m.TimeoutMs, m.Capability), m.Sig) {
 					fmt.Fprintln(os.Stderr, "rejected command: invalid or missing hub signature")
+					continue
+				}
+				if !allowsCapability(cfg.Capabilities, m.Capability) {
+					fmt.Fprintln(os.Stderr, "rejected command: capability not allowed:", m.Capability)
 					continue
 				}
 				go func(reqID, command string, timeoutMs int) {
@@ -158,8 +162,12 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 					})
 				}(m.ReqID, m.Command, m.TimeoutMs)
 			case "term_start":
-				if !protocol.VerifySig(hubPub, protocol.CanonicalTermStart(m.SessionID, m.Target, m.Cols, m.Rows), m.Sig) {
+				if !protocol.VerifySig(hubPub, protocol.CanonicalTermStart(m.SessionID, m.Target, m.Cols, m.Rows, m.Capability), m.Sig) {
 					fmt.Fprintln(os.Stderr, "rejected term_start: invalid or missing hub signature")
+					continue
+				}
+				if !allowsCapability(cfg.Capabilities, m.Capability) {
+					fmt.Fprintln(os.Stderr, "rejected term_start: capability not allowed:", m.Capability)
 					continue
 				}
 				sid := m.SessionID
@@ -231,4 +239,18 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			}
 		}
 	}
+}
+
+// allowsCapability reports whether the agent's local policy permits a capability.
+// An empty allowlist means no restrictions (all capabilities allowed).
+func allowsCapability(allowed []string, capability string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, c := range allowed {
+		if c == capability {
+			return true
+		}
+	}
+	return false
 }

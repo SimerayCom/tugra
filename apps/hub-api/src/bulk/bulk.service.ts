@@ -96,7 +96,7 @@ export class BulkService {
       data: { status: "RUNNING", startedAt: new Date() },
     });
     try {
-      const r = await this.agentWs.sendCommand(t.serverId, command);
+      const r = await this.agentWs.sendCommand(t.serverId, command, "bulk");
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {

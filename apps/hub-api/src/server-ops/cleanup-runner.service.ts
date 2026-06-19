@@ -23,6 +23,7 @@ export class CleanupRunnerService {
       const r = await this.agentWs.sendCommand(
         serverId,
         buildCleanupScript({ volumes: server.cleanupVolumes }),
+        "cleanup",
         CLEANUP_TIMEOUT_MS,
       );
       output = r.output.slice(0, 65536);

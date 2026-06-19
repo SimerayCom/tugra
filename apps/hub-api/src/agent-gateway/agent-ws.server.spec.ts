@@ -21,9 +21,10 @@ describe("AgentWsServer command streaming", () => {
   it("routes command_log chunks to the sendCommand onChunk callback", async () => {
     const { server, lastSent, deliver } = harness();
     const chunks: string[] = [];
-    const p = server.sendCommand("s1", "echo hi", 5000, (c) => chunks.push(c));
+    const p = server.sendCommand("s1", "echo hi", "deploy", 5000, (c) => chunks.push(c));
     const sent = lastSent();
     expect(sent.type).toBe("command");
+    expect(sent.capability).toBe("deploy");
     expect(sent.timeoutMs).toBe(5000); // per-command timeout sent to the agent
     const reqId = sent.reqId;
 
@@ -43,7 +44,7 @@ describe("AgentWsServer command streaming", () => {
   it("stops delivering chunks after the result arrives (listener cleaned up)", async () => {
     const { server, lastSent, deliver } = harness();
     const chunks: string[] = [];
-    const p = server.sendCommand("s1", "echo", 5000, (c) => chunks.push(c));
+    const p = server.sendCommand("s1", "echo", "deploy", 5000, (c) => chunks.push(c));
     const reqId = lastSent().reqId;
     await deliver({ type: "command_result", reqId, exitCode: 0, output: "ok" });
     await p;
@@ -53,7 +54,7 @@ describe("AgentWsServer command streaming", () => {
 
   it("rejects pending commands when the agent disconnects mid-stream", async () => {
     const { server } = harness();
-    const p = server.sendCommand("s1", "sleep 999", 300_000, () => undefined);
+    const p = server.sendCommand("s1", "sleep 999", "deploy", 300_000, () => undefined);
     (server as any).rejectPendingFor("s1");
     await expect(p).rejects.toThrow(/disconnected/);
     expect((server as any).chunkListeners.size).toBe(0);
@@ -76,7 +77,7 @@ describe("AgentWsServer terminal relay", () => {
 
   it("signs outbound command messages with the hub key", () => {
     const { server, lastSent } = harness();
-    server.sendCommand("s1", "echo hi", 5000);
+    server.sendCommand("s1", "echo hi", "deploy", 5000);
     const sent = lastSent();
     expect(sent.type).toBe("command");
     expect(sent.sig).toBe("SIG"); // signOutbound attached the hub signature

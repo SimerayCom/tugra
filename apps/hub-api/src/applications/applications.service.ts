@@ -220,6 +220,7 @@ export class ApplicationsService {
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,
+        "deploy",
         DEPLOY_TIMEOUT_MS,
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
@@ -282,6 +283,7 @@ export class ApplicationsService {
       const r = await this.agentWs.sendCommand(
         app.serverId,
         buildRunScript(spec, target.id, false),
+        "deploy",
         DEPLOY_TIMEOUT_MS,
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
@@ -332,7 +334,7 @@ export class ApplicationsService {
     });
     for (const d of kept.slice(DEPLOY_IMAGE_KEEP)) {
       await this.agentWs
-        .sendCommand(app.serverId, buildImageRemoveScript(app, d.id))
+        .sendCommand(app.serverId, buildImageRemoveScript(app, d.id), "cleanup")
         .catch(() => undefined);
       await this.prisma.deployment.update({
         where: { id: d.id },
@@ -365,7 +367,7 @@ export class ApplicationsService {
       app.source === "COMPOSE"
         ? buildComposeStopScript(this.toSpec(app))
         : buildStopScript(app);
-    await this.agentWs.sendCommand(app.serverId, cmd).catch(() => undefined);
+    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
     await this.prisma.application.update({
       where: { id },
       data: { status: AppStatus.STOPPED },
@@ -379,7 +381,7 @@ export class ApplicationsService {
       app.source === "COMPOSE"
         ? buildComposeDownScript(this.toSpec(app), { volumes: true })
         : buildRemoveScript(app, this.appVolumes(app));
-    await this.agentWs.sendCommand(app.serverId, cmd).catch(() => undefined);
+    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "app.remove", target: id });
   }

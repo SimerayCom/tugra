@@ -7,7 +7,12 @@ import {
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
-import type { AgentMessage, TermExitMsg, TermOutputMsg } from "@tugra/shared";
+import type {
+  AgentCapability,
+  AgentMessage,
+  TermExitMsg,
+  TermOutputMsg,
+} from "@tugra/shared";
 import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 
@@ -193,6 +198,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   sendCommand(
     serverId: string,
     command: string,
+    capability: AgentCapability,
     timeoutMs = 20_000,
     onChunk?: (chunk: string) => void,
   ): Promise<{ exitCode: number; output: string }> {
@@ -209,15 +215,20 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       }, timeoutMs);
       this.pending.set(reqId, { serverId, resolve, reject, timer });
       if (onChunk) this.chunkListeners.set(reqId, onChunk);
-      this.send(socket, this.signOutbound({ type: "command", reqId, command, timeoutMs }));
+      this.send(socket, this.signOutbound({ type: "command", reqId, command, timeoutMs, capability }));
     });
   }
 
-  /** Sign command/term_start so the agent can verify the hub issued them. */
+  /** Sign command/term_start (capability included) so the agent can verify + scope. */
   private signOutbound(msg: Record<string, unknown>): Record<string, unknown> {
     if (msg.type === "command") {
       msg.sig = this.hubSign.sign(
-        canonicalCommand(msg.reqId as string, msg.command as string, msg.timeoutMs as number),
+        canonicalCommand(
+          msg.reqId as string,
+          msg.command as string,
+          msg.timeoutMs as number,
+          msg.capability as string,
+        ),
       );
     } else if (msg.type === "term_start") {
       msg.sig = this.hubSign.sign(
@@ -226,6 +237,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.target as string,
           msg.cols as number,
           msg.rows as number,
+          msg.capability as string,
         ),
       );
     }

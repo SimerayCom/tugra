@@ -8,10 +8,10 @@ import (
 )
 
 func TestCanonicalStrings(t *testing.T) {
-	if got := CanonicalCommand("r1", "echo hi", 5000); got != "cmd\nr1\necho hi\n5000" {
+	if got := CanonicalCommand("r1", "echo hi", 5000, "deploy"); got != "cmd\nr1\necho hi\n5000\ndeploy" {
 		t.Fatalf("CanonicalCommand mismatch: %q", got)
 	}
-	if got := CanonicalTermStart("s1", "tugra_app1", 80, 24); got != "term\ns1\ntugra_app1\n80\n24" {
+	if got := CanonicalTermStart("s1", "tugra_app1", 80, 24, "terminal"); got != "term\ns1\ntugra_app1\n80\n24\nterminal" {
 		t.Fatalf("CanonicalTermStart mismatch: %q", got)
 	}
 }
@@ -36,15 +36,19 @@ func TestVerifySigRoundTripAndTamper(t *testing.T) {
 		t.Fatalf("ParseHubKey: %v", err)
 	}
 
-	canonical := CanonicalCommand("r1", "echo hi", 5000)
+	canonical := CanonicalCommand("r1", "echo hi", 5000, "deploy")
 	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte(canonical)))
 
 	if !VerifySig(parsed, canonical, sig) {
 		t.Fatal("expected valid signature to verify")
 	}
 	// tampered command must not verify against the original signature
-	if VerifySig(parsed, CanonicalCommand("r1", "rm -rf /", 5000), sig) {
+	if VerifySig(parsed, CanonicalCommand("r1", "rm -rf /", 5000, "deploy"), sig) {
 		t.Fatal("tampered command verified — signature check is broken")
+	}
+	// capability-relabel must not verify (anti-downgrade: bulk sig can't become deploy)
+	if VerifySig(parsed, CanonicalCommand("r1", "echo hi", 5000, "bulk"), sig) {
+		t.Fatal("capability-relabel verified — capability not bound to signature")
 	}
 	if VerifySig(parsed, canonical, "not-base64-!!") {
 		t.Fatal("garbage signature verified")
