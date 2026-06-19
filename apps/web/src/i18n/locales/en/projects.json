@@ -1,0 +1,17 @@
+{
+  "title": "Projects",
+  "subtitle": "Group apps and databases by project and environment (prod, staging…).",
+  "name": "Project name",
+  "create": "Create",
+  "team": "Team",
+  "empty": "No projects yet.",
+  "environments": "Environments",
+  "addEnvironment": "+ Add environment",
+  "environmentName": "Environment name (e.g. staging)",
+  "noResources": "No resources in this environment.",
+  "deleteProject": "Delete project",
+  "rename": "Rename",
+  "environment": "Environment",
+  "unassigned": "Unassigned",
+  "moveDesc": "Assign this resource to a project environment."
+}

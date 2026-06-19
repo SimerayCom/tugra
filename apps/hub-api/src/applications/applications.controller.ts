@@ -26,6 +26,8 @@ import {
   SetCredentialsSchema,
   SetEnvInput,
   SetEnvSchema,
+  SetEnvironmentInput,
+  SetEnvironmentSchema,
   SetLimitsInput,
   SetLimitsSchema,
   SetVolumesInput,
@@ -140,6 +142,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetCredentialsSchema)) body: SetCredentialsInput,
   ) {
     await this.apps.setCredentials(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/environment")
+  @HttpCode(200)
+  async setEnvironment(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetEnvironmentSchema)) body: SetEnvironmentInput,
+  ) {
+    await this.apps.setEnvironment(user.userId, id, body.environmentId);
     return { ok: true };
   }
 

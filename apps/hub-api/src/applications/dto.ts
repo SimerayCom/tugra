@@ -12,6 +12,7 @@ export const CreateAppSchema = z
     dockerfilePath: z.string().min(1).optional(),
     composeFile: z.string().min(1).optional(),
     env: z.record(z.string()).optional(),
+    environmentId: z.string().min(1).optional(),
     hostPort: z.number().int().min(1).max(65535).optional(),
     containerPort: z.number().int().min(1).max(65535).optional(),
     domain: z.string().min(1).optional(),
@@ -60,6 +61,11 @@ export const SetCredentialsSchema = z
     message: "provide gitToken and/or registry",
   });
 export type SetCredentialsInput = z.infer<typeof SetCredentialsSchema>;
+
+export const SetEnvironmentSchema = z.object({
+  environmentId: z.string().min(1).nullable(),
+});
+export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
 
 export const FromTemplateSchema = z.object({
   name: z.string().min(1),

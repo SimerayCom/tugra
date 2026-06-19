@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -33,6 +34,7 @@ export interface DatabaseView {
   name: string;
   engine: DbEngine;
   version: string;
+  environmentId: string | null;
   serverId: string;
   teamId: string;
   status: DbStatus;
@@ -73,6 +75,7 @@ export class DatabasesService {
     const server = await this.prisma.server.findUnique({ where: { id: dto.serverId } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requireRole(userId, server.teamId, WRITE);
+    if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
 
     const engine = dto.engine as DbEngine;
     const version = dto.version ?? defaultVersion(engine);
@@ -89,6 +92,7 @@ export class DatabasesService {
         image: resolveImage(engine, version),
         port: enginePort(engine),
         hostPort: dto.hostPort ?? null,
+        environmentId: dto.environmentId ?? null,
         serverId: dto.serverId,
         teamId: server.teamId,
         credentials: this.crypto.encrypt(JSON.stringify(creds)),
@@ -150,7 +154,24 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "database.remove", target: id });
   }
 
+  async setEnvironment(userId: string, id: string, environmentId: string | null): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    if (environmentId) await this.assertEnvInTeam(environmentId, db.teamId);
+    await this.prisma.database.update({ where: { id }, data: { environmentId } });
+    await this.audit.log({ actor: userId, action: "database.environment.update", target: id });
+  }
+
   // ── helpers ──
+  private async assertEnvInTeam(environmentId: string, teamId: string): Promise<void> {
+    const env = await this.prisma.environment.findUnique({
+      where: { id: environmentId },
+      include: { project: true },
+    });
+    if (!env || env.project.teamId !== teamId) {
+      throw new BadRequestException("environment not found in this team");
+    }
+  }
+
   private creds(db: Database): DbCredentials {
     return JSON.parse(this.crypto.decrypt(db.credentials)) as DbCredentials;
   }
@@ -190,6 +211,7 @@ export class DatabasesService {
       name: db.name,
       engine: db.engine as DbEngine,
       version: db.version,
+      environmentId: db.environmentId,
       serverId: db.serverId,
       teamId: db.teamId,
       status: db.status,
