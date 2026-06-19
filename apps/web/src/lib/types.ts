@@ -121,6 +121,14 @@ export interface AppVolume {
   path: string;
 }
 
+export interface Template {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  icon: string;
+}
+
 export interface Application {
   id: string;
   name: string;

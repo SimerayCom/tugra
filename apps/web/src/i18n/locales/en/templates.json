@@ -1,0 +1,8 @@
+{
+  "gallery": "One-click templates",
+  "galleryDesc": "Deploy a ready-made stack — secrets are generated automatically.",
+  "deploy": "Deploy",
+  "deploying": "Deploying…",
+  "cancel": "Cancel",
+  "namePlaceholder": "App name"
+}

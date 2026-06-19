@@ -292,6 +292,40 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--health-cmd");
   });
 
+  it("lists templates (metadata only) and creates an app from one", async () => {
+    const list = await request(app.getHttpServer())
+      .get("/apps/templates")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const wp = list.body.find((tpl: { slug: string }) => tpl.slug === "wordpress");
+    expect(wp).toBeTruthy();
+    expect(wp).not.toHaveProperty("composeFile"); // gallery metadata only
+    expect(wp).not.toHaveProperty("secrets");
+
+    const created = await request(app.getHttpServer())
+      .post("/apps/templates/wordpress")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "myblog", serverId })
+      .expect(201);
+    expect(created.body.source).toBe("COMPOSE");
+    expect(created.body.composeFile).toContain("services:");
+
+    // the generated DB secret landed in the (writer-visible) env
+    const env = await request(app.getHttpServer())
+      .get(`/apps/${created.body.id}/env`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(env.body.DB_PASSWORD).toBeTruthy();
+  });
+
+  it("rejects an unknown template slug (404)", async () => {
+    await request(app.getHttpServer())
+      .post("/apps/templates/does-not-exist")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "x", serverId })
+      .expect(404);
+  });
+
   it("mounts a persistent volume at deploy", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

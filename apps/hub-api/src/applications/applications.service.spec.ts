@@ -202,6 +202,34 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("rejects an unknown template slug", async () => {
+    const svc = make({} as PrismaService, {} as TeamAccessService, {} as AgentWsServer);
+    await expect(svc.createFromTemplate("u1", "nope", { name: "x", serverId: "s1" })).rejects.toThrow(
+      /template not found/,
+    );
+  });
+
+  it("creates a COMPOSE app from a template with generated secrets in env", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", {
+      name: "blog",
+      serverId: "s1",
+    });
+    const data = create.mock.calls[0][0].data;
+    expect(data.source).toBe("COMPOSE");
+    expect(data.composeFile).toContain("services:");
+    // env (encrypted in the test crypto stub: enc(<json>)) carries the generated secret
+    expect(data.envEnc).toContain("DB_PASSWORD");
+  });
+
   it("forbids a non-writer from setting volumes", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
