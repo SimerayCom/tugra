@@ -65,6 +65,7 @@ export class BackupsService {
     await this.agentWs.sendCommand(
       db.serverId,
       buildRestoreScript(this.runner.toSpec(db), backup.filename, dest),
+      "backup",
       300_000,
     );
     await this.audit.log({ actor: userId, action: "database.restore", target: dbId, meta: { backupId } });
@@ -76,7 +77,7 @@ export class BackupsService {
     if (!backup) throw new NotFoundException("backup not found");
     const dest = await this.runner.destinationSpec(db);
     await this.agentWs
-      .sendCommand(db.serverId, buildDeleteBackupScript(dbId, backup.filename, dest))
+      .sendCommand(db.serverId, buildDeleteBackupScript(dbId, backup.filename, dest), "backup")
       .catch(() => undefined);
     await this.prisma.backup.delete({ where: { id: backup.id } });
     await this.audit.log({ actor: userId, action: "database.backup.remove", target: dbId });

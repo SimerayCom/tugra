@@ -10,12 +10,32 @@ export const PROTOCOL_VERSION = 1;
  * delimited format (NOT JSON) so TS and Go produce byte-identical input.
  * The Go agent mirrors these exactly.
  */
-export function canonicalCommand(reqId: string, command: string, timeoutMs: number): string {
-  return `cmd\n${reqId}\n${command}\n${timeoutMs}`;
+export function canonicalCommand(
+  reqId: string,
+  command: string,
+  timeoutMs: number,
+  capability: string,
+): string {
+  return `cmd\n${reqId}\n${command}\n${timeoutMs}\n${capability}`;
 }
-export function canonicalTermStart(sessionId: string, target: string, cols: number, rows: number): string {
-  return `term\n${sessionId}\n${target}\n${cols}\n${rows}`;
+export function canonicalTermStart(
+  sessionId: string,
+  target: string,
+  cols: number,
+  rows: number,
+  capability: string,
+): string {
+  return `term\n${sessionId}\n${target}\n${cols}\n${rows}\n${capability}`;
 }
+
+/** What a command is for — the agent can locally allowlist these. */
+export type AgentCapability =
+  | "deploy"
+  | "database"
+  | "backup"
+  | "cleanup"
+  | "bulk"
+  | "terminal";
 
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
@@ -117,6 +137,8 @@ export interface CommandMsg {
   command: string;
   /** Per-command timeout in ms. When omitted the agent uses its default. */
   timeoutMs?: number;
+  /** What this command is for — the agent may locally allowlist capabilities. */
+  capability?: AgentCapability;
   /** base64(ed25519 signature over canonicalCommand) — agent rejects if invalid. */
   sig?: string;
 }
@@ -146,6 +168,7 @@ export interface TermStartMsg {
   target: string;
   cols: number;
   rows: number;
+  capability?: "terminal";
   /** base64(ed25519 signature over canonicalTermStart) — agent rejects if invalid. */
   sig?: string;
 }

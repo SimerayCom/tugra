@@ -128,6 +128,7 @@ export class DatabasesService {
       const r = await this.agentWs.sendCommand(
         db.serverId,
         buildDatabaseRunScript(this.toSpec(db)),
+        "database",
         PROVISION_TIMEOUT_MS,
       );
       status = r.exitCode === 0 ? DbStatus.RUNNING : DbStatus.FAILED;
@@ -142,14 +143,14 @@ export class DatabasesService {
 
   async stop(userId: string, id: string): Promise<void> {
     const db = await this.requireWrite(userId, id);
-    await this.agentWs.sendCommand(db.serverId, buildDbStopScript(db)).catch(() => undefined);
+    await this.agentWs.sendCommand(db.serverId, buildDbStopScript(db), "database").catch(() => undefined);
     await this.prisma.database.update({ where: { id }, data: { status: DbStatus.STOPPED } });
     await this.audit.log({ actor: userId, action: "database.stop", target: id });
   }
 
   async remove(userId: string, id: string): Promise<void> {
     const db = await this.requireWrite(userId, id);
-    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript(db)).catch(() => undefined);
+    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript(db), "database").catch(() => undefined);
     await this.prisma.database.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "database.remove", target: id });
   }

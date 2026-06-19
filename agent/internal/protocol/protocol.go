@@ -111,18 +111,19 @@ type ServerMsg struct {
 	Rows      int    `json:"rows"`
 	Data      string `json:"data"`
 	// Hub signing: hubKey on enrolled/auth_ok; sig on command/term_start.
-	HubKey string `json:"hubKey"`
-	Sig    string `json:"sig"`
+	HubKey     string `json:"hubKey"`
+	Sig        string `json:"sig"`
+	Capability string `json:"capability"`
 }
 
 // CanonicalCommand mirrors @tugra/shared canonicalCommand (byte-identical input).
-func CanonicalCommand(reqID, command string, timeoutMs int) string {
-	return "cmd\n" + reqID + "\n" + command + "\n" + strconv.Itoa(timeoutMs)
+func CanonicalCommand(reqID, command string, timeoutMs int, capability string) string {
+	return "cmd\n" + reqID + "\n" + command + "\n" + strconv.Itoa(timeoutMs) + "\n" + capability
 }
 
 // CanonicalTermStart mirrors @tugra/shared canonicalTermStart.
-func CanonicalTermStart(sessionID, target string, cols, rows int) string {
-	return "term\n" + sessionID + "\n" + target + "\n" + strconv.Itoa(cols) + "\n" + strconv.Itoa(rows)
+func CanonicalTermStart(sessionID, target string, cols, rows int, capability string) string {
+	return "term\n" + sessionID + "\n" + target + "\n" + strconv.Itoa(cols) + "\n" + strconv.Itoa(rows) + "\n" + capability
 }
 
 // ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).

@@ -16,6 +16,7 @@ export class ProxyService {
     await this.agentWs.sendCommand(
       serverId,
       buildProxySetupScript(email),
+      "deploy",
       60_000,
     );
   }

@@ -127,7 +127,7 @@ export class TerminalGateway
     this.sessions.set(sessionId, { ws, serverId, userId });
     (this.byServer.get(serverId) ?? this.addServerSet(serverId)).add(sessionId);
     await this.audit.log({ actor: userId, action: "terminal.open", target: auditTarget, meta: { kind } });
-    this.agentWs.sendToAgent(serverId, { type: "term_start", sessionId, target, cols, rows });
+    this.agentWs.sendToAgent(serverId, { type: "term_start", sessionId, target, cols, rows, capability: "terminal" });
 
     ws.on("message", (raw) => this.onClientMessage(sessionId, serverId, raw.toString()));
     ws.on("close", () => this.endSession(sessionId, true));

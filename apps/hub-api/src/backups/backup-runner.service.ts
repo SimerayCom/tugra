@@ -95,6 +95,7 @@ export class BackupRunnerService {
       const r = await this.agentWs.sendCommand(
         db.serverId,
         buildBackupScript(this.toSpec(db), filename, dest),
+        "backup",
         BACKUP_TIMEOUT_MS,
       );
       const ok = r.exitCode === 0;
@@ -127,7 +128,7 @@ export class BackupRunnerService {
     const stale = all.slice(db.backupRetention);
     for (const b of stale) {
       await this.agentWs
-        .sendCommand(db.serverId, buildDeleteBackupScript(db.id, b.filename, spec))
+        .sendCommand(db.serverId, buildDeleteBackupScript(db.id, b.filename, spec), "backup")
         .catch(() => undefined);
       await this.prisma.backup.delete({ where: { id: b.id } });
     }

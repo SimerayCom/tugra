@@ -13,6 +13,9 @@ type Config struct {
 	Version   string
 	KeyPath   string
 	StatePath string
+	// Capabilities the agent will run (deploy/database/backup/cleanup/bulk/terminal).
+	// Empty = all allowed; set to lock a server down (e.g. no bulk/terminal).
+	Capabilities []string
 }
 
 // Store persists what we learn at enrollment so reconnects use key auth.

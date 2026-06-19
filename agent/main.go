@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ const protocolVersion = 1
 func main() {
 	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com/agent")
 	token := flag.String("token", envOr("TUGRA_TOKEN", ""), "enrollment token (first run only)")
+	caps := flag.String("caps", envOr("TUGRA_CAPS", ""), "comma-separated allowed capabilities (deploy,database,backup,cleanup,bulk,terminal); empty = all")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -42,11 +44,12 @@ func main() {
 
 	home, _ := os.UserHomeDir()
 	cfg := config.Config{
-		HubURL:    *hub,
-		Token:     *token,
-		Version:   Version,
-		KeyPath:   filepath.Join(home, ".tugra", "agent.key"),
-		StatePath: filepath.Join(home, ".tugra", "agent.json"),
+		HubURL:       *hub,
+		Token:        *token,
+		Version:      Version,
+		KeyPath:      filepath.Join(home, ".tugra", "agent.key"),
+		StatePath:    filepath.Join(home, ".tugra", "agent.json"),
+		Capabilities: parseCaps(*caps),
 	}
 
 	kp, err := keys.LoadOrCreate(cfg.KeyPath)
@@ -81,4 +84,15 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseCaps turns "deploy, terminal" into ["deploy","terminal"]; empty → nil (all allowed).
+func parseCaps(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
