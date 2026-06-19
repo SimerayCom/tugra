@@ -16,6 +16,7 @@ import type {
   ServerView,
   SharedVariable,
   Team,
+  Template,
   TokenPair,
 } from "./types";
 
@@ -289,6 +290,15 @@ export const api = {
     env?: Record<string, string>;
   }) {
     return apiFetch<Application>("/apps", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  listTemplates() {
+    return apiFetch<Template[]>("/apps/templates");
+  },
+  createFromTemplate(slug: string, input: { name: string; serverId: string }) {
+    return apiFetch<Application>(`/apps/templates/${slug}`, {
       method: "POST",
       body: JSON.stringify(input),
     });

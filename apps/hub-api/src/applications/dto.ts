@@ -44,6 +44,12 @@ export const SetLimitsSchema = z.object({
 });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
 
+export const FromTemplateSchema = z.object({
+  name: z.string().min(1),
+  serverId: z.string().min(1),
+});
+export type FromTemplateInput = z.infer<typeof FromTemplateSchema>;
+
 export const SetVolumesSchema = z.object({
   volumes: z
     .array(

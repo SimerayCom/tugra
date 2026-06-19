@@ -20,6 +20,8 @@ import { ApplicationsService } from "./applications.service";
 import {
   CreateAppInput,
   CreateAppSchema,
+  FromTemplateInput,
+  FromTemplateSchema,
   SetEnvInput,
   SetEnvSchema,
   SetLimitsInput,
@@ -36,6 +38,22 @@ export class ApplicationsController {
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.apps.list(user.userId);
+  }
+
+  // NOTE: must precede `@Get(":id")` so "templates" isn't matched as an app id.
+  @Get("templates")
+  listTemplates() {
+    return this.apps.listTemplates();
+  }
+
+  @Post("templates/:slug")
+  @HttpCode(201)
+  fromTemplate(
+    @CurrentUser() user: AuthUser,
+    @Param("slug") slug: string,
+    @Body(new ZodValidationPipe(FromTemplateSchema)) body: FromTemplateInput,
+  ) {
+    return this.apps.createFromTemplate(user.userId, slug, body);
   }
 
   @Post()

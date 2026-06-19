@@ -31,6 +31,12 @@ import {
   generateWebhookSecret,
   generateWebhookToken,
 } from "../webhooks/webhook-verify";
+import {
+  TEMPLATES,
+  buildTemplateEnv,
+  templateMetaList,
+  type TemplateMeta,
+} from "../templates/catalog";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -110,6 +116,28 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
     const role = (await this.access.teamRole(userId, server.teamId))!;
     return this.view(app, role);
+  }
+
+  /** One-click template catalog (gallery metadata only). */
+  listTemplates(): TemplateMeta[] {
+    return templateMetaList();
+  }
+
+  /** Instantiate a curated template as a COMPOSE app (secrets generated here). */
+  async createFromTemplate(
+    userId: string,
+    slug: string,
+    input: { name: string; serverId: string },
+  ): Promise<AppView> {
+    const tpl = TEMPLATES[slug];
+    if (!tpl) throw new NotFoundException("template not found");
+    return this.create(userId, {
+      name: input.name,
+      serverId: input.serverId,
+      source: "COMPOSE",
+      composeFile: tpl.composeFile,
+      env: buildTemplateEnv(tpl),
+    });
   }
 
   async list(userId: string): Promise<AppView[]> {
