@@ -43,3 +43,18 @@ export const SetLimitsSchema = z.object({
   cpus: z.number().min(0.1).max(64).nullable().optional(),
 });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
+
+export const SetVolumesSchema = z.object({
+  volumes: z
+    .array(
+      z.object({
+        name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/, "lowercase name, [a-z0-9_-]"),
+        path: z.string().regex(/^\/.+/, "absolute container path"),
+      }),
+    )
+    .max(20)
+    .refine((vs) => new Set(vs.map((v) => v.name)).size === vs.length, {
+      message: "volume names must be unique",
+    }),
+});
+export type SetVolumesInput = z.infer<typeof SetVolumesSchema>;

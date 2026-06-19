@@ -24,6 +24,8 @@ import {
   SetEnvSchema,
   SetLimitsInput,
   SetLimitsSchema,
+  SetVolumesInput,
+  SetVolumesSchema,
 } from "./dto";
 
 @Controller("apps")
@@ -96,6 +98,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetLimitsSchema)) body: SetLimitsInput,
   ) {
     await this.apps.setLimits(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/volumes")
+  @HttpCode(200)
+  async setVolumes(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetVolumesSchema)) body: SetVolumesInput,
+  ) {
+    await this.apps.setVolumes(user.userId, id, body.volumes);
     return { ok: true };
   }
 

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import type { AppVolume } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
@@ -129,6 +130,10 @@ export default function AppDetailPage() {
 
       {appData.canWrite && appData.source !== "COMPOSE" && (
         <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} />
+      )}
+
+      {appData.canWrite && appData.source !== "COMPOSE" && (
+        <VolumesCard id={id} volumes={appData.volumes} />
       )}
 
       {appData.canWrite && <EnvCard id={id} />}
@@ -308,6 +313,49 @@ function LimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: 
         <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
         <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [rows, setRows] = useState<AppVolume[]>(volumes.length ? volumes : []);
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppVolumes(
+        id,
+        rows.filter((r) => r.name.trim() && r.path.trim()),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+  const setRow = (i: number, patch: Partial<AppVolume>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.volumes")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.volumesDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input style={{ ...envField, width: 160 }} placeholder={t("apps.volumeName")} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} />
+            <input style={{ ...envField, flex: 1 }} placeholder={t("apps.volumePath")} value={r.path} onChange={(e) => setRow(i, { path: e.target.value })} />
+            <button
+              onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { name: "", path: "" }])}>{t("apps.addVolume")}</Btn>
+          <div style={{ flex: 1 }} />
+          <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        </div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>

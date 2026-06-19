@@ -202,6 +202,30 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("forbids a non-writer from setting volumes", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+    } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/data" }]),
+    ).rejects.toThrow(/nope/);
+  });
+
+  it("persists volumes for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/app/data" }]);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { volumes: [{ name: "data", path: "/app/data" }] } }),
+    );
+  });
+
   it("rejects rollback to a deployment without a retained image", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
