@@ -1,6 +1,13 @@
 // Package protocol mirrors the JSON message contract in packages/shared.
 package protocol
 
+import (
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/base64"
+	"strconv"
+)
+
 const Version = 1
 
 type MetricsSample struct {
@@ -103,4 +110,52 @@ type ServerMsg struct {
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
 	Data      string `json:"data"`
+	// Hub signing: hubKey on enrolled/auth_ok; sig on command/term_start.
+	HubKey string `json:"hubKey"`
+	Sig    string `json:"sig"`
 }
+
+// CanonicalCommand mirrors @tugra/shared canonicalCommand (byte-identical input).
+func CanonicalCommand(reqID, command string, timeoutMs int) string {
+	return "cmd\n" + reqID + "\n" + command + "\n" + strconv.Itoa(timeoutMs)
+}
+
+// CanonicalTermStart mirrors @tugra/shared canonicalTermStart.
+func CanonicalTermStart(sessionID, target string, cols, rows int) string {
+	return "term\n" + sessionID + "\n" + target + "\n" + strconv.Itoa(cols) + "\n" + strconv.Itoa(rows)
+}
+
+// ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).
+func ParseHubKey(spkiB64 string) (ed25519.PublicKey, error) {
+	der, err := base64.StdEncoding.DecodeString(spkiB64)
+	if err != nil {
+		return nil, err
+	}
+	pub, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, err
+	}
+	key, ok := pub.(ed25519.PublicKey)
+	if !ok {
+		return nil, errNotEd25519
+	}
+	return key, nil
+}
+
+// VerifySig checks a base64 ed25519 signature over canonical with the hub key.
+func VerifySig(pub ed25519.PublicKey, canonical, sigB64 string) bool {
+	if pub == nil {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return false
+	}
+	return ed25519.Verify(pub, []byte(canonical), sig)
+}
+
+var errNotEd25519 = errString("hub key is not ed25519")
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

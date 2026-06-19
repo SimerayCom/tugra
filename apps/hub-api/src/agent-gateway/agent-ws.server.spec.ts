@@ -4,9 +4,11 @@ import { AgentWsServer } from "./agent-ws.server";
  * Unit-level coverage of command/log/result correlation. The full agent
  * round-trip (real WebSocket) is exercised by the e2e suites.
  */
+const hubSign = { sign: jest.fn().mockReturnValue("SIG"), publicKeySpkiBase64: "HUBKEY" } as any;
+
 function harness() {
   const servers = { markOffline: jest.fn() } as any;
-  const server = new AgentWsServer({} as any, servers, {} as any);
+  const server = new AgentWsServer({} as any, servers, {} as any, hubSign);
   const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any; // 1 === WebSocket.OPEN
   (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
   (server as any).sockets.set("s1", socket);
@@ -70,6 +72,14 @@ describe("AgentWsServer terminal relay", () => {
     const exit = { type: "term_exit", sessionId: "x", exitCode: 0 };
     await deliver(exit);
     expect(delegate.handleAgentTerminal).toHaveBeenCalledWith("s1", exit);
+  });
+
+  it("signs outbound command messages with the hub key", () => {
+    const { server, lastSent } = harness();
+    server.sendCommand("s1", "echo hi", 5000);
+    const sent = lastSent();
+    expect(sent.type).toBe("command");
+    expect(sent.sig).toBe("SIG"); // signOutbound attached the hub signature
   });
 
   it("sendToAgent returns true when online, false when offline", () => {

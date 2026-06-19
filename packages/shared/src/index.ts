@@ -5,6 +5,18 @@
 
 export const PROTOCOL_VERSION = 1;
 
+/**
+ * Canonical strings the hub signs (ed25519) and the agent verifies. Fixed,
+ * delimited format (NOT JSON) so TS and Go produce byte-identical input.
+ * The Go agent mirrors these exactly.
+ */
+export function canonicalCommand(reqId: string, command: string, timeoutMs: number): string {
+  return `cmd\n${reqId}\n${command}\n${timeoutMs}`;
+}
+export function canonicalTermStart(sessionId: string, target: string, cols: number, rows: number): string {
+  return `term\n${sessionId}\n${target}\n${cols}\n${rows}`;
+}
+
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
 /** A point-in-time snapshot the agent streams to the hub. */
@@ -32,12 +44,15 @@ export interface EnrolledMsg {
   type: "enrolled";
   serverId: string;
   seal: string;
+  /** Hub's ed25519 public key (base64 SPKI) — agent pins it to verify command signatures. */
+  hubKey?: string;
 }
 
 /** Re-auth (reconnect) accepted. */
 export interface AuthOkMsg {
   type: "auth_ok";
   serverId: string;
+  hubKey?: string;
 }
 
 export interface ErrorMsg {
@@ -102,6 +117,8 @@ export interface CommandMsg {
   command: string;
   /** Per-command timeout in ms. When omitted the agent uses its default. */
   timeoutMs?: number;
+  /** base64(ed25519 signature over canonicalCommand) — agent rejects if invalid. */
+  sig?: string;
 }
 
 /** Agent -> Hub: a chunk of a running command's combined stdout+stderr. */
@@ -129,6 +146,8 @@ export interface TermStartMsg {
   target: string;
   cols: number;
   rows: number;
+  /** base64(ed25519 signature over canonicalTermStart) — agent rejects if invalid. */
+  sig?: string;
 }
 
 /** Hub -> Agent: stdin for a session (base64). */
