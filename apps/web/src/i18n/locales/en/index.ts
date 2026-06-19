@@ -5,6 +5,7 @@ import common from "./common.json";
 import dashboard from "./dashboard.json";
 import databases from "./databases.json";
 import destinations from "./destinations.json";
+import domains from "./domains.json";
 import monitors from "./monitors.json";
 import nav from "./nav.json";
 import projects from "./projects.json";
@@ -15,6 +16,6 @@ import templates from "./templates.json";
 import terminal from "./terminal.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, auth, bulk, common, dashboard, databases, destinations, monitors, nav, projects, servers, settings, shared, templates, terminal };
+const en = { apps, auth, bulk, common, dashboard, databases, destinations, domains, monitors, nav, projects, servers, settings, shared, templates, terminal };
 
 export default en;

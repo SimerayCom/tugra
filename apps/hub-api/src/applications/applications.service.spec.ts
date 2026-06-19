@@ -287,6 +287,21 @@ describe("ApplicationsService", () => {
     expect(JSON.stringify(view)).not.toContain('"token":"p"');
   });
 
+  it("persists domain options for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setDomainOptions("u1", "app1", {
+      domainRedirect: "root",
+      securityHeaders: true,
+    });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { domainRedirect: "root", securityHeaders: true } }),
+    );
+  });
+
   it("rejects moving an app to an environment in another team", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },

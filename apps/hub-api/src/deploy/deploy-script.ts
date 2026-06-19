@@ -29,6 +29,8 @@ export interface AppSpec {
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
+  domainRedirect?: "www" | "root" | null;
+  securityHeaders?: boolean;
 }
 
 /** Credentials for pulling from a private container registry. */
@@ -98,17 +100,48 @@ export function traefikLabels(app: AppSpec): string[] {
   if (!app.domain) return [];
   const r = containerName(app);
   const port = app.containerPort ?? 80;
-  return [
+  const redirect = app.domainRedirect ?? null;
+  const base = app.domain.replace(/^www\./i, "");
+  const www = `www.${base}`;
+  // When a canonical redirect is set, answer for both bare + www hosts.
+  const rule = redirect ? `Host(\`${base}\`) || Host(\`${www}\`)` : `Host(\`${app.domain}\`)`;
+
+  const labels = [
     "traefik.enable=true",
-    `traefik.http.routers.${r}.rule=Host(\`${app.domain}\`)`,
+    `traefik.http.routers.${r}.rule=${rule}`,
     `traefik.http.routers.${r}.entrypoints=websecure`,
     `traefik.http.routers.${r}.tls.certresolver=le`,
     `traefik.http.services.${r}.loadbalancer.server.port=${port}`,
-    `traefik.http.routers.${r}-web.rule=Host(\`${app.domain}\`)`,
+    `traefik.http.routers.${r}-web.rule=${rule}`,
     `traefik.http.routers.${r}-web.entrypoints=web`,
     `traefik.http.routers.${r}-web.middlewares=${r}-redirect`,
     `traefik.http.middlewares.${r}-redirect.redirectscheme.scheme=https`,
   ];
+
+  const mw: string[] = [];
+  if (redirect) {
+    const esc = (s: string) => s.replace(/\./g, "\\.");
+    const from = redirect === "root" ? www : base; // non-canonical host
+    const to = redirect === "root" ? base : www; // canonical host
+    labels.push(
+      `traefik.http.middlewares.${r}-canon.redirectregex.regex=^https://${esc(from)}/(.*)`,
+      `traefik.http.middlewares.${r}-canon.redirectregex.replacement=${"https://" + to + "/${1}"}`,
+      `traefik.http.middlewares.${r}-canon.redirectregex.permanent=true`,
+    );
+    mw.push(`${r}-canon`);
+  }
+  if (app.securityHeaders) {
+    labels.push(
+      `traefik.http.middlewares.${r}-sec.headers.stsSeconds=31536000`,
+      `traefik.http.middlewares.${r}-sec.headers.stsIncludeSubdomains=true`,
+      `traefik.http.middlewares.${r}-sec.headers.contentTypeNosniff=true`,
+      `traefik.http.middlewares.${r}-sec.headers.frameDeny=true`,
+      `traefik.http.middlewares.${r}-sec.headers.referrerPolicy=strict-origin-when-cross-origin`,
+    );
+    mw.push(`${r}-sec`);
+  }
+  if (mw.length) labels.push(`traefik.http.routers.${r}.middlewares=${mw.join(",")}`);
+  return labels;
 }
 
 /** Build the prep steps (clone+build, or pull) that produce `tugra_<appId>:<version>`. */

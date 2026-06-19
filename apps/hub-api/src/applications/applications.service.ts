@@ -38,6 +38,7 @@ import {
   templateMetaList,
   type TemplateMeta,
 } from "../templates/catalog";
+import { probeSsl, type SslStatus } from "./ssl-probe";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -67,6 +68,8 @@ export interface AppView {
   hostPort: number | null;
   containerPort: number | null;
   domain: string | null;
+  domainRedirect: string | null;
+  securityHeaders: boolean;
   https: boolean;
   url: string | null;
   webhookToken: string | null;
@@ -75,6 +78,17 @@ export interface AppView {
   role: Role;
   canWrite: boolean;
   createdAt: Date;
+}
+
+export interface DomainView {
+  id: string;
+  name: string;
+  domain: string;
+  https: boolean;
+  url: string | null;
+  domainRedirect: string | null;
+  securityHeaders: boolean;
+  ssl: SslStatus;
 }
 
 @Injectable()
@@ -456,6 +470,36 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.environment.update", target: id });
   }
 
+  async setDomainOptions(
+    userId: string,
+    id: string,
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean },
+  ): Promise<void> {
+    await this.requireWrite(userId, id);
+    const data: Prisma.ApplicationUpdateInput = {};
+    if (opts.domainRedirect !== undefined) data.domainRedirect = opts.domainRedirect;
+    if (opts.securityHeaders !== undefined) data.securityHeaders = opts.securityHeaders;
+    await this.prisma.application.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
+  }
+
+  /** Every app domain across the user's teams + a live SSL status probe. */
+  async listDomains(userId: string): Promise<DomainView[]> {
+    const apps = (await this.list(userId)).filter((a) => a.domain);
+    return Promise.all(
+      apps.map(async (a) => ({
+        id: a.id,
+        name: a.name,
+        domain: a.domain!,
+        https: a.https,
+        url: a.url,
+        domainRedirect: a.domainRedirect,
+        securityHeaders: a.securityHeaders,
+        ssl: await probeSsl(a.domain!),
+      })),
+    );
+  }
+
   /** Ensure an environment exists and belongs to the given team (no cross-team moves). */
   private async assertEnvInTeam(environmentId: string, teamId: string): Promise<void> {
     const env = await this.prisma.environment.findUnique({
@@ -537,6 +581,8 @@ export class ApplicationsService {
       hostPort: app.hostPort,
       containerPort: app.containerPort,
       domain: app.domain,
+      domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
+      securityHeaders: app.securityHeaders,
     };
   }
 
@@ -581,6 +627,8 @@ export class ApplicationsService {
       hostPort: app.hostPort,
       containerPort: app.containerPort,
       domain: app.domain,
+      domainRedirect: app.domainRedirect,
+      securityHeaders: app.securityHeaders,
       https: app.https,
       url: app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null,
       // Webhook credentials are only exposed to members who can deploy.

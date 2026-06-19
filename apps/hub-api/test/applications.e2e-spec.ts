@@ -425,6 +425,45 @@ describe("Applications / deploy (e2e)", () => {
       .expect(400);
   });
 
+  it("sets domain options (redirect + security headers) applied as Traefik labels", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "domapp", serverId, image: "nginx:alpine", domain: "dom.example.com" })
+      .expect(201);
+    const appId = appRes.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/domain-options`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ domainRedirect: "root", securityHeaders: true })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.domainRedirect).toBe("root");
+    expect(detail.body.securityHeaders).toBe(true);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${appId}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const sent = commands.join("\n");
+    expect(sent).toContain("redirectregex");
+    expect(sent).toContain("Host(`www.dom.example.com`)");
+    expect(sent).toContain("-sec.headers.stsSeconds");
+
+    // central domains overview lists this domain (ssl probe best-effort)
+    const dom = await request(app.getHttpServer())
+      .get("/apps/domains")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const row = dom.body.find((d: { domain: string }) => d.domain === "dom.example.com");
+    expect(row).toBeTruthy();
+    expect(row.ssl).toHaveProperty("state");
+  });
+
   it("streams live build logs over SSE (agent command_log → hub → client)", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

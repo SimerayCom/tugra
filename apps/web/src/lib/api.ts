@@ -9,6 +9,7 @@ import type {
   Database,
   DbEngine,
   Deployment,
+  DomainView,
   Heartbeat,
   MetricsSample,
   Monitor,
@@ -358,6 +359,18 @@ export const api = {
     return apiFetch<{ ok: true }>(`/apps/${id}/environment`, {
       method: "PUT",
       body: JSON.stringify({ environmentId }),
+    });
+  },
+  listDomains() {
+    return apiFetch<DomainView[]>("/apps/domains");
+  },
+  setAppDomainOptions(
+    id: string,
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean },
+  ) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/domain-options`, {
+      method: "PUT",
+      body: JSON.stringify(opts),
     });
   },
   setDatabaseEnvironment(id: string, environmentId: string | null) {
