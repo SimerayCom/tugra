@@ -2,6 +2,7 @@
   "dashboard": "Dashboard",
   "uptime": "Uptime",
   "servers": "Servers",
+  "projects": "Projects",
   "apps": "Apps",
   "databases": "Databases",
   "destinations": "Backup Storage",

@@ -13,6 +13,7 @@ import type {
   MetricsSample,
   Monitor,
   PublicUser,
+  Project,
   ServerView,
   SharedVariable,
   Team,
@@ -352,6 +353,41 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(creds),
     });
+  },
+  setAppEnvironment(id: string, environmentId: string | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/environment`, {
+      method: "PUT",
+      body: JSON.stringify({ environmentId }),
+    });
+  },
+  setDatabaseEnvironment(id: string, environmentId: string | null) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/environment`, {
+      method: "PUT",
+      body: JSON.stringify({ environmentId }),
+    });
+  },
+
+  // ── projects / environments ──
+  listProjects() {
+    return apiFetch<Project[]>("/projects");
+  },
+  getProject(id: string) {
+    return apiFetch<Project>(`/projects/${id}`);
+  },
+  createProject(teamId: string, name: string) {
+    return apiFetch<Project>("/projects", { method: "POST", body: JSON.stringify({ teamId, name }) });
+  },
+  renameProject(id: string, name: string) {
+    return apiFetch<Project>(`/projects/${id}`, { method: "PUT", body: JSON.stringify({ name }) });
+  },
+  deleteProject(id: string) {
+    return apiFetch<{ ok: true }>(`/projects/${id}`, { method: "DELETE" });
+  },
+  addEnvironment(projectId: string, name: string) {
+    return apiFetch<Project>(`/projects/${projectId}/environments`, { method: "POST", body: JSON.stringify({ name }) });
+  },
+  deleteEnvironment(envId: string) {
+    return apiFetch<{ ok: true }>(`/projects/environments/${envId}`, { method: "DELETE" });
   },
 
   // ── databases ──

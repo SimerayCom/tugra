@@ -8,6 +8,7 @@ import type { AppVolume } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
+import { EnvironmentCard } from "../../../../components/environment-card";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 
@@ -145,6 +146,8 @@ export default function AppDetailPage() {
           registryUser={appData.registryUser}
         />
       )}
+
+      {appData.canWrite && <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />}
 
       {appData.canWrite && <EnvCard id={id} />}
 

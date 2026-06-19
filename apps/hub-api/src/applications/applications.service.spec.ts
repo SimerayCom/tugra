@@ -287,6 +287,31 @@ describe("ApplicationsService", () => {
     expect(JSON.stringify(view)).not.toContain('"token":"p"');
   });
 
+  it("rejects moving an app to an environment in another team", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { teamId: "OTHER" } }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setEnvironment("u1", "app1", "e1"),
+    ).rejects.toThrow(/not found in this team/);
+  });
+
+  it("assigns an app to a same-team environment and can unassign", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { teamId: "t1" } }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setEnvironment("u1", "app1", "e1");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { environmentId: "e1" } }));
+    await svc.setEnvironment("u1", "app1", null);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { environmentId: null } }));
+  });
+
   it("forbids a non-writer from setting volumes", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Put,
   UseGuards,
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -13,7 +14,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { DatabasesService } from "./databases.service";
-import { CreateDatabaseInput, CreateDatabaseSchema } from "./dto";
+import {
+  CreateDatabaseInput,
+  CreateDatabaseSchema,
+  SetEnvironmentInput,
+  SetEnvironmentSchema,
+} from "./dto";
 
 @Controller("databases")
 @UseGuards(ApiAuthGuard)
@@ -48,6 +54,17 @@ export class DatabasesController {
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.databases.stop(user.userId, id);
+    return { ok: true };
+  }
+
+  @Put(":id/environment")
+  @HttpCode(200)
+  async setEnvironment(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetEnvironmentSchema)) body: SetEnvironmentInput,
+  ) {
+    await this.databases.setEnvironment(user.userId, id, body.environmentId);
     return { ok: true };
   }
 

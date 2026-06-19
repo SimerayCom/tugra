@@ -58,7 +58,29 @@ model Team {
   databases    Database[]
   backupDestinations BackupDestination[]
   sharedVariables SharedVariable[]
+  projects     Project[]
   createdAt    DateTime     @default(now())
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       String
+  name         String
+  environments Environment[]
+  createdAt    DateTime      @default(now())
+
+  @@index([teamId])
+}
+
+model Environment {
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  name      String
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
 }
 
 model SharedVariable {
@@ -298,6 +320,7 @@ model Application {
   id            String       @id @default(cuid())
   team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId        String
+  environmentId  String?
   serverId       String
   name           String
   source         AppSource    @default(IMAGE)
@@ -324,6 +347,8 @@ model Application {
   webhookSecret  String?
   deployments   Deployment[]
   createdAt     DateTime     @default(now())
+
+  @@index([environmentId])
 }
 
 model Deployment {
@@ -343,6 +368,7 @@ model Database {
   id          String   @id @default(cuid())
   team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId      String
+  environmentId String?
   serverId    String
   name        String
   engine      DbEngine
@@ -360,6 +386,7 @@ model Database {
   createdAt   DateTime @default(now())
 
   @@index([teamId])
+  @@index([environmentId])
 }
 
 model BackupDestination {

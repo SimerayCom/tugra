@@ -60,6 +60,7 @@ export interface AppView {
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
+  environmentId: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -94,10 +95,12 @@ export class ApplicationsService {
     });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requireRole(userId, server.teamId, WRITE);
+    if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
 
     const app = await this.prisma.application.create({
       data: {
         name: dto.name,
+        environmentId: dto.environmentId ?? null,
         source: dto.source ?? "IMAGE",
         image: dto.image ?? null,
         gitUrl: dto.gitUrl ?? null,
@@ -446,6 +449,24 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.credentials.update", target: id });
   }
 
+  async setEnvironment(userId: string, id: string, environmentId: string | null): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (environmentId) await this.assertEnvInTeam(environmentId, app.teamId);
+    await this.prisma.application.update({ where: { id }, data: { environmentId } });
+    await this.audit.log({ actor: userId, action: "app.environment.update", target: id });
+  }
+
+  /** Ensure an environment exists and belongs to the given team (no cross-team moves). */
+  private async assertEnvInTeam(environmentId: string, teamId: string): Promise<void> {
+    const env = await this.prisma.environment.findUnique({
+      where: { id: environmentId },
+      include: { project: true },
+    });
+    if (!env || env.project.teamId !== teamId) {
+      throw new BadRequestException("environment not found in this team");
+    }
+  }
+
   // ── helpers ──
   private appVolumes(app: Application): AppVolume[] {
     return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
@@ -553,6 +574,7 @@ export class ApplicationsService {
       hasGitToken: !!app.gitTokenEnc,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
       registryUser: this.appRegistryAuth(app)?.user ?? null,
+      environmentId: app.environmentId,
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,

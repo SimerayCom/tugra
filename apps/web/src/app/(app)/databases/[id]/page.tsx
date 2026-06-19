@@ -8,6 +8,7 @@ import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
+import { EnvironmentCard } from "../../../../components/environment-card";
 
 export default function DatabaseDetailPage() {
   const t = useT();
@@ -104,6 +105,8 @@ export default function DatabaseDetailPage() {
           </div>
         </Card>
       )}
+
+      {db.canWrite && <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />}
 
       {db.canWrite && !db.backupSupported && (
         <Card style={{ padding: 16, marginTop: 16, color: "var(--c-tx3)", fontSize: 13 }}>

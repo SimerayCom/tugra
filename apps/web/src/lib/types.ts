@@ -121,6 +121,32 @@ export interface AppVolume {
   path: string;
 }
 
+export interface ProjectResource {
+  id: string;
+  name: string;
+  kind: "app" | "database";
+  status: string;
+}
+
+export interface Environment {
+  id: string;
+  name: string;
+  appCount: number;
+  dbCount: number;
+  resources?: ProjectResource[];
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  teamId: string;
+  name: string;
+  environments: Environment[];
+  role: Role;
+  canWrite: boolean;
+  createdAt: string;
+}
+
 export interface Template {
   slug: string;
   name: string;
@@ -145,6 +171,7 @@ export interface Application {
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
+  environmentId: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -188,6 +215,7 @@ export interface Database {
   name: string;
   engine: DbEngine;
   version: string;
+  environmentId: string | null;
   serverId: string;
   teamId: string;
   status: DbStatus;
