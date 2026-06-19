@@ -21,6 +21,7 @@ import {
   runTag,
   type AppSpec,
   type AppVolume,
+  type RegistryAuth,
 } from "../deploy/deploy-script";
 import {
   buildComposeDownScript,
@@ -56,6 +57,9 @@ export interface AppView {
   memoryMb: number | null;
   cpus: number | null;
   volumes: AppVolume[];
+  hasGitToken: boolean;
+  registryUrl: string | null;
+  registryUser: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -423,9 +427,46 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.volumes.update", target: id });
   }
 
+  async setCredentials(
+    userId: string,
+    id: string,
+    creds: { gitToken?: string | null; registry?: RegistryAuth | null },
+  ): Promise<void> {
+    await this.requireWrite(userId, id);
+    const data: Prisma.ApplicationUpdateInput = {};
+    if (creds.gitToken !== undefined) {
+      data.gitTokenEnc = creds.gitToken ? this.crypto.encrypt(creds.gitToken) : null;
+    }
+    if (creds.registry !== undefined) {
+      data.registryAuthEnc = creds.registry
+        ? this.crypto.encrypt(JSON.stringify(creds.registry))
+        : null;
+    }
+    await this.prisma.application.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "app.credentials.update", target: id });
+  }
+
   // ── helpers ──
   private appVolumes(app: Application): AppVolume[] {
     return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
+  }
+
+  private appGitToken(app: Application): string | null {
+    if (!app.gitTokenEnc) return null;
+    try {
+      return this.crypto.decrypt(app.gitTokenEnc);
+    } catch {
+      return null;
+    }
+  }
+
+  private appRegistryAuth(app: Application): RegistryAuth | null {
+    if (!app.registryAuthEnc) return null;
+    try {
+      return JSON.parse(this.crypto.decrypt(app.registryAuthEnc)) as RegistryAuth;
+    } catch {
+      return null;
+    }
   }
 
   private appEnv(app: Application): Record<string, string> {
@@ -469,6 +510,8 @@ export class ApplicationsService {
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       volumes: this.appVolumes(app),
+      gitToken: this.appGitToken(app),
+      registryAuth: this.appRegistryAuth(app),
       env: this.appEnv(app),
       hostPort: app.hostPort,
       containerPort: app.containerPort,
@@ -507,6 +550,9 @@ export class ApplicationsService {
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       volumes: this.appVolumes(app),
+      hasGitToken: !!app.gitTokenEnc,
+      registryUrl: this.appRegistryAuth(app)?.url ?? null,
+      registryUser: this.appRegistryAuth(app)?.user ?? null,
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,

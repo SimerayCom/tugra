@@ -23,10 +23,19 @@ export interface AppSpec {
   memoryMb?: number | null;
   cpus?: number | null;
   volumes?: AppVolume[] | null;
+  gitToken?: string | null;
+  registryAuth?: RegistryAuth | null;
   env: Record<string, string>;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
+}
+
+/** Credentials for pulling from a private container registry. */
+export interface RegistryAuth {
+  url?: string;
+  user: string;
+  token: string;
 }
 
 /** A persistent named volume mounted into the app container. */
@@ -62,6 +71,29 @@ function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
+function b64(v: string): string {
+  return Buffer.from(v, "utf8").toString("base64");
+}
+
+/** Inject the `x-access-token` user into an https git URL (token itself stays out). */
+export function gitAuthUrl(gitUrl: string): string {
+  return gitUrl.replace(/^https:\/\//i, "https://x-access-token@");
+}
+
+/**
+ * Shell prelude that creates a 0700 temp dir ($sd) for build-time secrets and a
+ * single trap to wipe it on exit (success or failure). Reused for git askpass
+ * and isolated docker registry config so no token persists on disk.
+ */
+function secretsDirPrelude(): string[] {
+  return [
+    "mkdir -p /etc/tugra/builds",
+    "sd=$(mktemp -d /etc/tugra/builds/.sec.XXXXXX)",
+    'chmod 700 "$sd"',
+    `trap 'rm -rf "$sd"' EXIT`,
+  ];
+}
+
 export function traefikLabels(app: AppSpec): string[] {
   if (!app.domain) return [];
   const r = containerName(app);
@@ -85,10 +117,22 @@ function prepSteps(app: AppSpec, version: string): string[] {
   if (app.source === "GIT") {
     const bd = `/etc/tugra/builds/${app.id}`;
     const branch = app.gitBranch || "main";
-    const steps = [
-      `rm -rf ${bd} && mkdir -p ${bd}`,
-      `git clone --depth 1 --branch ${shq(branch)} ${shq(app.gitUrl ?? "")} ${bd}`,
-    ];
+    const url = app.gitUrl ?? "";
+    const useToken = !!app.gitToken && /^https:\/\//i.test(url);
+    const steps = [`rm -rf ${bd} && mkdir -p ${bd}`];
+    if (useToken) {
+      // Private clone: token via GIT_ASKPASS (never in argv / URL / .git/config).
+      steps.push(
+        ...secretsDirPrelude(),
+        `printf %s ${shq(b64(app.gitToken!))} | base64 -d > "$sd/token"`,
+        'chmod 600 "$sd/token"',
+        `printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`,
+        'chmod 700 "$sd/askpass"',
+        `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} ${shq(gitAuthUrl(url))} ${bd}`,
+      );
+    } else {
+      steps.push(`git clone --depth 1 --branch ${shq(branch)} ${shq(url)} ${bd}`);
+    }
     if (app.buildType === "DOCKERFILE") {
       const df = app.dockerfilePath || "Dockerfile";
       steps.push(`docker build -t ${tag} -f ${bd}/${df} ${bd}`);
@@ -100,11 +144,30 @@ function prepSteps(app: AppSpec, version: string): string[] {
     }
     return steps;
   }
-  // IMAGE: pull upstream, then snapshot it to the versioned local tag.
+  // IMAGE: pull upstream (optionally authenticating), then snapshot to the tag.
   return [
+    ...registryLoginPrelude(app.registryAuth),
     `docker pull ${shq(imageRef(app))}`,
     `docker tag ${shq(imageRef(app))} ${tag}`,
+    ...registryLogoutSteps(app.registryAuth),
   ];
+}
+
+/** Login to a private registry into an isolated DOCKER_CONFIG ($sd), password via stdin. */
+export function registryLoginPrelude(auth?: RegistryAuth | null): string[] {
+  if (!auth) return [];
+  const host = auth.url ? ` ${shq(auth.url)}` : "";
+  return [
+    ...secretsDirPrelude(),
+    'export DOCKER_CONFIG="$sd"',
+    `printf %s ${shq(b64(auth.token))} | base64 -d | docker --config "$sd" login${host} -u ${shq(auth.user)} --password-stdin`,
+  ];
+}
+
+export function registryLogoutSteps(auth?: RegistryAuth | null): string[] {
+  if (!auth) return [];
+  const host = auth.url ? ` ${shq(auth.url)}` : "";
+  return [`docker --config "$sd" logout${host} || true`];
 }
 
 export const ENV_DIR = "/etc/tugra/env";

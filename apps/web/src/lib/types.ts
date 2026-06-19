@@ -142,6 +142,9 @@ export interface Application {
   memoryMb: number | null;
   cpus: number | null;
   volumes: AppVolume[];
+  hasGitToken: boolean;
+  registryUrl: string | null;
+  registryUser: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;

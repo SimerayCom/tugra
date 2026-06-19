@@ -326,6 +326,66 @@ describe("Applications / deploy (e2e)", () => {
       .expect(404);
   });
 
+  it("stores private registry credentials without exposing the token", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "privimg", serverId, image: "reg.io/team/app:1" })
+      .expect(201);
+    const id = appRes.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/apps/${id}/credentials`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ registry: { url: "reg.io", user: "robot", token: "supersecret" } })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.registryUrl).toBe("reg.io");
+    expect(detail.body.registryUser).toBe("robot");
+    expect(JSON.stringify(detail.body)).not.toContain("supersecret");
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(150);
+    const sent = commands.join("\n");
+    expect(sent).toContain("--password-stdin");
+    expect(sent).not.toContain("supersecret");
+  });
+
+  it("stores a private git token and uses GIT_ASKPASS on deploy", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "privrepo", serverId, source: "GIT", gitUrl: "https://github.com/acme/private.git", gitBranch: "main" })
+      .expect(201);
+    const id = appRes.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/apps/${id}/credentials`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ gitToken: "ghp_supersecret" })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.hasGitToken).toBe(true);
+    expect(JSON.stringify(detail.body)).not.toContain("ghp_supersecret");
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(150);
+    const sent = commands.join("\n");
+    expect(sent).toContain("GIT_ASKPASS");
+    expect(sent).toContain("x-access-token@github.com");
+    expect(sent).not.toContain("ghp_supersecret");
+  });
+
   it("mounts a persistent volume at deploy", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

@@ -44,6 +44,23 @@ export const SetLimitsSchema = z.object({
 });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
 
+export const SetCredentialsSchema = z
+  .object({
+    gitToken: z.string().min(1).nullable().optional(),
+    registry: z
+      .object({
+        url: z.string().min(1).optional(),
+        user: z.string().min(1),
+        token: z.string().min(1),
+      })
+      .nullable()
+      .optional(),
+  })
+  .refine((d) => d.gitToken !== undefined || d.registry !== undefined, {
+    message: "provide gitToken and/or registry",
+  });
+export type SetCredentialsInput = z.infer<typeof SetCredentialsSchema>;
+
 export const FromTemplateSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),

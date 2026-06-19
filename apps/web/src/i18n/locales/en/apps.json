@@ -55,5 +55,11 @@
   "volumesDesc": "Named volumes keep data across redeploys. Applied on next deploy.",
   "volumeName": "Name (e.g. data)",
   "volumePath": "Container path (e.g. /app/data)",
-  "addVolume": "+ Add volume"
+  "addVolume": "+ Add volume",
+  "credentials": "Source credentials",
+  "credentialsDesc": "Access a private git repo or container registry. Stored encrypted; applied on next deploy.",
+  "gitToken": "Git access token (PAT)",
+  "registryUrl": "Registry URL (Docker Hub if empty)",
+  "registryUser": "Registry username",
+  "registryToken": "Registry token / password"
 }

@@ -6,6 +6,7 @@ import {
   containerName,
   envFileContent,
   envFileB64,
+  gitAuthUrl,
   runTag,
   traefikLabels,
   type AppSpec,
@@ -84,6 +85,52 @@ describe("deploy-script", () => {
     const s = buildRemoveScript({ id: "abc" }, [{ name: "data", path: "/app/data" }]);
     expect(s).toContain("docker rm -f tugra_abc");
     expect(s).toContain("docker volume rm tugra_appv_abc_data");
+  });
+
+  it("gitAuthUrl injects x-access-token into https URLs only", () => {
+    expect(gitAuthUrl("https://github.com/x/y.git")).toBe("https://x-access-token@github.com/x/y.git");
+    expect(gitAuthUrl("git@github.com:x/y.git")).toBe("git@github.com:x/y.git");
+  });
+
+  it("GIT private clone uses GIT_ASKPASS and never puts the raw token in the command", () => {
+    const s = buildRunScript(
+      { ...base, source: "GIT", image: null, gitUrl: "https://github.com/x/y.git", gitBranch: "main", gitToken: "secret123" },
+      "v1",
+    );
+    expect(s).toContain("GIT_ASKPASS=");
+    expect(s).toContain("GIT_TERMINAL_PROMPT=0");
+    expect(s).toContain("x-access-token@github.com");
+    expect(s).toContain('trap');
+    expect(s).not.toContain("secret123"); // raw token only travels base64-encoded
+  });
+
+  it("GIT clone without a token keeps the plain command (regression)", () => {
+    const s = buildRunScript(
+      { ...base, source: "GIT", image: null, gitUrl: "https://github.com/x/y.git" },
+      "v1",
+    );
+    expect(s).not.toContain("GIT_ASKPASS");
+    expect(s).toContain("git clone --depth 1 --branch 'main' 'https://github.com/x/y.git'");
+  });
+
+  it("IMAGE pull authenticates to a private registry via --password-stdin (no raw token)", () => {
+    const s = buildRunScript(
+      { ...base, registryAuth: { url: "reg.io", user: "u", token: "secret123" } },
+      "v1",
+    );
+    expect(s).toContain("--password-stdin");
+    expect(s).toContain('docker --config "$sd" login');
+    expect(s).toContain("reg.io");
+    expect(s).toContain("-u 'u'");
+    expect(s).toContain("logout");
+    expect(s).not.toContain("--password "); // never the inline flag
+    expect(s).not.toContain("secret123");
+  });
+
+  it("IMAGE pull without registry auth stays unauthenticated (regression)", () => {
+    const s = buildRunScript(base, "v1");
+    expect(s).not.toContain("docker login");
+    expect(s).not.toContain("DOCKER_CONFIG");
   });
 
   it("omits limit/health flags when unset (regression)", () => {

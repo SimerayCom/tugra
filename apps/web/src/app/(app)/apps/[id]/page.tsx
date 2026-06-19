@@ -136,6 +136,16 @@ export default function AppDetailPage() {
         <VolumesCard id={id} volumes={appData.volumes} />
       )}
 
+      {appData.canWrite && (
+        <CredentialsCard
+          id={id}
+          source={appData.source}
+          hasGitToken={appData.hasGitToken}
+          registryUrl={appData.registryUrl}
+          registryUser={appData.registryUser}
+        />
+      )}
+
       {appData.canWrite && <EnvCard id={id} />}
 
       {deployActive && live.lines && <LiveLogCard lines={live.lines} />}
@@ -357,6 +367,69 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
           <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
         </div>
       </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function CredentialsCard({
+  id,
+  source,
+  hasGitToken,
+  registryUrl,
+  registryUser,
+}: {
+  id: string;
+  source: string;
+  hasGitToken: boolean;
+  registryUrl: string | null;
+  registryUser: string | null;
+}) {
+  const t = useT();
+  const qc = useQueryClient();
+  const isGit = source === "GIT";
+  const [gitToken, setGitToken] = useState("");
+  const [url, setUrl] = useState(registryUrl ?? "");
+  const [user, setUser] = useState(registryUser ?? "");
+  const [token, setToken] = useState("");
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppCredentials(
+        id,
+        isGit
+          ? { gitToken: gitToken.trim() || null }
+          : { registry: user.trim() && token.trim() ? { url: url.trim() || undefined, user: user.trim(), token } : null },
+      ),
+    onSuccess: () => {
+      setGitToken("");
+      setToken("");
+      qc.invalidateQueries({ queryKey: ["app", id] });
+    },
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.credentials")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.credentialsDesc")}</p>
+      {isGit ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            style={{ ...envField, flex: 1, minWidth: 200 }}
+            type="password"
+            placeholder={hasGitToken ? "•••••••• (set — replace)" : t("apps.gitToken")}
+            value={gitToken}
+            onChange={(e) => setGitToken(e.target.value)}
+          />
+          <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...envField, width: 200 }} placeholder={t("apps.registryUrl")} value={url} onChange={(e) => setUrl(e.target.value)} />
+          <input style={{ ...envField, width: 150 }} placeholder={t("apps.registryUser")} value={user} onChange={(e) => setUser(e.target.value)} />
+          <input style={{ ...envField, flex: 1, minWidth: 160 }} type="password" placeholder={t("apps.registryToken")} value={token} onChange={(e) => setToken(e.target.value)} />
+          <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        </div>
+      )}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );

@@ -311,6 +311,8 @@ model Application {
   memoryMb       Int?
   cpus           Float?
   volumes        Json?
+  gitTokenEnc     String?
+  registryAuthEnc String?
   env            Json
   envEnc         String?
   hostPort       Int?
