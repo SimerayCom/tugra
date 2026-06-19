@@ -8,7 +8,8 @@ import { HttpAdapterHost } from "@nestjs/core";
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import type { AgentMessage, TermExitMsg, TermOutputMsg } from "@tugra/shared";
-import { PROTOCOL_VERSION } from "@tugra/shared";
+import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart } from "@tugra/shared";
+import { HubSigningService } from "./hub-signing.service";
 
 /**
  * The terminal gateway registers a delegate so the agent socket can relay
@@ -53,6 +54,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly httpAdapterHost: HttpAdapterHost,
     private readonly servers: ServersService,
     private readonly metrics: MetricsService,
+    private readonly hubSign: HubSigningService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -117,7 +119,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           st.serverId = serverId;
           st.authed = true;
           this.sockets.set(serverId, socket);
-          return this.send(socket, { type: "enrolled", serverId, seal });
+          return this.send(socket, {
+            type: "enrolled",
+            serverId,
+            seal,
+            hubKey: this.hubSign.publicKeySpkiBase64,
+          });
         }
         case "auth": {
           const ok = await this.servers.authenticate(
@@ -129,7 +136,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           st.serverId = msg.serverId;
           st.authed = true;
           this.sockets.set(msg.serverId, socket);
-          return this.send(socket, { type: "auth_ok", serverId: msg.serverId });
+          return this.send(socket, {
+            type: "auth_ok",
+            serverId: msg.serverId,
+            hubKey: this.hubSign.publicKeySpkiBase64,
+          });
         }
         case "metrics": {
           if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
@@ -198,8 +209,27 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       }, timeoutMs);
       this.pending.set(reqId, { serverId, resolve, reject, timer });
       if (onChunk) this.chunkListeners.set(reqId, onChunk);
-      this.send(socket, { type: "command", reqId, command, timeoutMs });
+      this.send(socket, this.signOutbound({ type: "command", reqId, command, timeoutMs }));
     });
+  }
+
+  /** Sign command/term_start so the agent can verify the hub issued them. */
+  private signOutbound(msg: Record<string, unknown>): Record<string, unknown> {
+    if (msg.type === "command") {
+      msg.sig = this.hubSign.sign(
+        canonicalCommand(msg.reqId as string, msg.command as string, msg.timeoutMs as number),
+      );
+    } else if (msg.type === "term_start") {
+      msg.sig = this.hubSign.sign(
+        canonicalTermStart(
+          msg.sessionId as string,
+          msg.target as string,
+          msg.cols as number,
+          msg.rows as number,
+        ),
+      );
+    }
+    return msg;
   }
 
   /** Register the terminal gateway as the relay for interactive-shell traffic. */
@@ -208,10 +238,10 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /** Fire-and-forget a message to a connected agent. Returns false if offline. */
-  sendToAgent(serverId: string, msg: object): boolean {
+  sendToAgent(serverId: string, msg: Record<string, unknown>): boolean {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    this.send(socket, msg);
+    this.send(socket, this.signOutbound(msg));
     return true;
   }
 

@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -94,6 +95,15 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		return fmt.Errorf("authentication rejected: %s", resp.Message)
 	}
 
+	// Pin the hub's signing key (TOFU, per connection). Commands/term_start must
+	// carry a valid signature from this key or the agent rejects them.
+	var hubPub ed25519.PublicKey
+	if resp.HubKey != "" {
+		if k, err := protocol.ParseHubKey(resp.HubKey); err == nil {
+			hubPub = k
+		}
+	}
+
 	// Send host inventory right after auth, and refresh it periodically so it
 	// stays current across server upgrades / kernel patches on long sessions.
 	sendHostInfo := func() {
@@ -124,6 +134,10 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			}
 			switch m.Type {
 			case "command":
+				if !protocol.VerifySig(hubPub, protocol.CanonicalCommand(m.ReqID, m.Command, m.TimeoutMs), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected command: invalid or missing hub signature")
+					continue
+				}
 				go func(reqID, command string, timeoutMs int) {
 					to := commandTimeout
 					if timeoutMs > 0 {
@@ -144,6 +158,10 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 					})
 				}(m.ReqID, m.Command, m.TimeoutMs)
 			case "term_start":
+				if !protocol.VerifySig(hubPub, protocol.CanonicalTermStart(m.SessionID, m.Target, m.Cols, m.Rows), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected term_start: invalid or missing hub signature")
+					continue
+				}
 				sid := m.SessionID
 				sess, err := terminal.Start(m.Target, m.Cols, m.Rows,
 					func(b []byte) {
