@@ -8,6 +8,7 @@ import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import type { ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
+import { TerminalModal } from "../../../../components/terminal-modal";
 import { Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
 
 export default function ServerDetailPage() {
@@ -24,6 +25,7 @@ export default function ServerDetailPage() {
     queryFn: () => api.getMetrics(id, 60),
     refetchInterval: 5000,
   });
+  const [shellOpen, setShellOpen] = useState(false);
 
   if (isLoading || !server) return <div style={{ padding: 28 }}><Spinner /></div>;
 
@@ -68,7 +70,21 @@ export default function ServerDetailPage() {
         </div>
       )}
 
+      {server.canWrite && (
+        <div style={{ marginBottom: 20 }}>
+          <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
+        </div>
+      )}
+
       {server.canWrite && <CleanupCard id={id} server={server} />}
+
+      {shellOpen && (
+        <TerminalModal
+          target={{ server: id }}
+          title={t("terminal.hostTitle", { name: server.name })}
+          onClose={() => setShellOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -49,5 +49,6 @@
   "cleanupEvery": "Every (hours)",
   "cleanupVolumes": "Also unused volumes",
   "lastCleanup": "Last",
-  "save": "Save"
+  "save": "Save",
+  "openHostShell": "Open host shell"
 }

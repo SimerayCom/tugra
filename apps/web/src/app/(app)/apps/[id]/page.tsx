@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
+import { TerminalModal } from "../../../../components/terminal-modal";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 
@@ -48,6 +49,7 @@ export default function AppDetailPage() {
   // Deployments come newest-first; a leading RUNNING one means a live deploy.
   const deployActive = deployments[0]?.status === "RUNNING";
   const live = useDeployLogStream(id, deployActive);
+  const [shellOpen, setShellOpen] = useState(false);
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
 
@@ -76,9 +78,20 @@ export default function AppDetailPage() {
             {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
           </Btn>
           <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
+          {appData.source !== "COMPOSE" && (
+            <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("apps.openShell")}</Btn>
+          )}
           <div style={{ flex: 1 }} />
           <Btn variant="danger" onClick={() => del.mutate()}>Delete</Btn>
         </div>
+      )}
+
+      {shellOpen && (
+        <TerminalModal
+          target={{ app: id }}
+          title={t("terminal.containerTitle", { name: appData.name })}
+          onClose={() => setShellOpen(false)}
+        />
       )}
 
       {appData.canWrite && appData.webhookToken && (

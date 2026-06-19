@@ -73,6 +73,20 @@ type CommandResult struct {
 	Output   string `json:"output"`
 }
 
+// TermOutput: Agent -> Hub, a chunk of a terminal session's PTY output (base64).
+type TermOutput struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Data      string `json:"data"`
+}
+
+// TermExit: Agent -> Hub, a terminal session ended.
+type TermExit struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	ExitCode  int    `json:"exitCode"`
+}
+
 // Hub -> Agent (one struct covers all; unused fields stay empty)
 type ServerMsg struct {
 	Type      string `json:"type"`
@@ -83,4 +97,10 @@ type ServerMsg struct {
 	ReqID     string `json:"reqId"`
 	Command   string `json:"command"`
 	TimeoutMs int    `json:"timeoutMs"`
+	// Terminal session fields (term_start / term_input / term_resize / term_close)
+	SessionID string `json:"sessionId"`
+	Target    string `json:"target"`
+	Cols      int    `json:"cols"`
+	Rows      int    `json:"rows"`
+	Data      string `json:"data"`
 }

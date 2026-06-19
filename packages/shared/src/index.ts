@@ -119,6 +119,53 @@ export interface CommandResultMsg {
   output: string;
 }
 
+// ── Interactive terminal (web shell) ──
+// data fields are base64-encoded raw TTY bytes (binary-safe over JSON).
+
+/** Hub -> Agent: open a PTY. target="" → host `sh`; else a container name. */
+export interface TermStartMsg {
+  type: "term_start";
+  sessionId: string;
+  target: string;
+  cols: number;
+  rows: number;
+}
+
+/** Hub -> Agent: stdin for a session (base64). */
+export interface TermInputMsg {
+  type: "term_input";
+  sessionId: string;
+  data: string;
+}
+
+/** Hub -> Agent: resize a session's PTY. */
+export interface TermResizeMsg {
+  type: "term_resize";
+  sessionId: string;
+  cols: number;
+  rows: number;
+}
+
+/** Hub -> Agent: close a session. */
+export interface TermCloseMsg {
+  type: "term_close";
+  sessionId: string;
+}
+
+/** Agent -> Hub: a chunk of a session's PTY output (base64). */
+export interface TermOutputMsg {
+  type: "term_output";
+  sessionId: string;
+  data: string;
+}
+
+/** Agent -> Hub: a session ended. */
+export interface TermExitMsg {
+  type: "term_exit";
+  sessionId: string;
+  exitCode: number;
+}
+
 export type AgentMessage =
   | EnrollMsg
   | AuthMsg
@@ -126,10 +173,16 @@ export type AgentMessage =
   | HeartbeatMsg
   | HostInfoMsg
   | CommandLogMsg
-  | CommandResultMsg;
+  | CommandResultMsg
+  | TermOutputMsg
+  | TermExitMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
   | AuthOkMsg
   | ErrorMsg
-  | CommandMsg;
+  | CommandMsg
+  | TermStartMsg
+  | TermInputMsg
+  | TermResizeMsg
+  | TermCloseMsg;
