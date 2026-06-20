@@ -35,7 +35,8 @@ export type AgentCapability =
   | "backup"
   | "cleanup"
   | "bulk"
-  | "terminal";
+  | "terminal"
+  | "schedule";
 
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
