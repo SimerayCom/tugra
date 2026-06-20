@@ -23,6 +23,7 @@ import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { TeamsModule } from "./teams/teams.module";
+import { ScheduledTasksModule } from "./scheduled-tasks/scheduled-tasks.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
@@ -48,6 +49,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     SharedVariablesModule,
     ProjectsModule,
     TeamsModule,
+    ScheduledTasksModule,
     WebhooksModule,
   ],
   controllers: [HealthController],

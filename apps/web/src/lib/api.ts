@@ -17,6 +17,7 @@ import type {
   PublicUser,
   Project,
   Role,
+  ScheduledTask,
   ServerView,
   SharedVariable,
   Team,
@@ -391,6 +392,18 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ volumes }),
     });
+  },
+  listAppTasks(id: string) {
+    return apiFetch<ScheduledTask[]>(`/apps/${id}/tasks`);
+  },
+  createAppTask(id: string, task: { name: string; schedule: string; command: string; enabled?: boolean }) {
+    return apiFetch<ScheduledTask>(`/apps/${id}/tasks`, { method: "POST", body: JSON.stringify(task) });
+  },
+  updateAppTask(id: string, taskId: string, patch: { name?: string; schedule?: string; command?: string; enabled?: boolean }) {
+    return apiFetch<ScheduledTask>(`/apps/${id}/tasks/${taskId}`, { method: "PUT", body: JSON.stringify(patch) });
+  },
+  deleteAppTask(id: string, taskId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/tasks/${taskId}`, { method: "DELETE" });
   },
   setAppCredentials(
     id: string,

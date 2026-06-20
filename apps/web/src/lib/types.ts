@@ -144,6 +144,15 @@ export interface AppVolume {
   path: string;
 }
 
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  schedule: string;
+  command: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+}
+
 export interface ProjectResource {
   id: string;
   name: string;

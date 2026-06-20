@@ -364,9 +364,24 @@ model Application {
   webhookToken   String?      @unique
   webhookSecret  String?
   deployments   Deployment[]
+  scheduledTasks ScheduledTask[]
   createdAt     DateTime     @default(now())
 
   @@index([environmentId])
+}
+
+model ScheduledTask {
+  id          String      @id @default(cuid())
+  application Application  @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId       String
+  name        String
+  schedule    String
+  command     String
+  enabled     Boolean      @default(true)
+  lastRunAt   DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([appId])
 }
 
 model Deployment {

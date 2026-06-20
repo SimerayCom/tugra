@@ -137,6 +137,8 @@ export default function AppDetailPage() {
         <VolumesCard id={id} volumes={appData.volumes} />
       )}
 
+      {appData.canWrite && appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
+
       {appData.canWrite && (
         <CredentialsCard
           id={id}
@@ -381,6 +383,51 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
         </div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function ScheduledTasksCard({ id }: { id: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: tasks = [] } = useQuery({ queryKey: ["appTasks", id], queryFn: () => api.listAppTasks(id) });
+  const [name, setName] = useState("");
+  const [schedule, setSchedule] = useState("");
+  const [command, setCommand] = useState("");
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["appTasks", id] });
+  const add = useMutation({
+    mutationFn: () => api.createAppTask(id, { name, schedule, command }),
+    onSuccess: () => { setName(""); setSchedule(""); setCommand(""); invalidate(); },
+  });
+  const toggle = useMutation({
+    mutationFn: ({ taskId, enabled }: { taskId: string; enabled: boolean }) => api.updateAppTask(id, taskId, { enabled }),
+    onSuccess: invalidate,
+  });
+  const del = useMutation({ mutationFn: (taskId: string) => api.deleteAppTask(id, taskId), onSuccess: invalidate });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.tasks")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.tasksDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        {tasks.map((tk) => (
+          <div key={tk.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={tk.enabled} onChange={(e) => toggle.mutate({ taskId: tk.id, enabled: e.target.checked })} />
+            <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.name}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{tk.schedule}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.command}</span>
+            {tk.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(tk.lastRunAt).toLocaleString()}</span>}
+            <button onClick={() => del.mutate(tk.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+        <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} />
+        <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !schedule || !command}>{t("apps.addTask")}</Btn>
+      </div>
+      {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
     </Card>
   );
 }
