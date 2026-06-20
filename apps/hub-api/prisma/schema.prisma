@@ -294,6 +294,7 @@ enum AppSource {
 enum BuildType {
   NIXPACKS
   DOCKERFILE
+  STATIC
 }
 
 enum DeploymentStatus {
@@ -345,6 +346,8 @@ model Application {
   gitBranch      String?      @default("main")
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
+  buildCommand   String?
+  outputDir      String?
   composeFile    String?
   healthCmd      String?
   memoryMb       Int?

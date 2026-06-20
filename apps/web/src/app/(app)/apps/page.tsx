@@ -36,7 +36,9 @@ export default function AppsPage() {
   const [image, setImage] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("");
-  const [buildType, setBuildType] = useState<"NIXPACKS" | "DOCKERFILE">("NIXPACKS");
+  const [buildType, setBuildType] = useState<"NIXPACKS" | "DOCKERFILE" | "STATIC">("NIXPACKS");
+  const [buildCommand, setBuildCommand] = useState("");
+  const [outputDir, setOutputDir] = useState("");
   const [composeFile, setComposeFile] = useState("");
   const [hostPort, setHostPort] = useState("");
   const [domain, setDomain] = useState("");
@@ -51,6 +53,8 @@ export default function AppsPage() {
         gitUrl: source === "GIT" ? gitUrl : undefined,
         gitBranch: source === "GIT" ? gitBranch || undefined : undefined,
         buildType: source === "GIT" ? buildType : undefined,
+        buildCommand: source === "GIT" && buildType === "STATIC" ? buildCommand || undefined : undefined,
+        outputDir: source === "GIT" && buildType === "STATIC" ? outputDir || undefined : undefined,
         composeFile: source === "COMPOSE" ? composeFile : undefined,
         hostPort: hostPort ? Number(hostPort) : undefined,
         domain: domain || undefined,
@@ -101,10 +105,17 @@ export default function AppsPage() {
             <>
               <input style={{ ...field, flex: 2, minWidth: 160 }} placeholder={t("apps.gitUrl")} value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} required />
               <input style={{ ...field, width: 110 }} placeholder={t("apps.branch")} value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} />
-              <select style={field} value={buildType} onChange={(e) => setBuildType(e.target.value as "NIXPACKS" | "DOCKERFILE")}>
+              <select style={field} value={buildType} onChange={(e) => setBuildType(e.target.value as "NIXPACKS" | "DOCKERFILE" | "STATIC")}>
                 <option value="NIXPACKS">{t("apps.nixpacks")}</option>
                 <option value="DOCKERFILE">{t("apps.dockerfile")}</option>
+                <option value="STATIC">{t("apps.static")}</option>
               </select>
+              {buildType === "STATIC" && (
+                <>
+                  <input style={{ ...field, width: 180 }} placeholder={t("apps.buildCommand")} value={buildCommand} onChange={(e) => setBuildCommand(e.target.value)} />
+                  <input style={{ ...field, width: 120 }} placeholder={t("apps.outputDir")} value={outputDir} onChange={(e) => setOutputDir(e.target.value)} />
+                </>
+              )}
             </>
           )}
           {source !== "COMPOSE" && (

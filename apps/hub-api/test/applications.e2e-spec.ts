@@ -144,6 +144,25 @@ describe("Applications / deploy (e2e)", () => {
     expect(all).not.toContain("docker pull");
   });
 
+  it("deploys a GIT app with STATIC build → clone + docker build (nginx)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "spaapp", serverId, source: "GIT", gitUrl: "https://github.com/u/spa.git", buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist" })
+      .expect(201);
+    expect(appRes.body.buildType).toBe("STATIC");
+    expect(appRes.body.buildCommand).toBe("npm run build");
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${appRes.body.id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(300);
+    const all = commands.join("\n");
+    expect(all).toContain("git clone");
+    expect(all).toContain("Dockerfile.tugra");
+    expect(all).toContain("docker build -t");
+    expect(all).not.toContain("nixpacks");
+  });
+
   it("manages env vars (encrypted) and injects them via --env-file on deploy", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

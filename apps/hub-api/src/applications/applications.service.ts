@@ -52,7 +52,9 @@ export interface AppView {
   image: string | null;
   gitUrl: string | null;
   gitBranch: string | null;
-  buildType: "NIXPACKS" | "DOCKERFILE";
+  buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC";
+  buildCommand: string | null;
+  outputDir: string | null;
   composeFile: string | null;
   healthCmd: string | null;
   memoryMb: number | null;
@@ -121,6 +123,8 @@ export class ApplicationsService {
         gitBranch: dto.gitBranch ?? "main",
         buildType: dto.buildType ?? "NIXPACKS",
         dockerfilePath: dto.dockerfilePath ?? null,
+        buildCommand: dto.buildCommand ?? null,
+        outputDir: dto.outputDir ?? null,
         composeFile: dto.composeFile ?? null,
         serverId: dto.serverId,
         teamId: server.teamId,
@@ -572,6 +576,8 @@ export class ApplicationsService {
       gitBranch: app.gitBranch,
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
+      buildCommand: app.buildCommand,
+      outputDir: app.outputDir,
       composeFile: app.composeFile,
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,
@@ -614,6 +620,8 @@ export class ApplicationsService {
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
       buildType: app.buildType,
+      buildCommand: app.buildCommand,
+      outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,

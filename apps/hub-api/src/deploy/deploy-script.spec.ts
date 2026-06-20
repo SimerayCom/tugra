@@ -8,6 +8,8 @@ import {
   envFileB64,
   gitAuthUrl,
   runTag,
+  staticDockerfile,
+  staticNginxConf,
   traefikLabels,
   type AppSpec,
 } from "./deploy-script";
@@ -233,5 +235,49 @@ describe("deploy-script", () => {
     }, "v3");
     expect(s).toContain("docker build -t tugra_abc:v3 -f /etc/tugra/builds/abc/docker/Dockerfile");
     expect(s).not.toContain("nixpacks");
+  });
+
+  it("GIT + STATIC with a build command: node build stage → nginx, no nixpacks", () => {
+    const s = buildRunScript({
+      ...base,
+      source: "GIT",
+      image: null,
+      gitUrl: "https://x/r.git",
+      buildType: "STATIC",
+      buildCommand: "npm run build",
+      outputDir: "dist",
+    }, "v4");
+    const df = Buffer.from(s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/builds\/abc\/Dockerfile\.tugra/)![1], "base64").toString();
+    expect(df).toContain("FROM node:20-alpine AS build");
+    expect(df).toContain("RUN npm run build");
+    expect(df).toContain("FROM nginx:alpine");
+    expect(df).toContain("COPY --from=build /app/dist /usr/share/nginx/html");
+    expect(s).toContain("docker build -t tugra_abc:v4 -f /etc/tugra/builds/abc/Dockerfile.tugra");
+    expect(s).not.toContain("nixpacks");
+  });
+
+  it("GIT + STATIC without a build command: single-stage nginx copy", () => {
+    const s = buildRunScript({
+      ...base,
+      source: "GIT",
+      image: null,
+      gitUrl: "https://x/r.git",
+      buildType: "STATIC",
+      outputDir: "public",
+    }, "v5");
+    const df = Buffer.from(s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/builds\/abc\/Dockerfile\.tugra/)![1], "base64").toString();
+    expect(df).not.toContain("FROM node");
+    expect(df).toContain("FROM nginx:alpine");
+    expect(df).toContain("COPY public /usr/share/nginx/html");
+  });
+});
+
+describe("static helpers", () => {
+  it("staticNginxConf falls back to index.html for SPA routes", () => {
+    expect(staticNginxConf()).toContain("try_files $uri $uri/ /index.html");
+  });
+
+  it("staticDockerfile defaults the output dir to dist", () => {
+    expect(staticDockerfile("npm run build")).toContain("COPY --from=build /app/dist");
   });
 });
