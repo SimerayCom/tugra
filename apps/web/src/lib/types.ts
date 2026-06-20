@@ -137,7 +137,7 @@ export interface BulkOperation {
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export type AppSource = "IMAGE" | "GIT" | "COMPOSE";
-export type BuildType = "NIXPACKS" | "DOCKERFILE";
+export type BuildType = "NIXPACKS" | "DOCKERFILE" | "STATIC";
 
 export interface AppVolume {
   name: string;
@@ -211,6 +211,8 @@ export interface Application {
   gitUrl: string | null;
   gitBranch: string | null;
   buildType: BuildType;
+  buildCommand: string | null;
+  outputDir: string | null;
   composeFile: string | null;
   healthCmd: string | null;
   memoryMb: number | null;

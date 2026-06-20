@@ -331,7 +331,9 @@ export const api = {
     image?: string;
     gitUrl?: string;
     gitBranch?: string;
-    buildType?: "NIXPACKS" | "DOCKERFILE";
+    buildType?: "NIXPACKS" | "DOCKERFILE" | "STATIC";
+    buildCommand?: string;
+    outputDir?: string;
     composeFile?: string;
     hostPort?: number;
     containerPort?: number;

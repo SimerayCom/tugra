@@ -8,7 +8,7 @@ export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
-export type BuildKind = "NIXPACKS" | "DOCKERFILE";
+export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC";
 
 export interface AppSpec {
   id: string;
@@ -18,6 +18,8 @@ export interface AppSpec {
   gitBranch?: string | null;
   buildType?: BuildKind;
   dockerfilePath?: string | null;
+  buildCommand?: string | null;
+  outputDir?: string | null;
   composeFile?: string | null;
   healthCmd?: string | null;
   memoryMb?: number | null;
@@ -144,6 +146,40 @@ export function traefikLabels(app: AppSpec): string[] {
   return labels;
 }
 
+/** Generated Dockerfile for a STATIC site: optional node build stage, then nginx. */
+export function staticDockerfile(buildCommand?: string | null, outputDir?: string | null): string {
+  const out = (outputDir || "dist").replace(/^\/+/, "");
+  if (buildCommand) {
+    return [
+      "FROM node:20-alpine AS build",
+      "WORKDIR /app",
+      "COPY . .",
+      `RUN ${buildCommand}`,
+      "FROM nginx:alpine",
+      `COPY --from=build /app/${out} /usr/share/nginx/html`,
+      "COPY tugra-nginx.conf /etc/nginx/conf.d/default.conf",
+    ].join("\n");
+  }
+  // No build step: the repo already ships the built static files.
+  return [
+    "FROM nginx:alpine",
+    `COPY ${out} /usr/share/nginx/html`,
+    "COPY tugra-nginx.conf /etc/nginx/conf.d/default.conf",
+  ].join("\n");
+}
+
+/** nginx config for a static/SPA site: serve files, fall back to index.html. */
+export function staticNginxConf(): string {
+  return [
+    "server {",
+    "  listen 80;",
+    "  root /usr/share/nginx/html;",
+    "  index index.html;",
+    "  location / { try_files $uri $uri/ /index.html; }",
+    "}",
+  ].join("\n");
+}
+
 /** Build the prep steps (clone+build, or pull) that produce `tugra_<appId>:<version>`. */
 function prepSteps(app: AppSpec, version: string): string[] {
   const tag = runTag(app, version);
@@ -169,6 +205,13 @@ function prepSteps(app: AppSpec, version: string): string[] {
     if (app.buildType === "DOCKERFILE") {
       const df = app.dockerfilePath || "Dockerfile";
       steps.push(`docker build -t ${tag} -f ${bd}/${df} ${bd}`);
+    } else if (app.buildType === "STATIC") {
+      // Generate an nginx (+ optional node build stage) Dockerfile and config.
+      steps.push(
+        `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${bd}/Dockerfile.tugra`,
+        `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${bd}/tugra-nginx.conf`,
+        `docker build -t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
+      );
     } else {
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
