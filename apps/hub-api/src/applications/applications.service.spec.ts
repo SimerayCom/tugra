@@ -397,6 +397,134 @@ describe("ApplicationsService", () => {
     await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/compose/);
   });
 
+  // ── Preview deployments (B6) ──
+
+  const parentApp = {
+    ...app,
+    id: "parent1",
+    source: "GIT",
+    gitUrl: "https://github.com/u/r.git",
+    gitBranch: "main",
+    buildType: "NIXPACKS",
+    image: null,
+    domain: "x.com",
+    previewEnabled: true,
+    isPreview: false,
+  };
+
+  function deployMocks() {
+    return {
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+  }
+
+  it("upsertPreview is a no-op when the parent has previews disabled", async () => {
+    const create = jest.fn();
+    const prisma = { application: { create, findFirst: jest.fn() } } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    await svc.upsertPreview({ ...parentApp, previewEnabled: false } as never, 5, "feat");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("upsertPreview creates a preview clone on the PR branch and deploys it", async () => {
+    const create = jest
+      .fn()
+      .mockImplementation(({ data }) => Promise.resolve({ ...parentApp, ...data, id: "prev1" }));
+    const prisma = {
+      application: { create, update: jest.fn().mockResolvedValue({}), findFirst: jest.fn().mockResolvedValue(null) },
+      ...deployMocks(),
+    } as unknown as PrismaService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
+        sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    const svc = make(prisma, {} as TeamAccessService, agentWs);
+    await svc.upsertPreview(parentApp as never, 5, "feature-x");
+
+    const data = create.mock.calls[0][0].data;
+    expect(data.isPreview).toBe(true);
+    expect(data.parentAppId).toBe("parent1");
+    expect(data.prNumber).toBe(5);
+    expect(data.gitBranch).toBe("feature-x");
+    expect(data.domain).toBe("pr5.x.com");
+    expect(sentCmd).toContain("tugra_prev1"); // deployed under its own container
+  });
+
+  it("upsertPreview re-syncs the branch on an existing preview instead of creating", async () => {
+    const create = jest.fn();
+    const appUpdate = jest
+      .fn()
+      .mockResolvedValue({ ...parentApp, id: "prev1", isPreview: true, gitBranch: "feat-v2" });
+    const prisma = {
+      application: {
+        create,
+        update: appUpdate,
+        findFirst: jest.fn().mockResolvedValue({ ...parentApp, id: "prev1", isPreview: true }),
+      },
+      ...deployMocks(),
+    } as unknown as PrismaService;
+    const agentWs = {
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "ok" }),
+    } as unknown as AgentWsServer;
+    const svc = make(prisma, {} as TeamAccessService, agentWs);
+    await svc.upsertPreview(parentApp as never, 5, "feat-v2");
+    expect(create).not.toHaveBeenCalled();
+    expect(appUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2" } }),
+    );
+  });
+
+  it("removePreviewByPr tears down the preview container and deletes the record", async () => {
+    const del = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: {
+        findFirst: jest.fn().mockResolvedValue({ ...parentApp, id: "prev1", isPreview: true }),
+        delete: del,
+      },
+    } as unknown as PrismaService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
+        sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, {} as TeamAccessService, agentWs).removePreviewByPr("parent1", 5);
+    expect(sentCmd).toContain("docker rm -f tugra_prev1");
+    expect(del).toHaveBeenCalledWith({ where: { id: "prev1" } });
+  });
+
+  it("setPreviewEnabled refuses to enable previews without a domain", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...parentApp, domain: null }), update: jest.fn() },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setPreviewEnabled("u1", "parent1", true),
+    ).rejects.toThrow(/domain/);
+  });
+
+  it("list() excludes preview apps from the top-level listing", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = { application: { findMany } } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", Role.OWNER]])),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).list("u1");
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ isPreview: false }) }),
+    );
+  });
+
   it("rolls back by re-running the target image tag without rebuilding", async () => {
     const depUpdate = jest.fn().mockResolvedValue({});
     const prisma = {

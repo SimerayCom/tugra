@@ -61,6 +61,11 @@ export default function AppDetailPage() {
         <span style={{ width: 11, height: 11, borderRadius: "50%", background: appColor(appData.status) }} />
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{appData.name}</h1>
         <span style={{ fontSize: 12, color: appColor(appData.status), fontWeight: 600 }}>{appData.status}</span>
+        {appData.isPreview && (
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--c-lapis)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "2px 8px" }}>
+            {t("apps.previewBadge", { n: appData.prNumber ?? "?" })}
+          </span>
+        )}
       </div>
       <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 6px" }}>
         {appSourceSummary(appData)}
@@ -138,6 +143,10 @@ export default function AppDetailPage() {
       )}
 
       {appData.canWrite && appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
+
+      {appData.canWrite && !appData.isPreview && appData.source === "GIT" && (
+        <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />
+      )}
 
       {appData.canWrite && (
         <CredentialsCard
@@ -428,6 +437,74 @@ function ScheduledTasksCard({ id }: { id: string }) {
         <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !schedule || !command}>{t("apps.addTask")}</Btn>
       </div>
       {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
+    </Card>
+  );
+}
+
+function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnabled: boolean; domain: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: previews = [] } = useQuery({
+    queryKey: ["appPreviews", id],
+    queryFn: () => api.getAppPreviews(id),
+    enabled: previewEnabled,
+  });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["appPreviews", id] });
+    qc.invalidateQueries({ queryKey: ["app", id] });
+  };
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => api.setPreviewEnabled(id, enabled),
+    onSuccess: invalidate,
+  });
+  const del = useMutation({
+    mutationFn: (previewId: string) => api.deletePreview(id, previewId),
+    onSuccess: invalidate,
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.preview")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.previewDesc")}</p>
+      {!domain ? (
+        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.previewNeedsDomain")}</div>
+      ) : (
+        <>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={previewEnabled}
+              disabled={toggle.isPending}
+              onChange={(e) => toggle.mutate(e.target.checked)}
+            />
+            {t("apps.previewEnable")}
+          </label>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+            {t("apps.previewWildcardHint", { domain })}
+          </p>
+          {previewEnabled && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {previews.length === 0 && (
+                <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.previewNone")}</div>
+              )}
+              {previews.map((p) => (
+                <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 10px" }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>PR #{p.prNumber}</span>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{p.gitBranch}</span>
+                  <span style={{ flex: 1 }} />
+                  {p.url && (
+                    <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "var(--c-lapis)" }}>
+                      {p.url} {t("apps.open")}
+                    </a>
+                  )}
+                  <button onClick={() => del.mutate(p.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {toggle.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(toggle.error as Error).message}</div>}
     </Card>
   );
 }

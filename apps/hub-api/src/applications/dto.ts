@@ -79,6 +79,11 @@ export const SetDomainOptionsSchema = z
   });
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 
+export const PreviewConfigSchema = z.object({
+  enabled: z.boolean(),
+});
+export type PreviewConfigInput = z.infer<typeof PreviewConfigSchema>;
+
 export const FromTemplateSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),

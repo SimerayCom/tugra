@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import {
   generateWebhookSecret,
   generateWebhookToken,
+  parsePullRequest,
   parseRef,
   refMatchesBranch,
   verifyGithubSignature,
@@ -72,6 +73,37 @@ describe("webhook-verify", () => {
 
     it("does not match a null ref (e.g. a ping event)", () => {
       expect(refMatchesBranch(null, "main")).toBe(false);
+    });
+  });
+
+  describe("parsePullRequest", () => {
+    it("parses an opened PR event (number + head ref)", () => {
+      const ev = parsePullRequest({
+        action: "opened",
+        pull_request: { number: 42, head: { ref: "feature-x" } },
+      });
+      expect(ev).toEqual({
+        action: "opened",
+        prNumber: 42,
+        headRef: "feature-x",
+        merged: false,
+      });
+    });
+
+    it("flags a merged close event", () => {
+      const ev = parsePullRequest({
+        action: "closed",
+        pull_request: { number: 7, merged: true, head: { ref: "fix" } },
+      });
+      expect(ev?.action).toBe("closed");
+      expect(ev?.merged).toBe(true);
+    });
+
+    it("returns null for non-PR or incomplete payloads", () => {
+      expect(parsePullRequest({ ref: "refs/heads/main" })).toBeNull();
+      expect(parsePullRequest({ action: "opened" })).toBeNull();
+      expect(parsePullRequest({ action: "opened", pull_request: { number: 1 } })).toBeNull();
+      expect(parsePullRequest(null)).toBeNull();
     });
   });
 

@@ -141,4 +141,96 @@ describe("Webhooks / auto-deploy (e2e)", () => {
     await sleep(300);
     expect(commands.join("\n")).toContain("git clone");
   });
+
+  describe("preview deployments (PR events)", () => {
+    let pvId = "";
+    let pvToken = "";
+    let pvSecret = "";
+    const auth = () => ["Authorization", `Bearer ${token}`] as const;
+    const prBody = (action: string, number: number, ref: string) =>
+      JSON.stringify({ action, pull_request: { number, head: { ref } } });
+    const ghSig = (secret: string, body: string) =>
+      "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+
+    beforeAll(async () => {
+      const res = await request(app.getHttpServer())
+        .post("/apps")
+        .set(...auth())
+        .send({ name: "pvapp", serverId, source: "GIT", gitUrl: "https://github.com/u/r.git", domain: "app.example.com" })
+        .expect(201);
+      pvId = res.body.id;
+      pvToken = res.body.webhookToken;
+      pvSecret = res.body.webhookSecret;
+      await request(app.getHttpServer())
+        .put(`/apps/${pvId}/preview-config`)
+        .set(...auth())
+        .send({ enabled: true })
+        .expect(200);
+    });
+
+    it("refuses enabling previews on an app without a domain (400)", async () => {
+      await request(app.getHttpServer())
+        .put(`/apps/${appId}/preview-config`)
+        .set(...auth())
+        .send({ enabled: true })
+        .expect(400);
+    });
+
+    it("creates a preview clone on PR opened, under pr<n>.<domain>", async () => {
+      commands.length = 0;
+      const body = prBody("opened", 7, "feature-7");
+      const res = await request(app.getHttpServer())
+        .post(`/webhooks/deploy/${pvToken}`)
+        .set("X-GitHub-Event", "pull_request")
+        .set("X-Hub-Signature-256", ghSig(pvSecret, body))
+        .set("Content-Type", "application/json")
+        .send(body)
+        .expect(202);
+      expect(res.body.deployed).toBe(true);
+      await sleep(400);
+
+      const previews = await request(app.getHttpServer())
+        .get(`/apps/${pvId}/previews`)
+        .set(...auth())
+        .expect(200);
+      expect(previews.body).toHaveLength(1);
+      expect(previews.body[0].prNumber).toBe(7);
+      expect(previews.body[0].isPreview).toBe(true);
+      expect(previews.body[0].gitBranch).toBe("feature-7");
+      expect(previews.body[0].domain).toBe("pr7.app.example.com");
+      expect(commands.join("\n")).toContain("git clone");
+      // Preview apps never appear in the top-level app list.
+      const list = await request(app.getHttpServer()).get("/apps").set(...auth()).expect(200);
+      expect(list.body.some((a: { prNumber?: number }) => a.prNumber === 7)).toBe(false);
+    });
+
+    it("tears the preview down on PR closed", async () => {
+      const body = prBody("closed", 7, "feature-7");
+      await request(app.getHttpServer())
+        .post(`/webhooks/deploy/${pvToken}`)
+        .set("X-GitHub-Event", "pull_request")
+        .set("X-Hub-Signature-256", ghSig(pvSecret, body))
+        .set("Content-Type", "application/json")
+        .send(body)
+        .expect(202);
+      await sleep(400);
+      const previews = await request(app.getHttpServer())
+        .get(`/apps/${pvId}/previews`)
+        .set(...auth())
+        .expect(200);
+      expect(previews.body).toHaveLength(0);
+    });
+
+    it("ignores PR events when previews are disabled on the app", async () => {
+      const body = prBody("opened", 9, "feature-9");
+      const res = await request(app.getHttpServer())
+        .post(`/webhooks/deploy/${webhookToken}`)
+        .set("X-GitHub-Event", "pull_request")
+        .set("X-Hub-Signature-256", ghSig(webhookSecret, body))
+        .set("Content-Type", "application/json")
+        .send(body)
+        .expect(202);
+      expect(res.body.deployed).toBe(false);
+    });
+  });
 });

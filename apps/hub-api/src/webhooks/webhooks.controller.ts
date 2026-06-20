@@ -22,6 +22,6 @@ export class WebhooksController {
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   deploy(@Param("token") token: string, @Req() req: WebhookRequest) {
     const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
-    return this.webhooks.handlePush(token, req.headers, rawBody);
+    return this.webhooks.handle(token, req.headers, rawBody);
   }
 }

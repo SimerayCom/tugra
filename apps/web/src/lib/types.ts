@@ -234,6 +234,10 @@ export interface Application {
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;
+  isPreview: boolean;
+  previewEnabled: boolean;
+  prNumber: number | null;
+  parentAppId: string | null;
   envCount: number;
   role: Role;
   canWrite: boolean;
