@@ -1,0 +1,22 @@
+{
+  "title": "Teams",
+  "subtitle": "Create teams, invite members and manage their roles.",
+  "create": "Create",
+  "name": "Team name",
+  "members": "{n} members",
+  "empty": "No teams yet.",
+  "yourInvitations": "Invitations for you",
+  "accept": "Accept",
+  "decline": "Decline",
+  "invitedAs": "invited as {role}",
+  "membersTitle": "Members",
+  "invite": "Invite",
+  "inviteEmail": "Member email",
+  "inviteSent": "Invitation created — share this link:",
+  "pendingInvitations": "Pending invitations",
+  "revoke": "Revoke",
+  "remove": "Remove",
+  "rename": "Rename",
+  "deleteTeam": "Delete team",
+  "deleteConfirm": "Delete this team? It must have no servers, apps or databases."
+}

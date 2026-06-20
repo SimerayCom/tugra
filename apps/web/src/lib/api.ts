@@ -13,11 +13,15 @@ import type {
   Heartbeat,
   MetricsSample,
   Monitor,
+  MyInvitation,
   PublicUser,
   Project,
+  Role,
   ServerView,
   SharedVariable,
   Team,
+  TeamInvitation,
+  TeamMember,
   Template,
   TokenPair,
 } from "./types";
@@ -161,6 +165,48 @@ export const api = {
 
   listTeams() {
     return apiFetch<Team[]>("/teams");
+  },
+  createTeam(name: string) {
+    return apiFetch<Team>("/teams", { method: "POST", body: JSON.stringify({ name }) });
+  },
+  renameTeam(id: string, name: string) {
+    return apiFetch<{ ok: true }>(`/teams/${id}`, { method: "PUT", body: JSON.stringify({ name }) });
+  },
+  deleteTeam(id: string) {
+    return apiFetch<{ ok: true }>(`/teams/${id}`, { method: "DELETE" });
+  },
+  listTeamMembers(id: string) {
+    return apiFetch<TeamMember[]>(`/teams/${id}/members`);
+  },
+  inviteTeamMember(id: string, email: string, role: Role) {
+    return apiFetch<TeamInvitation>(`/teams/${id}/members/invite`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    });
+  },
+  listTeamInvitations(id: string) {
+    return apiFetch<TeamInvitation[]>(`/teams/${id}/invitations`);
+  },
+  revokeTeamInvitation(id: string, invId: string) {
+    return apiFetch<{ ok: true }>(`/teams/${id}/invitations/${invId}`, { method: "DELETE" });
+  },
+  setTeamMemberRole(id: string, userId: string, role: Role) {
+    return apiFetch<{ ok: true }>(`/teams/${id}/members/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    });
+  },
+  removeTeamMember(id: string, userId: string) {
+    return apiFetch<{ ok: true }>(`/teams/${id}/members/${userId}`, { method: "DELETE" });
+  },
+  myInvitations() {
+    return apiFetch<MyInvitation[]>("/teams/invitations/mine");
+  },
+  acceptInvitation(token: string) {
+    return apiFetch<{ ok: true }>(`/teams/invitations/${token}/accept`, { method: "POST" });
+  },
+  declineInvitation(token: string) {
+    return apiFetch<{ ok: true }>(`/teams/invitations/${token}/decline`, { method: "POST" });
   },
 
   listServers(params?: { teamId?: string; status?: string }) {

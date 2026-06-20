@@ -5,6 +5,29 @@ export interface Team {
   id: string;
   name: string;
   role: Role;
+  memberCount?: number;
+}
+
+export interface TeamMember {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: Role;
+}
+
+export interface TeamInvitation {
+  id: string;
+  email: string;
+  role: Role;
+  token: string;
+  expiresAt: string;
+}
+
+export interface MyInvitation {
+  token: string;
+  teamName: string;
+  role: Role;
+  expiresAt: string;
 }
 
 export interface PublicUser {

@@ -59,7 +59,23 @@ model Team {
   backupDestinations BackupDestination[]
   sharedVariables SharedVariable[]
   projects     Project[]
+  invitations  TeamInvitation[]
   createdAt    DateTime     @default(now())
+}
+
+model TeamInvitation {
+  id        String   @id @default(cuid())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String
+  email     String
+  role      Role     @default(VIEWER)
+  token     String   @unique
+  invitedBy String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, email])
+  @@index([email])
 }
 
 model Project {
