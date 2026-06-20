@@ -40,7 +40,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Account",
     items: [
-      { key: "teams", href: "/coming-soon?f=Teams" },
+      { key: "teams", href: "/teams", impl: true },
       { key: "settings", href: "/settings", impl: true },
     ],
   },
