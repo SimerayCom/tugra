@@ -9,6 +9,7 @@ import { backupColor, formatSize } from "../../../../lib/backups";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 import { EnvironmentCard } from "../../../../components/environment-card";
+import { TagsCard } from "../../../../components/tags";
 
 export default function DatabaseDetailPage() {
   const t = useT();
@@ -43,6 +44,7 @@ export default function DatabaseDetailPage() {
   const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups });
   const restore = useMutation({ mutationFn: (bid: string) => api.restoreBackup(id, bid) });
   const delBackup = useMutation({ mutationFn: (bid: string) => api.deleteBackup(id, bid), onSuccess: invalidateBackups });
+  const tags = useMutation({ mutationFn: (next: string[]) => api.setDatabaseTags(id, next), onSuccess: invalidate });
 
   const [schedEnabled, setSchedEnabled] = useState(false);
   const [interval, setIntervalH] = useState("24");
@@ -107,6 +109,10 @@ export default function DatabaseDetailPage() {
       )}
 
       {db.canWrite && <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />}
+
+      <div style={{ marginTop: 16 }}>
+        <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
+      </div>
 
       {db.canWrite && !db.backupSupported && (
         <Card style={{ padding: 16, marginTop: 16, color: "var(--c-tx3)", fontSize: 13 }}>

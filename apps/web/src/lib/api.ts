@@ -229,6 +229,12 @@ export const api = {
   cleanupServer(id: string) {
     return apiFetch<{ output: string }>(`/servers/${id}/cleanup`, { method: "POST" });
   },
+  setServerTags(id: string, tags: string[]) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/tags`, {
+      method: "PUT",
+      body: JSON.stringify({ tags }),
+    });
+  },
   setCleanupConfig(id: string, cfg: { enabled: boolean; intervalHours?: number; volumes?: boolean }) {
     return apiFetch<{ ok: true }>(`/servers/${id}/cleanup-config`, {
       method: "PUT",
@@ -339,6 +345,7 @@ export const api = {
     containerPort?: number;
     domain?: string;
     env?: Record<string, string>;
+    tags?: string[];
   }) {
     return apiFetch<Application>("/apps", {
       method: "POST",
@@ -372,6 +379,12 @@ export const api = {
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
       method: "POST",
+    });
+  },
+  setAppTags(id: string, tags: string[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/tags`, {
+      method: "PUT",
+      body: JSON.stringify({ tags }),
     });
   },
   getAppPreviews(id: string) {
@@ -446,6 +459,12 @@ export const api = {
     return apiFetch<{ ok: true }>(`/apps/${id}/domain-options`, {
       method: "PUT",
       body: JSON.stringify(opts),
+    });
+  },
+  setDatabaseTags(id: string, tags: string[]) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/tags`, {
+      method: "PUT",
+      body: JSON.stringify({ tags }),
     });
   },
   setDatabaseEnvironment(id: string, environmentId: string | null) {

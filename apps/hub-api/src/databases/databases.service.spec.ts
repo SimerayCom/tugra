@@ -80,6 +80,18 @@ describe("DatabasesService", () => {
     expect(view.connectionUri).toContain("postgresql://tugra:pw@tugra_db_db1:5432/main");
   });
 
+  it("normalizes and stores tags on setTags", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access).setTags("u1", "db1", ["Prod", "prod", " cache "]);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { tags: ["cache", "prod"] } }),
+    );
+  });
+
   it("hides connection details from non-write (viewer) members", async () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db) },

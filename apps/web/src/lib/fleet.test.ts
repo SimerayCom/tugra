@@ -27,6 +27,7 @@ const s = (
   lastSeenAt: null,
   createdAt: new Date().toISOString(),
   seal: null,
+  tags: [],
   role: canWrite ? "OWNER" : "VIEWER",
   canWrite,
 });

@@ -12,11 +12,12 @@ import projects from "./projects.json";
 import servers from "./servers.json";
 import settings from "./settings.json";
 import shared from "./shared.json";
+import tags from "./tags.json";
 import teams from "./teams.json";
 import templates from "./templates.json";
 import terminal from "./terminal.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, auth, bulk, common, dashboard, databases, destinations, domains, monitors, nav, projects, servers, settings, shared, teams, templates, terminal };
+const en = { apps, auth, bulk, common, dashboard, databases, destinations, domains, monitors, nav, projects, servers, settings, shared, tags, teams, templates, terminal };
 
 export default en;

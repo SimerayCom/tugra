@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
@@ -65,6 +66,17 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetEnvironmentSchema)) body: SetEnvironmentInput,
   ) {
     await this.databases.setEnvironment(user.userId, id, body.environmentId);
+    return { ok: true };
+  }
+
+  @Put(":id/tags")
+  @HttpCode(200)
+  async setTags(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetTagsSchema)) body: SetTagsInput,
+  ) {
+    await this.databases.setTags(user.userId, id, body.tags);
     return { ok: true };
   }
 

@@ -8,6 +8,7 @@ import { dbColor, engineLabel } from "../../../lib/databases";
 import type { DbEngine } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Card, Spinner } from "../../../components/ui";
+import { TagChips, TagFilter } from "../../../components/tags";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -30,6 +31,10 @@ export default function DatabasesPage() {
     refetchInterval: 8000,
   });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const allTags = [...new Set(databases.flatMap((d) => d.tags))].sort();
+  const visible = databases.filter((d) => selectedTags.every((tag) => d.tags.includes(tag)));
 
   const [name, setName] = useState("");
   const [serverId, setServerId] = useState("");
@@ -87,21 +92,27 @@ export default function DatabasesPage() {
       {isLoading ? (
         <Spinner />
       ) : (
-        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-          {databases.map((d) => (
-            <Link key={d.id} href={`/databases/${d.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-              <span style={{ width: 9, height: 9, borderRadius: "50%", background: dbColor(d.status) }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name}</div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{engineLabel(d.engine)} · {d.version}</div>
-              </div>
-              <span style={{ fontSize: 12, color: dbColor(d.status), fontWeight: 600 }}>{d.status}</span>
-            </Link>
-          ))}
-          {databases.length === 0 && (
-            <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("databases.empty")}</div>
-          )}
-        </div>
+        <>
+          <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+          <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
+            {visible.map((d) => (
+              <Link key={d.id} href={`/databases/${d.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: dbColor(d.status) }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                    {d.name}
+                    <TagChips tags={d.tags} />
+                  </div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{engineLabel(d.engine)} · {d.version}</div>
+                </div>
+                <span style={{ fontSize: 12, color: dbColor(d.status), fontWeight: 600 }}>{d.status}</span>
+              </Link>
+            ))}
+            {visible.length === 0 && (
+              <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("databases.empty")}</div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

@@ -148,6 +148,28 @@ describe("ServersService.saveHostInfo + uptime view", () => {
   });
 });
 
+describe("ServersService.setTags", () => {
+  it("forbids a VIEWER from setting tags", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.VIEWER }) },
+    } as unknown as PrismaService;
+    await expect(svcWith(prisma).setTags("u1", "s1", ["prod"])).rejects.toThrow(/insufficient role/);
+  });
+
+  it("normalizes and stores tags for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+    } as unknown as PrismaService;
+    await svcWith(prisma).setTags("u1", "s1", ["EU", "eu", " edge "]);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "s1" }, data: { tags: ["edge", "eu"] } }),
+    );
+  });
+});
+
 function row(id: string, teamId: string) {
   return {
     id,

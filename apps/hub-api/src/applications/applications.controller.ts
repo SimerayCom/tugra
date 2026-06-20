@@ -16,6 +16,7 @@ import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
+import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApplicationsService } from "./applications.service";
 import {
   CreateAppInput,
@@ -174,6 +175,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDomainOptionsSchema)) body: SetDomainOptionsInput,
   ) {
     await this.apps.setDomainOptions(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/tags")
+  @HttpCode(200)
+  async setTags(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetTagsSchema)) body: SetTagsInput,
+  ) {
+    await this.apps.setTags(user.userId, id, body.tags);
     return { ok: true };
   }
 

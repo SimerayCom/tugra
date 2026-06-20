@@ -9,16 +9,22 @@ import type { ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { TerminalModal } from "../../../../components/terminal-modal";
+import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
 
 export default function ServerDetailPage() {
   const t = useT();
   const id = String(useParams().id);
+  const qc = useQueryClient();
 
   const { data: server, isLoading } = useQuery({
     queryKey: ["server", id],
     queryFn: () => api.getServer(id),
     refetchInterval: 5000,
+  });
+  const tags = useMutation({
+    mutationFn: (next: string[]) => api.setServerTags(id, next),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
   });
   const { data: metrics = [] } = useQuery({
     queryKey: ["metrics", id],
@@ -75,6 +81,8 @@ export default function ServerDetailPage() {
           <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
         </div>
       )}
+
+      <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
 
       {server.canWrite && <CleanupCard id={id} server={server} />}
 

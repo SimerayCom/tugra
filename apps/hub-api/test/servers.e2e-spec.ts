@@ -69,6 +69,19 @@ describe("Servers + Agent (e2e)", () => {
     expect(found.status).toBe("PENDING");
   });
 
+  it("sets and normalizes tags on a server", async () => {
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/tags`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ tags: ["EU", "edge", "eu"] })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .get(`/servers/${serverId}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(res.body.tags).toEqual(["edge", "eu"]);
+  });
+
   it("enrolls an agent over WS, goes ONLINE, and ingests metrics", async () => {
     const { publicKey } = generateKeyPairSync("ed25519");
     const spkiB64 = publicKey
