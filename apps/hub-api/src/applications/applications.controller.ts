@@ -22,6 +22,8 @@ import {
   CreateAppSchema,
   FromTemplateInput,
   FromTemplateSchema,
+  PreviewConfigInput,
+  PreviewConfigSchema,
   SetCredentialsInput,
   SetCredentialsSchema,
   SetEnvInput,
@@ -172,6 +174,33 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDomainOptionsSchema)) body: SetDomainOptionsInput,
   ) {
     await this.apps.setDomainOptions(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Get(":id/previews")
+  listPreviews(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.listPreviews(user.userId, id);
+  }
+
+  @Put(":id/preview-config")
+  @HttpCode(200)
+  async setPreviewEnabled(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(PreviewConfigSchema)) body: PreviewConfigInput,
+  ) {
+    await this.apps.setPreviewEnabled(user.userId, id, body.enabled);
+    return { ok: true };
+  }
+
+  @Delete(":id/previews/:previewId")
+  @HttpCode(200)
+  async deletePreview(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("previewId") previewId: string,
+  ) {
+    await this.apps.deletePreview(user.userId, id, previewId);
     return { ok: true };
   }
 

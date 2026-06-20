@@ -366,11 +366,20 @@ model Application {
   status         AppStatus    @default(NEW)
   webhookToken   String?      @unique
   webhookSecret  String?
+  // Preview deployments (B6): a preview is a throwaway clone of a parent app
+  // created per pull-request; the parent opts in via previewEnabled.
+  isPreview      Boolean      @default(false)
+  previewEnabled Boolean      @default(false)
+  prNumber       Int?
+  parentAppId    String?
+  parent         Application?  @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
+  previews       Application[] @relation("AppPreviews")
   deployments   Deployment[]
   scheduledTasks ScheduledTask[]
   createdAt     DateTime     @default(now())
 
   @@index([environmentId])
+  @@index([parentAppId])
 }
 
 model ScheduledTask {

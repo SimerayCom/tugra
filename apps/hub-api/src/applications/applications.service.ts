@@ -76,6 +76,10 @@ export interface AppView {
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;
+  isPreview: boolean;
+  previewEnabled: boolean;
+  prNumber: number | null;
+  parentAppId: string | null;
   envCount: number;
   role: Role;
   canWrite: boolean;
@@ -170,7 +174,8 @@ export class ApplicationsService {
     const ids = [...roleByTeam.keys()];
     if (!ids.length) return [];
     const apps = await this.prisma.application.findMany({
-      where: { teamId: { in: ids } },
+      // Preview apps are nested under their parent, never in the top-level list.
+      where: { teamId: { in: ids }, isPreview: false },
       orderBy: { createdAt: "desc" },
     });
     return apps.map((a) => this.view(a, roleByTeam.get(a.teamId)!));
@@ -205,6 +210,126 @@ export class ApplicationsService {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new NotFoundException("application not found");
     return this.runDeploy(app, "webhook");
+  }
+
+  // ── Preview deployments (B6) ──
+
+  /**
+   * Create-or-update a per-PR preview deploy from a verified webhook. A preview
+   * is a throwaway clone of the parent app on the PR's head branch with its own
+   * subdomain (`pr<n>.<parentDomain>`). No-op unless the parent opted in
+   * (previewEnabled) and has a domain to derive the subdomain from. Fire-and-forget.
+   */
+  async upsertPreview(parent: Application, prNumber: number, headRef: string) {
+    if (!parent.previewEnabled || !parent.domain) return;
+    const existing = await this.prisma.application.findFirst({
+      where: { parentAppId: parent.id, prNumber },
+    });
+    const previewDomain = `pr${prNumber}.${this.baseDomain(parent.domain)}`;
+    let preview: Application;
+    if (existing) {
+      // Re-sync the head branch (a PR can be retargeted) before redeploying.
+      preview = await this.prisma.application.update({
+        where: { id: existing.id },
+        data: { gitBranch: headRef },
+      });
+    } else {
+      preview = await this.prisma.application.create({
+        data: {
+          name: `${parent.name} · PR #${prNumber}`,
+          teamId: parent.teamId,
+          serverId: parent.serverId,
+          environmentId: parent.environmentId,
+          source: parent.source,
+          image: parent.image,
+          gitUrl: parent.gitUrl,
+          gitBranch: headRef,
+          buildType: parent.buildType,
+          dockerfilePath: parent.dockerfilePath,
+          buildCommand: parent.buildCommand,
+          outputDir: parent.outputDir,
+          composeFile: parent.composeFile,
+          healthCmd: parent.healthCmd,
+          memoryMb: parent.memoryMb,
+          cpus: parent.cpus,
+          volumes: (parent.volumes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          gitTokenEnc: parent.gitTokenEnc,
+          registryAuthEnc: parent.registryAuthEnc,
+          env: {} as Prisma.InputJsonValue,
+          envEnc: parent.envEnc,
+          containerPort: parent.containerPort,
+          domain: previewDomain,
+          https: parent.https,
+          // Preview-specific: no webhook of its own (parent owns the trigger).
+          isPreview: true,
+          parentAppId: parent.id,
+          prNumber,
+        },
+      });
+    }
+    await this.audit.log({
+      actor: "webhook:pr",
+      action: "preview.deploy",
+      target: preview.id,
+      meta: { parentAppId: parent.id, prNumber, headRef },
+    });
+    return this.runDeploy(preview, "webhook:pr");
+  }
+
+  /** Tear down the preview for a closed/merged PR (no-op if none exists). */
+  async removePreviewByPr(parentId: string, prNumber: number) {
+    const preview = await this.prisma.application.findFirst({
+      where: { parentAppId: parentId, prNumber, isPreview: true },
+    });
+    if (!preview) return;
+    await this.removePreview(preview, "webhook:pr");
+  }
+
+  /** Active previews for a parent app (members only). */
+  async listPreviews(userId: string, parentId: string): Promise<AppView[]> {
+    const parent = await this.require(userId, parentId);
+    const role = (await this.access.teamRole(userId, parent.teamId))!;
+    const previews = await this.prisma.application.findMany({
+      where: { parentAppId: parentId, isPreview: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return previews.map((p) => this.view(p, role));
+  }
+
+  /** Toggle per-PR previews on a parent app — requires a domain to build URLs. */
+  async setPreviewEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (enabled && !app.domain) {
+      throw new BadRequestException("set a domain on the app before enabling previews");
+    }
+    await this.prisma.application.update({
+      where: { id },
+      data: { previewEnabled: enabled },
+    });
+    await this.audit.log({ actor: userId, action: "app.preview.config", target: id });
+  }
+
+  /** Manually remove a single preview (writer on the parent app). */
+  async deletePreview(userId: string, parentId: string, previewId: string): Promise<void> {
+    await this.requireWrite(userId, parentId);
+    const preview = await this.prisma.application.findFirst({
+      where: { id: previewId, parentAppId: parentId, isPreview: true },
+    });
+    if (!preview) throw new NotFoundException("preview not found");
+    await this.removePreview(preview, userId);
+  }
+
+  /** Shared teardown: stop+remove the preview container, then delete the record. */
+  private async removePreview(app: Application, actor: string): Promise<void> {
+    const cmd = buildRemoveScript(app, this.appVolumes(app));
+    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    await this.prisma.application.delete({ where: { id: app.id } });
+    await this.audit.log({ actor, action: "preview.remove", target: app.id });
+  }
+
+  /** Strip a leading `www.` so previews hang off the apex domain. */
+  private baseDomain(domain: string): string {
+    return domain.replace(/^www\./i, "");
   }
 
   /** Core deploy: build/run on the agent and record the Deployment. */
@@ -645,6 +770,10 @@ export class ApplicationsService {
       webhookToken: canWrite ? app.webhookToken : null,
       webhookSecret:
         canWrite && app.webhookSecret ? this.crypto.decrypt(app.webhookSecret) : null,
+      isPreview: app.isPreview,
+      previewEnabled: app.previewEnabled,
+      prNumber: app.prNumber,
+      parentAppId: app.parentAppId,
       envCount: Object.keys(this.appEnv(app)).length,
       role,
       canWrite,

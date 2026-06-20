@@ -48,6 +48,40 @@ export function refMatchesBranch(ref: string | null, branch: string): boolean {
   return ref === `refs/heads/${branch}`;
 }
 
+export interface PullRequestEvent {
+  /** GitHub PR action: opened | synchronize | reopened | closed | … */
+  action: string;
+  /** PR number (e.g. 42). */
+  prNumber: number;
+  /** Source branch name (head ref) the PR builds from. */
+  headRef: string;
+  /** True only on a "closed" event when the PR was actually merged. */
+  merged: boolean;
+}
+
+/**
+ * Extract the fields we need from a GitHub `pull_request` webhook payload.
+ * Returns null when the payload isn't a usable PR event (missing number/ref).
+ */
+export function parsePullRequest(payload: unknown): PullRequestEvent | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as {
+    action?: unknown;
+    pull_request?: {
+      number?: unknown;
+      merged?: unknown;
+      head?: { ref?: unknown };
+    };
+  };
+  const action = typeof p.action === "string" ? p.action : null;
+  const prNumber =
+    typeof p.pull_request?.number === "number" ? p.pull_request.number : null;
+  const headRef =
+    typeof p.pull_request?.head?.ref === "string" ? p.pull_request.head.ref : null;
+  if (!action || prNumber == null || !headRef) return null;
+  return { action, prNumber, headRef, merged: p.pull_request?.merged === true };
+}
+
 export function generateWebhookToken(): string {
   return `tugra_wh_${randomBytes(24).toString("base64url")}`;
 }

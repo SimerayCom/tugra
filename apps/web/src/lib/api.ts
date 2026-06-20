@@ -374,6 +374,20 @@ export const api = {
       method: "POST",
     });
   },
+  getAppPreviews(id: string) {
+    return apiFetch<Application[]>(`/apps/${id}/previews`);
+  },
+  setPreviewEnabled(id: string, enabled: boolean) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/preview-config`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+  deletePreview(id: string, previewId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/previews/${previewId}`, {
+      method: "DELETE",
+    });
+  },
   getAppEnv(id: string) {
     return apiFetch<Record<string, string>>(`/apps/${id}/env`);
   },
