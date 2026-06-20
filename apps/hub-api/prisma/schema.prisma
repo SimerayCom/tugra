@@ -148,6 +148,7 @@ model Server {
   lastSeenAt           DateTime?
   team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId               String
+  tags                 String[]     @default([])
   metrics              Metric[]
   createdAt            DateTime     @default(now())
 }
@@ -372,6 +373,7 @@ model Application {
   previewEnabled Boolean      @default(false)
   prNumber       Int?
   parentAppId    String?
+  tags           String[]     @default([])
   parent         Application?  @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
   previews       Application[] @relation("AppPreviews")
   deployments   Deployment[]
@@ -427,6 +429,7 @@ model Database {
   backupIntervalHours Int?
   backupRetention     Int      @default(7)
   backupDestinationId String?
+  tags        String[] @default([])
   backups     Backup[]
   createdAt   DateTime @default(now())
 

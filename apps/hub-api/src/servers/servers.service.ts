@@ -12,6 +12,7 @@ import {
   generateSeal,
   verifyEd25519,
 } from "./agent-auth";
+import { normalizeTags } from "../common/tags";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
@@ -36,6 +37,7 @@ export interface ServerView {
   lastSeenAt: Date | null;
   createdAt: Date;
   seal: string | null;
+  tags: string[];
   role: Role;
   canWrite: boolean;
 }
@@ -142,6 +144,17 @@ export class ServersService {
     await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
     await this.prisma.server.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "server.delete", target: id });
+  }
+
+  async setTags(userId: string, id: string, tags: string[]): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.prisma.server.update({
+      where: { id },
+      data: { tags: normalizeTags(tags) },
+    });
+    await this.audit.log({ actor: userId, action: "server.tags.update", target: id });
   }
 
   // ---- agent transport (called by the WS server) --------------------------
@@ -291,6 +304,7 @@ export class ServersService {
       lastSeenAt: Date | null;
       createdAt: Date;
       seal: string | null;
+      tags?: string[];
     },
     role: Role,
   ): ServerView {
@@ -316,6 +330,7 @@ export class ServersService {
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,
       seal: s.seal,
+      tags: s.tags ?? [],
       role,
       canWrite: WRITE_ROLES.includes(role),
     };

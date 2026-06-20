@@ -39,6 +39,7 @@ import {
   type TemplateMeta,
 } from "../templates/catalog";
 import { probeSsl, type SslStatus } from "./ssl-probe";
+import { normalizeTags } from "../common/tags";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -80,6 +81,7 @@ export interface AppView {
   previewEnabled: boolean;
   prNumber: number | null;
   parentAppId: string | null;
+  tags: string[];
   envCount: number;
   role: Role;
   canWrite: boolean;
@@ -138,6 +140,7 @@ export class ApplicationsService {
         containerPort: dto.containerPort ?? 80,
         domain: dto.domain ?? null,
         https: dto.https ?? true,
+        tags: normalizeTags(dto.tags ?? []),
         webhookToken: generateWebhookToken(),
         webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
       },
@@ -575,6 +578,15 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.volumes.update", target: id });
   }
 
+  async setTags(userId: string, id: string, tags: string[]): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: { tags: normalizeTags(tags) },
+    });
+    await this.audit.log({ actor: userId, action: "app.tags.update", target: id });
+  }
+
   async setCredentials(
     userId: string,
     id: string,
@@ -774,6 +786,7 @@ export class ApplicationsService {
       previewEnabled: app.previewEnabled,
       prNumber: app.prNumber,
       parentAppId: app.parentAppId,
+      tags: app.tags,
       envCount: Object.keys(this.appEnv(app)).length,
       role,
       canWrite,

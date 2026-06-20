@@ -102,6 +102,28 @@ describe("Databases (e2e)", () => {
     expect(detail.body.status).toBe("RUNNING");
   });
 
+  it("sets and normalizes tags on a database", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "tagdb", serverId, engine: "POSTGRES" })
+      .expect(201);
+    const dbId = res.body.id;
+    expect(res.body.tags).toEqual([]);
+
+    await request(app.getHttpServer())
+      .put(`/databases/${dbId}/tags`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ tags: ["Cache", "prod", "cache"] })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/databases/${dbId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.tags).toEqual(["cache", "prod"]);
+  });
+
   it("rejects creating a database on a server the user has no access to", async () => {
     await request(app.getHttpServer())
       .post("/databases")

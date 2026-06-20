@@ -9,6 +9,7 @@ import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../.
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { EnvironmentCard } from "../../../../components/environment-card";
+import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 
@@ -46,6 +47,10 @@ export default function AppDetailPage() {
   const rollback = useMutation({
     mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
     onSuccess: invalidate,
+  });
+  const tags = useMutation({
+    mutationFn: (next: string[]) => api.setAppTags(id, next),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
 
   // Deployments come newest-first; a leading RUNNING one means a live deploy.
@@ -143,6 +148,10 @@ export default function AppDetailPage() {
       )}
 
       {appData.canWrite && appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
+
+      {!appData.isPreview && (
+        <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />
+      )}
 
       {appData.canWrite && !appData.isPreview && appData.source === "GIT" && (
         <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />

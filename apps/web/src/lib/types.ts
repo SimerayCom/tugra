@@ -57,6 +57,7 @@ export interface ServerView {
   lastSeenAt: string | null;
   createdAt: string;
   seal: string | null;
+  tags: string[];
   role: Role;
   canWrite: boolean;
 }
@@ -238,6 +239,7 @@ export interface Application {
   previewEnabled: boolean;
   prNumber: number | null;
   parentAppId: string | null;
+  tags: string[];
   envCount: number;
   role: Role;
   canWrite: boolean;
@@ -287,6 +289,7 @@ export interface Database {
   backupRetention: number;
   backupDestinationId: string | null;
   backupSupported: boolean;
+  tags: string[];
   role: Role;
   canWrite: boolean;
   createdAt: string;

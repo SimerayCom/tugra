@@ -6,6 +6,7 @@ import type { ServerView } from "../lib/types";
 import { relativeTime, statusCounts, writableIds } from "../lib/fleet";
 import { useT } from "../i18n/provider";
 import { Badge, Btn, StatusDot } from "./ui";
+import { TagChips } from "./tags";
 import { BulkRunModal } from "./bulk-run-modal";
 
 const TEAM_COLORS = ["#C9A84C", "#3D6FE5", "#2FBF71", "#E5484D", "#A855F7", "#F5A524"];
@@ -65,7 +66,10 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <StatusDot status={s.status} />
                     <div>
-                      <div style={{ fontWeight: 600 }}>{s.name}</div>
+                      <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                        {s.name}
+                        <TagChips tags={s.tags} />
+                      </div>
                       <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{s.hostname ?? "—"}</div>
                     </div>
                   </div>

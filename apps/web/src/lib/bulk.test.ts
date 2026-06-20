@@ -22,6 +22,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   lastSeenAt: null,
   createdAt: "",
   seal: null,
+  tags: [],
   role: canWrite ? "OWNER" : "VIEWER",
   canWrite,
 });

@@ -24,6 +24,7 @@ import {
   type DbEngine,
   type DbSpec,
 } from "./database-script";
+import { normalizeTags } from "../common/tags";
 import type { CreateDatabaseInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -51,6 +52,7 @@ export interface DatabaseView {
   backupRetention: number;
   backupDestinationId: string | null;
   backupSupported: boolean;
+  tags: string[];
   role: Role;
   canWrite: boolean;
   createdAt: Date;
@@ -162,6 +164,15 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "database.environment.update", target: id });
   }
 
+  async setTags(userId: string, id: string, tags: string[]): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.database.update({
+      where: { id },
+      data: { tags: normalizeTags(tags) },
+    });
+    await this.audit.log({ actor: userId, action: "database.tags.update", target: id });
+  }
+
   // ── helpers ──
   private async assertEnvInTeam(environmentId: string, teamId: string): Promise<void> {
     const env = await this.prisma.environment.findUnique({
@@ -228,6 +239,7 @@ export class DatabasesService {
       backupRetention: db.backupRetention,
       backupDestinationId: db.backupDestinationId,
       backupSupported: supportsBackup(db.engine as DbEngine),
+      tags: db.tags,
       role,
       canWrite,
       createdAt: db.createdAt,

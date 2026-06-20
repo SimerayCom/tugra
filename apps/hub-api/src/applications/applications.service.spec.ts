@@ -513,6 +513,18 @@ describe("ApplicationsService", () => {
     ).rejects.toThrow(/domain/);
   });
 
+  it("normalizes and stores tags on setTags", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setTags("u1", "app1", ["PROD", " staging ", "prod"]);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { tags: ["prod", "staging"] } }),
+    );
+  });
+
   it("list() excludes preview apps from the top-level listing", async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const prisma = { application: { findMany } } as unknown as PrismaService;

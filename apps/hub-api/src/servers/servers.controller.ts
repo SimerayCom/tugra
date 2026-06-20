@@ -6,11 +6,13 @@ import {
   HttpCode,
   Param,
   Post,
+  Put,
   Query,
   UseGuards,
 } from "@nestjs/common";
 import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
@@ -56,6 +58,17 @@ export class ServersController {
     @Body(new ZodValidationPipe(CreateServerSchema)) body: CreateServerInput,
   ) {
     return this.servers.createServer(user.userId, body.name, body.teamId);
+  }
+
+  @Put(":id/tags")
+  @HttpCode(200)
+  async setTags(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetTagsSchema)) body: SetTagsInput,
+  ) {
+    await this.servers.setTags(user.userId, id, body.tags);
+    return { ok: true };
   }
 
   @Delete(":id")

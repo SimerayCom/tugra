@@ -311,6 +311,28 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--health-cmd");
   });
 
+  it("sets and normalizes tags on an app", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "tagapp", serverId, image: "nginx:alpine", tags: ["Web"] })
+      .expect(201);
+    const appId = appRes.body.id;
+    expect(appRes.body.tags).toEqual(["web"]); // normalized at create
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/tags`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ tags: ["Prod", "api", "prod", " API "] })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.tags).toEqual(["api", "prod"]);
+  });
+
   it("lists templates (metadata only) and creates an app from one", async () => {
     const list = await request(app.getHttpServer())
       .get("/apps/templates")

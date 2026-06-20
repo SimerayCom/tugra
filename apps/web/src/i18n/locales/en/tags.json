@@ -1,0 +1,10 @@
+{
+  "title": "Tags",
+  "desc": "Organize this resource with free-text tags. Use them to filter and group across the fleet.",
+  "placeholder": "Add a tag (e.g. production, api)",
+  "add": "Add",
+  "save": "Save",
+  "none": "No tags yet.",
+  "filter": "Filter by tag",
+  "clear": "Clear"
+}
