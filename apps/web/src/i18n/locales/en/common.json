@@ -3,5 +3,7 @@
   "loading": "Loading…",
   "team": "Team",
   "pickTeam": "Select a team…",
-  "select": "Select…"
+  "select": "Select…",
+  "back": "Back",
+  "backTo": "Back to {target}"
 }

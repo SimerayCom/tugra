@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { monitorColor, uptimeText } from "../../../../lib/monitors";
 import { useT } from "../../../../i18n/provider";
-import { Btn, Card, Spinner } from "../../../../components/ui";
+import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
 
 export default function MonitorDetailPage() {
   const t = useT();
@@ -40,6 +40,7 @@ export default function MonitorDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
+      <BackLink href="/monitors" label={t("common.backTo", { target: t("nav.uptime") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
         <span style={{ width: 11, height: 11, borderRadius: "50%", background: monitorColor(m.status) }} />
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{m.name}</h1>
