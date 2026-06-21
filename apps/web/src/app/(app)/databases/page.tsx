@@ -7,17 +7,15 @@ import { api } from "../../../lib/api";
 import { dbColor, engineLabel } from "../../../lib/databases";
 import type { DbEngine } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
-import { Card, Spinner } from "../../../components/ui";
+import { Btn, Card, Spinner } from "../../../components/ui";
+import { Field, Select, TextInput } from "../../../components/form";
 import { TagChips, TagFilter } from "../../../components/tags";
 
-const field: React.CSSProperties = {
-  padding: "8px 10px",
-  background: "var(--c-el)",
-  border: "1px solid var(--c-bd)",
-  borderRadius: "var(--r1)",
-  color: "var(--c-tx)",
-  fontSize: 13,
-  fontFamily: "inherit",
+const formGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+  gap: 12,
+  alignItems: "end",
 };
 
 const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
@@ -42,11 +40,13 @@ export default function DatabasesPage() {
   const [version, setVersion] = useState("");
   const [hostPort, setHostPort] = useState("");
 
+  const noServer = servers.length === 0;
+
   const create = useMutation({
     mutationFn: () =>
       api.createDatabase({
         name,
-        serverId: serverId || servers[0]?.id,
+        serverId,
         engine,
         version: version || undefined,
         hostPort: hostPort ? Number(hostPort) : undefined,
@@ -70,22 +70,37 @@ export default function DatabasesPage() {
             e.preventDefault();
             create.mutate();
           }}
-          style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
-          <input style={{ ...field, flex: 1, minWidth: 120 }} placeholder={t("databases.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-          <select style={field} value={serverId} onChange={(e) => setServerId(e.target.value)}>
-            <option value="">{servers[0]?.name ?? t("databases.server")}</option>
-            {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <select style={field} value={engine} onChange={(e) => setEngine(e.target.value as DbEngine)}>
-            {ENGINES.map((en) => <option key={en} value={en}>{engineLabel(en)}</option>)}
-          </select>
-          <input style={{ ...field, width: 130 }} placeholder={t("databases.version")} value={version} onChange={(e) => setVersion(e.target.value)} />
-          <input style={{ ...field, width: 130 }} placeholder={t("databases.hostPort")} value={hostPort} onChange={(e) => setHostPort(e.target.value)} type="number" />
-          <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
-            {create.isPending ? "…" : t("databases.create")}
-          </button>
+          <div style={formGrid}>
+            <Field label={t("databases.name")} htmlFor="db-name">
+              <TextInput id="db-name" value={name} onChange={(e) => setName(e.target.value)} required />
+            </Field>
+            <Field label={t("databases.server")}>
+              <Select value={serverId} onChange={setServerId} required placeholder={t("databases.server")}
+                options={servers.map((s) => ({ value: s.id, label: s.name }))} />
+            </Field>
+            <Field label={t("databases.engine")}>
+              <Select value={engine} onChange={(v) => setEngine(v as DbEngine)}
+                options={ENGINES.map((en) => ({ value: en, label: engineLabel(en) }))} />
+            </Field>
+            <Field label={t("databases.version")} hint={t("databases.versionHint")}>
+              <TextInput value={version} onChange={(e) => setVersion(e.target.value)} />
+            </Field>
+            <Field label={t("databases.hostPort")} hint={t("databases.hostPortHint")}>
+              <TextInput type="number" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
+            </Field>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <Btn type="submit" disabled={create.isPending || noServer}>
+              {create.isPending ? "…" : t("databases.create")}
+            </Btn>
+          </div>
         </form>
+        {noServer && (
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 10 }}>
+            {t("databases.needServer")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("databases.addServer")}</Link>
+          </div>
+        )}
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 

@@ -269,6 +269,9 @@ export const api = {
     thresholdPct?: number;
     teamId: string;
     channelIds?: string[];
+    intervalSec?: number;
+    retries?: number;
+    timeoutMs?: number;
   }) {
     return apiFetch<Monitor>("/monitors", {
       method: "POST",

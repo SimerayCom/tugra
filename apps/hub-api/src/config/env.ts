@@ -12,6 +12,9 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16, "JWT_REFRESH_SECRET must be at least 16 chars"),
   SECRETS_ENCRYPTION_KEY: z.string().min(16, "SECRETS_ENCRYPTION_KEY must be at least 16 chars"),
   ACME_EMAIL: z.string().email().optional(), // Let's Encrypt account email (deploy SSL)
+  // Public base URL the agent dials back to (e.g. https://hub.example.com). Used to
+  // build the install command; falls back to the request Host when unset.
+  HUB_PUBLIC_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

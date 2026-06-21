@@ -6,16 +6,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { monitorColor } from "../../../lib/monitors";
 import { useT } from "../../../i18n/provider";
-import { Card, Spinner } from "../../../components/ui";
+import { Btn, Card, Spinner } from "../../../components/ui";
+import { Field, Select, TextInput } from "../../../components/form";
 
-const field: React.CSSProperties = {
-  padding: "8px 10px",
-  background: "var(--c-el)",
-  border: "1px solid var(--c-bd)",
-  borderRadius: "var(--r1)",
-  color: "var(--c-tx)",
-  fontSize: 13,
-  fontFamily: "inherit",
+const formGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+  gap: 12,
+  alignItems: "end",
 };
 
 export default function MonitorsPage() {
@@ -36,6 +34,16 @@ export default function MonitorsPage() {
   const [metric, setMetric] = useState<"DISK" | "CPU" | "MEM">("DISK");
   const [thresholdPct, setThresholdPct] = useState("80");
   const [teamId, setTeamId] = useState("");
+  const [intervalSec, setIntervalSec] = useState("30");
+  const [retries, setRetries] = useState("1");
+  const [timeoutMs, setTimeoutMs] = useState("10000");
+
+  const tuning = {
+    intervalSec: Math.max(10, Number(intervalSec) || 30),
+    retries: Math.max(0, Number(retries) || 0),
+    timeoutMs: Math.max(1000, Number(timeoutMs) || 10000),
+  };
+  const noServer = type === "METRIC" && servers.length === 0;
 
   const create = useMutation({
     mutationFn: () =>
@@ -44,12 +52,13 @@ export default function MonitorsPage() {
           ? {
               name,
               type,
-              serverId: serverId || servers[0]?.id,
+              serverId,
               metric,
               thresholdPct: Number(thresholdPct) || 80,
-              teamId: teamId || teams[0]?.id,
+              teamId,
+              ...tuning,
             }
-          : { name, type, target, teamId: teamId || teams[0]?.id },
+          : { name, type, target, teamId, ...tuning },
       ),
     onSuccess: () => {
       setName("");
@@ -69,38 +78,71 @@ export default function MonitorsPage() {
             e.preventDefault();
             create.mutate();
           }}
-          style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
-          <input style={{ ...field, flex: 1, minWidth: 120 }} placeholder={t("monitors.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-          <select style={field} value={type} onChange={(e) => setType(e.target.value as "HTTP" | "TCP" | "METRIC")}>
-            <option value="HTTP">HTTP</option>
-            <option value="TCP">TCP</option>
-            <option value="METRIC">{t("monitors.metric")}</option>
-          </select>
-          {type === "METRIC" ? (
-            <>
-              <select style={field} value={serverId} onChange={(e) => setServerId(e.target.value)}>
-                <option value="">{servers[0]?.name ?? t("monitors.server")}</option>
-                {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <select style={field} value={metric} onChange={(e) => setMetric(e.target.value as "DISK" | "CPU" | "MEM")}>
-                <option value="DISK">{t("monitors.disk")}</option>
-                <option value="CPU">CPU</option>
-                <option value="MEM">{t("monitors.mem")}</option>
-              </select>
-              <input style={{ ...field, width: 110 }} type="number" placeholder={t("monitors.threshold")} value={thresholdPct} onChange={(e) => setThresholdPct(e.target.value)} />
-            </>
-          ) : (
-            <input style={{ ...field, flex: 2, minWidth: 180 }} placeholder={type === "HTTP" ? t("monitors.targetHttp") : t("monitors.targetTcp")} value={target} onChange={(e) => setTarget(e.target.value)} required />
-          )}
-          <select style={field} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-            <option value="">{teams[0]?.name ?? t("common.pickTeam")}</option>
-            {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-          </select>
-          <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
-            {create.isPending ? "…" : t("monitors.add")}
-          </button>
+          <div style={formGrid}>
+            <Field label={t("monitors.name")} htmlFor="mon-name">
+              <TextInput id="mon-name" value={name} onChange={(e) => setName(e.target.value)} required />
+            </Field>
+            <Field label={t("monitors.typeLabel")}>
+              <Select
+                value={type}
+                onChange={(v) => setType(v as "HTTP" | "TCP" | "METRIC")}
+                options={[
+                  { value: "HTTP", label: "HTTP" },
+                  { value: "TCP", label: "TCP" },
+                  { value: "METRIC", label: t("monitors.metric") },
+                ]}
+              />
+            </Field>
+            {type === "METRIC" ? (
+              <>
+                <Field label={t("monitors.server")}>
+                  <Select value={serverId} onChange={setServerId} required placeholder={t("monitors.server")}
+                    options={servers.map((s) => ({ value: s.id, label: s.name }))} />
+                </Field>
+                <Field label={t("monitors.metric")}>
+                  <Select value={metric} onChange={(v) => setMetric(v as "DISK" | "CPU" | "MEM")}
+                    options={[
+                      { value: "DISK", label: t("monitors.disk") },
+                      { value: "CPU", label: "CPU" },
+                      { value: "MEM", label: t("monitors.mem") },
+                    ]} />
+                </Field>
+                <Field label={t("monitors.threshold")}>
+                  <TextInput type="number" value={thresholdPct} onChange={(e) => setThresholdPct(e.target.value)} />
+                </Field>
+              </>
+            ) : (
+              <Field label={type === "HTTP" ? t("monitors.targetHttp") : t("monitors.targetTcp")} style={{ gridColumn: "span 2" }}>
+                <TextInput value={target} onChange={(e) => setTarget(e.target.value)} required
+                  placeholder={type === "HTTP" ? "https://example.com" : "host:port"} />
+              </Field>
+            )}
+            <Field label={t("common.team")}>
+              <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
+                options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+            </Field>
+            <Field label={t("monitors.intervalSec")} hint={t("monitors.intervalHint")}>
+              <TextInput type="number" min={10} value={intervalSec} onChange={(e) => setIntervalSec(e.target.value)} />
+            </Field>
+            <Field label={t("monitors.retries")}>
+              <TextInput type="number" min={0} value={retries} onChange={(e) => setRetries(e.target.value)} />
+            </Field>
+            <Field label={t("monitors.timeoutMs")}>
+              <TextInput type="number" min={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(e.target.value)} />
+            </Field>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <Btn type="submit" disabled={create.isPending || noServer}>
+              {create.isPending ? "…" : t("monitors.add")}
+            </Btn>
+          </div>
         </form>
+        {noServer && (
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 10 }}>
+            {t("monitors.needServer")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("monitors.addServer")}</Link>
+          </div>
+        )}
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 

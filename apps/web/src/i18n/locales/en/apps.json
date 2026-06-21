@@ -23,6 +23,8 @@
   "open": "Open ↗",
   "create": "Create",
   "empty": "No apps yet.",
+  "needServer": "Apps deploy to a server.",
+  "addServer": "Add a server →",
   "deploy": "Deploy",
   "stop": "Stop",
   "status": "Status",

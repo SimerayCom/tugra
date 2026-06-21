@@ -65,6 +65,7 @@ export class ServersService {
     userId: string,
     name: string,
     teamId: string,
+    publicUrl?: string,
   ): Promise<{ server: ServerView; enrollToken: string; installCommand: string }> {
     await this.requireTeamRole(userId, teamId, WRITE_ROLES);
 
@@ -87,8 +88,18 @@ export class ServersService {
     return {
       server: this.toView(created, Role.OWNER),
       enrollToken,
-      installCommand: `tugra-agent --hub <YOUR_HUB_URL>/agent --token ${enrollToken}`,
+      installCommand: `tugra-agent --hub ${this.agentWsUrl(publicUrl)} --token ${enrollToken}`,
     };
+  }
+
+  /**
+   * The ws(s) URL the agent should dial. Prefers the configured HUB_PUBLIC_URL,
+   * else the request's public host, else localhost — and maps http→ws/https→wss.
+   */
+  private agentWsUrl(publicUrl?: string): string {
+    const port = process.env.HUB_PORT ?? "3000";
+    const base = process.env.HUB_PUBLIC_URL ?? publicUrl ?? `http://localhost:${port}`;
+    return `${base.replace(/\/+$/, "").replace(/^http/i, "ws")}/agent`;
   }
 
   /** The teams the user belongs to (for team pickers, command-center scoping). */
