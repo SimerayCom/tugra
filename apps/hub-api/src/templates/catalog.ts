@@ -5,6 +5,7 @@
  * interpolated into the compose file via the deploy `--env-file`.
  */
 import { randomBytes } from "node:crypto";
+import generated from "./catalog.generated.json";
 
 export type TemplateCategory =
   | "cms"
@@ -15,17 +16,29 @@ export type TemplateCategory =
   | "analytics"
   | "security"
   | "productivity"
-  | "developer";
+  | "developer"
+  | "ai"
+  | "media"
+  | "communication"
+  | "finance";
+
+export type SecretKind = "alnum" | "hex" | "base64" | "password-symbols";
+
+/** A secret env key: a bare string (24-char alnum) or a typed descriptor. */
+export type SecretSpec =
+  | string
+  | { key: string; kind?: SecretKind; len?: number };
 
 export interface TemplateDef {
   slug: string;
   name: string;
   description: string;
   category: TemplateCategory;
-  icon: string; // emoji
+  icon?: string; // emoji (curated only); web renders the vendored `logo` svg
+  logo?: string; // /icons/<logo>.svg filename (no extension)
   composeFile: string;
   env?: Record<string, string>;
-  secrets?: string[]; // env keys auto-filled with a generated secret
+  secrets?: SecretSpec[]; // env keys auto-filled with a generated secret
 }
 
 /** Public metadata for the gallery — never exposes composeFile or secrets. */
@@ -34,10 +47,12 @@ export interface TemplateMeta {
   name: string;
   description: string;
   category: TemplateCategory;
-  icon: string;
+  icon?: string;
+  logo?: string;
 }
 
-export const TEMPLATES: Record<string, TemplateDef> = {
+/** Hand-curated, host-port'd templates — these win over generated on slug clash. */
+const CURATED: Record<string, TemplateDef> = {
   wordpress: {
     slug: "wordpress",
     name: "WordPress",
@@ -547,25 +562,48 @@ volumes:
   },
 };
 
+/** Bulk catalog imported from Coolify (Apache-2.0) — see scripts/import-templates.mjs. */
+const GENERATED = (generated as unknown as { templates: Record<string, TemplateDef> })
+  .templates;
+
+/** Full catalog: generated bulk + curated overrides (curated wins on slug clash). */
+export const TEMPLATES: Record<string, TemplateDef> = { ...GENERATED, ...CURATED };
+
 /** Gallery metadata for every template (no composeFile / secrets). */
 export function templateMetaList(): TemplateMeta[] {
-  return Object.values(TEMPLATES).map(({ slug, name, description, category, icon }) => ({
+  return Object.values(TEMPLATES).map(({ slug, name, description, category, icon, logo }) => ({
     slug,
     name,
     description,
     category,
     icon,
+    logo,
   }));
 }
 
-/** A random URL/password-safe alphanumeric secret. */
-export function genSecret(): string {
-  return randomBytes(32).toString("base64url").replace(/[^a-zA-Z0-9]/g, "").slice(0, 24);
+const SECRET_SYMBOLS = "!@#$%^&*-_=+";
+
+/** A random secret value. Default: 24-char URL/password-safe alphanumeric. */
+export function genSecret(kind: SecretKind = "alnum", len = 24): string {
+  const n = Math.max(len, 8);
+  if (kind === "hex") return randomBytes(Math.ceil(n / 2) + 1).toString("hex").slice(0, n);
+  if (kind === "base64") return randomBytes(n).toString("base64url").slice(0, n);
+  const alnum = randomBytes(n * 2).toString("base64url").replace(/[^a-zA-Z0-9]/g, "");
+  if (kind === "password-symbols") {
+    const sym =
+      SECRET_SYMBOLS[randomBytes(1)[0] % SECRET_SYMBOLS.length] +
+      SECRET_SYMBOLS[randomBytes(1)[0] % SECRET_SYMBOLS.length];
+    return alnum.slice(0, Math.max(n - 2, 6)) + sym;
+  }
+  return alnum.slice(0, n);
 }
 
 /** Resolve a template's env: static defaults + a freshly generated value per secret. */
 export function buildTemplateEnv(tpl: TemplateDef): Record<string, string> {
   const env: Record<string, string> = { ...(tpl.env ?? {}) };
-  for (const key of tpl.secrets ?? []) env[key] = genSecret();
+  for (const s of tpl.secrets ?? []) {
+    if (typeof s === "string") env[s] = genSecret();
+    else env[s.key] = genSecret(s.kind ?? "alnum", s.len ?? 24);
+  }
   return env;
 }
