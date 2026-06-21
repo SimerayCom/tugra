@@ -51,7 +51,8 @@ describe("ProjectsService", () => {
       },
       application: {
         findMany: jest.fn().mockResolvedValue([
-          { id: "a1", name: "api", status: "RUNNING", environmentId: "e1", domain: "x.com", https: true, tags: ["prod"], serverId: "s1" },
+          { id: "a1", name: "api", status: "RUNNING", environmentId: "e1", source: "GIT", domain: "x.com", https: true, tags: ["prod"], serverId: "s1" },
+          { id: "a2", name: "stack", status: "RUNNING", environmentId: "e1", source: "COMPOSE", domain: null, https: true, tags: [], serverId: "s1" },
         ]),
       },
       database: {
@@ -64,12 +65,16 @@ describe("ProjectsService", () => {
     const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
     const out = await make(prisma, access).get("u1", "p1");
     const res = out.environments[0].resources!;
-    const app = res.find((r) => r.kind === "app")!;
+    const app = res.find((r) => r.id === "a1")!;
     expect(app.url).toBe("https://x.com");
     expect(app.serverName).toBe("web-1");
     expect(app.tags).toEqual(["prod"]);
+    expect(app.source).toBe("GIT");
+    const service = res.find((r) => r.id === "a2")!;
+    expect(service.source).toBe("COMPOSE"); // grouped as a Service in the UI
     const db = res.find((r) => r.kind === "database")!;
     expect(db.engine).toBe("POSTGRES");
+    expect(db.source).toBeNull();
     expect(db.serverName).toBe("web-1");
   });
 

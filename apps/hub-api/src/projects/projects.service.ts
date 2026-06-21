@@ -15,6 +15,7 @@ export interface ProjectResource {
   id: string;
   name: string;
   kind: "app" | "database";
+  source: string | null; // app source (IMAGE/GIT/COMPOSE); null for databases
   status: string;
   url: string | null;
   serverName: string | null;
@@ -99,7 +100,7 @@ export class ProjectsService {
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true, domain: true, https: true, tags: true, serverId: true },
+        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, tags: true, serverId: true },
       }),
       this.prisma.database.findMany({
         where: { environmentId: { in: envIds } },
@@ -119,14 +120,14 @@ export class ProjectsService {
       environments: project.environments.map((e) => {
         const resources: ProjectResource[] = [
           ...apps.filter((a) => a.environmentId === e.id).map((a) => ({
-            id: a.id, name: a.name, kind: "app" as const, status: a.status,
+            id: a.id, name: a.name, kind: "app" as const, source: a.source, status: a.status,
             url: a.domain ? `${a.https ? "https" : "http"}://${a.domain}` : null,
             serverName: serverName.get(a.serverId) ?? null,
             tags: a.tags,
             engine: null,
           })),
           ...dbs.filter((d) => d.environmentId === e.id).map((d) => ({
-            id: d.id, name: d.name, kind: "database" as const, status: d.status,
+            id: d.id, name: d.name, kind: "database" as const, source: null, status: d.status,
             url: null,
             serverName: serverName.get(d.serverId) ?? null,
             tags: d.tags,

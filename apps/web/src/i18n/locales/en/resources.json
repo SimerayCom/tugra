@@ -9,6 +9,8 @@
   "type": "Resource type",
   "app": "Application",
   "appDesc": "Docker image, Git repo or Compose stack",
+  "service": "Service",
+  "serviceDesc": "A docker-compose stack (multi-container)",
   "database": "Database",
   "databaseDesc": "Managed Postgres, MySQL, Redis and more",
   "create": "Create",
