@@ -238,6 +238,25 @@ describe("ApplicationsService", () => {
     expect(data.envEnc).toContain("DB_PASSWORD");
   });
 
+  it("places a template app into the chosen environment", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { teamId: "t1" } }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", {
+      name: "blog",
+      serverId: "s1",
+      environmentId: "e1",
+    });
+    expect(create.mock.calls[0][0].data.environmentId).toBe("e1");
+  });
+
   it("forbids a non-writer from setting credentials", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

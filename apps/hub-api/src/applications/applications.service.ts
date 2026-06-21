@@ -163,7 +163,7 @@ export class ApplicationsService {
   async createFromTemplate(
     userId: string,
     slug: string,
-    input: { name: string; serverId: string },
+    input: { name: string; serverId: string; environmentId?: string },
   ): Promise<AppView> {
     const tpl = TEMPLATES[slug];
     if (!tpl) throw new NotFoundException("template not found");
@@ -173,6 +173,7 @@ export class ApplicationsService {
       source: "COMPOSE",
       composeFile: tpl.composeFile,
       env: buildTemplateEnv(tpl),
+      environmentId: input.environmentId,
     });
   }
 
