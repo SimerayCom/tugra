@@ -19,8 +19,8 @@ const EMPTY: DeployLogState = { lines: "", done: false };
  * connects while `active` is true; aborts and resets on unmount or deactivation.
  * On completion it refetches deployments so the persisted log/status take over.
  */
-export function useDeployLogStream(appId: string, active: boolean): DeployLogState {
-  const qc = useQueryClient();
+/** Shared SSE log consumer for any DeployLogHub-backed stream path. */
+function useLogStream(path: string, active: boolean, onDone?: () => void): DeployLogState {
   const [state, setState] = useState<DeployLogState>(EMPTY);
 
   useEffect(() => {
@@ -32,7 +32,7 @@ export function useDeployLogStream(appId: string, active: boolean): DeployLogSta
     setState(EMPTY);
     void (async () => {
       try {
-        const res = await fetch(`${API_BASE}/apps/${appId}/deployments/stream`, {
+        const res = await fetch(`${API_BASE}${path}`, {
           headers: {
             authorization: `Bearer ${tokens.access() ?? ""}`,
             accept: "text/event-stream",
@@ -45,8 +45,7 @@ export function useDeployLogStream(appId: string, active: boolean): DeployLogSta
             setState((s) => ({ ...s, lines: s.lines + event.data }));
           } else {
             setState((s) => ({ ...s, done: true, status: event.status, exitCode: event.exitCode }));
-            void qc.invalidateQueries({ queryKey: ["deployments", appId] });
-            void qc.invalidateQueries({ queryKey: ["app", appId] });
+            onDone?.();
           }
         });
       } catch {
@@ -54,7 +53,29 @@ export function useDeployLogStream(appId: string, active: boolean): DeployLogSta
       }
     })();
     return () => controller.abort();
-  }, [appId, active, qc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, active]);
 
   return state;
+}
+
+/**
+ * Subscribe to the live build-log SSE stream for an app's active deploy. Only
+ * connects while `active` is true; aborts and resets on unmount or deactivation.
+ * On completion it refetches deployments so the persisted log/status take over.
+ */
+export function useDeployLogStream(appId: string, active: boolean): DeployLogState {
+  const qc = useQueryClient();
+  return useLogStream(`/apps/${appId}/deployments/stream`, active, () => {
+    void qc.invalidateQueries({ queryKey: ["deployments", appId] });
+    void qc.invalidateQueries({ queryKey: ["app", appId] });
+  });
+}
+
+/** Live SSE stream for a server's active patch run (apt upgrade). */
+export function usePatchLogStream(serverId: string, active: boolean): DeployLogState {
+  const qc = useQueryClient();
+  return useLogStream(`/servers/${serverId}/updates/stream`, active, () => {
+    void qc.invalidateQueries({ queryKey: ["server", serverId] });
+  });
 }
