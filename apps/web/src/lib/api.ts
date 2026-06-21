@@ -399,7 +399,7 @@ export const api = {
   listTemplates() {
     return apiFetch<Template[]>("/apps/templates");
   },
-  createFromTemplate(slug: string, input: { name: string; serverId: string }) {
+  createFromTemplate(slug: string, input: { name: string; serverId: string; environmentId?: string }) {
     return apiFetch<Application>(`/apps/templates/${slug}`, {
       method: "POST",
       body: JSON.stringify(input),

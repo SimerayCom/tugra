@@ -88,6 +88,7 @@ export type PreviewConfigInput = z.infer<typeof PreviewConfigSchema>;
 export const FromTemplateSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),
+  environmentId: z.string().min(1).optional(),
 });
 export type FromTemplateInput = z.infer<typeof FromTemplateSchema>;
 
