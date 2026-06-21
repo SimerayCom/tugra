@@ -16,6 +16,16 @@ import { Field, Select, TextInput } from "../../../../components/form";
 
 const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
 
+// vendored brand icon per engine (KeyDB/Dragonfly have none → generic glyph)
+const ENGINE_LOGO: Partial<Record<DbEngine, string>> = {
+  POSTGRES: "postgresql",
+  MYSQL: "mysql",
+  MARIADB: "mariadb",
+  REDIS: "redis",
+  MONGO: "mongodb",
+  CLICKHOUSE: "clickhouse",
+};
+
 type Sel =
   | { group: "app"; source: "IMAGE" }
   | { group: "app"; source: "GIT"; build: "NIXPACKS" | "DOCKERFILE" }
@@ -178,7 +188,15 @@ function Wizard() {
 
               <div style={groupTitle}>{t("resources.databases")}</div>
               <div style={grid3}>
-                {ENGINES.map((e) => card(e, lucide(Database), engineLabel(e), t("resources.databaseDesc"), () => pick({ group: "db", engine: e })))}
+                {ENGINES.map((e) =>
+                  card(
+                    e,
+                    ENGINE_LOGO[e] ? <TemplateLogo logo={ENGINE_LOGO[e]} slug={e} name={engineLabel(e)} size={36} /> : lucide(Database),
+                    engineLabel(e),
+                    t("resources.databaseDesc"),
+                    () => pick({ group: "db", engine: e }),
+                  ),
+                )}
               </div>
 
               {templates.length > 0 && (() => {
