@@ -1,0 +1,9 @@
+{
+  "title": "Log drains",
+  "desc": "Forward this server's container logs to an external HTTP sink (Axiom, Loki, custom). Logs are batched and POSTed continuously.",
+  "name": "Name",
+  "endpoint": "Endpoint URL",
+  "token": "Bearer token (optional)",
+  "add": "+ Add drain",
+  "empty": "No log drains yet."
+}

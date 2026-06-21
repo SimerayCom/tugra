@@ -150,7 +150,22 @@ model Server {
   teamId               String
   tags                 String[]     @default([])
   metrics              Metric[]
+  logDrains            LogDrain[]
   createdAt            DateTime     @default(now())
+}
+
+model LogDrain {
+  id           String   @id @default(cuid())
+  server       Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String
+  name         String
+  type         String   @default("HTTP")
+  endpoint     String
+  authTokenEnc String?
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([serverId])
 }
 
 model Metric {

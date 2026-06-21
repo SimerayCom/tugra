@@ -6,3 +6,19 @@ export const CleanupConfigSchema = z.object({
   volumes: z.boolean().optional(),
 });
 export type CleanupConfigInput = z.infer<typeof CleanupConfigSchema>;
+
+export const CreateLogDrainSchema = z.object({
+  name: z.string().min(1),
+  endpoint: z.string().url(),
+  token: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+});
+export type CreateLogDrainInput = z.infer<typeof CreateLogDrainSchema>;
+
+export const UpdateLogDrainSchema = z.object({
+  name: z.string().min(1).optional(),
+  endpoint: z.string().url().optional(),
+  token: z.string().min(1).nullable().optional(),
+  enabled: z.boolean().optional(),
+});
+export type UpdateLogDrainInput = z.infer<typeof UpdateLogDrainSchema>;

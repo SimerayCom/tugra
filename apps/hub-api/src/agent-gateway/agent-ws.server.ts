@@ -54,6 +54,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private terminalDelegate?: TerminalDelegate;
+  // Called when a server comes online so log-drain config can be (re)pushed.
+  private logDrainProvider?: (serverId: string) => void;
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -124,12 +126,14 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           st.serverId = serverId;
           st.authed = true;
           this.sockets.set(serverId, socket);
-          return this.send(socket, {
+          this.send(socket, {
             type: "enrolled",
             serverId,
             seal,
             hubKey: this.hubSign.publicKeySpkiBase64,
           });
+          this.logDrainProvider?.(serverId);
+          return;
         }
         case "auth": {
           const ok = await this.servers.authenticate(
@@ -141,11 +145,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           st.serverId = msg.serverId;
           st.authed = true;
           this.sockets.set(msg.serverId, socket);
-          return this.send(socket, {
+          this.send(socket, {
             type: "auth_ok",
             serverId: msg.serverId,
             hubKey: this.hubSign.publicKeySpkiBase64,
           });
+          this.logDrainProvider?.(msg.serverId);
+          return;
         }
         case "metrics": {
           if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
@@ -249,6 +255,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   /** Register the terminal gateway as the relay for interactive-shell traffic. */
   setTerminalDelegate(delegate: TerminalDelegate): void {
     this.terminalDelegate = delegate;
+  }
+
+  /** Register a provider that pushes a server's log-drain config when it connects. */
+  setLogDrainProvider(fn: (serverId: string) => void): void {
+    this.logDrainProvider = fn;
   }
 
   /** Fire-and-forget a message to a connected agent. Returns false if offline. */

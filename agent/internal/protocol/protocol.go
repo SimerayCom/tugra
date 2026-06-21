@@ -114,6 +114,15 @@ type ServerMsg struct {
 	HubKey     string `json:"hubKey"`
 	Sig        string `json:"sig"`
 	Capability string `json:"capability"`
+	// Log drains (type "log_drains"): forward container logs to these sinks.
+	Drains []DrainCfg `json:"drains"`
+}
+
+// DrainCfg is one external log sink (HTTP endpoint + optional bearer token).
+type DrainCfg struct {
+	ID       string `json:"id"`
+	Endpoint string `json:"endpoint"`
+	Token    string `json:"token"`
 }
 
 // CanonicalCommand mirrors @tugra/shared canonicalCommand (byte-identical input).

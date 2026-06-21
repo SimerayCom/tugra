@@ -62,6 +62,16 @@ export interface ServerView {
   canWrite: boolean;
 }
 
+export interface LogDrain {
+  id: string;
+  name: string;
+  type: string;
+  endpoint: string;
+  enabled: boolean;
+  hasToken: boolean;
+  createdAt: string;
+}
+
 export interface UpgradablePackage {
   name: string;
   current: string;

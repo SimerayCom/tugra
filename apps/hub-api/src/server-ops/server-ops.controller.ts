@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   type MessageEvent,
@@ -17,7 +18,15 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
-import { CleanupConfigInput, CleanupConfigSchema } from "./dto";
+import { LogDrainService } from "./log-drain.service";
+import {
+  CleanupConfigInput,
+  CleanupConfigSchema,
+  CreateLogDrainInput,
+  CreateLogDrainSchema,
+  UpdateLogDrainInput,
+  UpdateLogDrainSchema,
+} from "./dto";
 
 @Controller("servers/:id")
 @UseGuards(ApiAuthGuard)
@@ -25,7 +34,39 @@ export class ServerOpsController {
   constructor(
     private readonly cleanup: CleanupService,
     private readonly patch: PatchService,
+    private readonly logDrains: LogDrainService,
   ) {}
+
+  @Get("log-drains")
+  listLogDrains(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.logDrains.list(user.userId, id);
+  }
+
+  @Post("log-drains")
+  createLogDrain(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(CreateLogDrainSchema)) body: CreateLogDrainInput,
+  ) {
+    return this.logDrains.create(user.userId, id, body);
+  }
+
+  @Put("log-drains/:drainId")
+  @HttpCode(200)
+  updateLogDrain(
+    @CurrentUser() user: AuthUser,
+    @Param("drainId") drainId: string,
+    @Body(new ZodValidationPipe(UpdateLogDrainSchema)) body: UpdateLogDrainInput,
+  ) {
+    return this.logDrains.update(user.userId, drainId, body);
+  }
+
+  @Delete("log-drains/:drainId")
+  @HttpCode(200)
+  async deleteLogDrain(@CurrentUser() user: AuthUser, @Param("drainId") drainId: string) {
+    await this.logDrains.remove(user.userId, drainId);
+    return { ok: true };
+  }
 
   @Get("updates")
   checkUpdates(@CurrentUser() user: AuthUser, @Param("id") id: string) {

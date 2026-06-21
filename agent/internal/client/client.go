@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/mrcandev/tugra/agent/internal/config"
+	"github.com/mrcandev/tugra/agent/internal/drains"
 	"github.com/mrcandev/tugra/agent/internal/exec"
 	"github.com/mrcandev/tugra/agent/internal/hostinfo"
 	"github.com/mrcandev/tugra/agent/internal/keys"
@@ -115,6 +116,10 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	hostTicker := time.NewTicker(hostInfoInterval)
 	defer hostTicker.Stop()
 
+	// Log-drain forwarder: starts/stops on hub "log_drains" config messages.
+	fwd := drains.New(store.ServerID)
+	defer fwd.Stop()
+
 	// Reader: handle commands + terminal sessions from the hub.
 	sessions := map[string]*terminal.Session{}
 	var sessMu sync.Mutex
@@ -216,6 +221,8 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 				if sess != nil {
 					sess.Close()
 				}
+			case "log_drains":
+				fwd.SetDrains(ctx, m.Drains)
 			}
 		}
 	}()
