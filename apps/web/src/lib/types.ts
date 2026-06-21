@@ -178,6 +178,10 @@ export interface ProjectResource {
   name: string;
   kind: "app" | "database";
   status: string;
+  url: string | null;
+  serverName: string | null;
+  tags: string[];
+  engine: string | null;
 }
 
 export interface Environment {

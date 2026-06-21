@@ -21,6 +21,7 @@ describe("ProjectsService", () => {
       },
       application: { findMany: jest.fn().mockResolvedValue([]) },
       database: { findMany: jest.fn().mockResolvedValue([]) },
+      server: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = {
       requireRole: jest.fn().mockResolvedValue(undefined),
@@ -38,6 +39,38 @@ describe("ProjectsService", () => {
       requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(make({} as PrismaService, access).create("u1", "t1", "web")).rejects.toThrow(/nope/);
+  });
+
+  it("get() returns resources enriched with url, server name, tags and engine", async () => {
+    const prisma = {
+      project: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "p1", teamId: "t1", name: "web",
+          environments: [{ id: "e1", name: "production", createdAt: new Date() }], createdAt: new Date(),
+        }),
+      },
+      application: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "a1", name: "api", status: "RUNNING", environmentId: "e1", domain: "x.com", https: true, tags: ["prod"], serverId: "s1" },
+        ]),
+      },
+      database: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "d1", name: "pg", status: "RUNNING", environmentId: "e1", engine: "POSTGRES", tags: [], serverId: "s1" },
+        ]),
+      },
+      server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", name: "web-1" }]) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const out = await make(prisma, access).get("u1", "p1");
+    const res = out.environments[0].resources!;
+    const app = res.find((r) => r.kind === "app")!;
+    expect(app.url).toBe("https://x.com");
+    expect(app.serverName).toBe("web-1");
+    expect(app.tags).toEqual(["prod"]);
+    const db = res.find((r) => r.kind === "database")!;
+    expect(db.engine).toBe("POSTGRES");
+    expect(db.serverName).toBe("web-1");
   });
 
   it("lists projects grouped by the user's teams with resource counts", async () => {
