@@ -23,11 +23,18 @@ function makeDeployLogs(): DeployLogHub {
   } as unknown as DeployLogHub;
 }
 
+type MonitorsMock = { createForApp: jest.Mock; removeForApp: jest.Mock };
+
+function makeMonitors(): MonitorsMock {
+  return { createForApp: jest.fn().mockResolvedValue(undefined), removeForApp: jest.fn().mockResolvedValue(undefined) };
+}
+
 function make(
   prisma: Partial<PrismaService>,
   access: Partial<TeamAccessService>,
   agentWs: Partial<AgentWsServer>,
   deployLogs: DeployLogHub = makeDeployLogs(),
+  monitors: MonitorsMock = makeMonitors(),
 ) {
   return new ApplicationsService(
     prisma as PrismaService,
@@ -37,6 +44,7 @@ function make(
     deployLogs,
     { ensureProxy: jest.fn() } as unknown as import("./proxy.service").ProxyService,
     crypto,
+    monitors as unknown as import("../monitors/monitors.service").MonitorsService,
   );
 }
 
@@ -511,6 +519,34 @@ describe("ApplicationsService", () => {
     await expect(
       make(prisma, access, {} as AgentWsServer).setPreviewEnabled("u1", "parent1", true),
     ).rejects.toThrow(/domain/);
+  });
+
+  it("auto-creates an uptime monitor when a domained app is created", async () => {
+    const monitors = makeMonitors();
+    const created = { ...app, id: "a9", domain: "x.com", https: true, isPreview: false };
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create: jest.fn().mockResolvedValue(created) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer, makeDeployLogs(), monitors).create("u1", {
+      name: "web", serverId: "s1", image: "nginx", domain: "x.com",
+    });
+    expect(monitors.createForApp).toHaveBeenCalledWith(expect.objectContaining({ id: "a9", domain: "x.com" }));
+  });
+
+  it("removes the app's auto monitors on delete", async () => {
+    const monitors = makeMonitors();
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), delete: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs, makeDeployLogs(), monitors).remove("u1", "app1");
+    expect(monitors.removeForApp).toHaveBeenCalledWith("app1");
   });
 
   it("normalizes and stores tags on setTags", async () => {

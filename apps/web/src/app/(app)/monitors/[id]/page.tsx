@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { monitorColor, uptimeText } from "../../../../lib/monitors";
+import type { Monitor } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { Field, TextInput } from "../../../../components/form";
+import { MonitorFavicon } from "../../../../components/monitor-favicon";
 
 export default function MonitorDetailPage() {
   const t = useT();
@@ -43,6 +47,7 @@ export default function MonitorDetailPage() {
       <BackLink href="/monitors" label={t("common.backTo", { target: t("nav.uptime") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
         <span style={{ width: 11, height: 11, borderRadius: "50%", background: monitorColor(m.status) }} />
+        <MonitorFavicon type={m.type} target={m.target} size={20} />
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{m.name}</h1>
       </div>
       <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 18px" }}>{m.type} · {m.target}</p>
@@ -83,6 +88,71 @@ export default function MonitorDetailPage() {
           ))}
         </div>
       </Card>
+
+      {m.canWrite && <MonitorSettings monitor={m} />}
     </div>
+  );
+}
+
+function MonitorSettings({ monitor }: { monitor: Monitor }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: channels = [] } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
+  const teamChannels = channels.filter((c) => c.teamId === monitor.teamId);
+
+  const [intervalSec, setIntervalSec] = useState(String(monitor.intervalSec));
+  const [retries, setRetries] = useState(String(monitor.retries));
+  const [timeoutMs, setTimeoutMs] = useState(String(monitor.timeoutMs));
+  const [enabled, setEnabled] = useState(monitor.enabled);
+  const [channelIds, setChannelIds] = useState<string[]>(monitor.channelIds);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateMonitor(monitor.id, {
+        intervalSec: Math.max(10, Number(intervalSec) || 30),
+        retries: Math.max(0, Number(retries) || 0),
+        timeoutMs: Math.max(1000, Number(timeoutMs) || 10000),
+        enabled,
+        channelIds,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["monitor", monitor.id] }),
+  });
+  const toggleChannel = (cid: string) =>
+    setChannelIds((cur) => (cur.includes(cid) ? cur.filter((x) => x !== cid) : [...cur, cid]));
+
+  return (
+    <Card style={{ padding: 16, marginTop: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("monitors.settings")}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <Field label={t("monitors.intervalSec")}>
+          <TextInput type="number" min={10} value={intervalSec} onChange={(e) => setIntervalSec(e.target.value)} />
+        </Field>
+        <Field label={t("monitors.retries")}>
+          <TextInput type="number" min={0} value={retries} onChange={(e) => setRetries(e.target.value)} />
+        </Field>
+        <Field label={t("monitors.timeoutMs")}>
+          <TextInput type="number" min={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(e.target.value)} />
+        </Field>
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, margin: "12px 0" }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        {t("monitors.enabled")}
+      </label>
+      {teamChannels.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("monitors.channels")}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+            {teamChannels.map((c) => (
+              <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                <input type="checkbox" checked={channelIds.includes(c.id)} onChange={() => toggleChannel(c.id)} />
+                {c.name}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      <Btn onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "…" : t("monitors.save")}</Btn>
+      {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
+    </Card>
   );
 }

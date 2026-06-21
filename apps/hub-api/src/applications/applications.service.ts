@@ -13,6 +13,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
+import { MonitorsService } from "../monitors/monitors.service";
 import {
   buildImageRemoveScript,
   buildRemoveScript,
@@ -109,6 +110,7 @@ export class ApplicationsService {
     private readonly deployLogs: DeployLogHub,
     private readonly proxy: ProxyService,
     private readonly crypto: CryptoService,
+    private readonly monitors: MonitorsService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -146,6 +148,8 @@ export class ApplicationsService {
       },
     });
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
+    // Auto-track uptime for a domained app (best-effort; never blocks creation).
+    await this.monitors.createForApp(app).catch(() => undefined);
     const role = (await this.access.teamRole(userId, server.teamId))!;
     return this.view(app, role);
   }
@@ -514,6 +518,7 @@ export class ApplicationsService {
         ? buildComposeDownScript(this.toSpec(app), { volumes: true })
         : buildRemoveScript(app, this.appVolumes(app));
     await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    await this.monitors.removeForApp(id).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "app.remove", target: id });
   }

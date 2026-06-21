@@ -27,3 +27,14 @@ export const CreateMonitorSchema = z
     },
   );
 export type CreateMonitorInput = z.infer<typeof CreateMonitorSchema>;
+
+export const UpdateMonitorSchema = z.object({
+  name: z.string().min(1).optional(),
+  intervalSec: z.number().int().min(10).optional(),
+  retries: z.number().int().min(0).optional(),
+  timeoutMs: z.number().int().min(1000).optional(),
+  resendEvery: z.number().int().min(0).optional(),
+  enabled: z.boolean().optional(),
+  channelIds: z.array(z.string()).optional(),
+});
+export type UpdateMonitorInput = z.infer<typeof UpdateMonitorSchema>;
