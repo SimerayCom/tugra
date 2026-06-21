@@ -1,7 +1,21 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import type { ServerStatus } from "../lib/types";
+
+/** Back-to-list link for detail pages (sub-routes have no other way back). */
+export function BackLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--c-tx3)", fontSize: 13, textDecoration: "none", marginBottom: 14 }}
+    >
+      <ArrowLeft size={15} /> {label}
+    </Link>
+  );
+}
 
 export function Btn({
   variant = "primary",

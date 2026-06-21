@@ -11,7 +11,7 @@ import { TerminalModal } from "../../../../components/terminal-modal";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
-import { Btn, Card, Spinner } from "../../../../components/ui";
+import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
 
 export default function AppDetailPage() {
   const t = useT();
@@ -62,6 +62,7 @@ export default function AppDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
+      <BackLink href="/apps" label={t("common.backTo", { target: t("nav.apps") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
         <span style={{ width: 11, height: 11, borderRadius: "50%", background: appColor(appData.status) }} />
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{appData.name}</h1>

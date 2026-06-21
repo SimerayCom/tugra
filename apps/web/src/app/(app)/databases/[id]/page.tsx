@@ -7,7 +7,7 @@ import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useT } from "../../../../i18n/provider";
-import { Btn, Card, Spinner } from "../../../../components/ui";
+import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 
@@ -74,6 +74,7 @@ export default function DatabaseDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
+      <BackLink href="/databases" label={t("common.backTo", { target: t("nav.databases") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
         <span style={{ width: 11, height: 11, borderRadius: "50%", background: dbColor(db.status) }} />
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{db.name}</h1>

@@ -16,8 +16,11 @@ import {
   Globe,
   HardDrive,
   LayoutDashboard,
+  LogOut,
+  Moon,
   Server,
   Settings,
+  Sun,
   Users,
   Variable,
   type LucideIcon,
@@ -129,7 +132,9 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
               {g.group}
             </div>
             {g.items.map((it) => {
-              const active = pathname === it.href.split("?")[0];
+              const base = it.href.split("?")[0];
+              // Active for the page itself AND its detail sub-routes (/servers/123).
+              const active = pathname === base || pathname.startsWith(`${base}/`);
               const Icon = it.icon;
               return (
                 <Link
@@ -152,8 +157,9 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
             await logout();
             router.replace("/login");
           }}
-          style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+          style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
         >
+          <LogOut size={15} style={{ flexShrink: 0 }} />
           {t("nav.logout")}
         </button>
       </div>
@@ -166,8 +172,8 @@ function TopHeader() {
   const [theme, toggle] = useTheme();
   return (
     <header style={{ height: 52, flexShrink: 0, borderBottom: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 14, padding: "0 18px", background: "var(--c-bg)" }}>
-      <button onClick={toggle} title="Toggle theme" style={{ background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "5px 10px", cursor: "pointer", color: "var(--c-tx2)", fontSize: 12, fontFamily: "inherit" }}>
-        {theme === "dark" ? "☾" : "☀"}
+      <button onClick={toggle} title="Toggle theme" style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
+        {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
       </button>
       <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{user?.email}</span>
     </header>

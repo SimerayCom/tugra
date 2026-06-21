@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import type { Environment } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
-import { Btn, Card, Spinner } from "../../../../components/ui";
+import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -43,6 +43,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
+      <BackLink href="/projects" label={t("common.backTo", { target: t("nav.projects") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{project.name}</h1>
         <div style={{ flex: 1 }} />

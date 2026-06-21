@@ -10,7 +10,7 @@ import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
-import { Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
+import { BackLink, Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
 
 export default function ServerDetailPage() {
   const t = useT();
@@ -40,6 +40,7 @@ export default function ServerDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
+      <BackLink href="/servers" label={t("common.backTo", { target: t("nav.servers") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
         <StatusDot status={server.status} />
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{server.name}</h1>
