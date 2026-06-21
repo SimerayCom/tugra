@@ -85,6 +85,28 @@ describe("Servers + Agent (e2e)", () => {
     expect(res.body.tags).toEqual(["edge", "eu"]);
   });
 
+  it("manages log drains for a server (create + list)", async () => {
+    const created = await request(app.getHttpServer())
+      .post(`/servers/${serverId}/log-drains`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ name: "axiom", endpoint: "https://logs.example.com/ingest", token: "secret" })
+      .expect(201);
+    expect(created.body.name).toBe("axiom");
+    expect(created.body.hasToken).toBe(true);
+    expect(created.body.token).toBeUndefined(); // secret never returned
+
+    const list = await request(app.getHttpServer())
+      .get(`/servers/${serverId}/log-drains`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(list.body.some((d: { id: string }) => d.id === created.body.id)).toBe(true);
+
+    await request(app.getHttpServer())
+      .delete(`/servers/${serverId}/log-drains/${created.body.id}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+  });
+
   it("enrolls an agent over WS, goes ONLINE, and ingests metrics", async () => {
     const { publicKey } = generateKeyPairSync("ed25519");
     const spkiB64 = publicKey

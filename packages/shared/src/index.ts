@@ -210,6 +210,17 @@ export interface TermExitMsg {
   exitCode: number;
 }
 
+/** Hub -> Agent: the server's active log drains (container logs are forwarded here). */
+export interface LogDrainCfg {
+  id: string;
+  endpoint: string;
+  token?: string;
+}
+export interface LogDrainsMsg {
+  type: "log_drains";
+  drains: LogDrainCfg[];
+}
+
 export type AgentMessage =
   | EnrollMsg
   | AuthMsg
@@ -229,4 +240,5 @@ export type HubMessage =
   | TermStartMsg
   | TermInputMsg
   | TermResizeMsg
-  | TermCloseMsg;
+  | TermCloseMsg
+  | LogDrainsMsg;

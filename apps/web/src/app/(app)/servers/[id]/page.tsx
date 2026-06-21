@@ -88,6 +88,8 @@ export default function ServerDetailPage() {
 
       {server.canWrite && <PatchCard id={id} />}
 
+      {server.canWrite && <LogDrainCard id={id} />}
+
       {server.canWrite && <CleanupCard id={id} server={server} />}
 
       {shellOpen && (
@@ -177,6 +179,53 @@ function PatchCard({ id }: { id: string }) {
       {(applying ? log.lines : output) && (
         <pre className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{applying ? log.lines : output}</pre>
       )}
+    </Card>
+  );
+}
+
+function LogDrainCard({ id }: { id: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: drains = [] } = useQuery({ queryKey: ["logDrains", id], queryFn: () => api.listLogDrains(id) });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["logDrains", id] });
+  const [name, setName] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [token, setToken] = useState("");
+  const add = useMutation({
+    mutationFn: () => api.createLogDrain(id, { name, endpoint, token: token || undefined }),
+    onSuccess: () => { setName(""); setEndpoint(""); setToken(""); invalidate(); },
+  });
+  const toggle = useMutation({
+    mutationFn: ({ drainId, enabled }: { drainId: string; enabled: boolean }) => api.updateLogDrain(id, drainId, { enabled }),
+    onSuccess: invalidate,
+  });
+  const del = useMutation({ mutationFn: (drainId: string) => api.deleteLogDrain(id, drainId), onSuccess: invalidate });
+  const field: React.CSSProperties = { padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit" };
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("logdrains.title")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("logdrains.desc")}</p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        {drains.map((d) => (
+          <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+            <input type="checkbox" checked={d.enabled} onChange={(e) => toggle.mutate({ drainId: d.id, enabled: e.target.checked })} />
+            <span style={{ fontWeight: 600, width: 130, overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{d.endpoint}</span>
+            <button onClick={() => del.mutate(d.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+          </div>
+        ))}
+        {drains.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("logdrains.empty")}</div>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input style={{ ...field, width: 130 }} placeholder={t("logdrains.name")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={{ ...field, flex: 1, minWidth: 180 }} placeholder={t("logdrains.endpoint")} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} />
+        <input style={{ ...field, width: 150 }} type="password" placeholder={t("logdrains.token")} value={token} onChange={(e) => setToken(e.target.value)} />
+        <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !endpoint}>{t("logdrains.add")}</Btn>
+      </div>
+      {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
     </Card>
   );
 }

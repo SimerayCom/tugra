@@ -13,6 +13,7 @@ import type {
   Heartbeat,
   MetricsSample,
   Monitor,
+  LogDrain,
   MyInvitation,
   PatchInfo,
   PublicUser,
@@ -238,6 +239,18 @@ export const api = {
   },
   checkUpdates(id: string) {
     return apiFetch<PatchInfo>(`/servers/${id}/updates`);
+  },
+  listLogDrains(serverId: string) {
+    return apiFetch<LogDrain[]>(`/servers/${serverId}/log-drains`);
+  },
+  createLogDrain(serverId: string, input: { name: string; endpoint: string; token?: string; enabled?: boolean }) {
+    return apiFetch<LogDrain>(`/servers/${serverId}/log-drains`, { method: "POST", body: JSON.stringify(input) });
+  },
+  updateLogDrain(serverId: string, drainId: string, input: { name?: string; endpoint?: string; token?: string | null; enabled?: boolean }) {
+    return apiFetch<LogDrain>(`/servers/${serverId}/log-drains/${drainId}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteLogDrain(serverId: string, drainId: string) {
+    return apiFetch<{ ok: true }>(`/servers/${serverId}/log-drains/${drainId}`, { method: "DELETE" });
   },
   upgradeAll(id: string) {
     return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply`, { method: "POST" });
