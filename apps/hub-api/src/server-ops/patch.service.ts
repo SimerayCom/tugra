@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import {
   buildCheckScript,
   buildUpgradeAllScript,
@@ -28,6 +29,7 @@ export class PatchService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
+    private readonly deployLogs: DeployLogHub,
   ) {}
 
   async checkUpdates(userId: string, serverId: string): Promise<PatchInfo> {
@@ -39,16 +41,41 @@ export class PatchService {
 
   async upgradeAll(userId: string, serverId: string): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
-    const r = await this.agentWs.sendCommand(serverId, buildUpgradeAllScript(), "patch", UPGRADE_ALL_TIMEOUT_MS);
+    const r = await this.runStreamed(serverId, buildUpgradeAllScript(), UPGRADE_ALL_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId });
-    return { output: r.output.slice(0, 65536), exitCode: r.exitCode };
+    return r;
   }
 
   async upgradeOne(userId: string, serverId: string, pkg: string): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
-    const r = await this.agentWs.sendCommand(serverId, buildUpgradeOneScript(pkg), "patch", UPGRADE_ONE_TIMEOUT_MS);
+    const r = await this.runStreamed(serverId, buildUpgradeOneScript(pkg), UPGRADE_ONE_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId, meta: { pkg } });
-    return { output: r.output.slice(0, 65536), exitCode: r.exitCode };
+    return r;
+  }
+
+  /** Live build-log stream for the server's active patch run (replay + live). */
+  async streamLogs(userId: string, serverId: string) {
+    await this.requireWrite(userId, serverId);
+    return this.deployLogs.subscribe(serverId);
+  }
+
+  /** Run a patch command on the agent, streaming its output via DeployLogHub. */
+  private async runStreamed(serverId: string, script: string, timeoutMs: number): Promise<{ output: string; exitCode: number }> {
+    this.deployLogs.begin(serverId);
+    try {
+      const r = await this.agentWs.sendCommand(serverId, script, "patch", timeoutMs, (c) =>
+        this.deployLogs.push(serverId, c),
+      );
+      this.deployLogs.finish(serverId, {
+        status: r.exitCode === 0 ? "SUCCESS" : "FAILED",
+        exitCode: r.exitCode,
+        deploymentId: serverId,
+      });
+      return { output: r.output.slice(0, 65536), exitCode: r.exitCode };
+    } catch (e) {
+      this.deployLogs.finish(serverId, { status: "FAILED", exitCode: -1, deploymentId: serverId });
+      throw e;
+    }
   }
 
   private async requireWrite(userId: string, serverId: string): Promise<void> {

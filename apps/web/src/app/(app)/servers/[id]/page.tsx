@@ -11,6 +11,7 @@ import { MetricChart } from "../../../../components/charts";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
 import { BackLink, Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
+import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 
 export default function ServerDetailPage() {
   const t = useT();
@@ -103,17 +104,23 @@ export default function ServerDetailPage() {
 function PatchCard({ id }: { id: string }) {
   const t = useT();
   const [output, setOutput] = useState("");
+  const [applying, setApplying] = useState(false);
+  const log = usePatchLogStream(id, applying);
   const check = useMutation({ mutationFn: () => api.checkUpdates(id) });
   const info = check.data;
   const upgradeAll = useMutation({
     mutationFn: () => api.upgradeAll(id),
     onSuccess: (r) => { setOutput(r.output); check.mutate(); },
+    onSettled: () => setApplying(false),
   });
   const upgradeOne = useMutation({
     mutationFn: (pkg: string) => api.upgradeOne(id, pkg),
     onSuccess: (r) => { setOutput(r.output); check.mutate(); },
+    onSettled: () => setApplying(false),
   });
   const busy = upgradeAll.isPending || upgradeOne.isPending;
+  const runAll = () => { setOutput(""); setApplying(true); upgradeAll.mutate(); };
+  const runOne = (pkg: string) => { setOutput(""); setApplying(true); upgradeOne.mutate(pkg); };
 
   return (
     <Card style={{ padding: 16, marginTop: 20 }}>
@@ -143,7 +150,7 @@ function PatchCard({ id }: { id: string }) {
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: info.count })}</span>
                 <div style={{ flex: 1 }} />
-                <Btn onClick={() => upgradeAll.mutate()} disabled={busy}>
+                <Btn onClick={runAll} disabled={busy}>
                   {upgradeAll.isPending ? t("patching.running") : t("patching.updateAll")}
                 </Btn>
               </div>
@@ -153,7 +160,7 @@ function PatchCard({ id }: { id: string }) {
                     <span style={{ fontWeight: 600, width: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
                     <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current} → {p.candidate}</span>
                     <button
-                      onClick={() => upgradeOne.mutate(p.name)}
+                      onClick={() => runOne(p.name)}
                       disabled={busy}
                       style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
                     >
@@ -167,8 +174,8 @@ function PatchCard({ id }: { id: string }) {
         </>
       )}
 
-      {output && (
-        <pre className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{output}</pre>
+      {(applying ? log.lines : output) && (
+        <pre className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{applying ? log.lines : output}</pre>
       )}
     </Card>
   );

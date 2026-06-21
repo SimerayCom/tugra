@@ -3,11 +3,14 @@ import {
   Controller,
   Get,
   HttpCode,
+  type MessageEvent,
   Param,
   Post,
   Put,
+  Sse,
   UseGuards,
 } from "@nestjs/common";
+import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -39,6 +42,15 @@ export class ServerOpsController {
   @HttpCode(200)
   upgradeOne(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("pkg") pkg: string) {
     return this.patch.upgradeOne(user.userId, id, pkg);
+  }
+
+  /** Live patch-log stream (SSE). Completes when no patch run is active. */
+  @Sse("updates/stream")
+  streamLogs(@CurrentUser() user: AuthUser, @Param("id") id: string): Observable<MessageEvent> {
+    return from(this.patch.streamLogs(user.userId, id)).pipe(
+      mergeMap((sub) => (sub ? concat(from(sub.replay), sub.live) : EMPTY)),
+      map((event) => ({ data: JSON.stringify(event) }) as MessageEvent),
+    );
   }
 
   @Post("cleanup")
