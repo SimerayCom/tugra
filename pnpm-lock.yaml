@@ -125,13 +125,16 @@ importers:
         version: 7.2.2
       ts-jest:
         specifier: ^29.2.5
-        version: 29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.43))(typescript@5.9.3)
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
 
   apps/web:
     dependencies:
+      '@icons-pack/react-simple-icons':
+        specifier: ^13.13.0
+        version: 13.13.0(react@19.2.7)
       '@tanstack/react-query':
         specifier: ^5.101.0
         version: 5.101.0(react@19.2.7)
@@ -147,6 +150,9 @@ importers:
       geist:
         specifier: ^1.7.2
         version: 1.7.2(next@15.5.19(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
+      lucide-react:
+        specifier: ^1.21.0
+        version: 1.21.0(react@19.2.7)
       next:
         specifier: ^15.0.0
         version: 15.5.19(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -201,7 +207,7 @@ importers:
         version: 29.7.0(@types/node@20.19.43)
       ts-jest:
         specifier: ^29.2.5
-        version: 29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3)
+        version: 29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.43))(typescript@5.9.3)
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -487,6 +493,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@icons-pack/react-simple-icons@13.13.0':
+    resolution: {integrity: sha512-B5HhQMIpcSH4z8IZ8HFhD59CboHceKYMpPC9kAwGyKntvPdyJJv26DLu4Z1wAjcCLyrJhf11tMhiQGom9Rxb9g==}
+    engines: {node: '>=24', pnpm: '>=10'}
+    peerDependencies:
+      react: ^16.13 || ^17 || ^18 || ^19
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2878,6 +2890,11 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
+  lucide-react@1.21.0:
+    resolution: {integrity: sha512-reEZMXq8Qdd5jg5XYkQ5TR1fB/GiQ7ih4vcrthYDtgjSDwh0i6/YLiGjsWsIwgN49gpAnd4J2elSNzncMEEUUQ==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   luxon@3.7.2:
     resolution: {integrity: sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==}
     engines: {node: '>=12'}
@@ -4423,6 +4440,10 @@ snapshots:
   '@exodus/bytes@1.15.1(@noble/hashes@1.8.0)':
     optionalDependencies:
       '@noble/hashes': 1.8.0
+
+  '@icons-pack/react-simple-icons@13.13.0(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
 
   '@img/colour@1.1.0':
     optional: true
@@ -7142,6 +7163,10 @@ snapshots:
     dependencies:
       yallist: 3.1.1
 
+  lucide-react@1.21.0(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+
   luxon@3.7.2: {}
 
   lz-string@1.5.0: {}
@@ -7963,7 +7988,7 @@ snapshots:
 
   tree-kill@1.2.2: {}
 
-  ts-jest@29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0)(typescript@5.9.3):
+  ts-jest@29.4.11(@babel/core@7.29.7)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.29.7))(jest-util@29.7.0)(jest@29.7.0(@types/node@20.19.43))(typescript@5.9.3):
     dependencies:
       bs-logger: 0.2.6
       fast-json-stable-stringify: 2.1.0

@@ -30,7 +30,7 @@
   "waiting": "Waiting for the agent to connect…",
   "createFailed": "Could not create",
   "status": "Status",
-  "sealLabel": "🏛️ Seal (Tuğra)",
+  "sealLabel": "Seal (Tuğra)",
   "sealed": "✓ sealed",
   "noMetrics": "No metrics yet — live stream starts when the agent connects.",
   "cpu": "CPU",

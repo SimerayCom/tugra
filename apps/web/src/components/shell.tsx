@@ -7,10 +7,26 @@ import { useAuth } from "../lib/auth";
 import { useT } from "../i18n/provider";
 import { Spinner } from "./ui";
 import { CommandPalette, type CommandDest } from "./command-palette";
+import {
+  Activity,
+  ArrowLeftRight,
+  Box,
+  Database,
+  FolderTree,
+  Globe,
+  HardDrive,
+  LayoutDashboard,
+  Server,
+  Settings,
+  Users,
+  Variable,
+  type LucideIcon,
+} from "lucide-react";
 
 interface NavItem {
   key: string; // i18n key under "nav"
   href: string;
+  icon: LucideIcon;
   impl?: boolean;
 }
 
@@ -18,28 +34,28 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Monitor",
     items: [
-      { key: "dashboard", href: "/dashboard", impl: true },
-      { key: "uptime", href: "/monitors", impl: true },
+      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard, impl: true },
+      { key: "uptime", href: "/monitors", icon: Activity, impl: true },
     ],
   },
   {
     group: "Resources",
     items: [
-      { key: "servers", href: "/servers", impl: true },
-      { key: "projects", href: "/projects", impl: true },
-      { key: "apps", href: "/apps", impl: true },
-      { key: "databases", href: "/databases", impl: true },
-      { key: "destinations", href: "/destinations", impl: true },
-      { key: "sharedVars", href: "/shared-variables", impl: true },
-      { key: "domains", href: "/domains", impl: true },
-      { key: "migration", href: "/coming-soon?f=Migration" },
+      { key: "servers", href: "/servers", icon: Server, impl: true },
+      { key: "projects", href: "/projects", icon: FolderTree, impl: true },
+      { key: "apps", href: "/apps", icon: Box, impl: true },
+      { key: "databases", href: "/databases", icon: Database, impl: true },
+      { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
+      { key: "sharedVars", href: "/shared-variables", icon: Variable, impl: true },
+      { key: "domains", href: "/domains", icon: Globe, impl: true },
+      { key: "migration", href: "/coming-soon?f=Migration", icon: ArrowLeftRight },
     ],
   },
   {
     group: "Account",
     items: [
-      { key: "teams", href: "/teams", impl: true },
-      { key: "settings", href: "/settings", impl: true },
+      { key: "teams", href: "/teams", icon: Users, impl: true },
+      { key: "settings", href: "/settings", icon: Settings, impl: true },
     ],
   },
 ];
@@ -93,7 +109,8 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
     >
       <div style={{ padding: "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 7, background: "var(--c-a)", color: "#0d0d11", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>T</div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-seal.png" alt="Tugra" width={28} height={28} style={{ borderRadius: 7 }} />
           <div style={{ fontWeight: 700, fontSize: 15 }}>Tugra</div>
         </div>
         <button
@@ -113,12 +130,14 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
             </div>
             {g.items.map((it) => {
               const active = pathname === it.href.split("?")[0];
+              const Icon = it.icon;
               return (
                 <Link
                   key={it.key}
                   href={it.href}
-                  style={{ display: "block", padding: "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
+                  style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
                 >
+                  <Icon size={15} strokeWidth={active ? 2.4 : 2} style={{ flexShrink: 0 }} />
                   {t(`nav.${it.key}`)}
                 </Link>
               );
