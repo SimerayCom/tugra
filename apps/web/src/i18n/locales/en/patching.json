@@ -1,0 +1,12 @@
+{
+  "title": "Server patching",
+  "desc": "Check for and apply OS package updates (apt — Debian/Ubuntu). Reboots are never automatic.",
+  "check": "Check for updates",
+  "updateAll": "Update all",
+  "update": "Update",
+  "running": "Updating…",
+  "upToDate": "Your server is up to date.",
+  "unsupported": "Automatic patching is only available on apt-based (Debian/Ubuntu) servers.",
+  "rebootRequired": "A reboot is required to finish applying updates.",
+  "count": "{n} package(s) can be upgraded"
+}

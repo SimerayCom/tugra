@@ -173,6 +173,29 @@ describe("Servers + Agent (e2e)", () => {
     expect(metrics.body.length).toBeGreaterThanOrEqual(1);
     expect(metrics.body[metrics.body.length - 1].cpu).toBe(42.5);
 
+    // server patching: reply to the patch command with a real apt-format output
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === "command") {
+        ws.send(
+          JSON.stringify({
+            type: "command_result",
+            reqId: msg.reqId,
+            exitCode: 0,
+            output: "TUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\nTUGRA_REBOOT\n",
+          }),
+        );
+      }
+    });
+    const updates = await request(app.getHttpServer())
+      .get(`/servers/${serverId}/updates`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(updates.body.supported).toBe(true);
+    expect(updates.body.count).toBe(1);
+    expect(updates.body.rebootRequired).toBe(true);
+    expect(updates.body.packages[0].name).toBe("docker-ce");
+
     ws.close();
   });
 
