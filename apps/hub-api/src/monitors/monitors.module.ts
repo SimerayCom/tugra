@@ -9,5 +9,6 @@ import { MonitorSchedulerService } from "./scheduler.service";
   imports: [NotificationsModule],
   controllers: [MonitorsController],
   providers: [MonitorsService, MonitorRunnerService, MonitorSchedulerService],
+  exports: [MonitorsService],
 })
 export class MonitorsModule {}

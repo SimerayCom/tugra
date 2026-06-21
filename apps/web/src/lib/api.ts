@@ -278,6 +278,23 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  updateMonitor(
+    id: string,
+    input: {
+      name?: string;
+      intervalSec?: number;
+      retries?: number;
+      timeoutMs?: number;
+      resendEvery?: number;
+      enabled?: boolean;
+      channelIds?: string[];
+    },
+  ) {
+    return apiFetch<Monitor>(`/monitors/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
   checkMonitor(id: string) {
     return apiFetch<{ status: string; ms: number; msg: string }>(
       `/monitors/${id}/check`,

@@ -91,7 +91,13 @@ export interface Monitor {
   thresholdPct: number | null;
   status: MonitorStatus;
   intervalSec: number;
+  retries: number;
+  timeoutMs: number;
+  resendEvery: number;
   enabled: boolean;
+  auto: boolean;
+  appId: string | null;
+  channelIds: string[];
   teamId: string;
   role: Role;
   canWrite: boolean;

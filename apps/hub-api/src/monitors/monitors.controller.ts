@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Put,
   Query,
   UseGuards,
 } from "@nestjs/common";
@@ -14,7 +15,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MonitorsService } from "./monitors.service";
-import { CreateMonitorInput, CreateMonitorSchema } from "./dto";
+import {
+  CreateMonitorInput,
+  CreateMonitorSchema,
+  UpdateMonitorInput,
+  UpdateMonitorSchema,
+} from "./dto";
 
 @Controller("monitors")
 @UseGuards(ApiAuthGuard)
@@ -37,6 +43,16 @@ export class MonitorsController {
   @Get(":id")
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.monitors.get(user.userId, id);
+  }
+
+  @Put(":id")
+  @HttpCode(200)
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(UpdateMonitorSchema)) body: UpdateMonitorInput,
+  ) {
+    return this.monitors.update(user.userId, id, body);
   }
 
   @Get(":id/heartbeats")

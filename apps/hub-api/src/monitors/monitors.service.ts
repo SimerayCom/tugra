@@ -10,7 +10,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 import { uptimePercent } from "./transition";
-import type { CreateMonitorInput } from "./dto";
+import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
@@ -24,7 +24,13 @@ export interface MonitorView {
   thresholdPct: number | null;
   status: MonitorStatus;
   intervalSec: number;
+  retries: number;
+  timeoutMs: number;
+  resendEvery: number;
   enabled: boolean;
+  auto: boolean;
+  appId: string | null;
+  channelIds: string[];
   teamId: string;
   role: Role;
   canWrite: boolean;
@@ -83,7 +89,84 @@ export class MonitorsService {
   async get(userId: string, id: string): Promise<MonitorView> {
     const m = await this.require(userId, id);
     const role = (await this.access.teamRole(userId, m.teamId))!;
-    return this.view(m, role);
+    const channels = await this.prisma.monitorChannel.findMany({
+      where: { monitorId: id },
+      select: { channelId: true },
+    });
+    return this.view(m, role, channels.map((c) => c.channelId));
+  }
+
+  /** Edit an existing monitor; re-schedules when the cadence/enabled changes. */
+  async update(userId: string, id: string, dto: UpdateMonitorInput): Promise<MonitorView> {
+    const m = await this.prisma.monitor.findUnique({ where: { id } });
+    if (!m) throw new NotFoundException("monitor not found");
+    await this.access.requireRole(userId, m.teamId, WRITE);
+
+    const updated = await this.prisma.monitor.update({
+      where: { id },
+      data: {
+        name: dto.name ?? undefined,
+        intervalSec: dto.intervalSec ?? undefined,
+        retries: dto.retries ?? undefined,
+        timeoutMs: dto.timeoutMs ?? undefined,
+        resendEvery: dto.resendEvery ?? undefined,
+        enabled: dto.enabled ?? undefined,
+      },
+    });
+    if (dto.channelIds !== undefined) {
+      await this.prisma.monitorChannel.deleteMany({ where: { monitorId: id } });
+      if (dto.channelIds.length) {
+        await this.prisma.monitorChannel.createMany({
+          data: dto.channelIds.map((channelId) => ({ monitorId: id, channelId })),
+          skipDuplicates: true,
+        });
+      }
+    }
+    // Cadence/enabled affect the BullMQ repeatable job → re-schedule.
+    if (dto.intervalSec !== undefined || dto.enabled !== undefined) {
+      await this.scheduler.unschedule(id);
+      if (updated.enabled) await this.scheduler.schedule(id, updated.intervalSec);
+    }
+    await this.audit.log({ actor: userId, action: "monitor.update", target: id });
+    const role = (await this.access.teamRole(userId, m.teamId))!;
+    return this.view(updated, role, dto.channelIds);
+  }
+
+  /** Auto-create an uptime monitor for an app's domain (system; no RBAC). */
+  async createForApp(app: {
+    id: string;
+    name: string;
+    teamId: string;
+    domain: string | null;
+    https: boolean;
+    isPreview: boolean;
+  }): Promise<void> {
+    if (!app.domain || app.isPreview) return;
+    const m = await this.prisma.monitor.create({
+      data: {
+        name: app.name,
+        type: MonitorType.HTTP,
+        target: `${app.https ? "https" : "http"}://${app.domain}`,
+        teamId: app.teamId,
+        appId: app.id,
+        auto: true,
+      },
+    });
+    await this.audit.log({ actor: "system", action: "monitor.auto.create", target: m.id });
+    await this.scheduler.schedule(m.id, m.intervalSec);
+  }
+
+  /** Remove the auto monitor(s) for an app (system; called on app delete). */
+  async removeForApp(appId: string): Promise<void> {
+    const autos = await this.prisma.monitor.findMany({
+      where: { appId, auto: true },
+      select: { id: true },
+    });
+    for (const a of autos) await this.scheduler.unschedule(a.id);
+    if (autos.length) {
+      await this.prisma.monitor.deleteMany({ where: { appId, auto: true } });
+      await this.audit.log({ actor: "system", action: "monitor.auto.remove", target: appId });
+    }
   }
 
   async remove(userId: string, id: string): Promise<void> {
@@ -135,7 +218,7 @@ export class MonitorsService {
     return m;
   }
 
-  private view(m: Monitor, role: Role): MonitorView {
+  private view(m: Monitor, role: Role, channelIds: string[] = []): MonitorView {
     return {
       id: m.id,
       name: m.name,
@@ -146,7 +229,13 @@ export class MonitorsService {
       thresholdPct: m.thresholdPct,
       status: m.status,
       intervalSec: m.intervalSec,
+      retries: m.retries,
+      timeoutMs: m.timeoutMs,
+      resendEvery: m.resendEvery,
       enabled: m.enabled,
+      auto: m.auto,
+      appId: m.appId,
+      channelIds,
       teamId: m.teamId,
       role,
       canWrite: WRITE.includes(role),

@@ -210,9 +210,14 @@ model Monitor {
   failCount   Int           @default(0) // consecutive failures (for retry → DOWN)
   downCount   Int           @default(0) // consecutive down beats (for resend)
   enabled     Boolean       @default(true)
+  // Auto-created uptime monitor for an app's domain (auto=true, appId set).
+  appId       String?
+  auto        Boolean       @default(false)
   heartbeats  Heartbeat[]
   channels    MonitorChannel[]
   createdAt   DateTime      @default(now())
+
+  @@index([appId])
 }
 
 model Heartbeat {

@@ -8,6 +8,7 @@ import { monitorColor } from "../../../lib/monitors";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
 import { Field, Select, TextInput } from "../../../components/form";
+import { MonitorFavicon } from "../../../components/monitor-favicon";
 
 const formGrid: React.CSSProperties = {
   display: "grid",
@@ -153,8 +154,12 @@ export default function MonitorsPage() {
           {monitors.map((m) => (
             <Link key={m.id} href={`/monitors/${m.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: monitorColor(m.status) }} />
+              <MonitorFavicon type={m.type} target={m.target} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</div>
+                <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                  {m.name}
+                  {m.auto && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: 4, padding: "0 5px" }}>{t("monitors.autoBadge")}</span>}
+                </div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{m.type} · {m.target}</div>
               </div>
               <span style={{ fontSize: 12, color: monitorColor(m.status), fontWeight: 600 }}>{m.status}</span>

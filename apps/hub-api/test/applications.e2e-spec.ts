@@ -123,6 +123,38 @@ describe("Applications / deploy (e2e)", () => {
     expect(commands.some((c) => c.includes("--network tugra-proxy"))).toBe(true);
   });
 
+  it("auto-creates an uptime monitor for a domained app, editable + removed on delete", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "monsite", serverId, image: "nginx:alpine", domain: "mon.example.com" })
+      .expect(201);
+    const appId = appRes.body.id;
+    await sleep(150);
+
+    const list = await request(app.getHttpServer()).get("/monitors").set("Authorization", `Bearer ${token}`).expect(200);
+    const auto = list.body.find((m: { appId?: string }) => m.appId === appId);
+    expect(auto).toBeTruthy();
+    expect(auto.auto).toBe(true);
+    expect(auto.type).toBe("HTTP");
+    expect(auto.target).toBe("https://mon.example.com");
+
+    // editable
+    await request(app.getHttpServer())
+      .put(`/monitors/${auto.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ intervalSec: 60 })
+      .expect(200);
+    const got = await request(app.getHttpServer()).get(`/monitors/${auto.id}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(got.body.intervalSec).toBe(60);
+
+    // removed when the app is deleted
+    await request(app.getHttpServer()).delete(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(150);
+    const after = await request(app.getHttpServer()).get("/monitors").set("Authorization", `Bearer ${token}`).expect(200);
+    expect(after.body.some((m: { id: string }) => m.id === auto.id)).toBe(false);
+  });
+
   it("deploys a GIT app → clone + nixpacks build", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")
