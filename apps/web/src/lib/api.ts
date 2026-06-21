@@ -366,6 +366,7 @@ export const api = {
     domain?: string;
     env?: Record<string, string>;
     tags?: string[];
+    environmentId?: string;
   }) {
     return apiFetch<Application>("/apps", {
       method: "POST",
@@ -530,6 +531,7 @@ export const api = {
     engine: DbEngine;
     version?: string;
     hostPort?: number;
+    environmentId?: string;
   }) {
     return apiFetch<Database>("/databases", {
       method: "POST",

@@ -1,0 +1,17 @@
+{
+  "newTitle": "New resource",
+  "subtitle": "Deploy an app or a database into a project environment.",
+  "destination": "Destination",
+  "project": "Project",
+  "environment": "Environment",
+  "needProject": "Create a project first.",
+  "createProject": "New project →",
+  "type": "Resource type",
+  "app": "Application",
+  "appDesc": "Docker image, Git repo or Compose stack",
+  "database": "Database",
+  "databaseDesc": "Managed Postgres, MySQL, Redis and more",
+  "create": "Create",
+  "needServer": "Add a server first to deploy resources.",
+  "addServer": "Add a server →"
+}
