@@ -23,26 +23,13 @@ export function TemplateLogo({
   const [failed, setFailed] = useState(false);
   if (failed) return <Boxes size={size} color="var(--c-a)" />;
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: size + 10,
-        height: size + 10,
-        borderRadius: 6,
-        background: "#fff",
-        flexShrink: 0,
-      }}
-    >
-      <img
-        src={`/icons/${logo ?? slug}.svg`}
-        alt={name ?? slug}
-        width={size}
-        height={size}
-        onError={() => setFailed(true)}
-        style={{ display: "block" }}
-      />
-    </span>
+    <img
+      src={`/icons/${logo ?? slug}.svg`}
+      alt={name ?? slug}
+      width={size}
+      height={size}
+      onError={() => setFailed(true)}
+      style={{ objectFit: "contain", display: "block" }}
+    />
   );
 }

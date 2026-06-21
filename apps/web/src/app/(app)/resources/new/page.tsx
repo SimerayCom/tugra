@@ -105,22 +105,31 @@ function Wizard() {
 
   if (isLoading) return <div style={{ padding: 28 }}><Spinner /></div>;
 
-  const tile = (key: string, Icon: typeof Box, title: string, desc: string, onClick: () => void, brand?: React.ReactNode) => (
+  // Coolify-style "coolbox": logo square + name + 2-line description
+  const logoBox: React.CSSProperties = {
+    width: 52, height: 52, borderRadius: 10, background: "rgba(255,255,255,0.06)",
+    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+    overflow: "hidden", padding: 8, boxSizing: "border-box",
+  };
+  const card = (key: string, iconNode: React.ReactNode, title: string, desc: string, onClick: () => void) => (
     <button
       key={key}
       type="button"
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: "12px 14px", borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)" }}
+      title={desc}
+      style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
     >
-      {brand ?? <Icon size={22} color="var(--c-a)" />}
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{title}</div>
-        <div style={{ fontSize: 12, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis" }}>{desc}</div>
-      </div>
+      <span style={logoBox}>{iconNode}</span>
+      <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{title}</span>
+        <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{desc}</span>
+      </span>
     </button>
   );
-  const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10, marginBottom: 18 };
-  const groupTitle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.06em", margin: "4px 0 8px" };
+  const lucide = (Icon: typeof Box) => <Icon size={26} color="var(--c-a)" />;
+  const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12, marginBottom: 20 };
+  const groupTitle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.06em", margin: "4px 0 10px" };
+  const subTitle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "var(--c-tx)", margin: "0 0 8px" };
 
   return (
     <div style={{ padding: 28, maxWidth: sel === null ? 1040 : 880 }}>
@@ -150,16 +159,26 @@ function Wizard() {
           {sel === null ? (
             <>
               <div style={groupTitle}>{t("resources.applications")}</div>
-              <div style={grid}>
-                {tile("img", Box, t("resources.dockerImage"), t("resources.dockerImageDesc"), () => pick({ group: "app", source: "IMAGE" }))}
-                {tile("git", GitBranch, t("resources.publicRepo"), t("resources.publicRepoDesc"), () => pick({ group: "app", source: "GIT", build: "NIXPACKS" }))}
-                {tile("dockerfile", FileCode2, t("resources.dockerfile"), t("resources.dockerfileDesc"), () => pick({ group: "app", source: "GIT", build: "DOCKERFILE" }))}
-                {tile("compose", Layers, t("resources.compose"), t("resources.composeDesc"), () => pick({ group: "service" }))}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18, marginBottom: 20 }}>
+                <div>
+                  <div style={subTitle}>{t("resources.gitBased")}</div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {card("git", lucide(GitBranch), t("resources.publicRepo"), t("resources.publicRepoDesc"), () => pick({ group: "app", source: "GIT", build: "NIXPACKS" }))}
+                    {card("dockerfile", lucide(FileCode2), t("resources.dockerfile"), t("resources.dockerfileDesc"), () => pick({ group: "app", source: "GIT", build: "DOCKERFILE" }))}
+                  </div>
+                </div>
+                <div>
+                  <div style={subTitle}>{t("resources.dockerBased")}</div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {card("img", lucide(Box), t("resources.dockerImage"), t("resources.dockerImageDesc"), () => pick({ group: "app", source: "IMAGE" }))}
+                    {card("compose", lucide(Layers), t("resources.compose"), t("resources.composeDesc"), () => pick({ group: "service" }))}
+                  </div>
+                </div>
               </div>
 
               <div style={groupTitle}>{t("resources.databases")}</div>
-              <div style={grid}>
-                {ENGINES.map((e) => tile(e, Database, engineLabel(e), t("resources.databaseDesc"), () => pick({ group: "db", engine: e })))}
+              <div style={grid3}>
+                {ENGINES.map((e) => card(e, lucide(Database), engineLabel(e), t("resources.databaseDesc"), () => pick({ group: "db", engine: e })))}
               </div>
 
               {templates.length > 0 && (() => {
@@ -198,32 +217,16 @@ function Wizard() {
                     {matches.length === 0 ? (
                       <div style={{ fontSize: 13, color: "var(--c-tx3)", marginBottom: 18 }}>{t("resources.noMatches")}</div>
                     ) : (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(116px, 1fr))", gap: 10, marginBottom: 18 }}>
-                        {matches.map((tpl) => (
-                          <button
-                            key={tpl.slug}
-                            type="button"
-                            title={tpl.description}
-                            onClick={() => pick({ group: "template", slug: tpl.slug, name: tpl.name })}
-                            style={{
-                              display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                              padding: "14px 8px", borderRadius: "var(--r1)", cursor: "pointer",
-                              fontFamily: "inherit", background: "var(--c-el)",
-                              border: "1px solid var(--c-bd)", color: "var(--c-tx)",
-                            }}
-                          >
-                            <TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} size={30} />
-                            <span
-                              style={{
-                                fontSize: 12, fontWeight: 600, textAlign: "center", lineHeight: 1.25,
-                                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                                overflow: "hidden", wordBreak: "break-word",
-                              }}
-                            >
-                              {tpl.name}
-                            </span>
-                          </button>
-                        ))}
+                      <div style={grid3}>
+                        {matches.map((tpl) =>
+                          card(
+                            tpl.slug,
+                            <TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} size={36} />,
+                            tpl.name,
+                            tpl.description,
+                            () => pick({ group: "template", slug: tpl.slug, name: tpl.name }),
+                          ),
+                        )}
                       </div>
                     )}
                   </>
