@@ -62,6 +62,19 @@ export interface ServerView {
   canWrite: boolean;
 }
 
+export interface UpgradablePackage {
+  name: string;
+  current: string;
+  candidate: string;
+}
+
+export interface PatchInfo {
+  supported: boolean;
+  rebootRequired: boolean;
+  packages: UpgradablePackage[];
+  count: number;
+}
+
 export interface MetricsSample {
   ts: number;
   cpu: number;

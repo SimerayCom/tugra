@@ -85,6 +85,8 @@ export default function ServerDetailPage() {
 
       <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
 
+      {server.canWrite && <PatchCard id={id} />}
+
       {server.canWrite && <CleanupCard id={id} server={server} />}
 
       {shellOpen && (
@@ -95,6 +97,80 @@ export default function ServerDetailPage() {
         />
       )}
     </div>
+  );
+}
+
+function PatchCard({ id }: { id: string }) {
+  const t = useT();
+  const [output, setOutput] = useState("");
+  const check = useMutation({ mutationFn: () => api.checkUpdates(id) });
+  const info = check.data;
+  const upgradeAll = useMutation({
+    mutationFn: () => api.upgradeAll(id),
+    onSuccess: (r) => { setOutput(r.output); check.mutate(); },
+  });
+  const upgradeOne = useMutation({
+    mutationFn: (pkg: string) => api.upgradeOne(id, pkg),
+    onSuccess: (r) => { setOutput(r.output); check.mutate(); },
+  });
+  const busy = upgradeAll.isPending || upgradeOne.isPending;
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>{t("patching.title")}</div>
+        <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
+          {check.isPending ? "…" : t("patching.check")}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("patching.desc")}</p>
+
+      {check.isError && <div style={{ color: "var(--c-r)", fontSize: 12 }}>{(check.error as Error).message}</div>}
+
+      {info && !info.supported && (
+        <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("patching.unsupported")}</div>
+      )}
+
+      {info && info.supported && (
+        <>
+          {info.rebootRequired && (
+            <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}>⚠ {t("patching.rebootRequired")}</div>
+          )}
+          {info.count === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--c-g)" }}>{t("patching.upToDate")}</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: info.count })}</span>
+                <div style={{ flex: 1 }} />
+                <Btn onClick={() => upgradeAll.mutate()} disabled={busy}>
+                  {upgradeAll.isPending ? t("patching.running") : t("patching.updateAll")}
+                </Btn>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                {info.packages.map((p) => (
+                  <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                    <span style={{ fontWeight: 600, width: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                    <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current} → {p.candidate}</span>
+                    <button
+                      onClick={() => upgradeOne.mutate(p.name)}
+                      disabled={busy}
+                      style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+                    >
+                      {t("patching.update")}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {output && (
+        <pre className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{output}</pre>
+      )}
+    </Card>
   );
 }
 

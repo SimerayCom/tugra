@@ -14,6 +14,7 @@ import type {
   MetricsSample,
   Monitor,
   MyInvitation,
+  PatchInfo,
   PublicUser,
   Project,
   Role,
@@ -234,6 +235,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ tags }),
     });
+  },
+  checkUpdates(id: string) {
+    return apiFetch<PatchInfo>(`/servers/${id}/updates`);
+  },
+  upgradeAll(id: string) {
+    return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply`, { method: "POST" });
+  },
+  upgradeOne(id: string, pkg: string) {
+    return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply/${pkg}`, { method: "POST" });
   },
   setCleanupConfig(id: string, cfg: { enabled: boolean; intervalHours?: number; volumes?: boolean }) {
     return apiFetch<{ ok: true }>(`/servers/${id}/cleanup-config`, {
