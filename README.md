@@ -46,11 +46,22 @@ Live logs, metrics and the terminal stream over WebSockets.
 
 ## Roadmap
 
-- [ ] Hub ↔ Agent protocol + server enrollment
-- [ ] Deploy from Git / Compose / image
-- [ ] Reverse proxy + automatic SSL
-- [ ] Live metrics, logs, web terminal
-- [ ] Backups & restore
+**Shipped**
+
+- [x] Hub ↔ Agent protocol + server enrollment (dial-out WSS · ed25519 · signed commands + capability scope)
+- [x] Deploy from Git / Docker Compose / image (Nixpacks · Dockerfile · static-site)
+- [x] Reverse proxy + automatic SSL (Traefik · Let's Encrypt)
+- [x] Live metrics, build logs & web terminal (WebSocket streams)
+- [x] Databases (8 engines) with backups & restore (local + S3/R2 off-site)
+- [x] Preview deployments (per pull request)
+- [x] Uptime monitoring (HTTP/TCP/metric) + notification channels
+- [x] Scheduled tasks (cron) · rollbacks · resource limits & health checks
+- [x] Projects / environments · teams, roles & invites · tags · shared variables
+
+**Next**
+
+- [ ] Public API + CLI
+- [ ] Server patching (semi-automatic OS package updates)
 - [ ] App store (Home mode)
 - [ ] Mobile app
 - [ ] Migrator (import from Coolify / Dokploy)
