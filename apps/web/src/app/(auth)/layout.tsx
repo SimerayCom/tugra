@@ -21,21 +21,8 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
             marginBottom: 24,
           }}
         >
-          <div
-            style={{
-              width: 30,
-              height: 30,
-              borderRadius: 8,
-              background: "var(--c-a)",
-              color: "#0d0d11",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 800,
-            }}
-          >
-            T
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-seal.png" alt="Tugra" width={32} height={32} style={{ borderRadius: 8 }} />
           <span style={{ fontWeight: 700, fontSize: 18 }}>Tugra</span>
         </div>
         {children}

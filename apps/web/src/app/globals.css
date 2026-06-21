@@ -10,7 +10,7 @@
   --c-bd: #28282f;
   --c-tx: #f6f3ec;
   --c-tx2: #b8b4ac;
-  --c-tx3: #76747c;
+  --c-tx3: #8d8b93; /* muted — lightened to clear WCAG AA on bg */
   --c-a: #c9a84c; /* gold — the seal */
   --c-ad: rgba(201, 168, 76, 0.15);
   --c-lapis: #3d6fe5;
@@ -32,7 +32,7 @@
   --c-bd: #e3ddcd;
   --c-tx: #1a1a1f;
   --c-tx2: #4a4843;
-  --c-tx3: #8a8779;
+  --c-tx3: #6c6a61; /* muted — darkened to clear WCAG AA on light bg */
   --c-a: #9a7b1e;
   --c-ad: rgba(154, 123, 30, 0.12);
 }

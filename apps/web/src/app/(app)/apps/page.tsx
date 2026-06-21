@@ -10,6 +10,7 @@ import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
 import { Select } from "../../../components/form";
 import { TagChips, TagFilter } from "../../../components/tags";
+import { templateIcon } from "../../../lib/template-icons";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -199,26 +200,29 @@ function TemplateGallery({ templates, serverId }: { templates: Template[]; serve
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("templates.gallery")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("templates.galleryDesc")}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {templates.map((tpl) => (
-          <button
-            key={tpl.slug}
-            onClick={() => { setPicked(tpl); setName(tpl.slug); }}
-            title={tpl.description}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-              background: picked?.slug === tpl.slug ? "var(--c-el)" : "transparent",
-              border: "1px solid var(--c-bd)", borderRadius: "var(--r1)",
-              color: "var(--c-tx)", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
-            }}
-          >
-            <span style={{ fontSize: 18 }}>{tpl.icon}</span>
-            {tpl.name}
-          </button>
-        ))}
+        {templates.map((tpl) => {
+          const Icon = templateIcon(tpl.slug);
+          return (
+            <button
+              key={tpl.slug}
+              onClick={() => { setPicked(tpl); setName(tpl.slug); }}
+              title={tpl.description}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+                background: picked?.slug === tpl.slug ? "var(--c-el)" : "transparent",
+                border: "1px solid var(--c-bd)", borderRadius: "var(--r1)",
+                color: "var(--c-tx)", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+              }}
+            >
+              <Icon size={18} />
+              {tpl.name}
+            </button>
+          );
+        })}
       </div>
       {picked && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
-          <span style={{ fontSize: 18 }}>{picked.icon}</span>
+          {(() => { const Icon = templateIcon(picked.slug); return <Icon size={18} />; })()}
           <input
             autoFocus
             style={{ ...field, flex: 1, minWidth: 140 }}
