@@ -27,6 +27,8 @@
   "changeType": "change type",
   "searchServices": "Search the app store…",
   "noMatches": "No services match your search.",
+  "allCategories": "All",
+  "appStore": "app store",
   "cat_cms": "CMS & Content",
   "cat_automation": "Automation",
   "cat_database": "Databases",

@@ -9,24 +9,12 @@ import { api } from "../../../../lib/api";
 import type { DbEngine } from "../../../../lib/types";
 import { engineLabel } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
+import { filterTemplates, presentCategories } from "../../../../lib/template-filter";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
 
 const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
-
-// display order for the one-click app-store categories
-const CATEGORY_ORDER = [
-  "cms",
-  "productivity",
-  "developer",
-  "analytics",
-  "automation",
-  "monitoring",
-  "security",
-  "database",
-  "tools",
-];
 
 type Sel =
   | { group: "app"; source: "IMAGE" }
@@ -57,6 +45,7 @@ function Wizard() {
 
   const [sel, setSel] = useState<Sel>(null);
   const [q, setQ] = useState("");
+  const [cat, setCat] = useState("all");
 
   // config fields
   const [name, setName] = useState("");
@@ -134,7 +123,7 @@ function Wizard() {
   const groupTitle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.06em", margin: "4px 0 8px" };
 
   return (
-    <div style={{ padding: 28, maxWidth: 880 }}>
+    <div style={{ padding: 28, maxWidth: sel === null ? 1040 : 880 }}>
       <BackLink href="/projects" label={t("common.backTo", { target: t("nav.projects") })} />
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("resources.newTitle")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("resources.subtitle")}</p>
@@ -174,38 +163,68 @@ function Wizard() {
               </div>
 
               {templates.length > 0 && (() => {
-                const needle = q.trim().toLowerCase();
-                const matches = needle
-                  ? templates.filter((tpl) =>
-                      `${tpl.name} ${tpl.description} ${tpl.category}`.toLowerCase().includes(needle),
-                    )
-                  : templates;
-                const cats = [...new Set(matches.map((tpl) => tpl.category))].sort(
-                  (a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b),
-                );
+                const matches = filterTemplates(templates, q, cat);
+                const chips = ["all", ...presentCategories(templates)];
                 return (
                   <>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 12px" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 0 10px" }}>
                       <div style={{ ...groupTitle, margin: 0 }}>{t("resources.services")}</div>
-                      <div style={{ flex: 1, maxWidth: 280 }}>
-                        <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("resources.searchServices")} />
-                      </div>
+                      <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>· {t("resources.appStore")} · {templates.length}</span>
+                    </div>
+                    <div style={{ maxWidth: 480, marginBottom: 10 }}>
+                      <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("resources.searchServices")} />
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+                      {chips.map((c) => {
+                        const active = c === cat;
+                        return (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setCat(c)}
+                            style={{
+                              fontFamily: "inherit", fontSize: 12, fontWeight: active ? 600 : 500,
+                              padding: "5px 11px", borderRadius: 999, cursor: "pointer",
+                              border: "1px solid var(--c-bd)",
+                              background: active ? "var(--c-a)" : "transparent",
+                              color: active ? "#0d0d11" : "var(--c-tx3)",
+                            }}
+                          >
+                            {c === "all" ? t("resources.allCategories") : t(`resources.cat_${c}`)}
+                          </button>
+                        );
+                      })}
                     </div>
                     {matches.length === 0 ? (
                       <div style={{ fontSize: 13, color: "var(--c-tx3)", marginBottom: 18 }}>{t("resources.noMatches")}</div>
                     ) : (
-                      cats.map((cat) => (
-                        <div key={cat}>
-                          <div style={{ ...groupTitle, opacity: 0.8 }}>{t(`resources.cat_${cat}`)}</div>
-                          <div style={grid}>
-                            {matches
-                              .filter((tpl) => tpl.category === cat)
-                              .map((tpl) =>
-                                tile(tpl.slug, Box, tpl.name, tpl.description, () => pick({ group: "template", slug: tpl.slug, name: tpl.name }), <TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} />),
-                              )}
-                          </div>
-                        </div>
-                      ))
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(116px, 1fr))", gap: 10, marginBottom: 18 }}>
+                        {matches.map((tpl) => (
+                          <button
+                            key={tpl.slug}
+                            type="button"
+                            title={tpl.description}
+                            onClick={() => pick({ group: "template", slug: tpl.slug, name: tpl.name })}
+                            style={{
+                              display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                              padding: "14px 8px", borderRadius: "var(--r1)", cursor: "pointer",
+                              fontFamily: "inherit", background: "var(--c-el)",
+                              border: "1px solid var(--c-bd)", color: "var(--c-tx)",
+                            }}
+                          >
+                            <TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} size={30} />
+                            <span
+                              style={{
+                                fontSize: 12, fontWeight: 600, textAlign: "center", lineHeight: 1.25,
+                                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                                overflow: "hidden", wordBreak: "break-word",
+                              }}
+                            >
+                              {tpl.name}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </>
                 );
