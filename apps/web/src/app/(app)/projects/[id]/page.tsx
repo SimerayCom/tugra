@@ -81,10 +81,11 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   const empty = all.length === 0;
   const q = query.toLowerCase();
   const match = (r: ProjectResource) => r.name.toLowerCase().includes(q) || (r.url ?? "").toLowerCase().includes(q);
-  const apps = all.filter((r) => r.kind === "app" && match(r));
+  const apps = all.filter((r) => r.kind === "app" && r.source !== "COMPOSE" && match(r));
+  const services = all.filter((r) => r.kind === "app" && r.source === "COMPOSE" && match(r));
   const dbs = all.filter((r) => r.kind === "database" && match(r));
   const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: onChange });
-  const newHref = (kind: "app" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
+  const newHref = (kind: "app" | "service" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
   const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "3px 10px", textDecoration: "none" };
   return (
     <Card style={{ padding: 16 }}>
@@ -95,6 +96,7 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
         {canWrite && (
           <>
             <Link href={newHref("app")} style={chip}>{t("projects.newApp")}</Link>
+            <Link href={newHref("service")} style={chip}>{t("projects.newService")}</Link>
             <Link href={newHref("database")} style={chip}>{t("projects.newDatabase")}</Link>
           </>
         )}
@@ -118,6 +120,7 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
       )}
       {empty && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("projects.noResources")}</div>}
       <ResourceGroup title={t("projects.applications")} items={apps} />
+      <ResourceGroup title={t("projects.services")} items={services} />
       <ResourceGroup title={t("projects.databases")} items={dbs} />
     </Card>
   );

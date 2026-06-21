@@ -177,6 +177,7 @@ export interface ProjectResource {
   id: string;
   name: string;
   kind: "app" | "database";
+  source: AppSource | null;
   status: string;
   url: string | null;
   serverName: string | null;

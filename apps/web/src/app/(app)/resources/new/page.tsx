@@ -21,7 +21,10 @@ function Wizard() {
   const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
 
-  const [kind, setKind] = useState<"app" | "database">(sp.get("kind") === "database" ? "database" : "app");
+  const qkind = sp.get("kind");
+  const [kind, setKind] = useState<"app" | "service" | "database">(
+    qkind === "database" ? "database" : qkind === "service" ? "service" : "app",
+  );
   const [projectId, setProjectId] = useState(sp.get("project") ?? "");
   const [envId, setEnvId] = useState(sp.get("env") ?? "");
 
@@ -58,6 +61,10 @@ function Wizard() {
   const create = useMutation({
     mutationFn: async (): Promise<string> => {
       const environmentId = envId || undefined;
+      if (kind === "service") {
+        const a = await api.createApp({ name, serverId, source: "COMPOSE", composeFile, environmentId });
+        return `/apps/${a.id}`;
+      }
       if (kind === "app") {
         const a = await api.createApp({
           name,
@@ -69,9 +76,8 @@ function Wizard() {
           buildType: source === "GIT" ? buildType : undefined,
           buildCommand: source === "GIT" && buildType === "STATIC" ? buildCommand || undefined : undefined,
           outputDir: source === "GIT" && buildType === "STATIC" ? outputDir || undefined : undefined,
-          composeFile: source === "COMPOSE" ? composeFile : undefined,
-          hostPort: source !== "COMPOSE" && hostPort ? Number(hostPort) : undefined,
-          domain: source !== "COMPOSE" ? domain || undefined : undefined,
+          hostPort: hostPort ? Number(hostPort) : undefined,
+          domain: domain || undefined,
           environmentId,
         });
         return `/apps/${a.id}`;
@@ -122,8 +128,8 @@ function Wizard() {
           {/* Type */}
           <Card style={{ padding: 16, marginBottom: 16 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("resources.type")}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {(["app", "database"] as const).map((k) => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+              {(["app", "service", "database"] as const).map((k) => (
                 <button
                   key={k}
                   type="button"
@@ -153,14 +159,13 @@ function Wizard() {
                   options={servers.map((s) => ({ value: s.id, label: s.name }))} />
               </Field>
 
-              {kind === "app" ? (
+              {kind === "app" && (
                 <>
                   <Field label={t("apps.source")}>
-                    <Select value={source} onChange={(v) => setSource(v as "IMAGE" | "GIT" | "COMPOSE")}
+                    <Select value={source} onChange={(v) => setSource(v as "IMAGE" | "GIT")}
                       options={[
                         { value: "IMAGE", label: t("apps.sourceImage") },
                         { value: "GIT", label: t("apps.sourceGit") },
-                        { value: "COMPOSE", label: t("apps.sourceCompose") },
                       ]} />
                   </Field>
                   {source === "IMAGE" && (
@@ -196,29 +201,28 @@ function Wizard() {
                       )}
                     </>
                   )}
-                  {source === "COMPOSE" && (
-                    <Field label={t("apps.compose")} style={{ gridColumn: "1 / -1" }}>
-                      <textarea
-                        value={composeFile}
-                        onChange={(e) => setComposeFile(e.target.value)}
-                        placeholder={t("apps.composeFile")}
-                        required
-                        style={{ width: "100%", minHeight: 120, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "var(--font-mono, monospace)", resize: "vertical", boxSizing: "border-box" }}
-                      />
-                    </Field>
-                  )}
-                  {source !== "COMPOSE" && (
-                    <>
-                      <Field label={t("apps.hostPort")}>
-                        <TextInput type="number" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
-                      </Field>
-                      <Field label={t("apps.domain")}>
-                        <TextInput value={domain} onChange={(e) => setDomain(e.target.value)} />
-                      </Field>
-                    </>
-                  )}
+                  <Field label={t("apps.hostPort")}>
+                    <TextInput type="number" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
+                  </Field>
+                  <Field label={t("apps.domain")}>
+                    <TextInput value={domain} onChange={(e) => setDomain(e.target.value)} />
+                  </Field>
                 </>
-              ) : (
+              )}
+
+              {kind === "service" && (
+                <Field label={t("apps.compose")} style={{ gridColumn: "1 / -1" }}>
+                  <textarea
+                    value={composeFile}
+                    onChange={(e) => setComposeFile(e.target.value)}
+                    placeholder={t("apps.composeFile")}
+                    required
+                    style={{ width: "100%", minHeight: 140, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "var(--font-mono, monospace)", resize: "vertical", boxSizing: "border-box" }}
+                  />
+                </Field>
+              )}
+
+              {kind === "database" && (
                 <>
                   <Field label={t("databases.engine")}>
                     <Select value={engine} onChange={(v) => setEngine(v as DbEngine)}
