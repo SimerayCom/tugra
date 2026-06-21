@@ -14,6 +14,8 @@
   "database": "Database",
   "databaseDesc": "Managed Postgres, MySQL, Redis and more",
   "applications": "Applications",
+  "gitBased": "Git Based",
+  "dockerBased": "Docker Based",
   "databases": "Databases",
   "services": "Services",
   "dockerImage": "Docker Image",
