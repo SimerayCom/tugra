@@ -10,8 +10,6 @@ import { CommandPalette, type CommandDest } from "./command-palette";
 import {
   Activity,
   ArrowLeftRight,
-  Box,
-  Database,
   FolderTree,
   Globe,
   HardDrive,
@@ -44,10 +42,10 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Resources",
     items: [
-      { key: "servers", href: "/servers", icon: Server, impl: true },
+      // Coolify-style: resources live under Projects → environment. Apps/Databases
+      // aren't top-level nav; reach them via a project, the dashboard, or ⌘K.
       { key: "projects", href: "/projects", icon: FolderTree, impl: true },
-      { key: "apps", href: "/apps", icon: Box, impl: true },
-      { key: "databases", href: "/databases", icon: Database, impl: true },
+      { key: "servers", href: "/servers", icon: Server, impl: true },
       { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
       { key: "sharedVars", href: "/shared-variables", icon: Variable, impl: true },
       { key: "domains", href: "/domains", icon: Globe, impl: true },
@@ -65,7 +63,12 @@ export const NAV: { group: string; items: NavItem[] }[] = [
 
 export const DESTS: CommandDest[] = NAV.flatMap((g) =>
   g.items.map((i) => ({ labelKey: `nav.${i.key}`, href: i.href })),
-).concat([{ labelKey: "nav.addServer", href: "/servers/new" }]);
+).concat([
+  // Not in the sidebar (resources live under Projects) but still ⌘K-reachable.
+  { labelKey: "nav.apps", href: "/apps" },
+  { labelKey: "nav.databases", href: "/databases" },
+  { labelKey: "nav.addServer", href: "/servers/new" },
+]);
 
 export function useTheme(): [string, () => void] {
   const [theme, setTheme] = useState("dark");
