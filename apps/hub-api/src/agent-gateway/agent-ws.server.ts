@@ -213,6 +213,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
         this.chunkListeners.delete(reqId);
         reject(new Error("command timed out"));
       }, timeoutMs);
+      // Don't let a stray command timer keep the process alive (clean teardown).
+      timer.unref?.();
       this.pending.set(reqId, { serverId, resolve, reject, timer });
       if (onChunk) this.chunkListeners.set(reqId, onChunk);
       this.send(socket, this.signOutbound({ type: "command", reqId, command, timeoutMs, capability }));

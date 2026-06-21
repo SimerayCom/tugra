@@ -5,6 +5,9 @@ import type { ServerStatus } from "../lib/types";
 
 export function Btn({
   variant = "primary",
+  // Default to "button" so a <Btn onClick> inside a <form> doesn't ALSO submit
+  // the form (that double-fired mutations). Submit buttons pass type="submit".
+  type = "button",
   children,
   style,
   ...rest
@@ -32,7 +35,7 @@ export function Btn({
     danger: { background: "var(--c-r)", color: "#fff" },
   };
   return (
-    <button style={{ ...base, ...variants[variant], ...style }} {...rest}>
+    <button type={type} style={{ ...base, ...variants[variant], ...style }} {...rest}>
       {children}
     </button>
   );
