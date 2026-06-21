@@ -77,10 +77,14 @@ describe("AgentWsServer terminal relay", () => {
 
   it("signs outbound command messages with the hub key", () => {
     const { server, lastSent } = harness();
-    server.sendCommand("s1", "echo hi", "deploy", 5000);
+    // never resolved here → guard the unhandled rejection AND clear the pending
+    // timeout timer so it can't fire after the suite (this crashed CI).
+    server.sendCommand("s1", "echo hi", "deploy", 5000).catch(() => undefined);
     const sent = lastSent();
     expect(sent.type).toBe("command");
     expect(sent.sig).toBe("SIG"); // signOutbound attached the hub signature
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (server as any).rejectPendingFor("s1");
   });
 
   it("sendToAgent returns true when online, false when offline", () => {
