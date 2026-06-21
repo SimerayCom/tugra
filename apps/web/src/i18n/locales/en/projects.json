@@ -9,6 +9,8 @@
   "addEnvironment": "+ Add environment",
   "environmentName": "Environment name (e.g. staging)",
   "noResources": "No resources in this environment.",
+  "newApp": "+ App",
+  "newDatabase": "+ Database",
   "deleteProject": "Delete project",
   "rename": "Rename",
   "environment": "Environment",

@@ -2,6 +2,7 @@
   "title": "Apps",
   "subtitle": "Deploy a Docker image or a Git repo to a server.",
   "add": "+ Add App",
+  "newApp": "+ New App",
   "name": "Name",
   "server": "Server",
   "sourceImage": "Image",

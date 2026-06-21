@@ -55,7 +55,7 @@ export default function ProjectDetailPage() {
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("projects.environments")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {project.environments.map((env) => (
-          <EnvironmentBlock key={env.id} env={env} canWrite={project.canWrite} onChange={invalidate} />
+          <EnvironmentBlock key={env.id} env={env} projectId={id} canWrite={project.canWrite} onChange={invalidate} />
         ))}
       </div>
 
@@ -71,19 +71,28 @@ export default function ProjectDetailPage() {
   );
 }
 
-function EnvironmentBlock({ env, canWrite, onChange }: { env: Environment; canWrite: boolean; onChange: () => void }) {
+function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environment; projectId: string; canWrite: boolean; onChange: () => void }) {
   const t = useT();
   const empty = (env.resources?.length ?? 0) === 0;
   const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: onChange });
+  const newHref = (kind: "app" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
+  const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "3px 10px", textDecoration: "none" };
   return (
     <Card style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>{env.name}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{env.appCount} apps · {env.dbCount} dbs</span>
         <div style={{ flex: 1 }} />
+        {canWrite && (
+          <>
+            <Link href={newHref("app")} style={chip}>{t("projects.newApp")}</Link>
+            <Link href={newHref("database")} style={chip}>{t("projects.newDatabase")}</Link>
+          </>
+        )}
         {canWrite && empty && (
           <button
             onClick={() => remove.mutate()}
+            title={t("projects.deleteProject")}
             style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
           >
             ×
