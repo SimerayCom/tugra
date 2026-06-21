@@ -15,6 +15,19 @@ import { Field, Select, TextInput } from "../../../../components/form";
 
 const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
 
+// display order for the one-click app-store categories
+const CATEGORY_ORDER = [
+  "cms",
+  "productivity",
+  "developer",
+  "analytics",
+  "automation",
+  "monitoring",
+  "security",
+  "database",
+  "tools",
+];
+
 type Sel =
   | { group: "app"; source: "IMAGE" }
   | { group: "app"; source: "GIT"; build: "NIXPACKS" | "DOCKERFILE" }
@@ -43,6 +56,7 @@ function Wizard() {
   }, [project, envId]);
 
   const [sel, setSel] = useState<Sel>(null);
+  const [q, setQ] = useState("");
 
   // config fields
   const [name, setName] = useState("");
@@ -159,17 +173,44 @@ function Wizard() {
                 {ENGINES.map((e) => tile(e, Database, engineLabel(e), t("resources.databaseDesc"), () => pick({ group: "db", engine: e })))}
               </div>
 
-              {templates.length > 0 && (
-                <>
-                  <div style={groupTitle}>{t("resources.services")}</div>
-                  <div style={grid}>
-                    {templates.map((tpl) => {
-                      const Icon = templateIcon(tpl.slug);
-                      return tile(tpl.slug, Box, tpl.name, tpl.description, () => pick({ group: "template", slug: tpl.slug, name: tpl.name }), <Icon size={22} />);
-                    })}
-                  </div>
-                </>
-              )}
+              {templates.length > 0 && (() => {
+                const needle = q.trim().toLowerCase();
+                const matches = needle
+                  ? templates.filter((tpl) =>
+                      `${tpl.name} ${tpl.description} ${tpl.category}`.toLowerCase().includes(needle),
+                    )
+                  : templates;
+                const cats = [...new Set(matches.map((tpl) => tpl.category))].sort(
+                  (a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b),
+                );
+                return (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 12px" }}>
+                      <div style={{ ...groupTitle, margin: 0 }}>{t("resources.services")}</div>
+                      <div style={{ flex: 1, maxWidth: 280 }}>
+                        <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("resources.searchServices")} />
+                      </div>
+                    </div>
+                    {matches.length === 0 ? (
+                      <div style={{ fontSize: 13, color: "var(--c-tx3)", marginBottom: 18 }}>{t("resources.noMatches")}</div>
+                    ) : (
+                      cats.map((cat) => (
+                        <div key={cat}>
+                          <div style={{ ...groupTitle, opacity: 0.8 }}>{t(`resources.cat_${cat}`)}</div>
+                          <div style={grid}>
+                            {matches
+                              .filter((tpl) => tpl.category === cat)
+                              .map((tpl) => {
+                                const Icon = templateIcon(tpl.slug);
+                                return tile(tpl.slug, Box, tpl.name, tpl.description, () => pick({ group: "template", slug: tpl.slug, name: tpl.name }), <Icon size={22} />);
+                              })}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </>
+                );
+              })()}
             </>
           ) : (
             <Card style={{ padding: 16 }}>

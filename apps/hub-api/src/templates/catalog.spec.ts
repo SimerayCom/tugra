@@ -18,6 +18,38 @@ describe("template catalog", () => {
     }
   });
 
+  it("every template has an allowed category", () => {
+    const allowed = new Set([
+      "cms",
+      "automation",
+      "database",
+      "monitoring",
+      "tools",
+      "analytics",
+      "security",
+      "productivity",
+      "developer",
+    ]);
+    for (const tpl of Object.values(TEMPLATES)) {
+      expect(allowed.has(tpl.category)).toBe(true);
+    }
+  });
+
+  it("published host ports are unique across the whole catalog", () => {
+    const ports: string[] = [];
+    for (const tpl of Object.values(TEMPLATES)) {
+      // match published host ports in compose: `- "8080:80"` → 8080
+      for (const m of tpl.composeFile.matchAll(/"(\d+):\d+"/g)) {
+        ports.push(m[1]);
+      }
+    }
+    expect(new Set(ports).size).toBe(ports.length);
+  });
+
+  it("ships a sizeable curated catalog", () => {
+    expect(Object.keys(TEMPLATES).length).toBeGreaterThanOrEqual(18);
+  });
+
   it("metadata list never leaks composeFile or secrets", () => {
     const metas = templateMetaList();
     expect(metas.length).toBe(Object.keys(TEMPLATES).length);

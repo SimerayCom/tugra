@@ -11,7 +11,11 @@ export type TemplateCategory =
   | "automation"
   | "database"
   | "monitoring"
-  | "tools";
+  | "tools"
+  | "analytics"
+  | "security"
+  | "productivity"
+  | "developer";
 
 export interface TemplateDef {
   slug: string;
@@ -160,6 +164,385 @@ volumes:
     restart: unless-stopped
     ports:
       - "8081:8080"
+`,
+  },
+  pocketbase: {
+    slug: "pocketbase",
+    name: "PocketBase",
+    description: "Open-source backend in one file (SQLite, auth, realtime).",
+    category: "developer",
+    icon: "🪶",
+    composeFile: `services:
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb_data
+volumes:
+  pb_data:
+`,
+  },
+  gitea: {
+    slug: "gitea",
+    name: "Gitea",
+    description: "Lightweight self-hosted Git service (SQLite).",
+    category: "developer",
+    icon: "🍵",
+    composeFile: `services:
+  gitea:
+    image: gitea/gitea:1
+    restart: unless-stopped
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+    ports:
+      - "3030:3000"
+    volumes:
+      - gitea_data:/data
+volumes:
+  gitea_data:
+`,
+  },
+  directus: {
+    slug: "directus",
+    name: "Directus",
+    description: "Headless CMS and data platform on Postgres.",
+    category: "developer",
+    icon: "🧩",
+    secrets: ["KEY", "SECRET", "DB_PASSWORD"],
+    composeFile: `services:
+  directus:
+    image: directus/directus:11
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8055:8055"
+    environment:
+      KEY: \${KEY}
+      SECRET: \${SECRET}
+      DB_CLIENT: pg
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: directus
+      DB_USER: directus
+      DB_PASSWORD: \${DB_PASSWORD}
+    volumes:
+      - directus_uploads:/directus/uploads
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: directus
+      POSTGRES_USER: directus
+      POSTGRES_PASSWORD: \${DB_PASSWORD}
+    volumes:
+      - directus_db:/var/lib/postgresql/data
+volumes:
+  directus_uploads:
+  directus_db:
+`,
+  },
+  umami: {
+    slug: "umami",
+    name: "Umami",
+    description: "Privacy-friendly web analytics on Postgres.",
+    category: "analytics",
+    icon: "📊",
+    secrets: ["DB_PASSWORD", "APP_SECRET"],
+    composeFile: `services:
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "3002:3000"
+    environment:
+      DATABASE_URL: postgresql://umami:\${DB_PASSWORD}@db:5432/umami
+      DATABASE_TYPE: postgresql
+      APP_SECRET: \${APP_SECRET}
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: umami
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: \${DB_PASSWORD}
+    volumes:
+      - umami_db:/var/lib/postgresql/data
+volumes:
+  umami_db:
+`,
+  },
+  metabase: {
+    slug: "metabase",
+    name: "Metabase",
+    description: "Business intelligence and dashboards (embedded H2).",
+    category: "analytics",
+    icon: "📈",
+    composeFile: `services:
+  metabase:
+    image: metabase/metabase:latest
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+    volumes:
+      - metabase_data:/metabase-data
+volumes:
+  metabase_data:
+`,
+  },
+  matomo: {
+    slug: "matomo",
+    name: "Matomo",
+    description: "Open web analytics platform with a MariaDB database.",
+    category: "analytics",
+    icon: "🧮",
+    secrets: ["DB_PASSWORD", "DB_ROOT_PASSWORD"],
+    composeFile: `services:
+  matomo:
+    image: matomo:5
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8082:80"
+    environment:
+      MATOMO_DATABASE_HOST: db
+      MATOMO_DATABASE_USERNAME: matomo
+      MATOMO_DATABASE_PASSWORD: \${DB_PASSWORD}
+      MATOMO_DATABASE_DBNAME: matomo
+    volumes:
+      - matomo_data:/var/www/html
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: matomo
+      MARIADB_USER: matomo
+      MARIADB_PASSWORD: \${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: \${DB_ROOT_PASSWORD}
+    volumes:
+      - matomo_db:/var/lib/mysql
+volumes:
+  matomo_data:
+  matomo_db:
+`,
+  },
+  grafana: {
+    slug: "grafana",
+    name: "Grafana",
+    description: "Metrics and observability dashboards.",
+    category: "monitoring",
+    icon: "📉",
+    secrets: ["GF_ADMIN_PASSWORD"],
+    composeFile: `services:
+  grafana:
+    image: grafana/grafana:11
+    restart: unless-stopped
+    ports:
+      - "3004:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: \${GF_ADMIN_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+volumes:
+  grafana_data:
+`,
+  },
+  vaultwarden: {
+    slug: "vaultwarden",
+    name: "Vaultwarden",
+    description: "Lightweight Bitwarden-compatible password manager.",
+    category: "security",
+    icon: "🔐",
+    secrets: ["ADMIN_TOKEN"],
+    composeFile: `services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    restart: unless-stopped
+    ports:
+      - "8083:80"
+    environment:
+      ADMIN_TOKEN: \${ADMIN_TOKEN}
+    volumes:
+      - vw_data:/data
+volumes:
+  vw_data:
+`,
+  },
+  minio: {
+    slug: "minio",
+    name: "MinIO",
+    description: "S3-compatible object storage.",
+    category: "security",
+    icon: "🪣",
+    secrets: ["MINIO_ROOT_PASSWORD"],
+    composeFile: `services:
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+volumes:
+  minio_data:
+`,
+  },
+  nextcloud: {
+    slug: "nextcloud",
+    name: "Nextcloud",
+    description: "Self-hosted files, calendar and collaboration suite.",
+    category: "productivity",
+    icon: "☁️",
+    secrets: ["DB_PASSWORD", "DB_ROOT_PASSWORD"],
+    composeFile: `services:
+  nextcloud:
+    image: nextcloud:30-apache
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8084:80"
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: \${DB_PASSWORD}
+    volumes:
+      - nc_data:/var/www/html
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: nextcloud
+      MARIADB_USER: nextcloud
+      MARIADB_PASSWORD: \${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: \${DB_ROOT_PASSWORD}
+    volumes:
+      - nc_db:/var/lib/mysql
+volumes:
+  nc_data:
+  nc_db:
+`,
+  },
+  jellyfin: {
+    slug: "jellyfin",
+    name: "Jellyfin",
+    description: "Free software media server for your movies and music.",
+    category: "productivity",
+    icon: "🎬",
+    composeFile: `services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - jellyfin_config:/config
+      - jellyfin_cache:/cache
+      - jellyfin_media:/media
+volumes:
+  jellyfin_config:
+  jellyfin_cache:
+  jellyfin_media:
+`,
+  },
+  excalidraw: {
+    slug: "excalidraw",
+    name: "Excalidraw",
+    description: "Virtual whiteboard for sketching hand-drawn diagrams.",
+    category: "productivity",
+    icon: "✏️",
+    composeFile: `services:
+  excalidraw:
+    image: excalidraw/excalidraw:latest
+    restart: unless-stopped
+    ports:
+      - "8085:80"
+`,
+  },
+  mealie: {
+    slug: "mealie",
+    name: "Mealie",
+    description: "Self-hosted recipe manager and meal planner.",
+    category: "productivity",
+    icon: "🍲",
+    composeFile: `services:
+  mealie:
+    image: ghcr.io/mealie-recipes/mealie:latest
+    restart: unless-stopped
+    ports:
+      - "9925:9000"
+    environment:
+      ALLOW_SIGNUP: "true"
+    volumes:
+      - mealie_data:/app/data
+volumes:
+  mealie_data:
+`,
+  },
+  wikijs: {
+    slug: "wikijs",
+    name: "Wiki.js",
+    description: "Modern, powerful wiki on a Postgres database.",
+    category: "cms",
+    icon: "📚",
+    secrets: ["DB_PASSWORD"],
+    composeFile: `services:
+  wiki:
+    image: requarks/wiki:2
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "3005:3000"
+    environment:
+      DB_TYPE: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: wiki
+      DB_PASS: \${DB_PASSWORD}
+      DB_NAME: wiki
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wiki
+      POSTGRES_USER: wiki
+      POSTGRES_PASSWORD: \${DB_PASSWORD}
+    volumes:
+      - wiki_db:/var/lib/postgresql/data
+volumes:
+  wiki_db:
+`,
+  },
+  "node-red": {
+    slug: "node-red",
+    name: "Node-RED",
+    description: "Low-code flow editor for event-driven automation.",
+    category: "automation",
+    icon: "🔴",
+    composeFile: `services:
+  node-red:
+    image: nodered/node-red:latest
+    restart: unless-stopped
+    ports:
+      - "1880:1880"
+    volumes:
+      - nodered_data:/data
+volumes:
+  nodered_data:
 `,
   },
 };
