@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { CHANNEL_FIELDS } from "../lib/monitors";
 import { useT } from "../i18n/provider";
 import { Btn, Card } from "./ui";
+import { Select } from "./form";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -79,10 +80,9 @@ export function ChannelsCard() {
         {fields.map((f) => (
           <input key={f} style={{ ...field, minWidth: 130 }} placeholder={f} value={config[f] ?? ""} onChange={(e) => setConfig((c) => ({ ...c, [f]: e.target.value }))} required={f !== "server"} />
         ))}
-        <select style={field} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-          <option value="">{teams[0]?.name ?? t("common.pickTeam")}</option>
-          {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-        </select>
+        <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
+          style={{ width: "auto", minWidth: 120 }}
+          options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
         <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
           {create.isPending ? "…" : t("settings.add")}
         </button>

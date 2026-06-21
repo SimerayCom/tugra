@@ -69,6 +69,38 @@ describe("ServersService.createServer (team role enforced)", () => {
     expect(res.server.id).toBe("s1");
     expect(res.installCommand).toContain(res.enrollToken);
   });
+
+  it("builds the install command from HUB_PUBLIC_URL (http→ws), no placeholder", async () => {
+    const prev = process.env.HUB_PUBLIC_URL;
+    process.env.HUB_PUBLIC_URL = "https://hub.example.com";
+    try {
+      const prisma = {
+        membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+        server: { create: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+      } as unknown as PrismaService;
+      const res = await svcWith(prisma).createServer("u1", "web", "teamA");
+      expect(res.installCommand).toContain("wss://hub.example.com/agent");
+      expect(res.installCommand).not.toContain("<YOUR_HUB_URL>");
+    } finally {
+      if (prev === undefined) delete process.env.HUB_PUBLIC_URL;
+      else process.env.HUB_PUBLIC_URL = prev;
+    }
+  });
+
+  it("falls back to the request public URL when HUB_PUBLIC_URL is unset", async () => {
+    const prev = process.env.HUB_PUBLIC_URL;
+    delete process.env.HUB_PUBLIC_URL;
+    try {
+      const prisma = {
+        membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+        server: { create: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+      } as unknown as PrismaService;
+      const res = await svcWith(prisma).createServer("u1", "web", "teamA", "http://1.2.3.4:39000");
+      expect(res.installCommand).toContain("ws://1.2.3.4:39000/agent");
+    } finally {
+      if (prev !== undefined) process.env.HUB_PUBLIC_URL = prev;
+    }
+  });
 });
 
 describe("ServersService.enroll (token validation)", () => {

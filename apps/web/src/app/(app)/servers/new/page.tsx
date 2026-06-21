@@ -5,18 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
-
-const field: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  background: "var(--c-el)",
-  border: "1px solid var(--c-bd)",
-  borderRadius: "var(--r1)",
-  color: "var(--c-tx)",
-  fontSize: 14,
-  fontFamily: "inherit",
-  marginBottom: 12,
-};
+import { Field, Select, TextInput } from "../../../../components/form";
 
 export default function NewServerPage() {
   const t = useT();
@@ -39,7 +28,7 @@ export default function NewServerPage() {
     setErr("");
     setBusy(true);
     try {
-      const res = await api.createServer(name, teamId || teams[0]?.id);
+      const res = await api.createServer(name, teamId);
       setCreated({ id: res.server.id, command: res.installCommand });
     } catch (e) {
       setErr(e instanceof Error ? e.message : t("servers.createFailed"));
@@ -80,16 +69,16 @@ export default function NewServerPage() {
   return (
     <div style={{ padding: 28, maxWidth: 480 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 16px" }}>{t("servers.newTitle")}</h1>
-      <form onSubmit={submit}>
-        <input style={field} placeholder={t("servers.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-        <select style={field} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-          <option value="">{teams[0]?.name ?? t("common.pickTeam")}</option>
-          {teams.map((tm) => (
-            <option key={tm.id} value={tm.id}>{tm.name} ({tm.role})</option>
-          ))}
-        </select>
-        {err && <div style={{ color: "var(--c-r)", fontSize: 13, marginBottom: 10 }}>{err}</div>}
-        <Btn type="submit" disabled={busy}>{busy ? "…" : t("servers.create")}</Btn>
+      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <Field label={t("servers.name")} htmlFor="srv-name">
+          <TextInput id="srv-name" value={name} onChange={(e) => setName(e.target.value)} required />
+        </Field>
+        <Field label={t("common.team")}>
+          <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
+            options={teams.map((tm) => ({ value: tm.id, label: `${tm.name} (${tm.role})` }))} />
+        </Field>
+        {err && <div style={{ color: "var(--c-r)", fontSize: 13 }}>{err}</div>}
+        <div><Btn type="submit" disabled={busy}>{busy ? "…" : t("servers.create")}</Btn></div>
       </form>
     </div>
   );

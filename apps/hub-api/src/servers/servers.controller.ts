@@ -8,8 +8,13 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UseGuards,
 } from "@nestjs/common";
+
+interface ReqLike {
+  headers: Record<string, string | string[] | undefined>;
+}
 import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
@@ -19,6 +24,16 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { ServersService } from "./servers.service";
 import { CreateServerInput, CreateServerSchema } from "./dto/servers.schemas";
+
+/** Best-effort public base URL of this hub from the request (proxy-aware). */
+function publicUrlFrom(req: ReqLike): string | undefined {
+  const fwdHost = req.headers["x-forwarded-host"];
+  const host = (Array.isArray(fwdHost) ? fwdHost[0] : fwdHost) ?? req.headers.host;
+  if (!host) return undefined;
+  const fwdProto = req.headers["x-forwarded-proto"];
+  const proto = (Array.isArray(fwdProto) ? fwdProto[0] : fwdProto)?.split(",")[0] ?? "http";
+  return `${proto}://${host}`;
+}
 
 @Controller("servers")
 @UseGuards(ApiAuthGuard)
@@ -56,8 +71,9 @@ export class ServersController {
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateServerSchema)) body: CreateServerInput,
+    @Req() req: ReqLike,
   ) {
-    return this.servers.createServer(user.userId, body.name, body.teamId);
+    return this.servers.createServer(user.userId, body.name, body.teamId, publicUrlFrom(req));
   }
 
   @Put(":id/tags")

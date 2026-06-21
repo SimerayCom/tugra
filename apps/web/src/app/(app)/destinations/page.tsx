@@ -6,6 +6,7 @@ import { api } from "../../../lib/api";
 import { destSummary, destTypeLabel } from "../../../lib/destinations";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
+import { Select } from "../../../components/form";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -71,10 +72,9 @@ export default function DestinationsPage() {
           onSubmit={(e) => { e.preventDefault(); create.mutate(); }}
           style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
-          <select style={field} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-            <option value="">{teams[0]?.name ?? t("destinations.team")}</option>
-            {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-          </select>
+          <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
+            style={{ width: "auto", minWidth: 130 }}
+            options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
           <input style={{ ...field, width: 130 }} placeholder={t("destinations.name")} value={name} onChange={(e) => setName(e.target.value)} required />
           <input style={{ ...field, width: 140 }} placeholder={t("destinations.bucket")} value={bucket} onChange={(e) => setBucket(e.target.value)} required />
           <input style={{ ...field, width: 150 }} placeholder={t("destinations.endpoint")} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} required />

@@ -54,6 +54,9 @@ describe("Servers + Agent (e2e)", () => {
       .send({ name: "web-1", teamId })
       .expect(201);
     expect(res.body.enrollToken).toMatch(/^tugra_en_/);
+    // install command is built from the request host, no manual placeholder
+    expect(res.body.installCommand).toContain("/agent");
+    expect(res.body.installCommand).not.toContain("<YOUR_HUB_URL>");
     serverId = res.body.server.id;
     enrollToken = res.body.enrollToken;
   });

@@ -8,6 +8,7 @@ import type { Template } from "../../../lib/types";
 import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
+import { Select } from "../../../components/form";
 import { TagChips, TagFilter } from "../../../components/tags";
 
 const field: React.CSSProperties = {
@@ -34,6 +35,7 @@ export default function AppsPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const allTags = [...new Set(apps.flatMap((a) => a.tags))].sort();
   const visibleApps = apps.filter((a) => selectedTags.every((tag) => a.tags.includes(tag)));
+  const noServer = servers.length === 0;
 
   const [name, setName] = useState("");
   const [serverId, setServerId] = useState("");
@@ -94,10 +96,9 @@ export default function AppsPage() {
           style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
           <input style={{ ...field, flex: 1, minWidth: 110 }} placeholder={t("apps.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-          <select style={field} value={serverId} onChange={(e) => setServerId(e.target.value)}>
-            <option value="">{servers[0]?.name ?? t("apps.server")}</option>
-            {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <Select value={serverId} onChange={setServerId} autoSelectFirst required placeholder={t("apps.server")}
+            style={{ width: "auto", minWidth: 130 }}
+            options={servers.map((s) => ({ value: s.id, label: s.name }))} />
           <select style={field} value={source} onChange={(e) => setSource(e.target.value as "IMAGE" | "GIT" | "COMPOSE")}>
             <option value="IMAGE">{t("apps.sourceImage")}</option>
             <option value="GIT">{t("apps.sourceGit")}</option>
@@ -138,10 +139,15 @@ export default function AppsPage() {
               required
             />
           )}
-          <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
+          <button type="submit" disabled={create.isPending || noServer} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: noServer ? "not-allowed" : "pointer", opacity: noServer ? 0.5 : 1 }}>
             {create.isPending ? "…" : t("apps.create")}
           </button>
         </form>
+        {noServer && (
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 10 }}>
+            {t("apps.needServer")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("apps.addServer")}</Link>
+          </div>
+        )}
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 
