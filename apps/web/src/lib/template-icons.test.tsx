@@ -1,20 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { SiGitea, SiNodered, SiWordpress } from "@icons-pack/react-simple-icons";
-import { Boxes } from "lucide-react";
-import { templateIcon } from "./template-icons";
+import { describe, it, expect, afterEach } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { TemplateLogo } from "./template-icons";
 
-describe("templateIcon", () => {
-  it("returns the brand icon for a known template slug", () => {
-    expect(templateIcon("wordpress")).toBe(SiWordpress);
+afterEach(cleanup);
+
+describe("TemplateLogo", () => {
+  it("renders the vendored svg for a slug", () => {
+    render(<TemplateLogo slug="wordpress" />);
+    expect(screen.getByRole("img").getAttribute("src")).toBe("/icons/wordpress.svg");
   });
 
-  it("returns brand icons for the expanded catalog slugs", () => {
-    expect(templateIcon("gitea")).toBe(SiGitea);
-    expect(templateIcon("node-red")).toBe(SiNodered);
-    expect(templateIcon("gitea")).not.toBe(Boxes);
+  it("prefers an explicit logo name over the slug", () => {
+    render(<TemplateLogo slug="some-app" logo="grafana" />);
+    expect(screen.getByRole("img").getAttribute("src")).toBe("/icons/grafana.svg");
   });
 
-  it("falls back to a generic glyph for unknown slugs", () => {
-    expect(templateIcon("something-else")).toBe(Boxes);
+  it("falls back to a generic glyph when the image fails to load", () => {
+    render(<TemplateLogo slug="does-not-exist" />);
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.queryByRole("img")).toBeNull();
   });
 });

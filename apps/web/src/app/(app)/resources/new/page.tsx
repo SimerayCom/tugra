@@ -8,7 +8,7 @@ import { Box, Database, FileCode2, GitBranch, Layers } from "lucide-react";
 import { api } from "../../../../lib/api";
 import type { DbEngine } from "../../../../lib/types";
 import { engineLabel } from "../../../../lib/databases";
-import { templateIcon } from "../../../../lib/template-icons";
+import { TemplateLogo } from "../../../../lib/template-icons";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
@@ -200,10 +200,9 @@ function Wizard() {
                           <div style={grid}>
                             {matches
                               .filter((tpl) => tpl.category === cat)
-                              .map((tpl) => {
-                                const Icon = templateIcon(tpl.slug);
-                                return tile(tpl.slug, Box, tpl.name, tpl.description, () => pick({ group: "template", slug: tpl.slug, name: tpl.name }), <Icon size={22} />);
-                              })}
+                              .map((tpl) =>
+                                tile(tpl.slug, Box, tpl.name, tpl.description, () => pick({ group: "template", slug: tpl.slug, name: tpl.name }), <TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} />),
+                              )}
                           </div>
                         </div>
                       ))

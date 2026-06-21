@@ -1,0 +1,23 @@
+Tugra
+Copyright (c) Simeray Ltd
+
+This product includes third-party material:
+
+One-click service templates
+---------------------------
+The bulk service catalog in apps/hub-api/src/templates/catalog.generated.json
+is adapted (transformed) from Coolify's service templates.
+  Source:  https://github.com/coollabsio/coolify (templates/service-templates.json)
+  License: Apache License 2.0
+Templates are programmatically converted to Tugra's compose + secret model by
+scripts/import-templates.mjs; the original compose definitions remain under the
+Apache-2.0 license of their respective upstream project.
+
+Brand icons
+-----------
+The service icons vendored in apps/web/public/icons/*.svg are sourced from the
+dashboard-icons project.
+  Source:  https://github.com/homarr-labs/dashboard-icons
+  License: Apache License 2.0
+Individual brand logos are trademarks of their respective owners and are used
+here only to identify the corresponding software.
