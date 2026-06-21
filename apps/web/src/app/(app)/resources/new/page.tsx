@@ -155,7 +155,7 @@ function Wizard() {
 
               {kind === "app" ? (
                 <>
-                  <Field label={t("apps.buildType")}>
+                  <Field label={t("apps.source")}>
                     <Select value={source} onChange={(v) => setSource(v as "IMAGE" | "GIT" | "COMPOSE")}
                       options={[
                         { value: "IMAGE", label: t("apps.sourceImage") },

@@ -5,9 +5,12 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import type { Environment } from "../../../../lib/types";
+import type { AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
+import { appColor } from "../../../../lib/apps";
+import { dbColor } from "../../../../lib/databases";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { TagChips } from "../../../../components/tags";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -73,7 +76,13 @@ export default function ProjectDetailPage() {
 
 function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environment; projectId: string; canWrite: boolean; onChange: () => void }) {
   const t = useT();
-  const empty = (env.resources?.length ?? 0) === 0;
+  const [query, setQuery] = useState("");
+  const all = env.resources ?? [];
+  const empty = all.length === 0;
+  const q = query.toLowerCase();
+  const match = (r: ProjectResource) => r.name.toLowerCase().includes(q) || (r.url ?? "").toLowerCase().includes(q);
+  const apps = all.filter((r) => r.kind === "app" && match(r));
+  const dbs = all.filter((r) => r.kind === "database" && match(r));
   const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: onChange });
   const newHref = (kind: "app" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
   const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "3px 10px", textDecoration: "none" };
@@ -99,20 +108,48 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
           </button>
         )}
       </div>
+      {!empty && (
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t("projects.searchResources")}
+          style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", marginBottom: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit" }}
+        />
+      )}
+      {empty && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("projects.noResources")}</div>}
+      <ResourceGroup title={t("projects.applications")} items={apps} />
+      <ResourceGroup title={t("projects.databases")} items={dbs} />
+    </Card>
+  );
+}
+
+function ResourceGroup({ title, items }: { title: string; items: ProjectResource[] }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", margin: "4px 0 6px" }}>{title}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {(env.resources ?? []).map((r) => (
+        {items.map((r) => (
           <Link
             key={`${r.kind}:${r.id}`}
             href={r.kind === "app" ? `/apps/${r.id}` : `/databases/${r.id}`}
-            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-tx)", textDecoration: "none" }}
+            style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--c-tx)", textDecoration: "none", padding: "8px 10px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)" }}
           >
-            <span className="mono" style={{ fontSize: 10, color: "var(--c-tx3)", width: 64 }}>{r.kind}</span>
-            <span style={{ flex: 1 }}>{r.name}</span>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: r.kind === "app" ? appColor(r.status as AppStatus) : dbColor(r.status as DbStatus), flexShrink: 0 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontWeight: 600 }}>{r.name}</span>
+                <TagChips tags={r.tags} />
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.url ? r.url : r.engine ?? ""}
+                {r.serverName ? ` · ${r.serverName}` : ""}
+              </div>
+            </div>
             <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{r.status}</span>
           </Link>
         ))}
-        {empty && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("projects.noResources")}</div>}
       </div>
-    </Card>
+    </div>
   );
 }

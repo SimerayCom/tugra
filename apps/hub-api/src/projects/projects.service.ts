@@ -16,6 +16,10 @@ export interface ProjectResource {
   name: string;
   kind: "app" | "database";
   status: string;
+  url: string | null;
+  serverName: string | null;
+  tags: string[];
+  engine: string | null;
 }
 
 export interface EnvironmentView {
@@ -95,13 +99,17 @@ export class ProjectsService {
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true },
+        select: { id: true, name: true, status: true, environmentId: true, domain: true, https: true, tags: true, serverId: true },
       }),
       this.prisma.database.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true },
+        select: { id: true, name: true, status: true, environmentId: true, engine: true, tags: true, serverId: true },
       }),
     ]);
+    // Resolve server names for the "Server: <name>" labels.
+    const serverIds = [...new Set([...apps.map((a) => a.serverId), ...dbs.map((d) => d.serverId)])];
+    const servers = await this.prisma.server.findMany({ where: { id: { in: serverIds } }, select: { id: true, name: true } });
+    const serverName = new Map(servers.map((s) => [s.id, s.name]));
     return {
       id: project.id,
       teamId: project.teamId,
@@ -110,8 +118,20 @@ export class ProjectsService {
       canWrite: WRITE.includes(role),
       environments: project.environments.map((e) => {
         const resources: ProjectResource[] = [
-          ...apps.filter((a) => a.environmentId === e.id).map((a) => ({ id: a.id, name: a.name, kind: "app" as const, status: a.status })),
-          ...dbs.filter((d) => d.environmentId === e.id).map((d) => ({ id: d.id, name: d.name, kind: "database" as const, status: d.status })),
+          ...apps.filter((a) => a.environmentId === e.id).map((a) => ({
+            id: a.id, name: a.name, kind: "app" as const, status: a.status,
+            url: a.domain ? `${a.https ? "https" : "http"}://${a.domain}` : null,
+            serverName: serverName.get(a.serverId) ?? null,
+            tags: a.tags,
+            engine: null,
+          })),
+          ...dbs.filter((d) => d.environmentId === e.id).map((d) => ({
+            id: d.id, name: d.name, kind: "database" as const, status: d.status,
+            url: null,
+            serverName: serverName.get(d.serverId) ?? null,
+            tags: d.tags,
+            engine: d.engine,
+          })),
         ];
         return {
           id: e.id,
