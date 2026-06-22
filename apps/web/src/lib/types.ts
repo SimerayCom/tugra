@@ -141,6 +141,7 @@ export interface Channel {
   type: string;
   teamId: string;
   enabled: boolean;
+  eventTypes: string[];
 }
 
 export type BulkTaskStatus =
