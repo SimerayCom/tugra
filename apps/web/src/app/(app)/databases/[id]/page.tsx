@@ -7,7 +7,9 @@ import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useT } from "../../../../i18n/provider";
-import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { PageHeader } from "../../../../components/page-header";
+import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 
@@ -70,59 +72,78 @@ export default function DatabaseDetailPage() {
     onSuccess: invalidate,
   });
 
+  const [tab, setTab] = useState("overview");
+
   if (isLoading || !db) return <div style={{ padding: 28 }}><Spinner /></div>;
 
   return (
     <div style={{ padding: 28 }}>
-      <BackLink href="/databases" label={t("common.backTo", { target: t("nav.databases") })} />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-        <span style={{ width: 11, height: 11, borderRadius: "50%", background: dbColor(db.status) }} />
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{db.name}</h1>
-        <span style={{ fontSize: 12, color: dbColor(db.status), fontWeight: 600 }}>{db.status}</span>
-      </div>
-      <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 18px" }}>
-        {engineLabel(db.engine)} · {db.version} · :{db.port}{db.hostPort ? ` → host :${db.hostPort}` : ""}
-      </p>
+      <PageHeader
+        breadcrumb={[{ label: t("nav.databases"), href: "/databases" }, { label: db.name }]}
+        title={db.name}
+        status={{ label: db.status, color: dbColor(db.status) }}
+        actions={
+          db.canWrite ? (
+            <>
+              <Btn onClick={() => provision.mutate()} disabled={provision.isPending}>
+                {provision.isPending ? t("databases.provisioning") : t("databases.provision")}
+              </Btn>
+              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("databases.stop")}</Btn>
+              <Btn variant="danger" onClick={() => del.mutate()}>{t("databases.delete")}</Btn>
+            </>
+          ) : undefined
+        }
+      >
+        <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>
+          {engineLabel(db.engine)} · {db.version} · :{db.port}{db.hostPort ? ` → host :${db.hostPort}` : ""}
+        </p>
+      </PageHeader>
 
-      {db.canWrite && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          <Btn onClick={() => provision.mutate()} disabled={provision.isPending}>
-            {provision.isPending ? t("databases.provisioning") : t("databases.provision")}
-          </Btn>
-          <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("databases.stop")}</Btn>
-          <div style={{ flex: 1 }} />
-          <Btn variant="danger" onClick={() => del.mutate()}>Delete</Btn>
-        </div>
+      <Tabs
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "overview", label: t("databases.tabOverview") },
+          { key: "backups", label: t("databases.tabBackups") },
+          ...(db.canWrite ? [{ key: "settings", label: t("databases.tabSettings") }] : []),
+        ]}
+      />
+
+      {tab === "overview" && (
+        db.canWrite && db.connectionUri ? (
+          <Card style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.connection")}</div>
+            <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.connectionDesc")}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <CopyRow label={t("databases.uri")} value={db.connectionUri} copy={t("databases.copy")} secret />
+              {db.internalHost && <CopyRow label={t("databases.host")} value={db.internalHost} copy={t("databases.copy")} />}
+              {db.username && <CopyRow label={t("databases.username")} value={db.username} copy={t("databases.copy")} />}
+              {db.password && <CopyRow label={t("databases.password")} value={db.password} copy={t("databases.copy")} secret />}
+              {db.database && <CopyRow label={t("databases.database")} value={db.database} copy={t("databases.copy")} />}
+            </div>
+          </Card>
+        ) : (
+          <Card style={{ padding: 16 }}><EmptyState>{t("databases.connectionPending")}</EmptyState></Card>
+        )
       )}
 
-      {db.canWrite && db.connectionUri && (
-        <Card style={{ padding: 16 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.connection")}</div>
-          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.connectionDesc")}</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <CopyRow label={t("databases.uri")} value={db.connectionUri} copy={t("databases.copy")} secret />
-            {db.internalHost && <CopyRow label={t("databases.host")} value={db.internalHost} copy={t("databases.copy")} />}
-            {db.username && <CopyRow label={t("databases.username")} value={db.username} copy={t("databases.copy")} />}
-            {db.password && <CopyRow label={t("databases.password")} value={db.password} copy={t("databases.copy")} secret />}
-            {db.database && <CopyRow label={t("databases.database")} value={db.database} copy={t("databases.copy")} />}
+      {tab === "settings" && db.canWrite && (
+        <>
+          <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />
+          <div style={{ marginTop: 16 }}>
+            <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
           </div>
-        </Card>
+        </>
       )}
 
-      {db.canWrite && <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />}
-
-      <div style={{ marginTop: 16 }}>
-        <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
-      </div>
-
-      {db.canWrite && !db.backupSupported && (
-        <Card style={{ padding: 16, marginTop: 16, color: "var(--c-tx3)", fontSize: 13 }}>
+      {tab === "backups" && db.canWrite && !db.backupSupported && (
+        <Card style={{ padding: 16, color: "var(--c-tx3)", fontSize: 13 }}>
           {t("databases.backupUnsupported")}
         </Card>
       )}
 
-      {db.canWrite && db.backupSupported && (
-        <Card style={{ padding: 16, marginTop: 16 }}>
+      {tab === "backups" && db.canWrite && db.backupSupported && (
+        <Card style={{ padding: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("databases.backups")}</div>
             <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
