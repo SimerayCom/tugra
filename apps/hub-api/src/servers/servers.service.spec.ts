@@ -4,9 +4,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
+const notifications = { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService;
 
 function svcWith(prisma: Partial<PrismaService>): ServersService {
-  return new ServersService(prisma as PrismaService, audit);
+  return new ServersService(prisma as PrismaService, audit, notifications);
 }
 
 describe("ServersService.listForUser (cross-team, role-aware)", () => {

@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Put,
   UseGuards,
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -13,7 +14,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
-import { CreateChannelInput, CreateChannelSchema } from "./dto";
+import { CreateChannelInput, CreateChannelSchema, UpdateChannelInput, UpdateChannelSchema } from "./dto";
 
 @Controller("channels")
 @UseGuards(JwtAuthGuard)
@@ -31,6 +32,16 @@ export class NotificationsController {
     @Body(new ZodValidationPipe(CreateChannelSchema)) body: CreateChannelInput,
   ) {
     return this.svc.create(user.userId, body);
+  }
+
+  @Put(":id")
+  @HttpCode(200)
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(UpdateChannelSchema)) body: UpdateChannelInput,
+  ) {
+    return this.svc.update(user.userId, id, body);
   }
 
   @Post(":id/test")

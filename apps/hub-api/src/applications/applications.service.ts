@@ -14,6 +14,7 @@ import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { MonitorsService } from "../monitors/monitors.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import {
   buildImageRemoveScript,
   buildRemoveScript,
@@ -111,6 +112,7 @@ export class ApplicationsService {
     private readonly proxy: ProxyService,
     private readonly crypto: CryptoService,
     private readonly monitors: MonitorsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -381,6 +383,13 @@ export class ApplicationsService {
         exitCode: r.exitCode,
         deploymentId: dep.id,
       });
+      this.notifications
+        .fireForEvent(
+          app.teamId,
+          ok ? "deploy_success" : "deploy_failed",
+          `${ok ? "✅" : "🔴"} ${app.name}: deploy ${ok ? "succeeded" : "failed"}`,
+        )
+        .catch(() => {});
       if (ok && !isCompose) await this.pruneImages(app);
     } catch (e) {
       await this.prisma.deployment.update({
@@ -392,6 +401,7 @@ export class ApplicationsService {
         data: { status: AppStatus.FAILED },
       });
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+      this.notifications.fireForEvent(app.teamId, "deploy_failed", `🔴 ${app.name}: deploy failed`).catch(() => {});
     }
     await this.audit.log({ actor, action: "app.deploy", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
