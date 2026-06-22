@@ -10,5 +10,10 @@
   "online": "Online",
   "pending": "Pending",
   "offline": "Offline",
-  "goToFleet": "Go to fleet table →"
+  "goToFleet": "Go to fleet table →",
+  "servers": "Servers",
+  "noProjects": "No projects yet.",
+  "addResource": "Add Resource",
+  "settings": "Settings",
+  "addServer": "Add your first server →"
 }
