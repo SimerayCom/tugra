@@ -34,6 +34,12 @@ describe("compose-script", () => {
     expect(s).not.toContain("--env-file");
   });
 
+  it("force deploy (noCache) re-pulls images with --pull always", () => {
+    expect(buildComposeUpScript(base, true)).toContain("up -d --pull always --remove-orphans");
+    expect(buildComposeUpScript(base, false)).toContain("up -d --remove-orphans");
+    expect(buildComposeUpScript(base, false)).not.toContain("--pull always");
+  });
+
   it("writes a .env and passes --env-file when the app has env vars", () => {
     const s = buildComposeUpScript({ ...base, env: { FOO: "bar" } });
     expect(s).toContain("base64 -d > /etc/tugra/compose/abc/.env");

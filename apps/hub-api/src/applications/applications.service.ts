@@ -195,10 +195,10 @@ export class ApplicationsService {
     return this.view(app, role);
   }
 
-  async deploy(userId: string, id: string) {
+  async deploy(userId: string, id: string, opts?: { noCache?: boolean }) {
     const app = await this.requireWrite(userId, id);
     await this.ensureNoActiveDeploy(id);
-    return this.runDeploy(app, userId);
+    return this.runDeploy(app, userId, opts?.noCache ?? false);
   }
 
   /** One deploy per app at a time — keeps the live-log stream unambiguous. */
@@ -341,7 +341,7 @@ export class ApplicationsService {
   }
 
   /** Core deploy: build/run on the agent and record the Deployment. */
-  private async runDeploy(app: Application, actor: string) {
+  private async runDeploy(app: Application, actor: string, noCache = false) {
     const dep = await this.prisma.deployment.create({
       data: { appId: app.id, status: "RUNNING" },
     });
@@ -352,8 +352,8 @@ export class ApplicationsService {
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       const command = isCompose
-        ? buildComposeUpScript(spec)
-        : buildRunScript(spec, dep.id, true);
+        ? buildComposeUpScript(spec, noCache)
+        : buildRunScript(spec, dep.id, true, noCache);
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,

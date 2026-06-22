@@ -21,6 +21,8 @@ import { ApplicationsService } from "./applications.service";
 import {
   CreateAppInput,
   CreateAppSchema,
+  DeployInput,
+  DeploySchema,
   FromTemplateInput,
   FromTemplateSchema,
   PreviewConfigInput,
@@ -103,8 +105,12 @@ export class ApplicationsController {
 
   @Post(":id/deploy")
   @HttpCode(200)
-  deploy(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.apps.deploy(user.userId, id);
+  deploy(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(DeploySchema)) body: DeployInput,
+  ) {
+    return this.apps.deploy(user.userId, id, body);
   }
 
   @Get(":id/env")

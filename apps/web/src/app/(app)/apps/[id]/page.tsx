@@ -36,7 +36,7 @@ export default function AppDetailPage() {
     qc.invalidateQueries({ queryKey: ["app", id] });
     qc.invalidateQueries({ queryKey: ["deployments", id] });
   };
-  const deploy = useMutation({ mutationFn: () => api.deployApp(id), onSuccess: invalidate });
+  const deploy = useMutation({ mutationFn: (opts?: { noCache?: boolean }) => api.deployApp(id, opts), onSuccess: invalidate });
   const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: invalidate });
   const del = useMutation({
     mutationFn: () => api.deleteApp(id),
@@ -63,7 +63,7 @@ export default function AppDetailPage() {
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
 
-  const onDeploy = () => { deploy.mutate(); setTab("logs"); };
+  const onDeploy = (opts?: { noCache?: boolean }) => { deploy.mutate(opts); setTab("logs"); };
 
   return (
     <div style={{ padding: 28 }}>
@@ -75,9 +75,10 @@ export default function AppDetailPage() {
         actions={
           appData.canWrite ? (
             <>
-              <Btn onClick={onDeploy} disabled={deploy.isPending}>
+              <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>
                 {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
               </Btn>
+              <Btn variant="ghost" onClick={() => onDeploy({ noCache: true })} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>{t("apps.forceDeploy")}</Btn>
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
               {appData.source !== "COMPOSE" && (
                 <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("apps.openShell")}</Btn>

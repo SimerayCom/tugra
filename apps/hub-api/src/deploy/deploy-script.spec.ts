@@ -44,6 +44,15 @@ describe("deploy-script", () => {
     expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:old1'");
   });
 
+  it("force deploy (noCache) adds --no-cache to Dockerfile builds only when requested", () => {
+    const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "DOCKERFILE" };
+    const forced = buildRunScript(git, "v1", true, true);
+    expect(forced).toContain("docker build --no-cache -t tugra_abc:v1");
+    const normal = buildRunScript(git, "v1", true, false);
+    expect(normal).toContain("docker build -t tugra_abc:v1");
+    expect(normal).not.toContain("--no-cache");
+  });
+
   it("injects env via an --env-file (0600) instead of -e, plus -p when no domain", () => {
     const s = buildRunScript({ ...base, env: { FOO: "bar baz" }, hostPort: 8080, containerPort: 3000 }, "v1");
     expect(s).toContain("--env-file /etc/tugra/env/abc.env");

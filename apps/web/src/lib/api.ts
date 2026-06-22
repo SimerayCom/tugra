@@ -405,8 +405,8 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  deployApp(id: string) {
-    return apiFetch<Deployment>(`/apps/${id}/deploy`, { method: "POST" });
+  deployApp(id: string, opts?: { noCache?: boolean }) {
+    return apiFetch<Deployment>(`/apps/${id}/deploy`, { method: "POST", body: JSON.stringify(opts ?? {}) });
   },
   stopApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/stop`, { method: "POST" });

@@ -181,8 +181,9 @@ export function staticNginxConf(): string {
 }
 
 /** Build the prep steps (clone+build, or pull) that produce `tugra_<appId>:<version>`. */
-function prepSteps(app: AppSpec, version: string): string[] {
+function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   const tag = runTag(app, version);
+  const nc = noCache ? "--no-cache " : "";
   if (app.source === "GIT") {
     const bd = `/etc/tugra/builds/${app.id}`;
     const branch = app.gitBranch || "main";
@@ -204,13 +205,13 @@ function prepSteps(app: AppSpec, version: string): string[] {
     }
     if (app.buildType === "DOCKERFILE") {
       const df = app.dockerfilePath || "Dockerfile";
-      steps.push(`docker build -t ${tag} -f ${bd}/${df} ${bd}`);
+      steps.push(`docker build ${nc}-t ${tag} -f ${bd}/${df} ${bd}`);
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
       steps.push(
         `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${bd}/Dockerfile.tugra`,
         `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${bd}/tugra-nginx.conf`,
-        `docker build -t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
+        `docker build ${nc}-t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
       );
     } else {
       steps.push(
@@ -269,7 +270,7 @@ export function envFileB64(env: Record<string, string>): string {
  * `build=true` (normal deploy) produces the versioned image first; `build=false`
  * (rollback) skips all prep and just runs the pre-existing versioned tag.
  */
-export function buildRunScript(app: AppSpec, version: string, build = true): string {
+export function buildRunScript(app: AppSpec, version: string, build = true, noCache = false): string {
   const name = containerName(app);
   const ref = runTag(app, version);
   const env = app.env && typeof app.env === "object" ? app.env : {};
@@ -334,7 +335,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true): str
 
   return [
     "set -e",
-    ...(build ? prepSteps(app, version) : []),
+    ...(build ? prepSteps(app, version, noCache) : []),
     ...envPrelude,
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,

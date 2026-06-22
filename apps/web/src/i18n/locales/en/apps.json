@@ -1,6 +1,8 @@
 {
   "title": "Apps",
   "subtitle": "Deploy a Docker image or a Git repo to a server.",
+  "forceDeploy": "Force deploy",
+  "forceDeployHint": "Rebuild without cache (pull fresh images)",
   "tabOverview": "Overview",
   "tabConfiguration": "Configuration",
   "tabDeployments": "Deployments",
