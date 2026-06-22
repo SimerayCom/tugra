@@ -24,4 +24,12 @@ export class WebhooksController {
     const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
     return this.webhooks.handle(token, req.headers, rawBody);
   }
+
+  @Post("github/:sourceId")
+  @HttpCode(202)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  github(@Param("sourceId") sourceId: string, @Req() req: WebhookRequest) {
+    const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
+    return this.webhooks.handleGithubApp(sourceId, req.headers, rawBody);
+  }
 }
