@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Box, GitBranch, Layers } from "lucide-react";
 import { api } from "../../../lib/api";
 import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
-import { Spinner } from "../../../components/ui";
+import { Spinner, StatusPill } from "../../../components/ui";
 import { TagChips, TagFilter } from "../../../components/tags";
+
+const SOURCE_ICON = { IMAGE: Box, GIT: GitBranch, COMPOSE: Layers } as const;
 
 export default function AppsPage() {
   const t = useT();
@@ -39,19 +42,24 @@ export default function AppsPage() {
         <>
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
           <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-            {visibleApps.map((a) => (
-              <Link key={a.id} href={`/apps/${a.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-                <span style={{ width: 9, height: 9, borderRadius: "50%", background: appColor(a.status) }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                    {a.name}
-                    <TagChips tags={a.tags} />
+            {visibleApps.map((a) => {
+              const Icon = SOURCE_ICON[a.source] ?? Box;
+              return (
+                <Link key={a.id} href={`/apps/${a.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+                  <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon size={18} color="var(--c-a)" />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                      {a.name}
+                      <TagChips tags={a.tags} />
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{appSourceSummary(a)}</div>
                   </div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{appSourceSummary(a)}</div>
-                </div>
-                <span style={{ fontSize: 12, color: appColor(a.status), fontWeight: 600 }}>{a.status}</span>
-              </Link>
-            ))}
+                  <StatusPill label={a.status} color={appColor(a.status)} />
+                </Link>
+              );
+            })}
             {visibleApps.length === 0 && (
               <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.empty")}</div>
             )}
