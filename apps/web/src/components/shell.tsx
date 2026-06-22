@@ -16,6 +16,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FolderTree,
+  GitBranch,
   Globe,
   HardDrive,
   LayoutDashboard,
@@ -53,6 +54,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       // aren't top-level nav; reach them via a project, the dashboard, or ⌘K.
       { key: "projects", href: "/projects", icon: FolderTree, impl: true },
       { key: "servers", href: "/servers", icon: Server, impl: true },
+      { key: "sources", href: "/sources", icon: GitBranch, impl: true },
       { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
       { key: "sharedVars", href: "/shared-variables", icon: Variable, impl: true },
       { key: "domains", href: "/domains", icon: Globe, impl: true },

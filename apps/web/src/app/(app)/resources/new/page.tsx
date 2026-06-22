@@ -48,6 +48,7 @@ function Wizard() {
   const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
+  const { data: gitSources = [] } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
 
   const [projectId, setProjectId] = useState(sp.get("project") ?? "");
   const [envId, setEnvId] = useState(sp.get("env") ?? "");
@@ -76,6 +77,13 @@ function Wizard() {
   const [hostPort, setHostPort] = useState("");
   const [domain, setDomain] = useState("");
   const [version, setVersion] = useState("");
+  const [gitSourceId, setGitSourceId] = useState("");
+
+  const { data: sourceRepos = [] } = useQuery({
+    queryKey: ["sourceRepos", gitSourceId],
+    queryFn: () => api.listSourceRepos(gitSourceId),
+    enabled: !!gitSourceId,
+  });
 
   const noServer = servers.length === 0;
 
@@ -108,6 +116,7 @@ function Wizard() {
         image: sel?.group === "app" && sel.source === "IMAGE" ? image : undefined,
         gitUrl: sel?.group === "app" && sel.source === "GIT" ? gitUrl : undefined,
         gitBranch: sel?.group === "app" && sel.source === "GIT" ? gitBranch || undefined : undefined,
+        gitSourceId: sel?.group === "app" && sel.source === "GIT" && gitSourceId ? gitSourceId : undefined,
         buildType: sel?.group === "app" && sel.source === "GIT" ? buildType : undefined,
         buildCommand: buildType === "STATIC" ? buildCommand || undefined : undefined,
         outputDir: buildType === "STATIC" ? outputDir || undefined : undefined,
@@ -323,9 +332,29 @@ function Wizard() {
                   )}
                   {sel.group === "app" && sel.source === "GIT" && (
                     <>
-                      <Field label={t("apps.gitUrl")} style={{ gridColumn: "1 / -1" }}>
-                        <TextInput value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} required />
-                      </Field>
+                      {gitSources.length > 0 && (
+                        <Field label={t("sources.source")}>
+                          <Select
+                            value={gitSourceId}
+                            onChange={(v) => { setGitSourceId(v); setGitUrl(""); }}
+                            options={[{ value: "", label: t("resources.publicRepo") }, ...gitSources.map((s) => ({ value: s.id, label: s.name }))]}
+                          />
+                        </Field>
+                      )}
+                      {gitSourceId ? (
+                        <Field label={t("sources.repo")} style={{ gridColumn: "1 / -1" }}>
+                          <Select
+                            value={gitUrl}
+                            onChange={setGitUrl}
+                            placeholder={t("sources.repo")}
+                            options={sourceRepos.map((r) => ({ value: r.cloneUrl, label: r.fullName }))}
+                          />
+                        </Field>
+                      ) : (
+                        <Field label={t("apps.gitUrl")} style={{ gridColumn: "1 / -1" }}>
+                          <TextInput value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} required />
+                        </Field>
+                      )}
                       <Field label={t("apps.branch")}>
                         <TextInput value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder="main" />
                       </Field>

@@ -7,6 +7,8 @@ import type {
   BackupDestination,
   Channel,
   Database,
+  GitSource,
+  SourceRepo,
   DbEngine,
   Deployment,
   DomainView,
@@ -359,6 +361,27 @@ export const api = {
     return apiFetch<{ ok: true }>(`/channels/${id}`, { method: "DELETE" });
   },
 
+  // ── git sources (GitHub App) ──
+  listGitSources() {
+    return apiFetch<GitSource[]>("/git-sources");
+  },
+  createGitSource(input: {
+    name: string;
+    teamId: string;
+    appId: string;
+    privateKey: string;
+    installationId?: string;
+    webhookSecret?: string;
+  }) {
+    return apiFetch<GitSource>("/git-sources", { method: "POST", body: JSON.stringify(input) });
+  },
+  listSourceRepos(id: string) {
+    return apiFetch<SourceRepo[]>(`/git-sources/${id}/repos`);
+  },
+  deleteGitSource(id: string) {
+    return apiFetch<{ ok: true }>(`/git-sources/${id}`, { method: "DELETE" });
+  },
+
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {
     return apiFetch<{ opId: string }>("/bulk", {
@@ -384,6 +407,7 @@ export const api = {
     image?: string;
     gitUrl?: string;
     gitBranch?: string;
+    gitSourceId?: string;
     buildType?: "NIXPACKS" | "DOCKERFILE" | "STATIC";
     buildCommand?: string;
     outputDir?: string;

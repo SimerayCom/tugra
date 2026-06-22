@@ -144,6 +144,24 @@ export interface Channel {
   eventTypes: string[];
 }
 
+export interface GitSource {
+  id: string;
+  name: string;
+  teamId: string;
+  provider: string;
+  appId: string;
+  appSlug: string | null;
+  installationId: string | null;
+  htmlUrl: string | null;
+  createdAt: string;
+}
+
+export interface SourceRepo {
+  fullName: string;
+  cloneUrl: string;
+  private: boolean;
+}
+
 export type BulkTaskStatus =
   | "PENDING"
   | "RUNNING"

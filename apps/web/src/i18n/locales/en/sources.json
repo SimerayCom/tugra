@@ -1,0 +1,21 @@
+{
+  "title": "Git Sources",
+  "subtitle": "Connect a GitHub App to deploy private repositories.",
+  "team": "Team",
+  "create": "Add GitHub App",
+  "name": "Name",
+  "appId": "App ID",
+  "installationId": "Installation ID",
+  "privateKey": "Private key (PEM)",
+  "webhookSecret": "Webhook secret",
+  "add": "Add source",
+  "delete": "Delete",
+  "repos": "Repositories",
+  "loadRepos": "List repos",
+  "noSources": "No git sources yet — add a GitHub App below.",
+  "howto": "Create a GitHub App on github.com, generate a private key, install it on your repos, then paste the App ID, Installation ID and private key here.",
+  "privateRepo": "Private Repository (GitHub App)",
+  "privateRepoDesc": "Deploy a private repo through a connected GitHub App.",
+  "source": "GitHub App",
+  "repo": "Repository"
+}
