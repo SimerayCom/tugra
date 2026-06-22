@@ -35,7 +35,7 @@ function b64(s: string): string {
   return Buffer.from(s, "utf8").toString("base64");
 }
 
-export function buildComposeUpScript(app: AppSpec): string {
+export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const dir = composeDir(app);
   const file = composeFilePath(app);
   const proj = composeProject(app);
@@ -58,7 +58,7 @@ export function buildComposeUpScript(app: AppSpec): string {
   lines.push(...registryLoginPrelude(app.registryAuth));
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
   lines.push(
-    `docker compose -p ${proj} -f ${file} ${envArg}up -d --remove-orphans`,
+    `docker compose -p ${proj} -f ${file} ${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
     `docker compose -p ${proj} -f ${file} ps`,
   );

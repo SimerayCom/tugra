@@ -85,6 +85,11 @@ export const PreviewConfigSchema = z.object({
 });
 export type PreviewConfigInput = z.infer<typeof PreviewConfigSchema>;
 
+export const DeploySchema = z.object({
+  noCache: z.boolean().optional(),
+});
+export type DeployInput = z.infer<typeof DeploySchema>;
+
 export const FromTemplateSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),
