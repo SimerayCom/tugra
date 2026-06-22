@@ -1,5 +1,10 @@
 {
   "title": "Servers",
+  "tabOverview": "Overview",
+  "tabMonitoring": "Monitoring",
+  "tabUpdates": "Updates",
+  "tabDrains": "Log Drains",
+  "tabMaintenance": "Maintenance",
   "add": "+ Add Server",
   "online": "{n} online",
   "pending": "{n} pending",

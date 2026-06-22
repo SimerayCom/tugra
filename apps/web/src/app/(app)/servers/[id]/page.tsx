@@ -5,13 +5,18 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
-import type { ServerView } from "../../../../lib/types";
+import type { ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
-import { BackLink, Badge, Btn, Card, Spinner, StatusDot } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { PageHeader } from "../../../../components/page-header";
+import { Tabs } from "../../../../components/tabs-nav";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
+
+const serverColor = (s: ServerStatus) =>
+  s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
 
 export default function ServerDetailPage() {
   const t = useT();
@@ -33,6 +38,7 @@ export default function ServerDetailPage() {
     refetchInterval: 5000,
   });
   const [shellOpen, setShellOpen] = useState(false);
+  const [tab, setTab] = useState("overview");
 
   if (isLoading || !server) return <div style={{ padding: 28 }}><Spinner /></div>;
 
@@ -41,56 +47,69 @@ export default function ServerDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
-      <BackLink href="/servers" label={t("common.backTo", { target: t("nav.servers") })} />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-        <StatusDot status={server.status} />
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{server.name}</h1>
-        <Badge tone={server.canWrite ? "gold" : "muted"}>{server.role}</Badge>
-      </div>
-      <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 20px" }}>
-        {server.hostname ?? "—"} · {server.status}
-      </p>
+      <PageHeader
+        breadcrumb={[{ label: t("nav.servers"), href: "/servers" }, { label: server.name }]}
+        title={server.name}
+        status={{ label: server.status, color: serverColor(server.status) }}
+        badge={<Badge tone={server.canWrite ? "gold" : "muted"}>{server.role}</Badge>}
+        actions={server.canWrite ? <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn> : undefined}
+      >
+        <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>{server.hostname ?? "—"}</p>
+      </PageHeader>
 
-      <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
-        <Info label={t("servers.status")} value={server.status} />
-        <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
-        <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
-        <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
-      </Card>
+      <Tabs
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "overview", label: t("servers.tabOverview") },
+          { key: "monitoring", label: t("servers.tabMonitoring") },
+          ...(server.canWrite ? [{ key: "updates", label: t("servers.tabUpdates") }, { key: "drains", label: t("servers.tabDrains") }] : []),
+          { key: "maintenance", label: t("servers.tabMaintenance") },
+        ]}
+      />
 
-      {(server.os || server.arch || server.cpuCores) && (
-        <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
-          <Info label={t("servers.os")} value={server.os ? `${server.os} ${server.osVersion ?? ""}`.trim() : "—"} />
-          <Info label={t("servers.arch")} value={server.arch ?? "—"} />
-          <Info label={t("servers.kernel")} value={server.kernel ?? "—"} />
-          <Info label={t("servers.cpuCores")} value={server.cpuCores != null ? String(server.cpuCores) : "—"} />
-          <Info label={t("servers.ramTotal")} value={fmtBytesStr(server.memTotalBytes)} />
-          <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />
-        </Card>
+      {tab === "overview" && (
+        <>
+          <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
+            <Info label={t("servers.status")} value={server.status} />
+            <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
+            <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
+            <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
+          </Card>
+          {(server.os || server.arch || server.cpuCores) && (
+            <Card style={{ padding: 16, display: "flex", gap: 28, flexWrap: "wrap" }}>
+              <Info label={t("servers.os")} value={server.os ? `${server.os} ${server.osVersion ?? ""}`.trim() : "—"} />
+              <Info label={t("servers.arch")} value={server.arch ?? "—"} />
+              <Info label={t("servers.kernel")} value={server.kernel ?? "—"} />
+              <Info label={t("servers.cpuCores")} value={server.cpuCores != null ? String(server.cpuCores) : "—"} />
+              <Info label={t("servers.ramTotal")} value={fmtBytesStr(server.memTotalBytes)} />
+              <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />
+            </Card>
+          )}
+        </>
       )}
 
-      {metrics.length === 0 ? (
-        <Card style={{ padding: 24, color: "var(--c-tx3)" }}>{t("servers.noMetrics")}</Card>
-      ) : (
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1fr 1fr" }}>
-          <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
-          <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
-        </div>
+      {tab === "monitoring" && (
+        metrics.length === 0 ? (
+          <Card style={{ padding: 16 }}><EmptyState>{t("servers.noMetrics")}</EmptyState></Card>
+        ) : (
+          <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+            <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
+            <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
+          </div>
+        )
       )}
 
-      {server.canWrite && (
-        <div style={{ marginBottom: 20 }}>
-          <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
-        </div>
+      {tab === "updates" && server.canWrite && <PatchCard id={id} />}
+
+      {tab === "drains" && server.canWrite && <LogDrainCard id={id} />}
+
+      {tab === "maintenance" && (
+        <>
+          <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
+          {server.canWrite && <CleanupCard id={id} server={server} />}
+        </>
       )}
-
-      <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
-
-      {server.canWrite && <PatchCard id={id} />}
-
-      {server.canWrite && <LogDrainCard id={id} />}
-
-      {server.canWrite && <CleanupCard id={id} server={server} />}
 
       {shellOpen && (
         <TerminalModal
