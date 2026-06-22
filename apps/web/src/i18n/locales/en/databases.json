@@ -8,6 +8,8 @@
   "engine": "Engine",
   "version": "Version",
   "versionHint": "Optional — defaults to latest",
+  "versionCustom": "Custom…",
+  "versionCustomLabel": "Custom version / tag",
   "hostPort": "Host port",
   "hostPortHint": "Optional — expose on the host",
   "needServer": "Databases run on a server.",

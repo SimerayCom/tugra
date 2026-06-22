@@ -7,7 +7,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Box, Database, FileCode2, GitBranch, Layers } from "lucide-react";
 import { api } from "../../../../lib/api";
 import type { DbEngine } from "../../../../lib/types";
-import { engineLabel } from "../../../../lib/databases";
+import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
 import { filterTemplates, presentCategories } from "../../../../lib/template-filter";
 import { useT } from "../../../../i18n/provider";
@@ -79,6 +79,7 @@ function Wizard() {
     setSel(s);
     if (s?.group === "app" && s.source === "GIT") setBuildType(s.build);
     if (s?.group === "template") setName(s.slug);
+    if (s?.group === "db") setVersion(engineVersions(s.engine)[0] ?? "");
   };
 
   const create = useMutation({
@@ -306,19 +307,35 @@ function Wizard() {
                         style={{ width: "100%", minHeight: 140, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "var(--font-mono, monospace)", resize: "vertical", boxSizing: "border-box" }} />
                     </Field>
                   )}
-                  {sel.group === "db" && (
-                    <>
-                      <Field label={t("databases.engine")}>
-                        <TextInput value={engineLabel(sel.engine)} disabled />
-                      </Field>
-                      <Field label={t("databases.version")} hint={t("databases.versionHint")}>
-                        <TextInput value={version} onChange={(e) => setVersion(e.target.value)} />
-                      </Field>
-                      <Field label={t("databases.hostPort")} hint={t("databases.hostPortHint")}>
-                        <TextInput type="number" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
-                      </Field>
-                    </>
-                  )}
+                  {sel.group === "db" && (() => {
+                    const versions = engineVersions(sel.engine);
+                    const isCustom = !versions.includes(version);
+                    return (
+                      <>
+                        <Field label={t("databases.engine")}>
+                          <TextInput value={engineLabel(sel.engine)} disabled />
+                        </Field>
+                        <Field label={t("databases.version")} hint={t("databases.versionHint")}>
+                          <Select
+                            value={isCustom ? "__custom__" : version}
+                            onChange={(v) => setVersion(v === "__custom__" ? "" : v)}
+                            options={[
+                              ...versions.map((v) => ({ value: v, label: v })),
+                              { value: "__custom__", label: t("databases.versionCustom") },
+                            ]}
+                          />
+                        </Field>
+                        {isCustom && (
+                          <Field label={t("databases.versionCustomLabel")}>
+                            <TextInput value={version} onChange={(e) => setVersion(e.target.value)} placeholder="e.g. 16-alpine" />
+                          </Field>
+                        )}
+                        <Field label={t("databases.hostPort")} hint={t("databases.hostPortHint")}>
+                          <TextInput type="number" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
+                        </Field>
+                      </>
+                    );
+                  })()}
                   {sel.group === "app" && (
                     <>
                       <Field label={t("apps.hostPort")}>
