@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FolderTree } from "lucide-react";
+import { FolderTree, Plus, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, Spinner } from "../../../components/ui";
@@ -16,6 +16,20 @@ const field: React.CSSProperties = {
   color: "var(--c-tx)",
   fontSize: 13,
   fontFamily: "inherit",
+};
+
+const rowChip: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontSize: 12,
+  fontWeight: 600,
+  color: "var(--c-a)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  padding: "5px 10px",
+  textDecoration: "none",
+  flexShrink: 0,
 };
 
 export default function ProjectsPage() {
@@ -64,20 +78,21 @@ export default function ProjectsPage() {
             const apps = p.environments.reduce((n, e) => n + e.appCount, 0);
             const dbs = p.environments.reduce((n, e) => n + e.dbCount, 0);
             return (
-              <Link key={p.id} href={`/projects/${p.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx)" }}>
                 <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <FolderTree size={18} color="var(--c-a)" />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
+                  <Link href={`/projects/${p.id}`} style={{ fontWeight: 600, fontSize: 14, color: "var(--c-tx)", textDecoration: "none" }}>{p.name}</Link>
                   <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
                     <Badge>{p.environments.length} env</Badge>
                     <Badge>{apps} apps</Badge>
                     <Badge>{dbs} dbs</Badge>
                   </div>
                 </div>
-                <ChevronRight size={16} color="var(--c-tx3)" />
-              </Link>
+                <Link href={`/resources/new?project=${p.id}&env=${p.environments[0]?.id ?? ""}`} style={rowChip}><Plus size={13} /> {t("dashboard.addResource")}</Link>
+                <Link href={`/projects/${p.id}`} style={rowChip}><Settings size={13} /> {t("dashboard.settings")}</Link>
+              </div>
             );
           })}
           {projects.length === 0 && (
