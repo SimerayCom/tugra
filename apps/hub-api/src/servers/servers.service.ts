@@ -7,6 +7,7 @@ import {
 import { Role, ServerStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import {
   generateEnrollToken,
   generateSeal,
@@ -57,6 +58,7 @@ export class ServersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ---- REST (operator-facing) ---------------------------------------------
@@ -230,12 +232,17 @@ export class ServersService {
   }
 
   async markOffline(serverId: string): Promise<void> {
-    await this.prisma.server
+    const s = await this.prisma.server
       .update({
         where: { id: serverId },
         data: { status: ServerStatus.OFFLINE },
       })
       .catch(() => undefined);
+    if (s) {
+      this.notifications
+        .fireForEvent(s.teamId, "server_offline", `🔴 ${s.name} is offline`)
+        .catch(() => {});
+    }
   }
 
   async touch(serverId: string): Promise<void> {
