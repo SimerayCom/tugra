@@ -11,7 +11,9 @@ import { TerminalModal } from "../../../../components/terminal-modal";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
-import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { PageHeader } from "../../../../components/page-header";
+import { Tabs } from "../../../../components/tabs-nav";
 
 export default function AppDetailPage() {
   const t = useT();
@@ -57,47 +59,46 @@ export default function AppDetailPage() {
   const deployActive = deployments[0]?.status === "RUNNING";
   const live = useDeployLogStream(id, deployActive);
   const [shellOpen, setShellOpen] = useState(false);
+  const [tab, setTab] = useState("overview");
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
 
+  const onDeploy = () => { deploy.mutate(); setTab("logs"); };
+
   return (
     <div style={{ padding: 28 }}>
-      <BackLink href="/apps" label={t("common.backTo", { target: t("nav.apps") })} />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-        <span style={{ width: 11, height: 11, borderRadius: "50%", background: appColor(appData.status) }} />
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{appData.name}</h1>
-        <span style={{ fontSize: 12, color: appColor(appData.status), fontWeight: 600 }}>{appData.status}</span>
-        {appData.isPreview && (
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--c-lapis)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "2px 8px" }}>
-            {t("apps.previewBadge", { n: appData.prNumber ?? "?" })}
-          </span>
-        )}
-      </div>
-      <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 6px" }}>
-        {appSourceSummary(appData)}
-        {appData.hostPort ? ` · :${appData.hostPort}→${appData.containerPort}` : ""}
-      </p>
-      {appData.url && (
-        <p style={{ margin: "0 0 18px" }}>
-          <a href={appData.url} target="_blank" rel="noreferrer" style={{ color: "var(--c-lapis)", fontSize: 13 }}>
-            {appData.url} {t("apps.open")}
-          </a>
+      <PageHeader
+        breadcrumb={[{ label: t("nav.apps"), href: "/apps" }, { label: appData.name }]}
+        title={appData.name}
+        status={{ label: appData.status, color: appColor(appData.status) }}
+        badge={appData.isPreview ? <Badge tone="lapis">{t("apps.previewBadge", { n: appData.prNumber ?? "?" })}</Badge> : undefined}
+        actions={
+          appData.canWrite ? (
+            <>
+              <Btn onClick={onDeploy} disabled={deploy.isPending}>
+                {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
+              </Btn>
+              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
+              {appData.source !== "COMPOSE" && (
+                <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("apps.openShell")}</Btn>
+              )}
+              <Btn variant="danger" onClick={() => del.mutate()}>{t("apps.delete")}</Btn>
+            </>
+          ) : undefined
+        }
+      >
+        <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>
+          {appSourceSummary(appData)}
+          {appData.hostPort ? ` · :${appData.hostPort}→${appData.containerPort}` : ""}
         </p>
-      )}
-
-      {appData.canWrite && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          <Btn onClick={() => deploy.mutate()} disabled={deploy.isPending}>
-            {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
-          </Btn>
-          <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
-          {appData.source !== "COMPOSE" && (
-            <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("apps.openShell")}</Btn>
-          )}
-          <div style={{ flex: 1 }} />
-          <Btn variant="danger" onClick={() => del.mutate()}>Delete</Btn>
-        </div>
-      )}
+        {appData.url && (
+          <p style={{ margin: "6px 0 0" }}>
+            <a href={appData.url} target="_blank" rel="noreferrer" style={{ color: "var(--c-lapis)", fontSize: 13 }}>
+              {appData.url} {t("apps.open")}
+            </a>
+          </p>
+        )}
+      </PageHeader>
 
       {shellOpen && (
         <TerminalModal
@@ -107,115 +108,132 @@ export default function AppDetailPage() {
         />
       )}
 
-      {appData.canWrite && appData.webhookToken && (
-        <Card style={{ padding: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.webhooks")}</div>
-          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
-            {t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <CopyRow label={t("apps.webhookUrl")} value={webhookUrl(appData.webhookToken)} copy={t("apps.copy")} />
-            {appData.webhookSecret && (
-              <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
-            )}
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <Btn
-              variant="ghost"
-              disabled={regen.isPending}
-              onClick={() => {
-                if (confirm(t("apps.regenerateConfirm"))) regen.mutate();
-              }}
-            >
-              {t("apps.regenerate")}
-            </Btn>
-          </div>
-        </Card>
+      <Tabs
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "overview", label: t("apps.tabOverview") },
+          ...(appData.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration") }] : []),
+          { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length },
+          { key: "logs", label: t("apps.tabLogs") },
+        ]}
+      />
+
+      {tab === "overview" && (
+        appData.source === "COMPOSE" && appData.composeFile ? (
+          <Card style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.compose")}</div>
+            <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto" }}>{appData.composeFile}</pre>
+          </Card>
+        ) : (
+          <Card style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+              {appData.canWrite ? t("apps.overviewHint") : t("apps.readOnlyHint")}
+            </div>
+          </Card>
+        )
       )}
 
-      {appData.source === "COMPOSE" && appData.composeFile && (
-        <Card style={{ padding: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.compose")}</div>
-          <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}>{appData.composeFile}</pre>
-        </Card>
-      )}
-
-      {appData.canWrite && appData.source !== "COMPOSE" && (
-        <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} />
-      )}
-
-      {appData.canWrite && appData.source !== "COMPOSE" && (
-        <VolumesCard id={id} volumes={appData.volumes} />
-      )}
-
-      {appData.canWrite && appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
-
-      {!appData.isPreview && (
-        <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />
-      )}
-
-      {appData.canWrite && !appData.isPreview && appData.source === "GIT" && (
-        <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />
-      )}
-
-      {appData.canWrite && (
-        <CredentialsCard
-          id={id}
-          source={appData.source}
-          hasGitToken={appData.hasGitToken}
-          registryUrl={appData.registryUrl}
-          registryUser={appData.registryUser}
-        />
-      )}
-
-      {appData.canWrite && appData.domain && (
-        <DomainOptionsCard
-          id={id}
-          domain={appData.domain}
-          https={appData.https}
-          domainRedirect={appData.domainRedirect}
-          securityHeaders={appData.securityHeaders}
-        />
-      )}
-
-      {appData.canWrite && <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />}
-
-      {appData.canWrite && <EnvCard id={id} />}
-
-      {deployActive && live.lines && <LiveLogCard lines={live.lines} />}
-
-      <Card style={{ padding: 16 }}>
-        <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("apps.deployments")}</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {deployments.map((d) => {
-            const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
-            const canRollback = appData.canWrite && !!d.imageTag && d.id !== latestSuccessId;
-            return (
-            <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
-                {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
-                <span style={{ flex: 1 }} />
-                <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
-                {canRollback && (
-                  <button
-                    onClick={() => { if (confirm(t("apps.rollbackConfirm"))) rollback.mutate(d.id); }}
-                    disabled={rollback.isPending}
-                    style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
-                  >
-                    {t("apps.rollback")}
-                  </button>
+      {tab === "configuration" && appData.canWrite && (
+        <>
+          {appData.webhookToken && (
+            <Card style={{ padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.webhooks")}</div>
+              <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+                {t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <CopyRow label={t("apps.webhookUrl")} value={webhookUrl(appData.webhookToken)} copy={t("apps.copy")} />
+                {appData.webhookSecret && (
+                  <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
                 )}
               </div>
-              {d.logs && (
-                <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{d.logs}</pre>
-              )}
-            </div>
-            );
-          })}
-          {deployments.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.noDeployments")}</div>}
-        </div>
-      </Card>
+              <div style={{ marginTop: 12 }}>
+                <Btn variant="ghost" disabled={regen.isPending} onClick={() => { if (confirm(t("apps.regenerateConfirm"))) regen.mutate(); }}>
+                  {t("apps.regenerate")}
+                </Btn>
+              </div>
+            </Card>
+          )}
+
+          {appData.source !== "COMPOSE" && (
+            <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} />
+          )}
+          {appData.source !== "COMPOSE" && <VolumesCard id={id} volumes={appData.volumes} />}
+          {appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
+          {!appData.isPreview && (
+            <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />
+          )}
+          {!appData.isPreview && appData.source === "GIT" && (
+            <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />
+          )}
+          <CredentialsCard
+            id={id}
+            source={appData.source}
+            hasGitToken={appData.hasGitToken}
+            registryUrl={appData.registryUrl}
+            registryUser={appData.registryUser}
+          />
+          {appData.domain && (
+            <DomainOptionsCard
+              id={id}
+              domain={appData.domain}
+              https={appData.https}
+              domainRedirect={appData.domainRedirect}
+              securityHeaders={appData.securityHeaders}
+            />
+          )}
+          <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />
+          <EnvCard id={id} />
+        </>
+      )}
+
+      {tab === "deployments" && (
+        <Card style={{ padding: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {deployments.map((d) => {
+              const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
+              const canRollback = appData.canWrite && !!d.imageTag && d.id !== latestSuccessId;
+              return (
+                <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
+                    {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
+                    {canRollback && (
+                      <button
+                        onClick={() => { if (confirm(t("apps.rollbackConfirm"))) rollback.mutate(d.id); }}
+                        disabled={rollback.isPending}
+                        style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+                      >
+                        {t("apps.rollback")}
+                      </button>
+                    )}
+                  </div>
+                  {d.logs && (
+                    <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{d.logs}</pre>
+                  )}
+                </div>
+              );
+            })}
+            {deployments.length === 0 && <EmptyState>{t("apps.noDeployments")}</EmptyState>}
+          </div>
+        </Card>
+      )}
+
+      {tab === "logs" && (
+        deployActive && live.lines ? (
+          <LiveLogCard lines={live.lines} />
+        ) : deployments[0]?.logs ? (
+          <Card style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
+            <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{deployments[0].logs}</pre>
+          </Card>
+        ) : (
+          <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
+        )
+      )}
     </div>
   );
 }
