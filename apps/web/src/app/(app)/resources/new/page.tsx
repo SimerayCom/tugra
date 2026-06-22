@@ -4,7 +4,8 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Box, Database, FileCode2, GitBranch, Layers } from "lucide-react";
+import { Box, Database } from "lucide-react";
+import { SiDocker, SiGit } from "@icons-pack/react-simple-icons";
 import { api } from "../../../../lib/api";
 import type { DbEngine } from "../../../../lib/types";
 import { engineLabel, engineVersions } from "../../../../lib/databases";
@@ -176,15 +177,15 @@ function Wizard() {
                 <div>
                   <div style={subTitle}>{t("resources.gitBased")}</div>
                   <div style={{ display: "grid", gap: 10 }}>
-                    {card("git", lucide(GitBranch), t("resources.publicRepo"), t("resources.publicRepoDesc"), () => pick({ group: "app", source: "GIT", build: "NIXPACKS" }))}
-                    {card("dockerfile", lucide(FileCode2), t("resources.dockerfile"), t("resources.dockerfileDesc"), () => pick({ group: "app", source: "GIT", build: "DOCKERFILE" }))}
+                    {card("git", <SiGit color="#F05032" size={26} />, t("resources.publicRepo"), t("resources.publicRepoDesc"), () => pick({ group: "app", source: "GIT", build: "NIXPACKS" }))}
+                    {card("dockerfile", <SiDocker color="#2496ED" size={26} />, t("resources.dockerfile"), t("resources.dockerfileDesc"), () => pick({ group: "app", source: "GIT", build: "DOCKERFILE" }))}
                   </div>
                 </div>
                 <div>
                   <div style={subTitle}>{t("resources.dockerBased")}</div>
                   <div style={{ display: "grid", gap: 10 }}>
-                    {card("img", lucide(Box), t("resources.dockerImage"), t("resources.dockerImageDesc"), () => pick({ group: "app", source: "IMAGE" }))}
-                    {card("compose", lucide(Layers), t("resources.compose"), t("resources.composeDesc"), () => pick({ group: "service" }))}
+                    {card("img", <SiDocker color="#2496ED" size={26} />, t("resources.dockerImage"), t("resources.dockerImageDesc"), () => pick({ group: "app", source: "IMAGE" }))}
+                    {card("compose", <SiDocker color="#2496ED" size={26} />, t("resources.compose"), t("resources.composeDesc"), () => pick({ group: "service" }))}
                   </div>
                 </div>
               </div>
