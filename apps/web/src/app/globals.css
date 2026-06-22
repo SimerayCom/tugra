@@ -7,16 +7,16 @@
   --c-sb: #121218;
   --c-sur: #17171f;
   --c-el: #1c1c24;
-  --c-bd: #28282f;
+  --c-bd: #2e2e3a; /* brand kit border */
   --c-tx: #f6f3ec;
   --c-tx2: #b8b4ac;
   --c-tx3: #8d8b93; /* muted — lightened to clear WCAG AA on bg */
-  --c-a: #c9a84c; /* gold — the seal */
-  --c-ad: rgba(201, 168, 76, 0.15);
-  --c-lapis: #3d6fe5;
-  --c-g: #2fbf71;
-  --c-am: #f5a524;
-  --c-r: #e5484d;
+  --c-a: #d4af6a; /* gold — the seal (brand kit) */
+  --c-ad: rgba(212, 175, 106, 0.15);
+  --c-lapis: #5588f5; /* brand kit blue */
+  --c-g: #34c759; /* brand kit green */
+  --c-am: #f5a623; /* brand kit amber */
+  --c-r: #ff4d4f; /* brand kit red */
   --r1: 8px;
   --r2: 12px;
   --r3: 16px;
