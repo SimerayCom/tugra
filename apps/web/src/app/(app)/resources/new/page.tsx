@@ -22,6 +22,8 @@ const ENGINE_LOGO: Partial<Record<DbEngine, string>> = {
   MYSQL: "mysql",
   MARIADB: "mariadb",
   REDIS: "redis",
+  KEYDB: "keydb",
+  DRAGONFLY: "dragonfly",
   MONGO: "mongodb",
   CLICKHOUSE: "clickhouse",
 };
