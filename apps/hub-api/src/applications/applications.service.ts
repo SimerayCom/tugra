@@ -15,6 +15,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { GitSourcesService } from "../git-sources/git-sources.service";
 import {
   buildImageRemoveScript,
   buildRemoveScript,
@@ -113,6 +114,7 @@ export class ApplicationsService {
     private readonly crypto: CryptoService,
     private readonly monitors: MonitorsService,
     private readonly notifications: NotificationsService,
+    private readonly gitSources: GitSourcesService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -122,6 +124,10 @@ export class ApplicationsService {
     if (!server) throw new NotFoundException("server not found");
     await this.access.requireRole(userId, server.teamId, WRITE);
     if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
+    if (dto.gitSourceId) {
+      const gs = await this.prisma.gitSource.findUnique({ where: { id: dto.gitSourceId } });
+      if (!gs || gs.teamId !== server.teamId) throw new BadRequestException("git source not found in this team");
+    }
 
     const app = await this.prisma.application.create({
       data: {
@@ -131,6 +137,7 @@ export class ApplicationsService {
         image: dto.image ?? null,
         gitUrl: dto.gitUrl ?? null,
         gitBranch: dto.gitBranch ?? "main",
+        gitSourceId: dto.gitSourceId ?? null,
         buildType: dto.buildType ?? "NIXPACKS",
         dockerfilePath: dto.dockerfilePath ?? null,
         buildCommand: dto.buildCommand ?? null,
@@ -353,6 +360,10 @@ export class ApplicationsService {
       if (app.domain && !isCompose) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
+      // Private repo via a GitHub App: mint a fresh installation token for the clone.
+      if (app.gitSourceId && app.source === "GIT") {
+        spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
+      }
       const command = isCompose
         ? buildComposeUpScript(spec, noCache)
         : buildRunScript(spec, dep.id, true, noCache);

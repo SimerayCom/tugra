@@ -46,6 +46,7 @@ function make(
     crypto,
     monitors as unknown as import("../monitors/monitors.service").MonitorsService,
     { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService,
+    { installationToken: jest.fn().mockResolvedValue("ghs_inst") } as unknown as import("../git-sources/git-sources.service").GitSourcesService,
   );
 }
 
