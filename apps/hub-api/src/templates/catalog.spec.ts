@@ -71,6 +71,14 @@ describe("template catalog", () => {
     expect(Object.keys(TEMPLATES).length).toBeGreaterThanOrEqual(100);
   });
 
+  it("most templates carry a documentation URL", () => {
+    const withDoc = Object.values(TEMPLATES).filter((t) => t.documentation).length;
+    expect(withDoc).toBeGreaterThanOrEqual(100);
+    for (const t of Object.values(TEMPLATES)) {
+      if (t.documentation) expect(t.documentation.startsWith("http")).toBe(true);
+    }
+  });
+
   it("metadata list never leaks composeFile or secrets", () => {
     const metas = templateMetaList();
     expect(metas.length).toBe(Object.keys(TEMPLATES).length);

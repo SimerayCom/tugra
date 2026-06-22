@@ -36,6 +36,7 @@ export interface TemplateDef {
   category: TemplateCategory;
   icon?: string; // emoji (curated only); web renders the vendored `logo` svg
   logo?: string; // /icons/<logo>.svg filename (no extension)
+  documentation?: string; // upstream docs URL (shown as a ↗ link)
   composeFile: string;
   env?: Record<string, string>;
   secrets?: SecretSpec[]; // env keys auto-filled with a generated secret
@@ -49,6 +50,7 @@ export interface TemplateMeta {
   category: TemplateCategory;
   icon?: string;
   logo?: string;
+  documentation?: string;
 }
 
 /** Hand-curated, host-port'd templates — these win over generated on slug clash. */
@@ -571,13 +573,14 @@ export const TEMPLATES: Record<string, TemplateDef> = { ...GENERATED, ...CURATED
 
 /** Gallery metadata for every template (no composeFile / secrets). */
 export function templateMetaList(): TemplateMeta[] {
-  return Object.values(TEMPLATES).map(({ slug, name, description, category, icon, logo }) => ({
+  return Object.values(TEMPLATES).map(({ slug, name, description, category, icon, logo, documentation }) => ({
     slug,
     name,
     description,
     category,
     icon,
     logo,
+    documentation,
   }));
 }
 

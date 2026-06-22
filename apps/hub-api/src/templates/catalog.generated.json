@@ -7,6 +7,7 @@
       "description": "Open source no-code business automation.",
       "category": "automation",
       "logo": "activepieces",
+      "documentation": "https://www.activepieces.com/docs/getting-started/introduction",
       "secrets": [
         {
           "key": "PASSWORD_64_APIKEY",
@@ -41,6 +42,7 @@
       "name": "Actualbudget",
       "description": "A local-first personal finance app.",
       "category": "finance",
+      "documentation": "https://actualbudget.org/docs/install/docker",
       "secrets": [],
       "composeFile": "services:\n  actual_server:\n    ports:\n      - \"20002:5006\"\n    image: 'actualbudget/actual-server:latest'\n    environment:\n      - FQDN_ACTUAL_5006=localhost:20002\n      - ACTUAL_LOGIN_METHOD=password\n    volumes:\n      - 'actual_data:/data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - \"bash -c ':> /dev/tcp/127.0.0.1/5006' || exit 1\"\n      interval: 5s\n      timeout: 20s\n      retries: 3\nvolumes:\n  actual_data:\n"
     },
@@ -50,6 +52,7 @@
       "description": "Affine is an open-source, all-in-one workspace and OS for knowledge management, a Notion/Miro alternative.",
       "category": "productivity",
       "logo": "affine",
+      "documentation": "https://docs.affine.pro/docs/self-host-affine",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -70,6 +73,7 @@
       "description": "A powerful Markdown workspace designed for speed, clarity, and creativity.",
       "category": "productivity",
       "logo": "alexandrie",
+      "documentation": "https://github.com/Smaug6739/Alexandrie/tree/main/docs",
       "secrets": [
         {
           "key": "PASSWORD_JWT",
@@ -110,6 +114,7 @@
       "description": "AnythingLLM is the easiest to use, all-in-one AI application that can do RAG, AI Agents, and much more with no code or infrastructure headaches.",
       "category": "ai",
       "logo": "anythingllm",
+      "documentation": "https://docs.anythingllm.com/installation-docker/overview",
       "secrets": [
         {
           "key": "PASSWORD_SIGKEY",
@@ -139,6 +144,7 @@
       "name": "Apprise api",
       "description": "Push Notifications API",
       "category": "automation",
+      "documentation": "https://docs.linuxserver.io/images/docker-apprise-api/",
       "secrets": [],
       "composeFile": "services:\n  apprise-api:\n    ports:\n      - \"20006:8000\"\n    image: 'linuxserver/apprise-api:latest'\n    environment:\n      - FQDN_APPRISE_8000=localhost:20006\n      - PUID=1000\n      - PGID=1000\n      - TZ=UTC\n    volumes:\n      - '/apprise-api/config:/config'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:8000/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n"
     },
@@ -147,6 +153,7 @@
       "name": "Argilla",
       "description": "Argilla is a collaboration tool for AI engineers and domain experts who need to build high-quality datasets for their projects.",
       "category": "ai",
+      "documentation": "https://docs.argilla.io/latest/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -182,6 +189,7 @@
       "description": "Self-hosted audiobook, ebook, and podcast server",
       "category": "media",
       "logo": "audiobookshelf",
+      "documentation": "https://www.audiobookshelf.org/",
       "secrets": [],
       "composeFile": "services:\n  audiobookshelf:\n    ports:\n      - \"20008:80\"\n    image: 'ghcr.io/advplyr/audiobookshelf:2.34.0'\n    environment:\n      - FQDN_AUDIOBOOKSHELF_80=localhost:20008\n      - 'TZ=${TIMEZONE:-America/Toronto}'\n    volumes:\n      - 'audiobookshelf-audiobooks:/audiobooks'\n      - 'audiobookshelf-podcasts:/podcasts'\n      - 'audiobookshelf-config:/config'\n      - 'audiobookshelf-metadata:/metadata'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget --quiet --tries=1 --timeout=5 http://localhost:80/ping -O /dev/null || exit 1'\n      interval: 30s\n      timeout: 10s\n      retries: 3\n      start_period: 15s\nvolumes:\n  audiobookshelf-audiobooks:\n  audiobookshelf-podcasts:\n  audiobookshelf-config:\n  audiobookshelf-metadata:\n"
     },
@@ -191,6 +199,7 @@
       "description": "An open-source Identity Provider, focused on flexibility and versatility.",
       "category": "security",
       "logo": "authentik",
+      "documentation": "https://docs.goauthentik.io/docs/installation/docker-compose",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -216,6 +225,7 @@
       "description": "Autobase for PostgreSQL® is an open-source alternative to cloud-managed databases (self-hosted DBaaS).",
       "category": "database",
       "logo": "autobase",
+      "documentation": "https://autobase.tech/docs/",
       "secrets": [
         {
           "key": "PASSWORD_UI",
@@ -240,6 +250,7 @@
       "name": "Bento pdf",
       "description": "Process PDFs entirely in your browser. No uploads. No servers. Complete privacy.",
       "category": "productivity",
+      "documentation": "https://bentopdf.com/docs",
       "secrets": [],
       "composeFile": "services:\n  bento-pdf:\n    ports:\n      - \"20011:8080\"\n    image: 'ghcr.io/alam00000/bentopdf:v1.16.1'\n    environment:\n      - FQDN_BENTOPDF_8080=localhost:20011\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:8080'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n"
     },
@@ -249,6 +260,7 @@
       "description": "A lightweight server resource monitoring hub with historical data, docker stats, and alerts.",
       "category": "monitoring",
       "logo": "beszel",
+      "documentation": "https://github.com/henrygd/beszel?tab=readme-ov-file#getting-started",
       "secrets": [],
       "composeFile": "services:\n  beszel:\n    ports:\n      - \"20012:8090\"\n    image: 'henrygd/beszel:0.18.7'\n    environment:\n      - FQDN_BESZEL_8090=localhost:20012\n      - 'CONTAINER_DETAILS=${CONTAINER_DETAILS:-true}'\n      - 'SHARE_ALL_SYSTEMS=${SHARE_ALL_SYSTEMS:-false}'\n    volumes:\n      - 'beszel_data:/beszel_data'\n      - 'beszel_socket:/beszel_socket'\n    healthcheck:\n      test:\n        - CMD\n        - /beszel\n        - health\n        - '--url'\n        - 'http://localhost:8090'\n      interval: 30s\n      timeout: 20s\n      retries: 10\n      start_period: 5s\n  beszel-agent:\n    image: 'henrygd/beszel-agent:0.18.7'\n    network_mode: host\n    environment:\n      - LISTEN=/beszel_socket/beszel.sock\n      - HUB_URL=$localhost:20012\n      - 'TOKEN=${TOKEN}'\n      - 'KEY=${KEY}'\n      - 'DISABLE_SSH=${DISABLE_SSH:-false}'\n      - 'LOG_LEVEL=${LOG_LEVEL:-warn}'\n      - 'SKIP_GPU=${SKIP_GPU:-false}'\n      - 'SYSTEM_NAME=${SYSTEM_NAME}'\n    volumes:\n      - 'beszel_agent_data:/var/lib/beszel-agent'\n      - 'beszel_socket:/beszel_socket'\n      - '/var/run/docker.sock:/var/run/docker.sock:ro'\n    healthcheck:\n      test:\n        - CMD\n        - /agent\n        - health\n      interval: 60s\n      timeout: 20s\n      retries: 10\n      start_period: 5s\nvolumes:\n  beszel_data:\n  beszel_socket:\n  beszel_agent_data:\n"
     },
@@ -258,6 +270,7 @@
       "description": "BookStack is a simple, self-hosted, easy-to-use platform for organising and storing information",
       "category": "cms",
       "logo": "bookstack",
+      "documentation": "https://www.bookstackapp.com/docs/",
       "secrets": [
         {
           "key": "PASSWORD_APPKEY",
@@ -288,6 +301,7 @@
       "description": "A headless Chrome browser as a service.",
       "category": "tools",
       "logo": "browserless",
+      "documentation": "https://docs.browserless.io/",
       "secrets": [
         {
           "key": "PASSWORD_BROWSERLESS",
@@ -303,6 +317,7 @@
       "description": "Low code platform for building business apps and workflows in minutes. Supports PostgreSQL, MySQL, MSSQL, MongoDB, Rest API, Docker, K8s, and more.",
       "category": "automation",
       "logo": "budibase",
+      "documentation": "https://docs.budibase.com/docs/docker-compose",
       "secrets": [
         {
           "key": "USER_COUCHDB",
@@ -363,6 +378,7 @@
       "description": "Self-hosted Error Tracking.",
       "category": "monitoring",
       "logo": "bugsink",
+      "documentation": "https://www.bugsink.com/docs/",
       "secrets": [
         {
           "key": "PASSWORD_ROOT",
@@ -392,6 +408,7 @@
       "name": "Calibre web Automated Book Downloader",
       "description": "An intuitive web interface for searching and requesting book downloads, designed to work seamlessly with Calibre-Web-Automated.",
       "category": "media",
+      "documentation": "https://github.com/calibrain/calibre-web-automated-book-downloader",
       "secrets": [],
       "composeFile": "services:\n  calibre-web-automated:\n    ports:\n      - \"20017:8083\"\n    image: 'crocodilestick/calibre-web-automated:latest'\n    environment:\n      - FQDN_CWA_8083=localhost:20017\n      - 'PUID=${PUID:-1000}'\n      - 'PGID=${PGID:-1000}'\n      - 'TZ=${TZ:-UTC}'\n      - 'NETWORK_SHARE_MODE=${NETWORK_SHARE_MODE:-false}'\n    volumes:\n      - 'cwa-config:/config'\n      - 'cwa-book-ingest:/cwa-book-ingest'\n      - 'calibre-library:/calibre-library'\n      - 'calibre-plugins:/config/.config/calibre/plugins'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'curl -fs http://localhost:8083 || exit 1'\n      interval: 30s\n      timeout: 10s\n      retries: 3\n      start_period: 30s\n  calibre-web-downloader:\n    image: 'ghcr.io/calibrain/calibre-web-automated-book-downloader:latest'\n    environment:\n      - FQDN_DOWNLOADER_8084=localhost:20017\n      - 'FLASK_PORT=${FLASK_PORT:-8084}'\n      - 'LOG_LEVEL=${LOG_LEVEL:-info}'\n      - 'BOOK_LANGUAGE=${BOOK_LANGUAGE:-en}'\n      - 'USE_BOOK_TITLE=${USE_BOOK_TITLE:-true}'\n      - 'TZ=${TZ:-America/New_York}'\n      - 'APP_ENV=${APP_ENV:-prod}'\n      - 'UID=${UID:-1000}'\n      - 'GID=${GID:-100}'\n      - 'CWA_DB_PATH=${CWA_DB_PATH:-/cwa-config/app.db}'\n    volumes:\n      - 'cwa-book-ingest:/cwa-book-ingest'\n      - 'cwa-config:/cwa-config'\nvolumes:\n  cwa-config:\n  cwa-book-ingest:\n  calibre-library:\n  calibre-plugins:\n"
     },
@@ -401,6 +418,7 @@
       "description": "Calibre-web is a web app providing a clean interface for browsing, reading and downloading eBooks.",
       "category": "media",
       "logo": "calibre-web",
+      "documentation": "https://github.com/linuxserver/docker-calibre-web",
       "secrets": [],
       "composeFile": "services:\n  calibre-web:\n    ports:\n      - \"20018:8083\"\n    image: 'lscr.io/linuxserver/calibre-web:latest'\n    environment:\n      - FQDN_CALIBRE_8083=localhost:20018\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-Etc/UTC}'\n      - 'DOCKER_MODS=${DOCKER_MODS:-linuxserver/mods:universal-calibre}'\n    volumes:\n      - 'calibre_web_data:/config'\n      - 'calibre_library:/books'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:8083'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  calibre_web_data:\n  calibre_library:\n"
     },
@@ -409,6 +427,7 @@
       "name": "cap Captcha",
       "description": "The self-hosted CAPTCHA for the modern web.",
       "category": "security",
+      "documentation": "https://capjs.js.org/guide/",
       "secrets": [
         {
           "key": "PASSWORD_ADMIN",
@@ -424,6 +443,7 @@
       "description": "Cap is the open source alternative to Loom. Lightweight, powerful, and cross-platform. Record and share in seconds.",
       "category": "media",
       "logo": "cap",
+      "documentation": "https://cap.so",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -459,6 +479,7 @@
       "description": "Castopod is a free & open-source hosting platform made for podcasters who want engage and interact with their audience.",
       "category": "media",
       "logo": "castopod",
+      "documentation": "https://docs.castopod.org/main/en/",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -489,6 +510,7 @@
       "description": "Website change detection monitor and notifications.",
       "category": "monitoring",
       "logo": "changedetection",
+      "documentation": "https://github.com/dgtlmoon/changedetection.io/",
       "secrets": [],
       "composeFile": "services:\n  changedetection:\n    ports:\n      - \"20022:5000\"\n    image: ghcr.io/dgtlmoon/changedetection.io\n    volumes:\n      - 'changedetection-data:/datastore'\n    environment:\n      - FQDN_CHANGEDETECTION_5000=localhost:20022\n      - 'BASE_URL=localhost:20022'\n      - 'PUID=${PUID:-1000}'\n      - 'PGID=${PGID:-1000}'\n      - 'PLAYWRIGHT_DRIVER_URL=${PLAYWRIGHT_DRIVER_URL:-ws://browser-sockpuppet-chrome:3000}'\n      - 'HIDE_REFERER=${HIDE_REFERER:-true}'\n      - 'FETCH_WORKERS=${FETCH_WORKERS:-10}'\n      - 'MINIMUM_SECONDS_RECHECK_TIME=${MINIMUM_SECONDS_RECHECK_TIME:-3}'\n      - 'DISABLE_VERSION_CHECK=${DISABLE_VERSION_CHECK:-true}'\n      - 'SCREENSHOT_MAX_HEIGHT=${SCREENSHOT_MAX_HEIGHT:-16000}'\n      - 'TZ=${TZ:-UTC}'\n      - 'LOGGER_LEVEL=${LOGGER_LEVEL:-DEBUG}'\n    healthcheck:\n      test:\n        - CMD\n        - echo\n        - ok\n      interval: 5s\n      timeout: 20s\n      retries: 10\n    depends_on:\n      browser-sockpuppet-chrome:\n        condition: service_started\n  browser-sockpuppet-chrome:\n    hostname: browser-sockpuppet-chrome\n    image: 'dgtlmoon/sockpuppetbrowser:latest'\n    cap_add:\n      - SYS_ADMIN\n    environment:\n      - 'SCREEN_WIDTH=${SCREEN_WIDTH:-1920}'\n      - 'SCREEN_HEIGHT=${SCREEN_HEIGHT:-1024}'\n      - 'SCREEN_DEPTH=${SCREEN_DEPTH:-16}'\n      - 'MAX_CONCURRENT_CHROME_PROCESSES=${MAX_CONCURRENT_CHROME_PROCESSES:-10}'\n    healthcheck:\n      test:\n        - CMD\n        - echo\n        - ok\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  changedetection-data:\n"
     },
@@ -498,6 +520,7 @@
       "description": "Delightful customer relationships at scale.",
       "category": "communication",
       "logo": "chatwoot",
+      "documentation": "https://www.chatwoot.com/docs/self-hosted/",
       "secrets": [
         {
           "key": "PASSWORD_CHATWOOT",
@@ -528,6 +551,7 @@
       "description": "An open source server and websites monitoring application",
       "category": "monitoring",
       "logo": "checkmate",
+      "documentation": "https://docs.checkmate.so/",
       "secrets": [
         {
           "key": "PASSWORD_64_JWT",
@@ -543,6 +567,7 @@
       "description": "Chroma is the open-source search and retrieval database for AI applications.",
       "category": "ai",
       "logo": "chroma",
+      "documentation": "https://cookbook.chromadb.dev/",
       "secrets": [],
       "composeFile": "services:\n  chromadb:\n    ports:\n      - \"20025:8000\"\n    image: 'chromadb/chroma:1.0.15'\n    volumes:\n      - 'chroma-data:/data'\n    environment:\n      - FQDN_CHROMA_8000=localhost:20025\n      - IS_PERSISTENT=TRUE\n      - PERSIST_DIRECTORY=/data\n    healthcheck:\n      test:\n        - CMD\n        - /bin/bash\n        - '-c'\n        - 'cat < /dev/null > /dev/tcp/localhost/8000'\n      interval: 30s\n      timeout: 10s\n      retries: 3\nvolumes:\n  chroma-data:\n"
     },
@@ -552,6 +577,7 @@
       "description": "CloudBeaver is a lightweight web application designed for comprehensive data management.",
       "category": "tools",
       "logo": "cloudbeaver",
+      "documentation": "https://dbeaver.com/docs/cloudbeaver/",
       "secrets": [],
       "composeFile": "services:\n  cloudbeaver:\n    ports:\n      - \"20026:8978\"\n    image: 'dbeaver/cloudbeaver:24'\n    volumes:\n      - 'cloudbeaver-data:/opt/cloudbeaver/workspace'\n    environment:\n      - FQDN_CLOUDBEAVER_8978=localhost:20026\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:8978/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  cloudbeaver-data:\n"
     },
@@ -561,6 +587,7 @@
       "description": "A self-hosted file management and sharing system.",
       "category": "productivity",
       "logo": "cloudreve",
+      "documentation": "https://docs.cloudreve.org/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -586,6 +613,7 @@
       "description": "Cockpit is a headless content platform that is lightweight, fast and ready for takeoff.",
       "category": "cms",
       "logo": "cockpit",
+      "documentation": "https://getcockpit.com/documentation/",
       "secrets": [],
       "composeFile": "services:\n  cockpit:\n    ports:\n      - \"20028:80\"\n    image: 'cockpithq/cockpit:core-latest'\n    volumes:\n      - 'cockpit-config:/var/www/html/config'\n      - 'cockpit-spaces:/var/www/html/.spaces'\n      - 'cockpit-storage:/var/www/html/storage'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1/api/system/healthcheck'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  cockpit-config:\n  cockpit-spaces:\n  cockpit-storage:\n"
     },
@@ -595,6 +623,7 @@
       "description": "Code-Server is a web-based code editor that enables remote coding and collaboration from any device, anywhere.",
       "category": "developer",
       "logo": "code-server",
+      "documentation": "https://coder.com/docs/code-server/latest",
       "secrets": [
         {
           "key": "PASSWORD_64_PASSWORDCODESERVER",
@@ -614,6 +643,7 @@
       "name": "Codimd",
       "description": "Realtime collaborative markdown notes on all platforms",
       "category": "productivity",
+      "documentation": "https://hackmd.io/c/codimd-documentation",
       "secrets": [
         {
           "key": "PASSWORD_SESSIONSECRET",
@@ -639,6 +669,7 @@
       "description": "Convex is the open-source reactive database for app developers.",
       "category": "ai",
       "logo": "convex",
+      "documentation": "https://github.com/get-convex/convex-backend/blob/main/self-hosted/README.md",
       "secrets": [
         {
           "key": "HEX_64_SECRET",
@@ -653,6 +684,7 @@
       "name": "Cryptgeon",
       "description": "Secure note / file sharing service inspired by PrivNote.",
       "category": "security",
+      "documentation": "https://github.com/cupcakearmy/cryptgeon",
       "secrets": [],
       "composeFile": "services:\n  app:\n    ports:\n      - \"20032:8000\"\n    image: 'cupcakearmy/cryptgeon:latest'\n    environment:\n      - FQDN_CRYPTGEON_8000=localhost:20032\n      - 'SIZE_LIMIT=${SIZE_LIMIT:-4 MiB}'\n      - 'MAX_VIEWS=${MAX_VIEWS:-100}'\n      - 'MAX_EXPIRATION=${MAX_EXPIRATION:-360}'\n      - 'ALLOW_ADVANCED=${ALLOW_ADVANCED:-true}'\n      - 'ALLOW_FILES=${ALLOW_FILES:-true}'\n    depends_on:\n      redis:\n        condition: service_healthy\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '--fail'\n        - 'http://127.0.0.1:8000/api/live/'\n      interval: 1m\n      timeout: 3s\n      retries: 2\n      start_period: 5s\n  redis:\n    image: 'redis:7-alpine'\n    command: 'redis-server --maxmemory 200mb --maxmemory-policy allkeys-lru'\n    healthcheck:\n      test:\n        - CMD\n        - redis-cli\n        - PING\n      interval: 5s\n      timeout: 10s\n      retries: 2\n"
     },
@@ -662,6 +694,7 @@
       "description": "The Cyber Swiss Army Knife - a web app for encryption, encoding, compression and data analysis",
       "category": "security",
       "logo": "cyberchef",
+      "documentation": "https://github.com/gchq/CyberChef",
       "secrets": [],
       "composeFile": "services:\n  cyberchef:\n    ports:\n      - \"20033:80\"\n    image: 'ghcr.io/gchq/cyberchef:latest'\n    platform: linux/amd64\n    environment:\n      - FQDN_CYBERCHEF_80=localhost:20033\n    volumes:\n      - 'cyberchef-data:/app/data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:80'\n      interval: 30s\n      timeout: 10s\n      retries: 3\nvolumes:\n  cyberchef-data:\n"
     },
@@ -670,6 +703,7 @@
       "name": "Dashy",
       "description": "A self-hostable personal dashboard built for you. Includes status-checking, widgets, themes, icon packs, a UI editor and tons more!",
       "category": "productivity",
+      "documentation": "https://dashy.to/docs",
       "secrets": [],
       "composeFile": "services:\n  dashy:\n    ports:\n      - \"20034:8080\"\n    image: lissy93/dashy\n    environment:\n      - FQDN_DASHY_8080=localhost:20034\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TIMEZONE:-UTC}'\n    volumes:\n      - './dashy/conf.yml:/app/public/conf.yml'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:8080/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n"
     },
@@ -679,6 +713,7 @@
       "description": "Databasus is a free, open source and self-hosted tool to backup PostgreSQL, MySQL, and MongoDB.",
       "category": "tools",
       "logo": "databasus",
+      "documentation": "https://databasus.com/installation",
       "secrets": [],
       "composeFile": "services:\n  databasus:\n    ports:\n      - \"20035:4005\"\n    image: 'databasus/databasus:v3.16.2'\n    environment:\n      - FQDN_DATABASUS_4005=localhost:20035\n    volumes:\n      - 'databasus-data:/databasus-data'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-qO-'\n        - 'http://localhost:4005/api/v1/system/health'\n      interval: 5s\n      timeout: 10s\n      retries: 5\nvolumes:\n  databasus-data:\n"
     },
@@ -688,6 +723,7 @@
       "description": "The Denoland key-value database",
       "category": "database",
       "logo": "denoKV",
+      "documentation": "https://docs.deno.com/deploy/kv/manual/",
       "secrets": [
         {
           "key": "PASSWORD_DENOKV",
@@ -703,6 +739,7 @@
       "description": "Directus wraps databases with a dynamic API, and provides an intuitive app for managing its content.",
       "category": "cms",
       "logo": "directus-with-postgresql",
+      "documentation": "https://directus.io",
       "secrets": [
         {
           "key": "BASE64_64_KEY",
@@ -738,6 +775,7 @@
       "description": "Directus wraps databases with a dynamic API, and provides an intuitive app for managing its content.",
       "category": "cms",
       "logo": "directus",
+      "documentation": "https://directus.io",
       "secrets": [
         {
           "key": "BASE64_64_KEY",
@@ -762,6 +800,7 @@
       "name": "Docmost",
       "description": "Open-source collaborative wiki and documentation software",
       "category": "productivity",
+      "documentation": "https://docmost.com/docs/",
       "secrets": [
         {
           "key": "BASE64_APPKEY",
@@ -787,6 +826,7 @@
       "description": "Document signing, finally open source",
       "category": "productivity",
       "logo": "documenso",
+      "documentation": "https://docs.documenso.com/",
       "secrets": [
         {
           "key": "BASE64_AUTHSECRET",
@@ -827,6 +867,7 @@
       "description": "Document Signing for Everyone free forever for individuals, extensible for businesses and developers. Open Source Alternative to DocuSign, PandaDoc and more.",
       "category": "productivity",
       "logo": "docuseal-with-postgres",
+      "documentation": "https://www.docuseal.co/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -847,6 +888,7 @@
       "description": "Document Signing for Everyone free forever for individuals, extensible for businesses and developers. Open Source Alternative to DocuSign, PandaDoc and more.",
       "category": "productivity",
       "logo": "docuseal",
+      "documentation": "https://www.docuseal.co/",
       "secrets": [],
       "composeFile": "services:\n  docuseal:\n    ports:\n      - \"20042:3000\"\n    image: 'docuseal/docuseal:latest'\n    environment:\n      - FQDN_DOCUSEAL_3000=localhost:20042\n      - 'HOST=localhost:20042'\n    volumes:\n      - 'docuseal-data:/data'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:3000'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  docuseal-data:\n"
     },
@@ -855,6 +897,7 @@
       "name": "Dolibarr",
       "description": "Dolibarr is a modern software package to manage your organization's activity (contacts, quotes, invoices, orders, stocks, agenda, hr, expense reports, accountancy, ecm, manufacturing, ...).",
       "category": "productivity",
+      "documentation": "https://www.dolibarr.org/documentation-home.php",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -890,6 +933,7 @@
       "description": "Dozzle is a simple and lightweight web UI for Docker logs.",
       "category": "tools",
       "logo": "dozzle",
+      "documentation": "https://dozzle.dev/guide/getting-started#running-with-docker",
       "secrets": [],
       "composeFile": "services:\n  dozzle:\n    ports:\n      - \"20044:8080\"\n    image: 'amir20/dozzle:latest'\n    environment:\n      - FQDN_DOZZLE_8080=localhost:20044\n    volumes:\n      - '/var/run/docker.sock:/var/run/docker.sock'\n    healthcheck:\n      test:\n        - CMD\n        - /dozzle\n        - healthcheck\n      interval: 3s\n      timeout: 30s\n      retries: 5\n      start_period: 30s\n"
     },
@@ -898,6 +942,7 @@
       "name": "Drizzle Gateway",
       "description": "Free self-hosted Drizzle Studio on steroids",
       "category": "developer",
+      "documentation": "https://gateway.drizzle.team/",
       "secrets": [
         {
           "key": "PASSWORD_DRIZZLE",
@@ -912,6 +957,7 @@
       "name": "Easyappointments",
       "description": "Schedule Anything. Let's start with easy! Get the best free online appointment scheduler on your server, today.",
       "category": "productivity",
+      "documentation": "https://easyappointments.org/",
       "secrets": [
         {
           "key": "PASSWORD_EASYAPPOINTMENTS",
@@ -927,6 +973,7 @@
       "description": "Elastic + Kibana is a Free and Open Source Search, Monitoring, and Visualization Stack",
       "category": "monitoring",
       "logo": "elasticsearch-with-kibana",
+      "documentation": "https://www.elastic.co/docs/deploy-manage/deploy/self-managed/install-kibana-with-docker",
       "secrets": [
         {
           "key": "PASSWORD_ELASTICSEARCH",
@@ -962,6 +1009,7 @@
       "description": "Elasticsearch is free and Open Source, Distributed, RESTful Search Engine.",
       "category": "tools",
       "logo": "elasticsearch",
+      "documentation": "https://www.elastic.co/products/elasticsearch",
       "secrets": [
         {
           "key": "PASSWORD_ELASTICSEARCH",
@@ -977,6 +1025,7 @@
       "description": "Sync shape-based subsets of your Postgres data over HTTP.",
       "category": "developer",
       "logo": "electricsql",
+      "documentation": "https://electric-sql.com/docs/guides/deployment",
       "secrets": [
         {
           "key": "PASSWORD_64_ELECTRIC",
@@ -992,6 +1041,7 @@
       "description": "A media server software that allows you to organize, stream, and access your multimedia content effortlessly.",
       "category": "media",
       "logo": "emby",
+      "documentation": "https://emby.media/support/articles/Home.html",
       "secrets": [],
       "composeFile": "services:\n  emby:\n    ports:\n      - \"20050:8096\"\n    image: 'lscr.io/linuxserver/emby:latest'\n    environment:\n      - FQDN_EMBY_8096=localhost:20050\n      - PUID=1000\n      - PGID=1000\n      - TZ=Europe/Madrid\n    volumes:\n      - 'emby-config:/config'\n      - 'emby-tvshows:/tvshows'\n      - 'emby-movies:/movies'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:8096'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  emby-config:\n  emby-tvshows:\n  emby-movies:\n"
     },
@@ -1000,6 +1050,7 @@
       "name": "Embystat",
       "description": "EmbyStat is a web analytics tool, designed to provide insight into website traffic and user behavior.",
       "category": "analytics",
+      "documentation": "https://github.com/mregni/EmbyStat",
       "secrets": [],
       "composeFile": "services:\n  embystat:\n    ports:\n      - \"20051:6555\"\n    image: 'lscr.io/linuxserver/embystat:latest'\n    environment:\n      - FQDN_EMBYSTAT_6555=localhost:20051\n      - PUID=1000\n      - PGID=1000\n      - TZ=Europe/Madrid\n    volumes:\n      - 'embystat-config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:6555'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  embystat-config:\n"
     },
@@ -1009,6 +1060,7 @@
       "description": "Ente Photos is a fully open source, End to End Encrypted alternative to Google Photos and Apple Photos.",
       "category": "media",
       "logo": "ente-photos-with-s3",
+      "documentation": "https://help.ente.io/self-hosting/installation/compose",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -1054,6 +1106,7 @@
       "description": "Smart Home Made Simple.",
       "category": "automation",
       "logo": "esphome",
+      "documentation": "https://esphome.io/guides/getting_started_command_line/",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -1074,6 +1127,7 @@
       "description": "EspoCRM is a free and open-source CRM platform.",
       "category": "productivity",
       "logo": "espocrm",
+      "documentation": "https://docs.espocrm.com",
       "secrets": [
         {
           "key": "PASSWORD_ADMIN",
@@ -1104,6 +1158,7 @@
       "description": "Multi-platform messaging (whatsapp and more) integration API",
       "category": "developer",
       "logo": "evolution-api",
+      "documentation": "https://doc.evolution-api.com/v2/en/get-started/introduction",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -1129,6 +1184,7 @@
       "description": "Virtual whiteboard for sketching hand-drawn like diagrams",
       "category": "productivity",
       "logo": "excalidraw",
+      "documentation": "https://docs.excalidraw.com/docs",
       "secrets": [],
       "composeFile": "services:\n  excalidraw:\n    ports:\n      - \"20056:80\"\n    image: 'excalidraw/excalidraw:latest'\n    environment:\n      - FQDN_EXCALIDRAW_80=localhost:20056\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '--spider'\n        - '--quiet'\n        - 'http://localhost'\n      interval: 10s\n      timeout: 5s\n      retries: 10\n"
     },
@@ -1137,6 +1193,7 @@
       "name": "Faraday",
       "description": "Faraday is a powerful, open-source, web-based vulnerability management tool.",
       "category": "security",
+      "documentation": "https://faradaysec.com/",
       "secrets": [
         {
           "key": "PASSWORD_POSTGRESQL",
@@ -1157,6 +1214,7 @@
       "description": "Fider is a feedback platform for collecting and managing user feedback.",
       "category": "productivity",
       "logo": "fider",
+      "documentation": "https://fider.io",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -1182,6 +1240,7 @@
       "description": "FileFlows can drastically reduce your files, up to 90%, saving you space and money. No need to buy more hard drives, just shrink your files and start saving.",
       "category": "media",
       "logo": "fileflows",
+      "documentation": "https://fileflows.com/docs/",
       "secrets": [],
       "composeFile": "services:\n  fileflows:\n    ports:\n      - \"20059:5000\"\n    image: revenz/fileflows\n    environment:\n      - FQDN_FILEFLOWS_5000=localhost:20059\n      - _APP_URL=$localhost:20059\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-America/Toronto}'\n    volumes:\n      - 'fileflows_temp:/temp'\n      - 'fileflows_configs:/app/Data'\n      - 'fileflows_logs:/app/Logs'\n      - 'fileflows_common:/app/common'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:5000/api/system/version'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  fileflows_temp:\n  fileflows_configs:\n  fileflows_logs:\n  fileflows_common:\n"
     },
@@ -1191,6 +1250,7 @@
       "description": "Fast, private, and self-hosted secure browser for browsing without limits.",
       "category": "productivity",
       "logo": "firefox",
+      "documentation": "https://github.com/jlesage/docker-firefox",
       "secrets": [],
       "composeFile": "services:\n  firefox:\n    ports:\n      - \"20060:5800\"\n    image: jlesage/firefox\n    environment:\n      - FQDN_FIREFOX_5800=localhost:20060\n    volumes:\n      - 'firefox_config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:5800/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  firefox_config:\n"
     },
@@ -1199,6 +1259,7 @@
       "name": "Fizzy",
       "description": "Kanban tracking tool for issues and ideas by 37signals",
       "category": "productivity",
+      "documentation": "https://github.com/basecamp/fizzy",
       "secrets": [
         {
           "key": "PASSWORD_FIZZY",
@@ -1219,6 +1280,7 @@
       "description": "Flipt is a fully managed feature flag solution that enables you to keep your feature flags and remote config next to your code in Git.",
       "category": "developer",
       "logo": "flipt",
+      "documentation": "https://docs.flipt.io/cloud/overview",
       "secrets": [],
       "composeFile": "services:\n  flipt:\n    ports:\n      - \"20062:8080\"\n    image: 'docker.flipt.io/flipt/flipt:latest'\n    volumes:\n      - 'flipt-data:/var/opt/flipt'\n    environment:\n      - FQDN_FLIPT_8080=localhost:20062\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '--spider'\n        - '--quiet'\n        - 'http://127.0.0.1:8080'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  flipt-data:\n"
     },
@@ -1228,6 +1290,7 @@
       "description": "Flowise is an open source low-code tool for developers to build customized LLM orchestration flows & AI agents.",
       "category": "ai",
       "logo": "flowise",
+      "documentation": "https://docs.flowiseai.com/",
       "secrets": [
         {
           "key": "USER_FLOWISE",
@@ -1248,6 +1311,7 @@
       "description": "Open Source Survey Platform",
       "category": "productivity",
       "logo": "formbricks",
+      "documentation": "https://formbricks.com/docs/self-hosting/setup/docker",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -1292,6 +1356,7 @@
       "name": "Foundryvtt",
       "description": "Foundry Virtual Tabletop is a self-hosted & modern roleplaying platform",
       "category": "tools",
+      "documentation": "https://foundryvtt.com/kb/",
       "secrets": [],
       "composeFile": "services:\n  foundryvtt:\n    ports:\n      - \"20065:30000\"\n    image: 'felddy/foundryvtt:release'\n    expose:\n      - 30000\n    environment:\n      - FQDN_FOUNDRY_30000=localhost:20065\n      - 'FOUNDRY_USERNAME=${FOUNDRY_USERNAME}'\n      - 'FOUNDRY_PASSWORD=${FOUNDRY_PASSWORD}'\n      - 'FOUNDRY_RELEASE_URL=${FOUNDRY_RELEASE_URL}'\n      - 'FOUNDRY_LICENSE_KEY=${FOUNDRY_LICENSE_KEY}'\n      - 'FOUNDRY_ADMIN_KEY=${FOUNDRY_ADMIN:-atropos}'\n      - 'FOUNDRY_HOSTNAME=${FOUNDRY_HOSTNAME}'\n      - 'FOUNDRY_ROUTE_PREFIX=${FOUNDRY_ROUTE_PREFIX}'\n      - 'FOUNDRY_PROXY_PORT=${FOUNDRY_PROXY_PORT:-80}'\n      - 'FOUNDRY_PROXY_SSL=${FOUNDRY_PROXY_SSL:-true}'\n      - 'FOUNDRY_AWS_CONFIG=${FOUNDRY_AWS_CONFIG}'\n      - 'FOUNDRY_LANGUAGE=${FOUNDRY_LANGUAGE:-en.core}'\n      - 'FOUNDRY_CSS_THEME=${FOUNDRY_CSS_THEME:-foundry}'\n      - 'FOUNDRY_MINIFY_STATIC_FILES=${FOUNDRY_MINIFY_STATIC_FILES:-true}'\n      - 'FOUNDRY_WORLD=${FOUNDRY_WORLD}'\n      - 'FOUNDRY_TELEMETRY=${FOUNDRY_TELEMETRY:-false}'\n      - 'TIMEZONE=${TIMEZONE:-UTC}'\n      - CONTAINER_CACHE=/data/container_cache\n    volumes:\n      -\n        type: bind\n        source: '${FOUNDRY_DATA:-/data/foundryvtt}'\n        target: /data\n        is_directory: true\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:30000'\n      timeout: 5s\n      interval: 30s\n      retries: 3\n"
     },
@@ -1300,6 +1365,7 @@
       "name": "Freescout",
       "description": "FreeScout is the super lightweight and powerful free open source help desk and shared inbox written in PHP (Laravel framework).",
       "category": "tools",
+      "documentation": "https://github.com/freescout-help-desk/freescout/wiki/",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -1330,6 +1396,7 @@
       "description": "A free, self-hostable feed aggregator.",
       "category": "tools",
       "logo": "freshrss-with-mariadb",
+      "documentation": "https://freshrss.org/index.html",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -1355,6 +1422,7 @@
       "description": "A free, self-hostable feed aggregator.",
       "category": "tools",
       "logo": "freshrss-with-mysql",
+      "documentation": "https://freshrss.org/index.html",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -1380,6 +1448,7 @@
       "description": "A free, self-hostable feed aggregator.",
       "category": "tools",
       "logo": "freshrss-with-postgresql",
+      "documentation": "https://freshrss.org/index.html",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -1400,6 +1469,7 @@
       "description": "A free, self-hostable feed aggregator.",
       "category": "tools",
       "logo": "freshrss",
+      "documentation": "https://freshrss.org/index.html",
       "secrets": [],
       "composeFile": "services:\n  freshrss:\n    ports:\n      - \"20070:80\"\n    image: 'freshrss/freshrss:latest'\n    environment:\n      - FQDN_FRESHRSS_80=localhost:20070\n      - 'CRON_MIN=${CRON_MIN:-1,31}'\n    volumes:\n      - 'freshrss-data:/var/www/FreshRSS/data'\n      - 'freshrss-extensions:/var/www/FreshRSS/extensions'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - \"bash -c ':> /dev/tcp/127.0.0.1/80' || exit 1\"\n      interval: 5s\n      timeout: 20s\n      retries: 3\nvolumes:\n  freshrss-data:\n  freshrss-extensions:\n"
     },
@@ -1408,6 +1478,7 @@
       "name": "Getoutline",
       "description": "Your team’s knowledge base",
       "category": "productivity",
+      "documentation": "https://docs.getoutline.com/s/hosting/doc/hosting-outline-nipGaCRBDu",
       "secrets": [
         {
           "key": "HEX_64_OUTLINE",
@@ -1443,6 +1514,7 @@
       "description": "Ghost is a content management system (CMS) and blogging platform.",
       "category": "cms",
       "logo": "ghost",
+      "documentation": "https://ghost.org",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -1468,6 +1540,7 @@
       "description": "An Eye on your system",
       "category": "monitoring",
       "logo": "glances",
+      "documentation": "https://nicolargo.github.io/glances/",
       "secrets": [],
       "composeFile": "services:\n  glances:\n    ports:\n      - \"20073:61208\"\n    image: 'nicolargo/glances:latest'\n    restart: unless-stopped\n    environment:\n      - GLANCES_OPT=-w\n      - FQDN_GLANCES_61208=localhost:20073\n    volumes:\n      - '/var/run/docker.sock:/var/run/docker.sock:ro'\n      - '/run/user/1000/podman/podman.sock:/run/user/1000/podman/podman.sock:ro'\n    pid: host\n    privileged: true\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:61208'\n      interval: 2s\n      timeout: 10s\n      retries: 30\n"
     },
@@ -1477,6 +1550,7 @@
       "description": "GlitchTip is a error tracking system.",
       "category": "monitoring",
       "logo": "glitchtip",
+      "documentation": "https://glitchtip.com",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -1502,6 +1576,7 @@
       "description": "GLPI (Gestionnaire Libre de Parc Informatique) is a free, open-source IT Service Management (ITSM) platform used for IT asset management, helpdesk, and service desk operations.",
       "category": "tools",
       "logo": "glpi",
+      "documentation": "https://help.glpi-project.org/documentation",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -1526,6 +1601,7 @@
       "name": "Goatcounter",
       "description": "Lightweight web analytics platform.",
       "category": "analytics",
+      "documentation": "https://www.goatcounter.com/help",
       "secrets": [],
       "composeFile": "services:\n  goatcounter:\n    ports:\n      - \"20076:8080\"\n    image: 'arp242/goatcounter:2.7'\n    environment:\n      - FQDN_GOATCOUNTER_8080=localhost:20076\n    volumes:\n      - 'goatcounter-data:/home/goatcounter/goatcounter-data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:8080/status >/dev/null 2>&1 || exit 1'\n      interval: 10s\n      timeout: 5s\n      retries: 10\nvolumes:\n  goatcounter-data:\n"
     },
@@ -1534,6 +1610,7 @@
       "name": "Gotenberg",
       "description": "Gotenberg is a Docker-powered stateless API for PDF files.",
       "category": "developer",
+      "documentation": "https://gotenberg.dev/docs/getting-started/introduction",
       "secrets": [
         {
           "key": "USER_GOTENBERG",
@@ -1554,6 +1631,7 @@
       "description": "Gotify is an open-source self-hosted notification server.",
       "category": "communication",
       "logo": "gotify",
+      "documentation": "https://gotify.net/docs/install",
       "secrets": [
         {
           "key": "PASSWORD_GOTIFY",
@@ -1569,6 +1647,7 @@
       "description": "Golang WhatsApp - Built with Go for efficient memory use",
       "category": "communication",
       "logo": "gowa",
+      "documentation": "https://github.com/aldinokemal/go-whatsapp-web-multidevice",
       "secrets": [
         {
           "key": "USER_GOWA",
@@ -1589,6 +1668,7 @@
       "description": "Grafana is the open source analytics & monitoring solution for every database.",
       "category": "monitoring",
       "logo": "grafana-with-postgresql",
+      "documentation": "https://grafana.com",
       "secrets": [
         {
           "key": "PASSWORD_GRAFANA",
@@ -1614,6 +1694,7 @@
       "description": "Grafana is the open source analytics & monitoring solution for every database.",
       "category": "monitoring",
       "logo": "grafana",
+      "documentation": "https://grafana.com",
       "secrets": [
         {
           "key": "PASSWORD_GRAFANA",
@@ -1629,6 +1710,7 @@
       "description": "Open Source Online Genealogy System.",
       "category": "tools",
       "logo": "gramps-web",
+      "documentation": "https://www.grampsweb.org/install_setup/setup/",
       "secrets": [],
       "composeFile": "services:\n  grampsweb:\n    ports:\n      - \"20082:5000\"\n    image: 'ghcr.io/gramps-project/grampsweb:25.9.0'\n    environment:\n      - FQDN_GRAMPSWEB_5000=localhost:20082\n      - 'GRAMPSWEB_TREE=${GRAMPSWEB_TREE:-Gramps Web}'\n      - 'GRAMPSWEB_CELERY_CONFIG__broker_url=redis://grampsweb_redis:6379/0'\n      - 'GRAMPSWEB_CELERY_CONFIG__result_backend=redis://grampsweb_redis:6379/0'\n      - 'GRAMPSWEB_RATELIMIT_STORAGE_URI=redis://grampsweb_redis:6379/1'\n      - 'GUNICORN_NUM_WORKERS=${GUNICORN_NUM_WORKERS:-2}'\n    depends_on:\n      - grampsweb_redis\n    volumes:\n      - 'gramps_users:/app/users'\n      - 'gramps_index:/app/indexdir'\n      - 'gramps_thumb_cache:/app/thumbnail_cache'\n      - 'gramps_cache:/app/cache'\n      - 'gramps_secret:/app/secret'\n      - 'gramps_db:/root/.gramps/grampsdb'\n      - 'gramps_media:/app/media'\n      - 'gramps_tmp:/tmp'\n    healthcheck:\n      test: 'wget -O - http://localhost:5000 > /dev/null 2>&1'\n      interval: 5s\n      timeout: 10s\n      retries: 3\n  grampsweb_celery:\n    image: 'ghcr.io/gramps-project/grampsweb:25.9.0'\n    environment:\n      - 'GRAMPSWEB_TREE=${GRAMPSWEB_TREE:-Gramps Web}'\n      - 'GRAMPSWEB_CELERY_CONFIG__broker_url=redis://grampsweb_redis:6379/0'\n      - 'GRAMPSWEB_CELERY_CONFIG__result_backend=redis://grampsweb_redis:6379/0'\n      - 'GRAMPSWEB_RATELIMIT_STORAGE_URI=redis://grampsweb_redis:6379/1'\n    depends_on:\n      - grampsweb_redis\n    volumes:\n      - 'gramps_users:/app/users'\n      - 'gramps_index:/app/indexdir'\n      - 'gramps_thumb_cache:/app/thumbnail_cache'\n      - 'gramps_cache:/app/cache'\n      - 'gramps_secret:/app/secret'\n      - 'gramps_db:/root/.gramps/grampsdb'\n      - 'gramps_media:/app/media'\n      - 'gramps_tmp:/tmp'\n    command: 'celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=2'\n    healthcheck:\n      test: 'SECRET_KEY=\"$(cat secret/secret)\" celery -A gramps_webapi.celery status || exit 1'\n      interval: 5s\n      timeout: 10s\n      retries: 3\n  grampsweb_redis:\n    image: 'docker.io/library/redis:7.2.4-alpine'\n    healthcheck:\n      test: 'redis-cli ping | grep PONG'\n      interval: 5s\n      timeout: 10s\n      retries: 3\nvolumes:\n  gramps_users:\n  gramps_index:\n  gramps_thumb_cache:\n  gramps_cache:\n  gramps_secret:\n  gramps_db:\n  gramps_media:\n  gramps_tmp:\n"
     },
@@ -1638,6 +1720,7 @@
       "description": "Grimmory is a self-hosted application for managing your entire book collection in one place. Organize, read, annotate, sync across devices, and share without relying on third-party services.",
       "category": "tools",
       "logo": "grimmory",
+      "documentation": "https://github.com/grimmory-tools/grimmory",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -1663,6 +1746,7 @@
       "description": "Hatchet allows you to run background tasks at scale with a high-throughput, low-latency computing service built on an open-source, fault-tolerant queue.",
       "category": "automation",
       "logo": "hatchet",
+      "documentation": "https://docs.hatchet.run/self-hosting/docker-compose",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -1693,6 +1777,7 @@
       "description": "Healthchecks is a cron job monitoring service. It listens for HTTP requests and email messages from your cron jobs and scheduled tasks.",
       "category": "monitoring",
       "logo": "healthchecks",
+      "documentation": "https://healthchecks.io/docs",
       "secrets": [
         {
           "key": "PASSWORD_64_HEALTHCHECKS",
@@ -1707,6 +1792,7 @@
       "name": "Hermes Agent With Webui",
       "description": "Hermes Agent — autonomous AI agent with persistent memory, scheduling, and a self-hosted web chat UI.",
       "category": "ai",
+      "documentation": "https://github.com/nesquena/hermes-webui",
       "secrets": [
         {
           "key": "PASSWORD_HERMESWEBUI",
@@ -1722,6 +1808,7 @@
       "description": "Allows anyone to create engaging conversational forms for surveys, questionnaires, quizzes, and polls. No coding skills required.",
       "category": "productivity",
       "logo": "heyform",
+      "documentation": "https://docs.heyform.net/open-source/self-hosting",
       "secrets": [
         {
           "key": "BASE64_64_SESSION",
@@ -1747,6 +1834,7 @@
       "description": "Homarr is a self-hosted homepage for your services.",
       "category": "productivity",
       "logo": "homarr",
+      "documentation": "https://homarr.dev",
       "secrets": [
         {
           "key": "HEX_64_HOMARR",
@@ -1762,6 +1850,7 @@
       "description": "Homebox is the inventory and organization system built for the Home User.",
       "category": "productivity",
       "logo": "homebox",
+      "documentation": "https://github.com/sysadminsmedia/homebox",
       "secrets": [],
       "composeFile": "services:\n  homebox:\n    ports:\n      - \"20089:7745\"\n    image: 'ghcr.io/sysadminsmedia/homebox:latest'\n    environment:\n      - FQDN_HOMEBOX_7745=localhost:20089\n      - 'HBOX_OPTIONS_ALLOW_REGISTRATION=${HBOX_OPTIONS_ALLOW_REGISTRATION:-false}'\n      - 'HBOX_LOG_LEVEL=${HBOX_LOG_LEVEL:-info}'\n      - 'HBOX_LOG_FORMAT=${HBOX_LOG_FORMAT:-text}'\n      - 'HBOX_WEB_MAX_UPLOAD_SIZE=${HBOX_WEB_MAX_UPLOAD_SIZE:-10}'\n      - 'HBOX_MAILER_HOST=${HBOX_MAILER_HOST}'\n      - 'HBOX_MAILER_PORT=${HBOX_MAILER_PORT:-587}'\n      - 'HBOX_MAILER_USERNAME=${HBOX_MAILER_USERNAME}'\n      - 'HBOX_MAILER_PASSWORD=${HBOX_MAILER_PASSWORD}'\n      - 'HBOX_MAILER_FROM=${HBOX_MAILER_FROM}'\n    volumes:\n      - 'homebox-data:/data'\n    healthcheck:\n      test:\n        - CMD\n        - sh\n        - '-c'\n        - 'wget --method=GET -qO- http://localhost:7745/api/v1/status > /dev/null || exit 1'\n      interval: 30s\n      timeout: 5s\n      retries: 10\nvolumes:\n  homebox-data:\n"
     },
@@ -1771,6 +1860,7 @@
       "description": "The Open Source API Development Platform",
       "category": "developer",
       "logo": "hoppscotch",
+      "documentation": "https://docs.hoppscotch.io",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -1795,6 +1885,7 @@
       "name": "Imgcompress",
       "description": "Offline image compression, conversion, and AI background removal for Docker homelabs.",
       "category": "media",
+      "documentation": "https://imgcompress.karimzouine.com",
       "secrets": [],
       "composeFile": "services:\n  imgcompress:\n    ports:\n      - \"20091:5000\"\n    image: 'karimz1/imgcompress:0.6.0'\n    environment:\n      - FQDN_IMGCOMPRESS_5000=localhost:20091\n      - 'DISABLE_LOGO=${DISABLE_LOGO:-false}'\n      - 'DISABLE_STORAGE_MANAGEMENT=${DISABLE_STORAGE_MANAGEMENT:-false}'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:5000'\n      interval: 30s\n      timeout: 10s\n      retries: 3\n"
     },
@@ -1804,6 +1895,7 @@
       "description": "Self-hosted photo and video management solution.",
       "category": "media",
       "logo": "immich",
+      "documentation": "https://immich.app/docs/overview/introduction",
       "secrets": [
         {
           "key": "PASSWORD_POSTGRES",
@@ -1824,6 +1916,7 @@
       "description": "Infisical is the open source secret management platform that developers use to centralize their application configuration and secrets like API keys and database credentials.",
       "category": "security",
       "logo": "infisical",
+      "documentation": "https://infisical.com/docs/documentation/getting-started/introduction",
       "secrets": [
         {
           "key": "PASSWORD_ENCRYPTIONKEY",
@@ -1854,6 +1947,7 @@
       "description": "IT Tools is a self-hosted solution for managing various IT tasks.",
       "category": "tools",
       "logo": "it-tools",
+      "documentation": "https://github.com/corentinth/it-tools",
       "secrets": [],
       "composeFile": "services:\n  it-tools:\n    ports:\n      - \"20094:80\"\n    image: 'corentinth/it-tools:latest'\n    environment:\n      - FQDN_ITTOOLS_80=localhost:20094\n    volumes:\n      - 'it-tools-data:/app/data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:80'\n      interval: 30s\n      timeout: 10s\n      retries: 3\nvolumes:\n  it-tools-data:\n"
     },
@@ -1863,6 +1957,7 @@
       "description": "Jellyfin is a media server for hosting and streaming your media collection.",
       "category": "media",
       "logo": "jellyfin",
+      "documentation": "https://jellyfin.org",
       "secrets": [],
       "composeFile": "services:\n  jellyfin:\n    ports:\n      - \"20095:8096\"\n    image: 'lscr.io/linuxserver/jellyfin:10.11.8'\n    environment:\n      - FQDN_JELLYFIN_8096=localhost:20095\n      - PUID=1000\n      - PGID=1000\n      - TZ=Europe/Madrid\n      - JELLYFIN_PublishedServerUrl=$localhost:20095\n    volumes:\n      - 'jellyfin-config:/config'\n      - 'jellyfin-tvshows:/data/tvshows'\n      - 'jellyfin-movies:/data/movies'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:8096'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  jellyfin-config:\n  jellyfin-tvshows:\n  jellyfin-movies:\n"
     },
@@ -1872,6 +1967,7 @@
       "description": "Jenkins is an open source automation server, Jenkins provides hundreds of plugins to support building, deploying and automating any project.",
       "category": "developer",
       "logo": "jenkins",
+      "documentation": "https://www.jenkins.io/doc/",
       "secrets": [],
       "composeFile": "services:\n  jenkins:\n    ports:\n      - \"20096:8080\"\n    image: 'jenkins/jenkins:latest'\n    environment:\n      - FQDN_JENKINS_8080=localhost:20096\n    volumes:\n      - 'jenkins-home:/var/jenkins_home'\n      - '/var/run/docker.sock:/var/run/docker.sock'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:8080/login'\n      interval: 30s\n      timeout: 10s\n      retries: 3\n      start_period: 40s\nvolumes:\n  jenkins-home:\n"
     },
@@ -1881,6 +1977,7 @@
       "description": "Joomla! is the mobile-ready and user-friendly way to build your website. Choose from thousands of features and designs. Joomla! is free and open source.",
       "category": "cms",
       "logo": "joomla-with-mariadb",
+      "documentation": "https://joomla.org",
       "secrets": [
         {
           "key": "USER_JOOMLA",
@@ -1906,6 +2003,7 @@
       "description": "Self-hosted sync server for Joplin",
       "category": "productivity",
       "logo": "joplin",
+      "documentation": "https://github.com/laurent22/joplin/blob/dev/packages/server/README.md",
       "secrets": [
         {
           "key": "PASSWORD_64_POSTGRES",
@@ -1926,6 +2024,7 @@
       "description": "Jupyter Notebook is an open-source web application that allows you to create and share documents that contain live code, equations, visualizations, and narrative text.",
       "category": "tools",
       "logo": "jupyter-notebook-python",
+      "documentation": "https://jupyter.org/",
       "secrets": [],
       "composeFile": "services:\n  jupyter-notebook-python:\n    ports:\n      - \"20099:8888\"\n    image: 'quay.io/jupyter/base-notebook:latest'\n    environment:\n      - FQDN_JUPYTER_8888=localhost:20099\n    volumes:\n      - '/jupyter:/home/jovyan/work'\n    command: start-notebook.sh\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:8888/'\n      interval: 30s\n      timeout: 20s\n      retries: 10\n"
     },
@@ -1935,6 +2034,7 @@
       "description": "Keycloak is an open-source Identity and Access Management tool.",
       "category": "security",
       "logo": "keycloak-with-postgres",
+      "documentation": "https://www.keycloak.org",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -1965,6 +2065,7 @@
       "description": "Keycloak is an open-source Identity and Access Management tool.",
       "category": "security",
       "logo": "keycloak",
+      "documentation": "https://www.keycloak.org",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -1985,6 +2086,7 @@
       "description": "Open source time-tracking app.",
       "category": "productivity",
       "logo": "kimai",
+      "documentation": "https://www.kimai.org/",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -2019,6 +2121,7 @@
       "name": "Kuzzle",
       "description": "Kuzzle is a generic backend offering the basic building blocks common to every application.",
       "category": "developer",
+      "documentation": "https://kuzzle.io",
       "secrets": [],
       "composeFile": "services:\n  redis:\n    image: 'redis:7-alpine'\n    command: 'redis-server --appendonly yes'\n    volumes:\n      - 'elastic-redis-data:/data'\n    healthcheck:\n      test:\n        - CMD\n        - redis-cli\n        - ping\n      interval: 5s\n      timeout: 20s\n      retries: 10\n  elasticsearch:\n    image: 'kuzzleio/elasticsearch:7'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:9200'\n      interval: 2s\n      timeout: 2s\n      retries: 10\n    ulimits:\n      nofile: 65536\n  kuzzle:\n    ports:\n      - \"20103:7512\"\n    image: 'kuzzleio/kuzzle:latest'\n    environment:\n      - FQDN_KUZZLE_7512=localhost:20103\n      - 'kuzzle_services__storageEngine__client__node=http://elasticsearch:9200'\n      - kuzzle_services__storageEngine__commonMapping__dynamic=true\n      - kuzzle_services__internalCache__node__host=redis\n      - kuzzle_services__memoryStorage__node__host=redis\n      - kuzzle_server__protocols__mqtt__enabled=true\n      - kuzzle_server__protocols__mqtt__developmentMode=false\n      - kuzzle_limits__loginsPerSecond=50\n      - NODE_ENV=production\n      - 'DEBUG=${DEBUG:-kuzzle:cluster:sync}'\n      - 'DEBUG_DEPTH=${DEBUG_DEPTH:-0}'\n      - 'DEBUG_MAX_ARRAY_LENGTH=${DEBUG_MAX_ARRAY:-100}'\n      - 'DEBUG_EXPAND=${DEBUG_EXPAND:-off}'\n      - 'DEBUG_SHOW_HIDDEN={$DEBUG_SHOW_HIDDEN:-on}'\n      - 'DEBUG_COLORS=${DEBUG_COLORS:-on}'\n    cap_add:\n      - SYS_PTRACE\n    ulimits:\n      nofile: 65536\n    sysctls:\n      - net.core.somaxconn=8192\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:7512/_healthcheck'\n      timeout: 1s\n      interval: 2s\n      retries: 30\n    depends_on:\n      redis:\n        condition: service_healthy\n      elasticsearch:\n        condition: service_healthy\nvolumes:\n  elastic-redis-data:\n"
     },
@@ -2027,6 +2130,7 @@
       "name": "Labelstudio",
       "description": "Label Studio is a multi-type data labeling and annotation tool with standardized output format",
       "category": "ai",
+      "documentation": "https://labelstud.io/guide/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2052,6 +2156,7 @@
       "description": "Langflow is an open-source, Python-based, customizable framework for building AI applications.",
       "category": "ai",
       "logo": "langflow",
+      "documentation": "https://docs.langflow.org",
       "secrets": [
         {
           "key": "USER_LANGFLOW",
@@ -2082,6 +2187,7 @@
       "description": "Langfuse is an open-source LLM engineering platform that helps teams collaboratively debug, analyze, and iterate on their LLM applications.",
       "category": "ai",
       "logo": "langfuse",
+      "documentation": "https://langfuse.com/docs",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2142,6 +2248,7 @@
       "description": "Leantime is a goals focused project management system for non-project managers.",
       "category": "productivity",
       "logo": "leantime",
+      "documentation": "https://leantime.io",
       "secrets": [
         {
           "key": "USER_MYSQLDB",
@@ -2172,6 +2279,7 @@
       "description": "LibreOffice is a free and powerful office suite.",
       "category": "productivity",
       "logo": "libreoffice",
+      "documentation": "https://docs.linuxserver.io/images/docker-libreoffice/",
       "secrets": [],
       "composeFile": "services:\n  libreoffice:\n    ports:\n      - \"20108:3000\"\n    image: 'lscr.io/linuxserver/libreoffice:latest'\n    environment:\n      - FQDN_LIBREOFFICE_3000=localhost:20108\n      - 'PUID=${PUID:-1000}'\n      - 'PGID=${PGID:-1000}'\n      - 'TZ=${TZ:-Etc/UTC}'\n    volumes:\n      - 'libreoffice-config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://localhost:3000'\n      interval: 30s\n      timeout: 10s\n      retries: 3\nvolumes:\n  libreoffice-config:\n"
     },
@@ -2181,6 +2289,7 @@
       "description": "Self-hosted lightweight Speed Test.",
       "category": "tools",
       "logo": "librespeed",
+      "documentation": "https://github.com/librespeed/speedtest",
       "secrets": [],
       "composeFile": "services:\n  librespeed:\n    ports:\n      - \"20109:82\"\n    container_name: librespeed\n    image: 'ghcr.io/librespeed/speedtest:latest'\n    environment:\n      - FQDN_LIBRESPEED_82=localhost:20109\n      - MODE=standalone\n      - TELEMETRY=false\n      - DISTANCE=km\n      - WEBPORT=82\n    healthcheck:\n      test: 'curl 127.0.0.1:82 || exit 1'\n      timeout: 1s\n      interval: 1m0s\n      retries: 1\n"
     },
@@ -2190,6 +2299,7 @@
       "description": "Free and open-source machine translation API, entirely self-hosted.",
       "category": "ai",
       "logo": "libretranslate",
+      "documentation": "https://libretranslate.com/docs/",
       "secrets": [],
       "composeFile": "services:\n  libretranslate:\n    ports:\n      - \"20110:5000\"\n    image: 'libretranslate/libretranslate:latest'\n    environment:\n      - FQDN_LIBRETRANSLATE_5000=localhost:20110\n      - 'LT_SSL=${LT_SSL:-true}'\n      - 'LT_UPDATE_MODELS=${LT_UPDATE_MODELS:-true}'\n      - 'LT_LOAD_ONLY=${LT_LOAD_ONLY:-en,es,fr,de,ja}'\n    volumes:\n      - 'libretranslate-api-keys:/app/db'\n      - 'libretranslate-models:/home/libretranslate/.local'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - './venv/bin/python scripts/healthcheck.py'\nvolumes:\n  libretranslate-api-keys:\n  libretranslate-models:\n"
     },
@@ -2199,6 +2309,7 @@
       "description": "Simple, quick and anonymous online survey tool that's bursting with juicy insights.",
       "category": "productivity",
       "logo": "limesurvey",
+      "documentation": "https://www.limesurvey.org/manual/",
       "secrets": [
         {
           "key": "PASSWORD_MYSQL",
@@ -2229,6 +2340,7 @@
       "description": "A self-hosted bookmark manager designed to be minimal, fast, and easy to set up. (Includes feature for archiving websites as HTML snapshots)",
       "category": "tools",
       "logo": "linkding-plus",
+      "documentation": "https://linkding.link/",
       "secrets": [
         {
           "key": "USER_LINKDING",
@@ -2249,6 +2361,7 @@
       "description": "A self-hosted bookmark manager designed to be minimal, fast, and easy to set up.",
       "category": "tools",
       "logo": "linkding",
+      "documentation": "https://linkding.link/",
       "secrets": [
         {
           "key": "USER_LINKDING",
@@ -2269,6 +2382,7 @@
       "description": "Self-hosted newsletter and mailing list manager",
       "category": "communication",
       "logo": "listmonk",
+      "documentation": "https://listmonk.app/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2289,6 +2403,7 @@
       "description": "An open-source, modern-design AI chat framework.",
       "category": "ai",
       "logo": "lobe-chat",
+      "documentation": "https://github.com/lobehub/lobe-chat?tab=readme-ov-file#b-deploying-with-docker",
       "secrets": [
         {
           "key": "PASSWORD_ACCESSCODE",
@@ -2304,6 +2419,7 @@
       "description": "Lowcoder (forked from OpenBlocks) is a self-hosted, open-source, low-code platform for building internal tools.",
       "category": "productivity",
       "logo": "lowcoder",
+      "documentation": "https://docs.lowcoder.cloud/",
       "secrets": [
         {
           "key": "PASSWORD_ENCRYPTION",
@@ -2324,6 +2440,7 @@
       "description": "Build, run, and manage data pipelines for integrating and transforming data.",
       "category": "automation",
       "logo": "mage-ai",
+      "documentation": "https://docs.mage.ai",
       "secrets": [],
       "composeFile": "services:\n  mage-ai:\n    ports:\n      - \"20117:6789\"\n    image: 'mageai/mageai:0.9.78'\n    command: 'mage start default_project'\n    environment:\n      - FQDN_MAGEAI_6789=localhost:20117\n      - PROJECT_NAME=default_project\n      - USER_CODE_PATH=/home/src/default_project\n      - ENV=production\n    volumes:\n      - 'mageai_data:/home/src/'\n    restart: unless-stopped\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-s'\n        - '-f'\n        - '-o'\n        - /dev/null\n        - 'http://127.0.0.1:6789'\n      interval: 30s\n      timeout: 10s\n      retries: 5\nvolumes:\n  mageai_data:\n"
     },
@@ -2332,6 +2449,7 @@
       "name": "Martin",
       "description": "Martin is a tile server able to generate and serve vector tiles on the fly from large PostGIS databases, PMTiles (local or remote), and MBTiles files, allowing multiple tile sources to be dynamically combined into one.",
       "category": "ai",
+      "documentation": "https://maplibre.org/martin/introduction.html/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2352,6 +2470,7 @@
       "description": "Chat securely with your family, friends, community, or build great apps with Matrix!",
       "category": "communication",
       "logo": "matrix-synapse-with-postgresql",
+      "documentation": "https://element-hq.github.io/synapse/latest/welcome_and_overview.html",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -2382,6 +2501,7 @@
       "description": "Chat securely with your family, friends, community, or build great apps with Matrix!",
       "category": "communication",
       "logo": "matrix-synapse-with-sqlite",
+      "documentation": "https://element-hq.github.io/synapse/latest/welcome_and_overview.html",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -2402,6 +2522,7 @@
       "description": "Mattermost is an open source, self-hosted Slack-alternative.",
       "category": "communication",
       "logo": "mattermost",
+      "documentation": "https://docs.mattermost.com",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2422,6 +2543,7 @@
       "description": "A recipe manager and meal planner.",
       "category": "productivity",
       "logo": "mealie",
+      "documentation": "https://docs.mealie.io/",
       "secrets": [],
       "composeFile": "services:\n  mealie:\n    ports:\n      - \"20122:9000\"\n    image: 'ghcr.io/mealie-recipes/mealie:3.17.0'\n    environment:\n      - FQDN_MEALIE_9000=localhost:20122\n      - 'ALLOW_SIGNUP=${ALLOW_SIGNUP:-true}'\n      - 'PUID=${PUID:-1000}'\n      - 'PGID=${PGID:-1000}'\n      - 'TZ=${TZ:-Europe/Berlin}'\n      - 'MAX_WORKERS=${MAX_WORKERS:-1}'\n      - 'WEB_CONCURRENCY=${WEB_CONCURRENCY:-1}'\n    volumes:\n      - 'mealie_data:/app/data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - \"bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1\"\n      interval: 5s\n      timeout: 10s\n      retries: 5\nvolumes:\n  mealie_data:\n"
     },
@@ -2431,6 +2553,7 @@
       "description": "MediaWiki is a collaboration and documentation platform brought to you by a vibrant community.",
       "category": "cms",
       "logo": "mediawiki",
+      "documentation": "https://www.mediawiki.org",
       "secrets": [],
       "composeFile": "services:\n  mediawiki:\n    ports:\n      - \"20123:80\"\n    image: 'mediawiki:latest'\n    environment:\n      - FQDN_MEDIAWIKI_80=localhost:20123\n    volumes:\n      - 'mediawiki-images:/var/www/html/images'\n      - 'mediawiki-sqlite:/var/www/html/data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:80'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  mediawiki-images:\n  mediawiki-sqlite:\n"
     },
@@ -2440,6 +2563,7 @@
       "description": "MeiliSearch is a powerful, fast, easy to use and deploy search engine.",
       "category": "tools",
       "logo": "meilisearch",
+      "documentation": "https://www.meilisearch.com",
       "secrets": [
         {
           "key": "PASSWORD_MEILISEARCH",
@@ -2455,6 +2579,7 @@
       "description": "An open-source, lightweight note-taking solution. The pain-less way to create your meaningful notes. Your Notes, Your Way.",
       "category": "productivity",
       "logo": "memos",
+      "documentation": "https://github.com/usememos/memos",
       "secrets": [],
       "composeFile": "services:\n  memos:\n    ports:\n      - \"20125:5230\"\n    image: 'neosmemo/memos:stable'\n    volumes:\n      - 'memos/:/var/opt/memos'\n    environment:\n      - FQDN_MEMOS_5230=localhost:20125\n"
     },
@@ -2464,6 +2589,7 @@
       "description": "Fast analytics with the friendly UX and integrated tooling to let your company explore data on their own.",
       "category": "analytics",
       "logo": "metabase",
+      "documentation": "https://www.metabase.com",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -2483,6 +2609,7 @@
       "name": "Metamcp",
       "description": "MCP Aggregator, Orchestrator, Middleware, Gateway in one app",
       "category": "ai",
+      "documentation": "https://github.com/metatool-ai/metamcp",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2508,6 +2635,7 @@
       "description": "A web GUI for youtube-dl with playlist support. It enables you to effortlessly download videos from YouTube and dozens of other sites.",
       "category": "media",
       "logo": "metube",
+      "documentation": "https://github.com/alexta69/metube",
       "secrets": [],
       "composeFile": "services:\n  metube:\n    ports:\n      - \"20128:8081\"\n    image: 'ghcr.io/alexta69/metube:latest'\n    environment:\n      - FQDN_METUBE_8081=localhost:20128\n      - UID=1000\n      - GID=1000\n    volumes:\n      - 'metube-downloads:/downloads'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:8081'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  metube-downloads:\n"
     },
@@ -2517,6 +2645,7 @@
       "description": "MindsDB is the platform for building AI from enterprise data, enabling smarter organizations.",
       "category": "ai",
       "logo": "mindsdb",
+      "documentation": "https://docs.mindsdb.com/what-is-mindsdb",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2537,6 +2666,7 @@
       "description": "Miniflux is a minimalist and opinionated feed reader.",
       "category": "tools",
       "logo": "miniflux",
+      "documentation": "https://miniflux.app/docs/index.html",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -2567,6 +2697,7 @@
       "description": "Mixpost is a robust and versatile social media management software, designed to streamline social media operations and enhance content marketing strategies.",
       "category": "analytics",
       "logo": "mixpost",
+      "documentation": "https://docs.mixpost.app/lite",
       "secrets": [
         {
           "key": "BASE64_MIXPOST",
@@ -2597,6 +2728,7 @@
       "description": "Moodle is the world’s most customisable and trusted eLearning solution that empowers educators to improve our world.",
       "category": "cms",
       "logo": "moodle",
+      "documentation": "https://moodle.org",
       "secrets": [
         {
           "key": "PASSWORD_ROOT",
@@ -2627,6 +2759,7 @@
       "description": "n8n is an extendable workflow automation tool with queue mode and workers.",
       "category": "automation",
       "logo": "n8n-with-postgres-and-worker",
+      "documentation": "https://n8n.io",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2657,6 +2790,7 @@
       "description": "n8n is an extendable workflow automation tool.",
       "category": "automation",
       "logo": "n8n-with-postgresql",
+      "documentation": "https://n8n.io",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2682,6 +2816,7 @@
       "description": "n8n is an extendable workflow automation tool.",
       "category": "automation",
       "logo": "n8n",
+      "documentation": "https://n8n.io",
       "secrets": [
         {
           "key": "PASSWORD_N8N",
@@ -2697,6 +2832,7 @@
       "description": "Standalone server, that allows you to browse and listen to your music collection using a web browser or any Subsonic-compatible client.",
       "category": "media",
       "logo": "navidrome",
+      "documentation": "https://www.navidrome.org/docs/",
       "secrets": [],
       "composeFile": "services:\n  navidrome:\n    ports:\n      - \"20136:4533\"\n    image: 'deluan/navidrome:latest'\n    restart: unless-stopped\n    environment:\n      - FQDN_NAVIDROME_4533=localhost:20136\n      - 'ND_BASEURL=localhost:20136'\n      - 'ND_SCANSCHEDULE=${ND_SCANSCHEDULE:-1h}'\n      - 'ND_LOGLEVEL=${ND_LOGLEVEL:-info}'\n      - 'ND_SESSIONTIMEOUT=${ND_SESSIONTIMEOUT:-24h}'\n      - 'ND_ENABLEINSIGHTSCOLLECTOR=${ND_ENABLEINSIGHTSCOLLECTOR:-false}'\n    volumes:\n      - './data:/data'\n      - './music:/music:ro'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '--spider'\n        - '--quiet'\n        - 'http://127.0.0.1:4533/ping'\n      interval: 10s\n      timeout: 5s\n      retries: 5\n"
     },
@@ -2705,6 +2841,7 @@
       "name": "Newapi",
       "description": "The next-generation LLM gateway and AI asset management system supports multiple languages.",
       "category": "ai",
+      "documentation": "https://docs.newapi.pro/en/getting-started/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2730,6 +2867,7 @@
       "description": "Drop-in replacement for Vercel's Nextjs image optimization service.",
       "category": "media",
       "logo": "next-image-transformation",
+      "documentation": "https://github.com/coollabsio/next-image-transformation",
       "secrets": [],
       "composeFile": "services:\n  next-image-transformation:\n    ports:\n      - \"20138:3000\"\n    image: 'ghcr.io/coollabsio/next-image-transformation:latest'\n    environment:\n      - FQDN_TRANSFORMATION_3000=localhost:20138\n      - NODE_ENV=production\n      - 'ALLOWED_REMOTE_DOMAINS=${ALLOWED_REMOTE_DOMAINS:-*}'\n      - 'IMGPROXY_URL=${IMGPROXY_URL:-http://imgproxy:8080}'\n    healthcheck:\n      test: 'wget -qO- http://127.0.0.1:3000/health || exit 1'\n      interval: 2s\n      timeout: 10s\n      retries: 5\n  imgproxy:\n    image: darthsim/imgproxy\n    environment:\n      - IMGPROXY_ENABLE_WEBP_DETECTION=true\n      - IMGPROXY_JPEG_PROGRESSIVE=true\n      - IMGPROXY_USE_ETAG=true\n    healthcheck:\n      test:\n        - CMD\n        - imgproxy\n        - health\n      interval: 2s\n      timeout: 10s\n      retries: 5\n"
     },
@@ -2739,6 +2877,7 @@
       "description": "NextCloud is a self-hosted, open-source platform that provides file storage, collaboration, and communication tools for seamless data management.",
       "category": "productivity",
       "logo": "nextcloud-with-mariadb",
+      "documentation": "https://docs.nextcloud.com",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -2764,6 +2903,7 @@
       "description": "NextCloud is a self-hosted, open-source platform that provides file storage, collaboration, and communication tools for seamless data management.",
       "category": "productivity",
       "logo": "nextcloud-with-mysql",
+      "documentation": "https://docs.nextcloud.com",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -2789,6 +2929,7 @@
       "description": "NextCloud is a self-hosted, open-source platform that provides file storage, collaboration, and communication tools for seamless data management.",
       "category": "productivity",
       "logo": "nextcloud-with-postgres",
+      "documentation": "https://docs.nextcloud.com",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2809,6 +2950,7 @@
       "description": "NextCloud is a self-hosted, open-source platform that provides file storage, collaboration, and communication tools for seamless data management.",
       "category": "productivity",
       "logo": "nextcloud",
+      "documentation": "https://docs.nextcloud.com",
       "secrets": [],
       "composeFile": "services:\n  nextcloud:\n    ports:\n      - \"20142:80\"\n    image: 'lscr.io/linuxserver/nextcloud:latest'\n    environment:\n      - FQDN_NEXTCLOUD_80=localhost:20142\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-Europe/Madrid}'\n    volumes:\n      - 'nextcloud-config:/config'\n      - 'nextcloud-data:/data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:80/status.php'\n      interval: 30s\n      timeout: 10s\n      retries: 15\nvolumes:\n  nextcloud-config:\n  nextcloud-data:\n"
     },
@@ -2818,6 +2960,7 @@
       "description": "Open source Universal Repository Manager (ARM version, community edition), default credentials: admin/admin123",
       "category": "developer",
       "logo": "nexus-arm",
+      "documentation": "https://help.sonatype.com/en/sonatype-nexus-repository.html",
       "secrets": [],
       "composeFile": "services:\n  nexus:\n    ports:\n      - \"20143:8081\"\n    image: sonatypecommunity/nexus3\n    environment:\n      - FQDN_NEXUS_8081=localhost:20143\n      - NEXUS_SECURITY_RANDOMPASSWORD=false\n      - 'INSTALL4J_ADD_VM_PARAMS=-Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m -Djava.util.prefs.userRoot=/nexus-data/javaprefs'\n    volumes:\n      - 'nexus_data:/nexus-data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:8081/service/rest/v1/status'\n      interval: 10s\n      timeout: 10s\n      retries: 3\n      start_period: 60s\nvolumes:\n  nexus_data:\n"
     },
@@ -2827,6 +2970,7 @@
       "description": "Open source Universal Repository Manager (x86_64 version, official), default credentials: admin/admin123",
       "category": "developer",
       "logo": "nexus",
+      "documentation": "https://help.sonatype.com/en/sonatype-nexus-repository.html",
       "secrets": [],
       "composeFile": "services:\n  nexus:\n    ports:\n      - \"20144:8081\"\n    image: sonatype/nexus3\n    platform: linux/amd64\n    environment:\n      - FQDN_NEXUS_8081=localhost:20144\n      - 'NEXUS_SECURITY_RANDOMPASSWORD=${NEXUS_SECURITY_RANDOMPASSWORD:-false}'\n      - 'INSTALL4J_ADD_VM_PARAMS=-Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m -Djava.util.prefs.userRoot=/nexus-data/javaprefs'\n    volumes:\n      - 'nexus_data:/nexus-data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:8081/service/rest/v1/status'\n      interval: 10s\n      timeout: 10s\n      retries: 3\n      start_period: 60s\nvolumes:\n  nexus_data:\n"
     },
@@ -2836,6 +2980,7 @@
       "description": "Nitropage is an extensible, visual website builder, offering a growing library of versatile building blocks, focal-point image cropping and sovereign font management.",
       "category": "cms",
       "logo": "nitropage-with-postgresql",
+      "documentation": "https://nitropage.org",
       "secrets": [
         {
           "key": "BASE64_SALT",
@@ -2866,6 +3011,7 @@
       "description": "Nitropage is an extensible, visual website builder, offering a growing library of versatile building blocks, focal-point image cropping and sovereign font management.",
       "category": "cms",
       "logo": "nitropage",
+      "documentation": "https://nitropage.org",
       "secrets": [
         {
           "key": "BASE64_SALT",
@@ -2885,6 +3031,7 @@
       "name": "Nocobase",
       "description": "NocoBase is the most extensible AI-powered no-code/low-code platform.",
       "category": "automation",
+      "documentation": "https://docs.nocobase.com/",
       "secrets": [
         {
           "key": "BASE64_64_APPKEY",
@@ -2910,6 +3057,7 @@
       "description": "NocoDB is an open source Airtable alternative. Turns any MySQL, PostgreSQL, SQL Server, SQLite & MariaDB into a smart-spreadsheet.",
       "category": "productivity",
       "logo": "nocodb",
+      "documentation": "https://nocodb.com/",
       "secrets": [],
       "composeFile": "services:\n  nocodb:\n    ports:\n      - \"20148:8080\"\n    image: nocodb/nocodb\n    environment:\n      - FQDN_NOCODB_8080=localhost:20148\n    volumes:\n      - 'nocodb-data:/usr/app/data/'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:8080/api/v1/health'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  nocodb-data:\n"
     },
@@ -2919,6 +3067,7 @@
       "description": "A next-generation discussion platform.",
       "category": "communication",
       "logo": "nodebb",
+      "documentation": "https://docs.nodebb.org/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -2939,6 +3088,7 @@
       "description": "ntfy is a simple HTTP-based pub-sub notification service. It allows you to send notifications to your phone or desktop via scripts from any computer, and/or using a REST API.",
       "category": "communication",
       "logo": "ntfy",
+      "documentation": "https://docs.ntfy.sh/",
       "secrets": [],
       "composeFile": "services:\n  ntfy:\n    ports:\n      - \"20150:80\"\n    image: binwiederhier/ntfy\n    command:\n      - serve\n    environment:\n      - FQDN_NTFY_80=localhost:20150\n      - 'NTFY_BASE_URL=localhost:20150'\n      - 'TZ=${TZ:-UTC}'\n      - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db\n      - NTFY_AUTH_FILE=/var/lib/ntfy/auth.db\n      - NTFY_WEB_PUSH_FILE=/var/cache/ntfy/webpush.db\n      - 'NTFY_BEHIND_PROXY=${NTFY_BEHIND_PROXY:-true}'\n      - 'NTFY_UPSTREAM_BASE_URL=${UPSTREAM_BASE_URL:-https://ntfy.sh}'\n      - 'NTFY_ENABLE_SIGNUP=${NTFY_ENABLE_SIGNUP:-true}'\n      - 'NTFY_ENABLE_LOGIN=${NTFY_ENABLE_LOGIN:-true}'\n      - 'NTFY_CACHE_DURATION=${NTFY_CACHE_DURATION:-24h}'\n      - 'NTFY_ATTACHMENT_TOTAL_SIZE_LIMIT=${NTFY_ATTACHMENT_TOTAL_SIZE_LIMIT:-1G}'\n      - 'NTFY_ATTACHMENT_FILE_SIZE_LIMIT=${NTFY_ATTACHMENT_FILE_SIZE_LIMIT:-10M}'\n      - 'NTFY_ATTACHMENT_EXPIRY_DURATION=${NTFY_ATTACHMENT_EXPIRY_DURATION:-24h}'\n      - 'NTFY_SMTP_SENDER_ADDR=${NTFY_SMTP_SENDER_ADDR:-smtp.your-domain.de}'\n      - 'NTFY_SMTP_SENDER_USER=${NTFY_SMTP_SENDER_USER:-no-reply@de}'\n      - 'NTFY_SMTP_SENDER_PASS=${NTFY_SMTP_SENDER_PASS:-password}'\n      - 'NTFY_SMTP_SENDER_FROM=${NTFY_SMTP_SENDER_FROM:-no-reply@de}'\n      - 'NTFY_KEEPALIVE_INTERVAL=${NTFY_KEEPALIVE_INTERVAL:-5m}'\n      - 'NTFY_MANAGER_INTERVAL=${NTFY_MANAGER_INTERVAL:-5m}'\n      - 'NTFY_VISITOR_MESSAGE_DAILY_LIMIT=${NTFY_VISITOR_MESSAGE_DAILY_LIMIT:-100}'\n      - 'NTFY_VISITOR_ATTACHMENT_DAILY_BANDWIDTH_LIMIT=${NTFY_VISITOR_ATTACHMENT_DAILY_BANDWIDTH_LIMIT:-1G}'\n      - 'NTFY_UPSTREAM_ACCESS_TOKEN=${UPSTREAM_ACCESS_TOKEN}'\n      - 'NTFY_AUTH_DEFAULT_ACCESS=${NTFY_AUTH_DEFAULT_ACCESS:-read-write}'\n      - 'NTFY_WEB_PUSH_PUBLIC_KEY=${NTFY_WEB_PUSH_PUBLIC_KEY}'\n      - 'NTFY_WEB_PUSH_PRIVATE_KEY=${NTFY_WEB_PUSH_PRIVATE_KEY}'\n      - 'NTFY_WEB_PUSH_EMAIL_ADDRESS=${NTFY_WEB_PUSH_EMAIL_ADDRESS}'\n    volumes:\n      - 'ntfy-cache:/var/cache/ntfy'\n      - 'ntfy-db:/var/lib/ntfy/'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -q --tries=1 http://localhost:80/v1/health -O - | grep -Eo ''\"healthy\"\\s*:\\s*true'' || exit 1'\n      interval: 60s\n      timeout: 10s\n      retries: 3\n      start_period: 40s\nvolumes:\n  ntfy-cache:\n  ntfy-db:\n"
     },
@@ -2947,6 +3097,7 @@
       "name": "Observium",
       "description": "Observium is a comprehensive network monitoring platform designed to deliver powerful monitoring capabilities, combined with an elegant and intuitive user interface.",
       "category": "monitoring",
+      "documentation": "https://docs.observium.org/",
       "secrets": [
         {
           "key": "PASSWORD_OBSERVIUMADMIN",
@@ -2982,6 +3133,7 @@
       "description": "Odoo is a suite of open-source business apps that cover all your company needs.",
       "category": "productivity",
       "logo": "odoo",
+      "documentation": "https://www.odoo.com/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -3001,6 +3153,7 @@
       "name": "Once Campfire",
       "description": "Super simple group chat, without a subscription.",
       "category": "communication",
+      "documentation": "https://github.com/basecamp/once-campfire",
       "secrets": [
         {
           "key": "BASE64_64_CAMPFIRE",
@@ -3016,6 +3169,7 @@
       "description": "Git server with CI/CD, kanban, and packages. Seamless integration. Unparalleled experience.",
       "category": "developer",
       "logo": "onedev",
+      "documentation": "https://docs.onedev.io/",
       "secrets": [
         {
           "key": "USER_DATABASE",
@@ -3046,6 +3200,7 @@
       "description": "Share sensitive information securely with self-destructing links that are only viewable once.",
       "category": "security",
       "logo": "onetimesecret",
+      "documentation": "https://docs.onetimesecret.com",
       "secrets": [
         {
           "key": "PASSWORD_REDIS",
@@ -3066,6 +3221,7 @@
       "description": "A self-hosted, open-source email archiving solution with full-text search capability.",
       "category": "communication",
       "logo": "open-archiver",
+      "documentation": "https://docs.openarchiver.com/",
       "secrets": [
         {
           "key": "HEX_64_ENCRYPTIONKEY",
@@ -3111,6 +3267,7 @@
       "description": "User-friendly AI Interface (Supports Ollama, OpenAI API, ...)",
       "category": "ai",
       "logo": "open-webui",
+      "documentation": "https://docs.openwebui.com",
       "secrets": [],
       "composeFile": "services:\n  open-webui:\n    ports:\n      - \"20157:8080\"\n    image: 'ghcr.io/open-webui/open-webui:main'\n    volumes:\n      - 'open-webui:/app/backend/data'\n    environment:\n      - FQDN_OPENWEBUI_8080=localhost:20157\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:8080'\n      interval: 5s\n      timeout: 30s\n      retries: 10\nvolumes:\n  open-webui: null\n"
     },
@@ -3120,6 +3277,7 @@
       "description": "AI-powered coding assistant with multi-provider support and browser automation.",
       "category": "ai",
       "logo": "openclaw",
+      "documentation": "https://coolify.io/docs/services/openclaw",
       "secrets": [
         {
           "key": "USER_OPENCLAW",
@@ -3145,6 +3303,7 @@
       "description": "Cloud-native observability platform for logs, metrics, traces, RUM, errors and session replays — a 140x cheaper alternative to Elasticsearch, Splunk and Datadog.",
       "category": "monitoring",
       "logo": "openobserve",
+      "documentation": "https://openobserve.ai/docs/",
       "secrets": [
         {
           "key": "PASSWORD_OPENOBSERVE",
@@ -3160,6 +3319,7 @@
       "description": "OrangeHRM open source HR management software.",
       "category": "productivity",
       "logo": "orangehrm",
+      "documentation": "https://starterhelp.orangehrm.com/hc/en-us",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -3184,6 +3344,7 @@
       "name": "Organizr",
       "description": "Homelab Services Organizer",
       "category": "productivity",
+      "documentation": "https://docs.organizr.app/",
       "secrets": [],
       "composeFile": "services:\n  organizr:\n    ports:\n      - \"20161:80\"\n    image: 'organizr/organizr:latest'\n    environment:\n      - FQDN_ORGANIZR_80=localhost:20161\n      - 'branch=${branch:-v2-master}'\n    volumes:\n      - 'organizr-data:/config'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'curl -sf http://localhost:80 || exit 1'\n      interval: 10s\n      timeout: 1s\n      retries: 3\nvolumes:\n  organizr-data:\n"
     },
@@ -3193,6 +3354,7 @@
       "description": "osTicket is a widely-used open source support ticket system.",
       "category": "tools",
       "logo": "osticket",
+      "documentation": "https://docs.osticket.com/en/latest/",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -3233,6 +3395,7 @@
       "description": "Overseerr is a request management and media discovery tool built to work with your existing Plex ecosystem.",
       "category": "media",
       "logo": "overseerr",
+      "documentation": "https://docs.overseerr.dev/getting-started/installation#docker",
       "secrets": [],
       "composeFile": "services:\n  overseerr:\n    ports:\n      - \"20163:5055\"\n    image: 'sctx/overseerr:latest'\n    environment:\n      - FQDN_OVERSEERR_5055=localhost:20163\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-America/Toronto}'\n    volumes:\n      - 'overseerr-config:/app/config'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '--tries'\n        - '1'\n        - '--no-verbose'\n        - '--spider'\n        - 'http://localhost:5055/api/v1/status'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  overseerr-config:\n"
     },
@@ -3242,6 +3405,7 @@
       "description": "OwnCloud with Open Web UI integrates file management with a powerful, user-friendly interface.",
       "category": "productivity",
       "logo": "owncloud",
+      "documentation": "https://owncloud.com/docs-guides/",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -3276,6 +3440,7 @@
       "name": "Pairdrop",
       "description": "Pairdrop is a self-hosted file sharing and collaboration platform, offering secure file sharing and collaboration capabilities for efficient teamwork.",
       "category": "productivity",
+      "documentation": "https://pairdrop.net/",
       "secrets": [],
       "composeFile": "services:\n  pairdrop:\n    ports:\n      - \"20165:3000\"\n    image: 'lscr.io/linuxserver/pairdrop:latest'\n    environment:\n      - FQDN_PAIRDROP_3000=localhost:20165\n      - PUID=1000\n      - PGID=1000\n      - TZ=Europe/Madrid\n      - DEBUG_MODE=false\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:3000'\n      interval: 2s\n      timeout: 10s\n      retries: 15\n"
     },
@@ -3285,6 +3450,7 @@
       "description": "Passbolt Community Edition (CE) API. The JSON API for the open source password manager for teams!",
       "category": "security",
       "logo": "passbolt",
+      "documentation": "https://www.passbolt.com/ce/docker",
       "secrets": [
         {
           "key": "USER_PASSBOLT",
@@ -3310,6 +3476,7 @@
       "description": "Open-Source Billing, Built for Hosting",
       "category": "finance",
       "logo": "paymenter",
+      "documentation": "https://paymenter.org/docs/guides/docker",
       "secrets": [
         {
           "key": "PASSWORD_MYSQL",
@@ -3345,6 +3512,7 @@
       "description": "Penpot is the first Open Source design and prototyping platform for product teams.",
       "category": "productivity",
       "logo": "penpot-with-s3",
+      "documentation": "https://help.penpot.app/technical-guide/getting-started/#install-with-docker",
       "secrets": [
         {
           "key": "REALBASE64_64_PENPOT",
@@ -3380,6 +3548,7 @@
       "description": "Penpot is the first Open Source design and prototyping platform for product teams.",
       "category": "productivity",
       "logo": "penpot",
+      "documentation": "https://help.penpot.app/technical-guide/getting-started/#install-with-docker",
       "secrets": [
         {
           "key": "REALBASE64_64_PENPOT",
@@ -3405,6 +3574,7 @@
       "description": "pgAdmin is a web-based database management tool for administering your PostgreSQL databases through a user-friendly interface.",
       "category": "database",
       "logo": "pgadmin",
+      "documentation": "https://www.pgadmin.org/docs/pgadmin4/latest/container_deployment.html",
       "secrets": [],
       "composeFile": "services:\n  pgadmin:\n    ports:\n      - \"20170:80\"\n    image: 'dpage/pgadmin4:latest'\n    environment:\n      - FQDN_PGADMIN=localhost:20170\n      - 'PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:?}'\n      - 'PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:?}'\n    volumes:\n      - 'pgadmin-data:/var/lib/pgadmin'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-qO-'\n        - 'http://localhost:80/login'\n      interval: 5s\n      timeout: 10s\n      retries: 5\nvolumes:\n  pgadmin-data:\n"
     },
@@ -3413,6 +3583,7 @@
       "name": "Pgbackweb",
       "description": "Effortless PostgreSQL backups with a user-friendly web interface!",
       "category": "tools",
+      "documentation": "https://github.com/eduardolat/pgbackweb",
       "secrets": [
         {
           "key": "PASSWORD_64_PGBACKWEB",
@@ -3438,6 +3609,7 @@
       "description": "The open source project management tool",
       "category": "productivity",
       "logo": "plane",
+      "documentation": "https://docs.plane.so/self-hosting/methods/docker-compose",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -3488,6 +3660,7 @@
       "description": "Plex organizes video, music and photos from personal media libraries and streams them to smart TVs, streaming boxes and mobile devices.",
       "category": "media",
       "logo": "plex",
+      "documentation": "https://docs.linuxserver.io/images/docker-plex/",
       "secrets": [],
       "composeFile": "services:\n  plex:\n    ports:\n      - \"20173:32400\"\n    image: 'lscr.io/linuxserver/plex:latest'\n    environment:\n      - FQDN_PLEX_32400=localhost:20173\n      - _APP_URL=$localhost:20173\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-America/Toronto}'\n      - 'PLEX_CLAIM=${PLEX_CLAIM}'\n    volumes:\n      - 'plex-config:/config'\n      - 'plex-tv:/tv'\n      - 'plex-movies:/movies'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:32400/identity'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  plex-config:\n  plex-tv:\n  plex-movies:\n"
     },
@@ -3497,6 +3670,7 @@
       "description": "Plunk, The Open-Source Email Platform for AWS",
       "category": "communication",
       "logo": "plunk",
+      "documentation": "https://docs.useplunk.com/getting-started/introduction",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -3521,6 +3695,7 @@
       "name": "Pocket id With Postgresql",
       "description": "A simple and secure OIDC provider with passkey authentication",
       "category": "security",
+      "documentation": "https://pocket-id.org/docs/setup/installation",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -3546,6 +3721,7 @@
       "description": "A simple and secure OIDC provider with passkey authentication",
       "category": "security",
       "logo": "pocket-id",
+      "documentation": "https://pocket-id.org/docs/setup/installation",
       "secrets": [],
       "composeFile": "services:\n  pocket-id:\n    ports:\n      - \"20176:1411\"\n    image: 'ghcr.io/pocket-id/pocket-id:v1.13'\n    environment:\n      - FQDN_POCKETID_1411=localhost:20176\n      - 'APP_URL=localhost:20176'\n      - 'TRUST_PROXY=${TRUST_PROXY:-true}'\n      - 'MAXMIND_LICENSE_KEY=${MAXMIND_LICENSE_KEY}'\n      - 'SMTP_HOST=${SMTP_HOST}'\n      - 'SMTP_PORT=${SMTP_PORT:-587}'\n      - 'SMTP_FROM=${SMTP_FROM}'\n      - 'SMTP_USER=${SMTP_USER}'\n      - 'SMTP_PASSWORD=${SMTP_PASSWORD}'\n      - 'SMTP_TLS=${SMTP_TLS:-starttls}'\n      - 'SMTP_SKIP_CERT_VERIFY=${SMTP_SKIP_CERT_VERIFY:-false}'\n      - 'EMAIL_LOGIN_NOTIFICATION_ENABLED=${EMAIL_LOGIN_NOTIFICATION_ENABLED:-false}'\n      - 'EMAIL_ONE_TIME_ACCESS_AS_ADMIN_ENABLED=${EMAIL_ONE_TIME_ACCESS_AS_ADMIN_ENABLED:-false}'\n      - 'EMAIL_API_KEY_EXPIRATION_ENABLED=${EMAIL_API_KEY_EXPIRATION_ENABLED:-false}'\n      - 'PUID=${PUID:-1000}'\n      - 'PGID=${PGID:-1000}'\n    volumes:\n      - 'pocket-id-data:/app/data'\n    healthcheck:\n      test:\n        - CMD\n        - /app/pocket-id\n        - healthcheck\n      interval: 30s\n      timeout: 5s\n      retries: 3\n      start_period: 10s\nvolumes:\n  pocket-id-data:\n"
     },
@@ -3555,6 +3731,7 @@
       "description": "Open Source backend for your next SaaS and Mobile app in 1 file",
       "category": "developer",
       "logo": "pocketbase",
+      "documentation": "https://pocketbase.io/docs/",
       "secrets": [],
       "composeFile": "services:\n  pocketbase:\n    ports:\n      - \"20177:8080\"\n    image: 'ghcr.io/coollabsio/pocketbase:latest'\n    environment:\n      - FQDN_POCKETBASE_8080=localhost:20177\n    volumes:\n      - 'pocketbase-data:/app/pb_data'\n      - 'pocketbase-hooks:/app/pb_hooks'\nvolumes:\n  pocketbase-data:\n  pocketbase-hooks:\n"
     },
@@ -3564,6 +3741,7 @@
       "description": "Portainer is a lightweight management UI for Docker",
       "category": "tools",
       "logo": "portainer",
+      "documentation": "https://docs.portainer.io",
       "secrets": [],
       "composeFile": "services:\n  portainer:\n    ports:\n      - \"20178:9000\"\n    image: 'portainer/portainer-ce:alpine'\n    environment:\n      - FQDN_PORTAINER_9000=localhost:20178\n    volumes:\n      - '/var/run/docker.sock:/var/run/docker.sock'\n      - 'portainer_data:/data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:9000/'\n      interval: 20s\n      timeout: 20s\n      retries: 10\nvolumes:\n  portainer_data:\n"
     },
@@ -3572,6 +3750,7 @@
       "name": "Prefect",
       "description": "Prefect is an orchestration and observability platform that empowers developers to build and scale workflows quickly.",
       "category": "automation",
+      "documentation": "https://www.prefect.io/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -3597,6 +3776,7 @@
       "description": "PrivateBin is a minimalist, open source online pastebin where the server has zero knowledge of pasted data.",
       "category": "security",
       "logo": "privatebin",
+      "documentation": "https://github.com/PrivateBin/PrivateBin/blob/master/doc/README.md",
       "secrets": [],
       "composeFile": "services:\n  privatebin:\n    ports:\n      - \"20180:8080\"\n    image: privatebin/nginx-fpm-alpine\n    environment:\n      - FQDN_PRIVATEBIN_8080=localhost:20180\n    volumes:\n      - 'privatebin_data:/srv/data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:8080/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  privatebin_data:\n"
     },
@@ -3606,6 +3786,7 @@
       "description": "Prowlarr⁠ is a indexer manager/proxy built on the popular arr .net/reactjs base stack to integrate with your various PVR apps.",
       "category": "media",
       "logo": "prowlarr",
+      "documentation": "https://hub.docker.com/r/linuxserver/prowlarr",
       "secrets": [],
       "composeFile": "services:\n  prowlarr:\n    ports:\n      - \"20181:9696\"\n    image: 'lscr.io/linuxserver/prowlarr:latest'\n    environment:\n      - FQDN_PROWLARR_9696=localhost:20181\n      - _APP_URL=$localhost:20181\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-America/Toronto}'\n    volumes:\n      - 'prowlarr-config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:9696/ping'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  prowlarr-config:\n"
     },
@@ -3615,6 +3796,7 @@
       "description": "A simple proxy server created for https://hoppscotch.io - CORS proxy",
       "category": "tools",
       "logo": "proxyscotch",
+      "documentation": "https://github.com/hoppscotch/proxyscotch",
       "secrets": [
         {
           "key": "PASSWORD_TOKEN",
@@ -3630,6 +3812,7 @@
       "description": "The qBittorrent project aims to provide an open-source software alternative to μTorrent.",
       "category": "media",
       "logo": "qbittorrent",
+      "documentation": "https://docs.linuxserver.io/images/docker-qbittorrent/",
       "secrets": [],
       "composeFile": "services:\n  qbit:\n    ports:\n      - \"20183:8080\"\n    image: 'lscr.io/linuxserver/qbittorrent:latest'\n    environment:\n      - 'WEBUI_PORT=${WEBUI_PORT:-8080}'\n      - PUID=1000\n      - PGID=1000\n    volumes:\n      - 'qbittorrent-config:/config'\n      - 'qbittorrent-downloads:/downloads'\n      - 'qbittorrent-torrents:/torrents'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:8080/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n  vuetorrent-backend:\n    image: 'ghcr.io/vuetorrent/vuetorrent-backend:latest'\n    environment:\n      - FQDN_QBITORRENT_8080=localhost:20183\n      - 'PORT=${WEBUI_PORT:-8080}'\n      - 'QBIT_BASE=localhost:20183'\n      - 'RELEASE_TYPE=${RELEASE_TYPE:-stable}'\n      - 'UPDATE_VT_CRON=${UPDATE_VT_CRON:-\"0 * * * *\"}'\n    volumes:\n      - 'vuetorrent-config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:8080/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  qbittorrent-config:\n  qbittorrent-downloads:\n  qbittorrent-torrents:\n  vuetorrent-config:\n"
     },
@@ -3639,6 +3822,7 @@
       "description": "Radarr⁠ - A fork of Sonarr to work with movies à la Couchpotato.",
       "category": "media",
       "logo": "radarr",
+      "documentation": "https://hub.docker.com/r/linuxserver/radarr",
       "secrets": [],
       "composeFile": "services:\n  radarr:\n    ports:\n      - \"20184:7878\"\n    image: 'lscr.io/linuxserver/radarr:latest'\n    environment:\n      - FQDN_RADARR_7878=localhost:20184\n      - _APP_URL=$localhost:20184\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-America/Toronto}'\n    volumes:\n      - 'radarr-config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:7878/ping'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  radarr-config:\n"
     },
@@ -3648,6 +3832,7 @@
       "description": "Rallly is an open-source scheduling and collaboration tool designed to make organizing events and meetings easier.",
       "category": "productivity",
       "logo": "rallly",
+      "documentation": "https://support.rallly.co/self-hosting/introduction",
       "secrets": [
         {
           "key": "PASSWORD_POSTGRES",
@@ -3673,6 +3858,7 @@
       "description": "Simple web application that lets you save the precious readable content of web pages you like and want to keep forever.",
       "category": "productivity",
       "logo": "readeck",
+      "documentation": "https://readeck.org/en/docs/",
       "secrets": [],
       "composeFile": "services:\n  readeck:\n    ports:\n      - \"20186:8000\"\n    image: 'codeberg.org/readeck/readeck:latest'\n    environment:\n      - FQDN_READECK=localhost:20186\n      - 'READECK_USE_X_FORWARDED=${READECK_USE_X_FORWARDED:-true}'\n    volumes:\n      - 'readeck_data:/readeck'\n    healthcheck:\n      test:\n        - CMD\n        - /bin/readeck\n        - healthcheck\n        - '-config'\n        - config.toml\n      interval: 30s\n      timeout: 2s\n      retries: 3\nvolumes:\n  readeck_data:\n"
     },
@@ -3681,6 +3867,7 @@
       "name": "Redis Insight",
       "description": "Redis Insight lets you do both GUI- and CLI-based interactions in a fully-featured desktop GUI client.",
       "category": "monitoring",
+      "documentation": "https://redis.io/docs/latest/operate/redisinsight/",
       "secrets": [
         {
           "key": "PASSWORD_RI_ENCRYPTION_KEY",
@@ -3696,6 +3883,7 @@
       "description": "An alternative private front-end to Reddit, with its origins in Libreddit.",
       "category": "productivity",
       "logo": "redlib",
+      "documentation": "https://github.com/redlib-org/redlib",
       "secrets": [],
       "composeFile": "services:\n  redlib:\n    ports:\n      - \"20188:8080\"\n    image: 'quay.io/redlib/redlib:latest'\n    environment:\n      - FQDN_REDLIB_8080=localhost:20188\n      - 'REDLIB_SFW_ONLY=${REDLIB_SFW_ONLY:-off}'\n      - 'REDLIB_BANNER=${REDLIB_BANNER:-\"\"}'\n      - 'REDLIB_ROBOTS_DISABLE_INDEXING=${REDLIB_ROBOTS_DISABLE_INDEXING:-off}'\n      - 'REDLIB_DEFAULT_FRONT_PAGE=${REDLIB_DEFAULT_FRONT_PAGE:-worldnews}'\n      - 'REDLIB_PUSHSHIFT_FRONTEND=${REDLIB_PUSHSHIFT_FRONTEND:-undelete.pullpush.io}'\n      - 'REDLIB_DEFAULT_LAYOUT=${REDLIB_DEFAULT_LAYOUT:-card}'\n      - 'REDLIB_DEFAULT_WIDE=${REDLIB_DEFAULT_WIDE:-off}'\n      - 'REDLIB_DEFAULT_POST_SORT=${REDLIB_DEFAULT_POST_SORT:-hot}'\n      - 'REDLIB_DEFAULT_COMMENT_SORT=${REDLIB_DEFAULT_COMMENT_SORT:-confidence}'\n      - 'REDLIB_DEFAULT_BLUR_SPOILER=${REDLIB_DEFAULT_BLUR_SPOILER:-off}'\n      - 'REDLIB_DEFAULT_SHOW_NSFW=${REDLIB_DEFAULT_SHOW_NSFW:-off}'\n      - 'REDLIB_DEFAULT_BLUR_NSFW=${REDLIB_DEFAULT_BLUR_NSFW:-off}'\n      - 'REDLIB_DEFAULT_USE_HLS=${REDLIB_DEFAULT_USE_HLS:-off}'\n      - 'REDLIB_DEFAULT_HIDE_HLS_NOTIFICATION=${REDLIB_DEFAULT_HIDE_HLS_NOTIFICATION:-off}'\n      - 'REDLIB_DEFAULT_AUTOPLAY_VIDEOS=${REDLIB_DEFAULT_AUTOPLAY_VIDEOS:-off}'\n      - 'REDLIB_DEFAULT_SUBSCRIPTIONS=${REDLIB_DEFAULT_SUBSCRIPTIONS:-\"\"}'\n      - 'REDLIB_DEFAULT_HIDE_AWARDS=${REDLIB_DEFAULT_HIDE_AWARDS:-off}'\n      - 'REDLIB_DEFAULT_HIDE_SIDEBAR_AND_SUMMARY=${REDLIB_DEFAULT_HIDE_SIDEBAR_AND_SUMMARY:-off}'\n      - 'REDLIB_DEFAULT_DISABLE_VISIT_REDDIT_CONFIRMATION=${REDLIB_DEFAULT_DISABLE_VISIT_REDDIT_CONFIRMATION:-off}'\n      - 'REDLIB_DEFAULT_HIDE_SCORE=${REDLIB_DEFAULT_HIDE_SCORE:-off}'\n      - 'REDLIB_DEFAULT_FIXED_NAVBAR=${REDLIB_DEFAULT_FIXED_NAVBAR:-on}'\n    user: nobody\n    security_opt:\n      - 'no-new-privileges:true'\n    cap_drop:\n      - ALL\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:8080/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n"
     },
@@ -3705,6 +3893,7 @@
       "description": "Redmine is a flexible project management web application.",
       "category": "productivity",
       "logo": "redmine",
+      "documentation": "https://www.redmine.org/",
       "secrets": [
         {
           "key": "PASSWORD_64_REDMINE",
@@ -3730,6 +3919,7 @@
       "description": "Build and scale stateful workloads with long-lived processes",
       "category": "developer",
       "logo": "rivet-engine",
+      "documentation": "https://www.rivet.dev/docs",
       "secrets": [
         {
           "key": "BASE64_TOKEN",
@@ -3745,6 +3935,7 @@
       "description": "Self-hosted, secure and highly customizable open-source communication platform for organizations with sophisticated security and privacy concerns.",
       "category": "communication",
       "logo": "rocketchat",
+      "documentation": "https://github.com/RocketChat/Rocket.Chat",
       "secrets": [],
       "composeFile": "services:\n  rocketchat:\n    ports:\n      - \"20191:3000\"\n    image: 'registry.rocket.chat/rocketchat/rocket.chat:8.0.1'\n    environment:\n      - FQDN_ROCKETCHAT_3000=localhost:20191\n      - 'MONGO_URL=mongodb://${MONGODB_ADVERTISED_HOSTNAME:-mongodb}:${MONGODB_INITIAL_PRIMARY_PORT_NUMBER:-27017}/${MONGODB_DATABASE:-rocketchat}?replicaSet=${MONGODB_REPLICA_SET_NAME:-rs0}'\n      - 'MONGO_OPLOG_URL=mongodb://${MONGODB_ADVERTISED_HOSTNAME:-mongodb}:${MONGODB_INITIAL_PRIMARY_PORT_NUMBER:-27017}/local?replicaSet=${MONGODB_REPLICA_SET_NAME:-rs0}'\n      - ROOT_URL=$localhost:20191\n      - DEPLOY_METHOD=docker\n      - REG_TOKEN=$REG_TOKEN\n      - 'MAIL_URL=${MAIL_URL:-test@example.com}'\n    depends_on:\n      mongodb:\n        condition: service_healthy\n    healthcheck:\n      test:\n        - CMD\n        - node\n        - '--eval'\n        - \"const http = require('http'); const options = { host: '0.0.0.0', port: 3000, timeout: 2000, path: '/health' }; const healthCheck = http.request(options, (res) => { console.log('HEALTHCHECK STATUS:', res.statusCode); if (res.statusCode == 200) { process.exit(0); } else { process.exit(1); } }); healthCheck.on('error', function (err) { console.error('ERROR'); process.exit(1); }); healthCheck.end();\"\n      interval: 2s\n      timeout: 10s\n      retries: 15\n  mongodb:\n    image: 'mongo:7'\n    volumes:\n      - 'mongodb_data:/data/db'\n    command: \"sh -c \\\"\\n  mongod --replSet ${MONGODB_REPLICA_SET_NAME:-rs0} --bind_ip_all &\\n  sleep 5 &&\\n  mongosh --eval 'rs.initiate({_id:\\\\\\\"${MONGODB_REPLICA_SET_NAME:-rs0}\\\\\\\", members:[{_id:0, host:\\\\\\\"mongodb:27017\\\\\\\"}]})' ||\\n  true &&\\n  wait\\n\\\"\\n\"\n    healthcheck:\n      test:\n        - CMD\n        - mongosh\n        - '--quiet'\n        - '--eval'\n        - \"db.adminCommand('ping')\"\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  mongodb_data:\n"
     },
@@ -3754,6 +3945,7 @@
       "description": "Roll your own tracker! Ryot is a self-hosted platform for tracking various aspects of life such as media consumption, fitness activities, and more.",
       "category": "productivity",
       "logo": "ryot",
+      "documentation": "https://github.com/ignisda/ryot",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -3779,6 +3971,7 @@
       "description": "Open source cloud storage system for file sync, share and document collaboration",
       "category": "tools",
       "logo": "seafile",
+      "documentation": "https://manual.seafile.com",
       "secrets": [
         {
           "key": "PASSWORD_MYSQLROOT",
@@ -3814,6 +4007,7 @@
       "description": "The fastest Postgres change data capture",
       "category": "analytics",
       "logo": "sequin",
+      "documentation": "https://sequinstream.com/docs/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -3844,6 +4038,7 @@
       "description": "Email observability platform for monitoring and analyzing email systems.",
       "category": "monitoring",
       "logo": "sessy",
+      "documentation": "https://github.com/marckohlbrugge/sessy/blob/main/docs/docker-deployment.md",
       "secrets": [
         {
           "key": "HEX_64_SESSYSECRET",
@@ -3869,6 +4064,7 @@
       "description": "The definitive self-hosted URL shortener",
       "category": "productivity",
       "logo": "shlink",
+      "documentation": "https://shlink.io/",
       "secrets": [
         {
           "key": "BASE64_SHLINKAPIKEY",
@@ -3883,6 +4079,7 @@
       "name": "Silverbullet",
       "description": "SilverBullet is a tool to develop, organize, and structure your personal knowledge and to make it universally accessible across all your devices.",
       "category": "productivity",
+      "documentation": "https://v2.silverbullet.md/Install/Configuration",
       "secrets": [
         {
           "key": "USER_SILVERBULLET",
@@ -3903,6 +4100,7 @@
       "description": "A privacy-first, self-hosted, fully open source personal knowledge management software, written in typescript and golang.",
       "category": "cms",
       "logo": "siyuan",
+      "documentation": "https://github.com/siyuan-note/siyuan",
       "secrets": [
         {
           "key": "PASSWORD_SIYUAN",
@@ -3918,6 +4116,7 @@
       "description": "An open source, self-hosted links shortener and sharing platform.",
       "category": "productivity",
       "logo": "slash",
+      "documentation": "https://github.com/yourselfhosted/slash",
       "secrets": [],
       "composeFile": "services:\n  slash:\n    ports:\n      - \"20199:5231\"\n    image: yourselfhosted/slash\n    environment:\n      - FQDN_SLASH_5231=localhost:20199\n    volumes:\n      - 'slash-data:/var/opt/slash'\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:5231'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  slash-data:\n"
     },
@@ -3927,6 +4126,7 @@
       "description": "Manage soketi websocket server and apps with ease.",
       "category": "analytics",
       "logo": "soketi-app-manager",
+      "documentation": "https://github.com/rahulhaque/soketi-app-manager-filament",
       "secrets": [],
       "composeFile": "services:\n  soketi-app-manager:\n    ports:\n      - \"20200:8080\"\n    image: 'ghcr.io/rahulhaque/soketi-app-manager-filament-alpine:latest'\n    environment:\n      - FQDN_SOKETIAPPMANAGER_8080=localhost:20200\n      - AUTORUN_ENABLED=true\n      - 'AUTORUN_LARAVEL_MIGRATION=${AUTORUN_LARAVEL_MIGRATION:-true}'\n      - 'APP_DEBUG=${APP_DEBUG:-false}'\n      - APP_URL=$localhost:20200\n      - APP_KEY=$APP_KEY\n      - DB_CONNECTION=$DB_CONNECTION\n      - DB_HOST=$DB_HOST\n      - DB_PORT=$DB_PORT\n      - DB_DATABASE=$DB_DATABASE\n      - DB_USERNAME=$DB_USERNAME\n      - DB_PASSWORD=$DB_PASSWORD\n      - PUSHER_HOST=$PUSHER_HOST\n      - PUSHER_PORT=$PUSHER_PORT\n      - PUSHER_SCHEME=$PUSHER_SCHEME\n      - PUSHER_APP_CLUSTER=$PUSHER_APP_CLUSTER\n      - SOKETI_DB_REDIS_USERNAME=$SOKETI_DB_REDIS_USERNAME\n      - SOKETI_DB_REDIS_PASSWORD=$SOKETI_DB_REDIS_PASSWORD\n      - METRICS_HOST=$METRICS_HOST\n    healthcheck:\n      test:\n        - CMD\n        - php-fpm-healthcheck\n      start_period: 10s\n"
     },
@@ -3935,6 +4135,7 @@
       "name": "Soketi",
       "description": "Soketi is your simple, fast, and resilient open-source WebSockets server.",
       "category": "communication",
+      "documentation": "https://docs.soketi.app",
       "secrets": [
         {
           "key": "USER_SOKETI",
@@ -3960,6 +4161,7 @@
       "description": "Sonarr⁠ (formerly NZBdrone) is a PVR for usenet and bittorrent users. It can monitor multiple RSS feeds for new episodes of your favorite shows and will grab, sort and rename them. It can also be configured to automatically upgrade the quality of files already downloaded when a better quality format becomes available.",
       "category": "media",
       "logo": "sonarr",
+      "documentation": "https://hub.docker.com/r/linuxserver/sonarr",
       "secrets": [],
       "composeFile": "services:\n  sonarr:\n    ports:\n      - \"20202:8989\"\n    image: 'lscr.io/linuxserver/sonarr:latest'\n    environment:\n      - FQDN_SONARR_8989=localhost:20202\n      - _APP_URL=$localhost:20202\n      - PUID=1000\n      - PGID=1000\n      - 'TZ=${TZ:-America/Toronto}'\n    volumes:\n      - 'sonarr-config:/config'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://localhost:8989/ping'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  sonarr-config:\n"
     },
@@ -3968,6 +4170,7 @@
       "name": "Spacebot",
       "description": "An agentic AI system with specialized processes for thinking, working, and remembering.",
       "category": "ai",
+      "documentation": "https://docs.spacebot.sh/docker",
       "secrets": [],
       "composeFile": "services:\n  spacebot:\n    ports:\n      - \"20203:19898\"\n    image: 'ghcr.io/spacedriveapp/spacebot:full'\n    environment:\n      - FQDN_SPACEBOT_19898=localhost:20203\n      - 'ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}'\n      - 'OPENAI_API_KEY=${OPENAI_API_KEY}'\n      - 'OPENROUTER_API_KEY=${OPENROUTER_API_KEY}'\n      - 'DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}'\n      - 'SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}'\n      - 'SLACK_APP_TOKEN=${SLACK_APP_TOKEN}'\n      - 'BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY}'\n      - 'SPACEBOT_CHANNEL_MODEL=${SPACEBOT_CHANNEL_MODEL}'\n      - 'SPACEBOT_WORKER_MODEL=${SPACEBOT_WORKER_MODEL}'\n    volumes:\n      - 'spacebot-data:/data'\n    security_opt:\n      - seccomp=unconfined\n    shm_size: 1g\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-sf'\n        - 'http://localhost:19898/api/health'\n      interval: 30s\n      timeout: 5s\n      retries: 3\nvolumes:\n  spacebot-data:\n"
     },
@@ -3977,6 +4180,7 @@
       "description": "SparkyFitness is a comprehensive fitness tracking and management application designed to help users monitor their nutrition, exercise, and body measurements. It provides tools for daily progress tracking, goal setting, and insightful reports to support a healthy lifestyle.",
       "category": "tools",
       "logo": "sparkyfitness",
+      "documentation": "https://codewithcj.github.io/SparkyFitness/",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -4007,6 +4211,7 @@
       "description": "Effortlessly deploy a status page and start monitoring endpoints in minutes",
       "category": "monitoring",
       "logo": "statusnook",
+      "documentation": "https://statusnook.com",
       "secrets": [],
       "composeFile": "services:\n  statusnook:\n    ports:\n      - \"20205:8000\"\n    environment:\n      - FQDN_STATUSNOOK_8000=localhost:20205\n    volumes:\n      - 'statusnook-data:/app/statusnook-data'\n    image: goksan/statusnook\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '-q'\n        - '--spider'\n        - 'http://127.0.0.1:8000'\n      interval: 2s\n      timeout: 10s\n      retries: 15\nvolumes:\n  statusnook-data:\n"
     },
@@ -4016,6 +4221,7 @@
       "description": "Stirling is a powerful web based PDF manipulation tool",
       "category": "productivity",
       "logo": "stirling-pdf",
+      "documentation": "https://github.com/Stirling-Tools/Stirling-PDF",
       "secrets": [],
       "composeFile": "services:\n  stirling-pdf:\n    ports:\n      - \"20206:8080\"\n    image: 'stirlingtools/stirling-pdf:latest'\n    volumes:\n      - 'stirling-training-data:/usr/share/tesseract-ocr/5/tessdata'\n      - 'stirling-configs:/configs'\n      - 'stirling-custom-files:/customFiles/'\n      - 'stirling-logs:/logs/'\n    environment:\n      - FQDN_SPDF_8080=localhost:20206\n      - DOCKER_ENABLE_SECURITY=false\n    healthcheck:\n      test: 'curl --fail --silent http://127.0.0.1:8080/api/v1/info/status | grep -q \"UP\" || exit 1'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  stirling-training-data:\n  stirling-configs:\n  stirling-custom-files:\n  stirling-logs:\n"
     },
@@ -4025,6 +4231,7 @@
       "description": "Open-source headless CMS to build powerful APIs with built-in content management.",
       "category": "developer",
       "logo": "strapi",
+      "documentation": "https://docs.strapi.io/",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -4055,6 +4262,7 @@
       "description": "An open-source authentication solution that simplifies the implementation of secure user authentication and session management for web and mobile applications.",
       "category": "security",
       "logo": "supertokens-with-mysql",
+      "documentation": "https://supertokens.com/docs/guides",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -4075,6 +4283,7 @@
       "description": "An open-source authentication solution that simplifies the implementation of secure user authentication and session management for web and mobile applications.",
       "category": "security",
       "logo": "supertokens-with-postgresql",
+      "documentation": "https://supertokens.com/docs/guides",
       "secrets": [
         {
           "key": "USER_POSTGRESQL",
@@ -4095,6 +4304,7 @@
       "description": "An all-in-one personal finance platform.",
       "category": "finance",
       "logo": "sure",
+      "documentation": "https://github.com/we-promise/sure",
       "secrets": [
         {
           "key": "BASE64_BASE",
@@ -4119,6 +4329,7 @@
       "name": "Teable",
       "description": "Teable is a powerful visual interface built on relational databases (PostgreSQL).",
       "category": "productivity",
+      "documentation": "https://help.teable.io/",
       "secrets": [
         {
           "key": "PASSWORD_POSTGRES",
@@ -4149,6 +4360,7 @@
       "description": "Tolgee is a localization management platform for developers and translators.",
       "category": "productivity",
       "logo": "tolgee",
+      "documentation": "https://tolgee.io/",
       "secrets": [
         {
           "key": "PASSWORD_TOLGEE",
@@ -4179,6 +4391,7 @@
       "description": "A blazingly fast Rust/SQLite/Wasmtime app server with type-safe APIs",
       "category": "developer",
       "logo": "trailbase",
+      "documentation": "https://trailbase.io/",
       "secrets": [],
       "composeFile": "services:\n  trailbase:\n    ports:\n      - \"20213:4000\"\n    image: 'trailbase/trailbase:0.22.6'\n    environment:\n      - FQDN_TRAILBASE_4000=localhost:20213\n    volumes:\n      - 'trailbase-data:/app/traildepot'\nvolumes:\n  trailbase-data:\n"
     },
@@ -4188,6 +4401,7 @@
       "description": "Fast, easy, and free BitTorrent client.",
       "category": "media",
       "logo": "transmission",
+      "documentation": "https://docs.linuxserver.io/images/docker-transmission/",
       "secrets": [
         {
           "key": "USER_ADMIN",
@@ -4207,6 +4421,7 @@
       "name": "Trigger",
       "description": "The open source background jobs platform for developers",
       "category": "automation",
+      "documentation": "https://trigger.dev/docs/self-hosting/overview",
       "secrets": [
         {
           "key": "PASSWORD_64_SESSION",
@@ -4262,6 +4477,7 @@
       "description": "Build your personal knowledge base with TriliumNext Notes.",
       "category": "productivity",
       "logo": "triliumnext",
+      "documentation": "https://github.com/TriliumNext/Trilium",
       "secrets": [],
       "composeFile": "services:\n  triliumnext:\n    ports:\n      - \"20216:8080\"\n    image: 'ghcr.io/triliumnext/trilium:stable'\n    platform: linux/amd64\n    environment:\n      - FQDN_TRILIUMNEXT_8080=localhost:20216\n      - 'TZ=${TZ:-Europe/Berlin}'\n    volumes:\n      - 'triliumnext_data:/home/node/trilium-data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget --quiet --tries=1 --spider http://127.0.0.1:8080/api/health-check || exit 1'\n      interval: 5s\n      timeout: 20s\n      retries: 10\nvolumes:\n  triliumnext_data:\n"
     },
@@ -4271,6 +4487,7 @@
       "description": "Twenty is a CRM designed to fit your unique business needs.",
       "category": "productivity",
       "logo": "twenty",
+      "documentation": "https://docs.twenty.com",
       "secrets": [
         {
           "key": "BASE64_32_SECRET",
@@ -4296,6 +4513,7 @@
       "description": "Cutting-edge, in-memory search engine for mere mortals. Knowledge of rocket science optional.",
       "category": "developer",
       "logo": "typesense",
+      "documentation": "https://typesense.org/docs",
       "secrets": [],
       "composeFile": "services:\n  typesense:\n    ports:\n      - \"20218:8108\"\n    image: 'typesense/typesense:28.0'\n    environment:\n      - FQDN_TYPESENSE_8108=localhost:20218\n      - 'TYPESENSE_ENABLE_CORS=${TYPESENSE_ENABLE_CORS:-true}'\n      - TYPESENSE_DATA_DIR=/data\n      - 'TYPESENSE_API_KEY=${TYPESENSE_API_KEY:?}'\n    volumes:\n      - 'typesense_data:/data'\n    healthcheck:\n      test:\n        - CMD\n        - bash\n        - '-c'\n        - 'exec 3<>/dev/tcp/localhost/8108 && printf ''GET /health HTTP/1.1\\r\\nConnection: close\\r\\n\\r\\n'' >&3 && head -n1 <&3 | grep ''200'' && exec 3>&-'\n      retries: 5\n      timeout: 7s\nvolumes:\n  typesense_data:\n"
     },
@@ -4305,6 +4523,7 @@
       "description": "Umami is web analytics platform which provides insights into visitor behavior without compromising user privacy.",
       "category": "analytics",
       "logo": "umami",
+      "documentation": "https://umami.is",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -4330,6 +4549,7 @@
       "description": "Open source feature flag management for enterprises.",
       "category": "tools",
       "logo": "unleash-with-postgresql",
+      "documentation": "https://docs.getunleash.io",
       "secrets": [
         {
           "key": "PASSWORD_UNLEASH",
@@ -4355,6 +4575,7 @@
       "description": "Open source feature flag management for enterprises.",
       "category": "tools",
       "logo": "unleash-without-database",
+      "documentation": "https://docs.getunleash.io",
       "secrets": [
         {
           "key": "PASSWORD_UNLEASH",
@@ -4369,6 +4590,7 @@
       "name": "Unstructured",
       "description": "Unstructured provides a platform and tools to ingest and process unstructured documents for Retrieval Augmented Generation (RAG) and model fine-tuning.",
       "category": "ai",
+      "documentation": "https://github.com/Unstructured-IO/unstructured-api?tab=readme-ov-file#--general-pre-processing-pipeline-for-documents",
       "secrets": [
         {
           "key": "PASSWORD_APIKEY",
@@ -4384,6 +4606,7 @@
       "description": "Uptime Kuma is a monitoring tool for tracking the status and performance of your applications in real-time.",
       "category": "monitoring",
       "logo": "uptime-kuma-with-mariadb",
+      "documentation": "https://github.com/louislam/uptime-kuma?tab=readme-ov-file",
       "secrets": [
         {
           "key": "USER_MARIADB",
@@ -4409,6 +4632,7 @@
       "description": "Uptime Kuma is a monitoring tool for tracking the status and performance of your applications in real-time.",
       "category": "monitoring",
       "logo": "uptime-kuma-with-mysql",
+      "documentation": "https://github.com/louislam/uptime-kuma?tab=readme-ov-file",
       "secrets": [
         {
           "key": "USER_MYSQL",
@@ -4434,6 +4658,7 @@
       "description": "Uptime Kuma is a monitoring tool for tracking the status and performance of your applications in real-time.",
       "category": "monitoring",
       "logo": "uptime-kuma",
+      "documentation": "https://github.com/louislam/uptime-kuma?tab=readme-ov-file",
       "secrets": [],
       "composeFile": "services:\n  uptime-kuma:\n    ports:\n      - \"20225:3001\"\n    image: 'louislam/uptime-kuma:2'\n    environment:\n      - FQDN_UPTIMEKUMA_3001=localhost:20225\n    volumes:\n      - 'uptime-kuma-data:/app/data'\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - extra/healthcheck\n      interval: 5s\n      timeout: 5s\n      retries: 10\nvolumes:\n  uptime-kuma-data:\n"
     },
@@ -4442,6 +4667,7 @@
       "name": "Vert",
       "description": "The next-generation file converter. Open source, fully local and free forever.",
       "category": "productivity",
+      "documentation": "https://github.com/VERT-sh/VERT",
       "secrets": [],
       "composeFile": "services:\n  vert:\n    ports:\n      - \"20226:80\"\n    image: 'ghcr.io/vert-sh/vert:latest'\n    environment:\n      - FQDN_VERT_80=localhost:20226\n      - 'PUB_VERT_URL=localhost:20226'\n      - 'PUB_HOSTNAME=localhost:20226'\n      - PUB_PORT=80\n      - PUB_ENV=production\n"
     },
@@ -4451,6 +4677,7 @@
       "description": "Powerful and easy to use cms to build websites, blogs or ecommerce stores.",
       "category": "cms",
       "logo": "vvveb-with-mariadb",
+      "documentation": "https://docs.vvveb.com",
       "secrets": [
         {
           "key": "USER_VVVEB",
@@ -4476,6 +4703,7 @@
       "description": "Powerful and easy to use cms to build websites, blogs or ecommerce stores.",
       "category": "cms",
       "logo": "vvveb-with-mysql",
+      "documentation": "https://docs.vvveb.com",
       "secrets": [
         {
           "key": "USER_VVVEB",
@@ -4501,6 +4729,7 @@
       "description": "Powerful and easy to use cms to build websites, blogs or ecommerce stores.",
       "category": "cms",
       "logo": "vvveb",
+      "documentation": "https://docs.vvveb.com",
       "secrets": [],
       "composeFile": "services:\n  vvveb:\n    ports:\n      - \"20229:80\"\n    image: 'vvveb/vvvebcms:latest'\n    volumes:\n      - 'vvveb-data:/var/www/html'\n    environment:\n      - FQDN_VVVEB_80=localhost:20229\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1'\n      interval: 2s\n      timeout: 10s\n      retries: 10\nvolumes:\n  vvveb-data:\n"
     },
@@ -4510,6 +4739,7 @@
       "description": "A minimalist, self-hosted WakaTime-compatible backend for coding statistics",
       "category": "analytics",
       "logo": "wakapi",
+      "documentation": "https://wakapi.dev/",
       "secrets": [
         {
           "key": "BASE64_64_PASSWORDSALT",
@@ -4534,6 +4764,7 @@
       "name": "Weaviate",
       "description": "Weaviate is an open-source vector database that stores both objects and vectors, allowing for combining vector search with structured filtering.",
       "category": "ai",
+      "documentation": "https://weaviate.io/developers/weaviate",
       "secrets": [
         {
           "key": "PASSWORD_APIKEYS",
@@ -4549,6 +4780,7 @@
       "description": "All-in-one OSINT tool for analysing any website",
       "category": "monitoring",
       "logo": "web-check",
+      "documentation": "https://github.com/lissy93/web-check",
       "secrets": [],
       "composeFile": "services:\n  web-check:\n    ports:\n      - \"20232:3000\"\n    image: lissy93/web-check\n    environment:\n      - FQDN_WEBCHECK_3000=localhost:20232\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'wget -qO- http://127.0.0.1:3000/'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n"
     },
@@ -4557,6 +4789,7 @@
       "name": "Weblate",
       "description": "Weblate is a libre software web-based continuous localization system.",
       "category": "productivity",
+      "documentation": "https://weblate.org",
       "secrets": [
         {
           "key": "PASSWORD_WEBLATE",
@@ -4586,6 +4819,7 @@
       "name": "Whoogle",
       "description": "Whoogle is a self-hosted, privacy-focused search engine front-end for accessing Google search results without tracking and data collection.",
       "category": "tools",
+      "documentation": "https://github.com/benbusby/whoogle-search?tab=readme-ov-file",
       "secrets": [],
       "composeFile": "services:\n  whoogle:\n    ports:\n      - \"20234:5000\"\n    image: 'benbusby/whoogle-search:latest'\n    environment:\n      - FQDN_WHOOGLE_5000=localhost:20234\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:5000'\n      interval: 2s\n      timeout: 10s\n      retries: 15\n"
     },
@@ -4595,6 +4829,7 @@
       "description": "The most powerful and extensible open source Wiki software.",
       "category": "cms",
       "logo": "wikijs",
+      "documentation": "https://docs.requarks.io",
       "secrets": [
         {
           "key": "USER_POSTGRES",
@@ -4615,6 +4850,7 @@
       "description": "Windmill is a developer platform to build production-grade multi-steps automations and internal apps.",
       "category": "automation",
       "logo": "windmill",
+      "documentation": "https://www.windmill.dev/docs/",
       "secrets": [
         {
           "key": "PASSWORD_POSTGRES",
@@ -4635,6 +4871,7 @@
       "description": "Yamtrack is a self hosted media tracker for movies, tv shows, anime, manga, video games and books.",
       "category": "productivity",
       "logo": "yamtrack-with-postgresql",
+      "documentation": "https://github.com/FuzzyGrim/Yamtrack/wiki",
       "secrets": [
         {
           "key": "PASSWORD_SECRET",
@@ -4660,6 +4897,7 @@
       "description": "Yamtrack is a self hosted media tracker for movies, tv shows, anime, manga, video games and books.",
       "category": "productivity",
       "logo": "yamtrack",
+      "documentation": "https://github.com/FuzzyGrim/Yamtrack/wiki",
       "secrets": [
         {
           "key": "PASSWORD_SECRET",
@@ -4675,6 +4913,7 @@
       "description": "A ShareX/file upload server that is easy to use, packed with features, and with an easy setup!",
       "category": "media",
       "logo": "zipline",
+      "documentation": "https://zipline.diced.sh/docs/config",
       "secrets": [
         {
           "key": "PASSWORD_64_ZIPLINE",
@@ -4699,6 +4938,7 @@
       "name": "Convertx",
       "description": "A self-hosted online file converter. Supports over a thousand different formats.",
       "category": "developer",
+      "documentation": "https://github.com/C4illin/ConvertX",
       "secrets": [
         {
           "key": "PASSWORD_CONVERTXJWTSECRET",
@@ -4714,6 +4954,7 @@
       "description": "An open-source reactive notebook for Python — reproducible, git-friendly, SQL built-in, executable as a script, and shareable as an app.",
       "category": "tools",
       "logo": "marimo",
+      "documentation": "https://marimo.io/",
       "secrets": [
         {
           "key": "PASSWORD_MARIMO",
@@ -4728,6 +4969,7 @@
       "name": "Pydio Cells",
       "description": "High-performance large file sharing, native no-code automation, and a collaboration-centric architecture that simplifies access control without compromising security or compliance.",
       "category": "tools",
+      "documentation": "https://docs.pydio.com/",
       "secrets": [
         {
           "key": "PASSWORD_MYSQLROOT",

@@ -237,6 +237,7 @@ export interface Template {
   category: string;
   icon?: string;
   logo?: string;
+  documentation?: string;
 }
 
 export interface Application {
