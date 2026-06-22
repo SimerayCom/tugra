@@ -1,4 +1,10 @@
 {
+  "new": "New",
+  "newResource": "New Resource",
+  "newProject": "New Project",
+  "newServer": "New Server",
+  "collapse": "Collapse",
+  "expand": "Expand",
   "dashboard": "Dashboard",
   "uptime": "Uptime",
   "servers": "Servers",
