@@ -27,6 +27,8 @@
   "compose": "Docker Compose",
   "composeDesc": "A multi-container docker-compose stack",
   "changeType": "change type",
+  "selectServer": "Select a server",
+  "changeServer": "change server",
   "searchServices": "Search the app store…",
   "noMatches": "No services match your search.",
   "allCategories": "All",

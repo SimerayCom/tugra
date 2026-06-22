@@ -4,16 +4,19 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Box, Database, ExternalLink } from "lucide-react";
+import { Box, Database, ExternalLink, Server } from "lucide-react";
 import { SiDocker, SiGit } from "@icons-pack/react-simple-icons";
 import { api } from "../../../../lib/api";
-import type { DbEngine } from "../../../../lib/types";
+import type { DbEngine, ServerStatus } from "../../../../lib/types";
 import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
 import { filterTemplates, presentCategories } from "../../../../lib/template-filter";
 import { useT } from "../../../../i18n/provider";
-import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { BackLink, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
+
+const serverColor = (s: ServerStatus) =>
+  s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
 
 const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
 
@@ -157,6 +160,7 @@ function Wizard() {
   const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12, marginBottom: 20 };
   const groupTitle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.06em", margin: "4px 0 10px" };
   const subTitle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "var(--c-tx)", margin: "0 0 8px" };
+  const backLinkBtn: React.CSSProperties = { background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: 0 };
 
   return (
     <div style={{ padding: 28, maxWidth: sel === null ? 1040 : 880 }}>
@@ -269,18 +273,47 @@ function Wizard() {
                 );
               })()}
             </>
+          ) : !serverId ? (
+            <Card style={{ padding: 16 }}>
+              <button type="button" onClick={() => setSel(null)} style={{ ...backLinkBtn, marginBottom: 14 }}>← {t("resources.changeType")}</button>
+              <div style={groupTitle}>{t("resources.selectServer")}</div>
+              {noServer ? (
+                <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>
+                  {t("resources.needServer")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("resources.addServer")}</Link>
+                </div>
+              ) : (
+                <div style={grid3}>
+                  {servers.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setServerId(s.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
+                    >
+                      <span style={logoBox}><Server size={22} color="var(--c-a)" /></span>
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ display: "block", fontWeight: 600, fontSize: 14 }}>{s.name}</span>
+                        {s.hostname && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{s.hostname}</span>}
+                      </span>
+                      <StatusPill label={s.status} color={serverColor(s.status)} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
           ) : (
             <Card style={{ padding: 16 }}>
-              <button type="button" onClick={() => setSel(null)} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: 0, marginBottom: 14 }}>
-                ← {t("resources.changeType")}
-              </button>
-              <form onSubmit={(e) => { e.preventDefault(); if (!noServer && name && serverId) create.mutate(); }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => setSel(null)} style={backLinkBtn}>← {t("resources.changeType")}</button>
+                <button type="button" onClick={() => setServerId("")} style={backLinkBtn}>← {t("resources.changeServer")}</button>
+                <span style={{ fontSize: 12, color: "var(--c-tx3)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <Server size={13} /> {servers.find((s) => s.id === serverId)?.name}
+                </span>
+              </div>
+              <form onSubmit={(e) => { e.preventDefault(); if (name && serverId) create.mutate(); }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                   <Field label={t("apps.name")} htmlFor="r-name">
                     <TextInput id="r-name" value={name} onChange={(e) => setName(e.target.value)} required />
-                  </Field>
-                  <Field label={t("apps.server")}>
-                    <Select value={serverId} onChange={setServerId} required placeholder={t("apps.server")} options={servers.map((s) => ({ value: s.id, label: s.name }))} />
                   </Field>
 
                   {sel.group === "app" && sel.source === "IMAGE" && (
