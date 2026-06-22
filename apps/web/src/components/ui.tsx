@@ -115,6 +115,55 @@ export function StatusDot({ status }: { status: ServerStatus }) {
   );
 }
 
+/** Coloured status dot + label (RUNNING / OFFLINE / SUCCESS …). */
+export function StatusPill({ label, color }: { label: string; color: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 0 3px ${color}22` }} />
+      {label}
+    </span>
+  );
+}
+
+/** Card with a consistent uppercase title + optional description and right slot. */
+export function SectionCard({
+  title,
+  desc,
+  right,
+  children,
+  style,
+}: {
+  title?: string;
+  desc?: string;
+  right?: ReactNode;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  return (
+    <Card style={{ padding: 16, marginBottom: 16, ...style }}>
+      {(title || right) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: desc ? 4 : 12 }}>
+          {title && (
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}>
+              {title}
+            </div>
+          )}
+          {right}
+        </div>
+      )}
+      {desc && <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{desc}</p>}
+      {children}
+    </Card>
+  );
+}
+
+/** Centred placeholder for empty lists/sections. */
+export function EmptyState({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ padding: 28, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{children}</div>
+  );
+}
+
 export function Badge({
   children,
   tone = "muted",
