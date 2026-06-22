@@ -8,6 +8,7 @@
 // and SKIP the rest (logged). The generated set is gated by catalog.spec.ts.
 
 import { writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -251,6 +252,7 @@ async function fetchText(url) {
 }
 
 async function downloadIcon(slug, coolifyLogo) {
+  if (existsSync(resolve(ICON_DIR, `${slug}.svg`))) return true; // keep vendored icon, skip re-fetch
   const candidates = [];
   if (coolifyLogo) {
     const base = String(coolifyLogo).replace(/^svgs\//, "").replace(/\.(svg|png|webp)$/i, "");
@@ -328,6 +330,9 @@ async function main() {
         description: (meta.slogan ?? "").trim() || `${titleize(slug)} self-hosted service.`,
         category: mapCategory(meta.category, meta.tags),
         logo: hasIcon ? slug : undefined,
+        documentation:
+          ((meta.documentation ?? "").trim().replace(/[?&]utm_source=[^&]*/g, "").replace(/\?$/, "")) ||
+          undefined,
         secrets,
         composeFile: compose,
       };

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Box, Database } from "lucide-react";
+import { Box, Database, ExternalLink } from "lucide-react";
 import { SiDocker, SiGit } from "@icons-pack/react-simple-icons";
 import { api } from "../../../../lib/api";
 import type { DbEngine } from "../../../../lib/types";
@@ -125,19 +125,32 @@ function Wizard() {
     display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
     overflow: "hidden", padding: 8, boxSizing: "border-box",
   };
-  const card = (key: string, iconNode: React.ReactNode, title: string, desc: string, onClick: () => void) => (
+  const card = (key: string, iconNode: React.ReactNode, title: string, desc: string, onClick: () => void, docHref?: string) => (
     <button
       key={key}
       type="button"
       onClick={onClick}
       title={desc}
-      style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
+      style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
     >
       <span style={logoBox}>{iconNode}</span>
       <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>{title}</span>
         <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{desc}</span>
       </span>
+      {docHref && (
+        <a
+          href={docHref}
+          target="_blank"
+          rel="noreferrer"
+          title={t("resources.docTitle")}
+          aria-label={t("resources.docTitle")}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "absolute", top: 8, right: 8, display: "inline-flex", padding: 3, borderRadius: 6, color: "var(--c-tx3)" }}
+        >
+          <ExternalLink size={14} />
+        </a>
+      )}
     </button>
   );
   const lucide = (Icon: typeof Box) => <Icon size={26} color="var(--c-a)" />;
@@ -247,6 +260,7 @@ function Wizard() {
                             tpl.name,
                             tpl.description,
                             () => pick({ group: "template", slug: tpl.slug, name: tpl.name }),
+                            tpl.documentation,
                           ),
                         )}
                       </div>
