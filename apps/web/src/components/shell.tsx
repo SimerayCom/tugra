@@ -12,6 +12,7 @@ import { CommandPalette, type CommandDest } from "./command-palette";
 import {
   Activity,
   ArrowLeftRight,
+  Bell,
   ChevronsLeft,
   ChevronsRight,
   FolderTree,
@@ -61,6 +62,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Account",
     items: [
+      { key: "notifications", href: "/notifications", icon: Bell, impl: true },
       { key: "teams", href: "/teams", icon: Users, impl: true },
       { key: "settings", href: "/settings", icon: Settings, impl: true },
     ],

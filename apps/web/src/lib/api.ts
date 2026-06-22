@@ -342,11 +342,15 @@ export const api = {
     type: string;
     teamId: string;
     config: Record<string, unknown>;
+    eventTypes?: string[];
   }) {
     return apiFetch<Channel>("/channels", {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+  updateChannel(id: string, input: { name?: string; enabled?: boolean; eventTypes?: string[]; config?: Record<string, unknown> }) {
+    return apiFetch<Channel>(`/channels/${id}`, { method: "PUT", body: JSON.stringify(input) });
   },
   testChannel(id: string) {
     return apiFetch<{ ok: true }>(`/channels/${id}/test`, { method: "POST" });
