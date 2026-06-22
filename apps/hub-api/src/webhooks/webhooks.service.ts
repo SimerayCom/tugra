@@ -54,6 +54,40 @@ export class WebhooksService {
     return this.handlePush(app, rawBody);
   }
 
+  /**
+   * GitHub App webhook receiver: one endpoint per registered source. Verifies
+   * the source's webhook secret, then fans out to every app wired to that
+   * source whose repo (gitUrl) matches the event's repository.
+   */
+  async handleGithubApp(
+    sourceId: string,
+    headers: Headers,
+    rawBody: Buffer | string,
+  ): Promise<WebhookResult> {
+    const source = await this.prisma.gitSource.findUnique({ where: { id: sourceId } });
+    if (!source || !source.webhookSecretEnc) throw new NotFoundException("git source webhook not found");
+    const secret = this.crypto.decrypt(source.webhookSecretEnc);
+    const ghSig = header(headers, "x-hub-signature-256");
+    if (!ghSig || !verifyGithubSignature(secret, rawBody, ghSig)) {
+      throw new UnauthorizedException("invalid webhook signature");
+    }
+    const body = this.parseBody(rawBody) as { repository?: { full_name?: string } };
+    const fullName = body.repository?.full_name?.toLowerCase();
+    if (!fullName) return { deployed: false, reason: "no repository (ignored)" };
+
+    const apps = await this.prisma.application.findMany({ where: { gitSourceId: sourceId } });
+    const matched = apps.filter((a) => (a.gitUrl ?? "").toLowerCase().includes(fullName));
+    if (!matched.length) return { deployed: false, reason: "no matching app (ignored)" };
+
+    const isPr = header(headers, "x-github-event") === "pull_request";
+    let deployed = false;
+    for (const app of matched) {
+      const r = isPr ? await this.handlePullRequest(app, rawBody) : await this.handlePush(app, rawBody);
+      deployed = deployed || r.deployed;
+    }
+    return { deployed };
+  }
+
   /** Resolve the app from the token and verify the request signature. */
   private async authenticate(
     token: string,
