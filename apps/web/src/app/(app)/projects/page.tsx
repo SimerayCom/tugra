@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronRight, FolderTree } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
-import { Card, Spinner } from "../../../components/ui";
+import { Badge, Card, Spinner } from "../../../components/ui";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -64,13 +65,18 @@ export default function ProjectsPage() {
             const dbs = p.environments.reduce((n, e) => n + e.dbCount, 0);
             return (
               <Link key={p.id} href={`/projects/${p.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-                <div style={{ flex: 1 }}>
+                <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <FolderTree size={18} color="var(--c-a)" />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
-                    {p.environments.length} env · {apps} apps · {dbs} dbs
+                  <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                    <Badge>{p.environments.length} env</Badge>
+                    <Badge>{apps} apps</Badge>
+                    <Badge>{dbs} dbs</Badge>
                   </div>
                 </div>
-                <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>→</span>
+                <ChevronRight size={16} color="var(--c-tx3)" />
               </Link>
             );
           })}
