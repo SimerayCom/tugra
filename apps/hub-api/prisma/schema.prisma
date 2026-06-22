@@ -60,6 +60,7 @@ model Team {
   sharedVariables SharedVariable[]
   projects     Project[]
   invitations  TeamInvitation[]
+  gitSources   GitSource[]
   createdAt    DateTime     @default(now())
 }
 
@@ -270,6 +271,27 @@ model MonitorChannel {
   @@id([monitorId, channelId])
 }
 
+// A registered Git provider app (GitHub App) for private-repo deploys.
+model GitSource {
+  id               String        @id @default(cuid())
+  team             Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId           String
+  name             String
+  provider         String        @default("github")
+  appId            String
+  appSlug          String?
+  clientId         String?
+  clientSecretEnc  String?
+  privateKeyEnc    String
+  webhookSecretEnc String?
+  installationId   String?
+  htmlUrl          String?
+  applications     Application[]
+  createdAt        DateTime      @default(now())
+
+  @@index([teamId])
+}
+
 enum BulkTaskStatus {
   PENDING
   RUNNING
@@ -376,6 +398,8 @@ model Application {
   cpus           Float?
   volumes        Json?
   gitTokenEnc     String?
+  gitSource       GitSource?   @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
+  gitSourceId     String?
   registryAuthEnc String?
   env            Json
   envEnc         String?

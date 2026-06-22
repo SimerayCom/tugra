@@ -8,6 +8,7 @@ export const CreateAppSchema = z
     image: z.string().min(1).optional(),
     gitUrl: z.string().min(1).optional(),
     gitBranch: z.string().min(1).optional(),
+    gitSourceId: z.string().min(1).optional(),
     buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC"]).optional(),
     dockerfilePath: z.string().min(1).optional(),
     buildCommand: z.string().min(1).optional(),

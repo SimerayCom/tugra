@@ -21,6 +21,7 @@ import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
+import { GitSourcesModule } from "./git-sources/git-sources.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { TeamsModule } from "./teams/teams.module";
 import { ScheduledTasksModule } from "./scheduled-tasks/scheduled-tasks.module";
@@ -47,6 +48,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     ServerOpsModule,
     ApiTokensModule,
     SharedVariablesModule,
+    GitSourcesModule,
     ProjectsModule,
     TeamsModule,
     ScheduledTasksModule,
