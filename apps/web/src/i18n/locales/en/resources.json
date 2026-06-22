@@ -40,6 +40,10 @@
   "cat_security": "Security",
   "cat_productivity": "Productivity",
   "cat_developer": "Developer",
+  "cat_ai": "AI & LLM",
+  "cat_communication": "Communication",
+  "cat_media": "Media",
+  "cat_finance": "Finance",
   "create": "Create",
   "needServer": "Add a server first to deploy resources.",
   "addServer": "Add a server →"
