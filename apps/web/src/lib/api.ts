@@ -518,6 +518,15 @@ export const api = {
       body: JSON.stringify({ env }),
     });
   },
+  getAppBuildArgs(id: string) {
+    return apiFetch<Record<string, string>>(`/apps/${id}/build-args`);
+  },
+  setAppBuildArgs(id: string, buildArgs: Record<string, string>) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/build-args`, {
+      method: "PUT",
+      body: JSON.stringify({ buildArgs }),
+    });
+  },
   setAppLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {
       method: "PUT",

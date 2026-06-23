@@ -28,6 +28,8 @@ export interface AppSpec {
   gitToken?: string | null;
   registryAuth?: RegistryAuth | null;
   env: Record<string, string>;
+  /** Build-time variables injected during image build (separate from runtime env). */
+  buildArgs?: Record<string, string>;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
@@ -184,6 +186,15 @@ export function staticNginxConf(): string {
 function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   const tag = runTag(app, version);
   const nc = noCache ? "--no-cache " : "";
+  // Build-time variables: `--build-arg K=V` for docker build, `--env K=V` for
+  // the CNB/nixpacks/railpack builders. Empty → no flags (regression-safe).
+  const ba = app.buildArgs && Object.keys(app.buildArgs).length ? app.buildArgs : null;
+  const buildArgFlags = ba
+    ? Object.entries(ba).map(([k, v]) => `--build-arg ${shq(`${k}=${v}`)}`).join(" ") + " "
+    : "";
+  const buildEnvFlags = ba
+    ? " " + Object.entries(ba).map(([k, v]) => `--env ${shq(`${k}=${v}`)}`).join(" ")
+    : "";
   if (app.source === "GIT") {
     const bd = `/etc/tugra/builds/${app.id}`;
     const branch = app.gitBranch || "main";
@@ -205,30 +216,30 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     }
     if (app.buildType === "DOCKERFILE") {
       const df = app.dockerfilePath || "Dockerfile";
-      steps.push(`docker build ${nc}-t ${tag} -f ${bd}/${df} ${bd}`);
+      steps.push(`docker build ${nc}${buildArgFlags}-t ${tag} -f ${bd}/${df} ${bd}`);
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
       steps.push(
         `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${bd}/Dockerfile.tugra`,
         `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${bd}/tugra-nginx.conf`,
-        `docker build ${nc}-t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
+        `docker build ${nc}${buildArgFlags}-t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
       );
     } else if (app.buildType === "RAILPACK") {
       // Railpack (Railway's modern builder) — builds an OCI image via BuildKit.
       steps.push(
         "command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | sh",
-        `railpack build ${bd} --name ${tag}`,
+        `railpack build ${bd} --name ${tag}${buildEnvFlags}`,
       );
     } else if (app.buildType === "HEROKU") {
       // Heroku / Cloud Native Buildpacks via the pack CLI.
       steps.push(
         "command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C /usr/local/bin -xz pack; }",
-        `pack build ${tag} --path ${bd} --builder heroku/builder:24 --pull-policy if-not-present`,
+        `pack build ${tag} --path ${bd} --builder heroku/builder:24 --pull-policy if-not-present${buildEnvFlags}`,
       );
     } else {
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
-        `nixpacks build ${bd} --name ${tag}`,
+        `nixpacks build ${bd} --name ${tag}${buildEnvFlags}`,
       );
     }
     return steps;

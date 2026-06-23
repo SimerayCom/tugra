@@ -69,6 +69,22 @@ describe("deploy-script", () => {
     expect(s).toContain("pack build tugra_abc:v1 --path /etc/tugra/builds/abc --builder heroku/builder:24");
   });
 
+  it("injects build args as --build-arg (docker) and --env (buildpacks)", () => {
+    const git = { ...base, source: "GIT" as const, gitUrl: "https://x/y.git", buildArgs: { API_URL: "https://api.x" } };
+    const dockerfile = buildRunScript({ ...git, buildType: "DOCKERFILE" }, "v1");
+    expect(dockerfile).toContain("--build-arg 'API_URL=https://api.x'");
+    const nixpacks = buildRunScript({ ...git, buildType: "NIXPACKS" }, "v1");
+    expect(nixpacks).toContain("nixpacks build /etc/tugra/builds/abc --name tugra_abc:v1 --env 'API_URL=https://api.x'");
+    const railpack = buildRunScript({ ...git, buildType: "RAILPACK" }, "v1");
+    expect(railpack).toContain("--env 'API_URL=https://api.x'");
+  });
+
+  it("adds no build-arg/env flags when there are no build args", () => {
+    const s = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "DOCKERFILE" }, "v1");
+    expect(s).not.toContain("--build-arg");
+    expect(s).not.toContain("--env ");
+  });
+
   it("injects env via an --env-file (0600) instead of -e, plus -p when no domain", () => {
     const s = buildRunScript({ ...base, env: { FOO: "bar baz" }, hostPort: 8080, containerPort: 3000 }, "v1");
     expect(s).toContain("--env-file /etc/tugra/env/abc.env");
