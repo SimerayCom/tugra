@@ -1,5 +1,6 @@
 export type Role = "OWNER" | "ADMIN" | "VIEWER";
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
+export type ProxyStatus = "running" | "stopped" | "absent";
 
 export interface Team {
   id: string;

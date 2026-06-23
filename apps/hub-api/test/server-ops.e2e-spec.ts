@@ -104,4 +104,25 @@ describe("Server ops / docker cleanup (e2e)", () => {
     await sleep(60);
     expect(commands.join("\n")).toContain("docker system prune -af --volumes");
   });
+
+  it("checks proxy status, restarts it, and tails logs via the agent", async () => {
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .get(`/servers/${serverId}/proxy`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/servers/${serverId}/proxy/restart`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/servers/${serverId}/proxy/logs?tail=50`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(60);
+    const joined = commands.join("\n");
+    expect(joined).toContain("docker inspect -f '{{.State.Status}}' tugra-proxy");
+    expect(joined).toContain("docker restart tugra-proxy");
+    expect(joined).toContain("docker logs --tail 50 tugra-proxy");
+  });
 });

@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Sse,
   UseGuards,
 } from "@nestjs/common";
@@ -19,6 +20,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
 import { LogDrainService } from "./log-drain.service";
+import { ProxyOpsService } from "./proxy-ops.service";
 import {
   CleanupConfigInput,
   CleanupConfigSchema,
@@ -35,7 +37,40 @@ export class ServerOpsController {
     private readonly cleanup: CleanupService,
     private readonly patch: PatchService,
     private readonly logDrains: LogDrainService,
+    private readonly proxy: ProxyOpsService,
   ) {}
+
+  @Get("proxy")
+  proxyStatus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.proxy.status(user.userId, id);
+  }
+
+  @Post("proxy/start")
+  @HttpCode(200)
+  proxyStart(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.proxy.start(user.userId, id);
+  }
+
+  @Post("proxy/stop")
+  @HttpCode(200)
+  proxyStop(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.proxy.stop(user.userId, id);
+  }
+
+  @Post("proxy/restart")
+  @HttpCode(200)
+  proxyRestart(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.proxy.restart(user.userId, id);
+  }
+
+  @Get("proxy/logs")
+  proxyLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("tail") tail?: string,
+  ) {
+    return this.proxy.logs(user.userId, id, tail ? Number(tail) : undefined);
+  }
 
   @Get("log-drains")
   listLogDrains(@CurrentUser() user: AuthUser, @Param("id") id: string) {

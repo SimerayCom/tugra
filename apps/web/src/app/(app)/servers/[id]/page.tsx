@@ -10,7 +10,8 @@ import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
-import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
+import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
@@ -107,6 +108,7 @@ export default function ServerDetailPage() {
       {tab === "maintenance" && (
         <>
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
+          <ProxyCard id={id} canWrite={server.canWrite} />
           {server.canWrite && <CleanupCard id={id} server={server} />}
         </>
       )}
@@ -296,6 +298,53 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
         </label>
         <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       </div>
+    </Card>
+  );
+}
+
+const PROXY_COLOR: Record<ProxyStatus, string> = {
+  running: "var(--c-g)",
+  stopped: "var(--c-am)",
+  absent: "var(--c-tx3)",
+};
+
+function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [logs, setLogs] = useState("");
+  const status = useQuery({ queryKey: ["proxy", id], queryFn: () => api.getProxyStatus(id) });
+  const st = status.data?.status;
+  const refresh = () => qc.invalidateQueries({ queryKey: ["proxy", id] });
+  const onResult = (r: { status: ProxyStatus }) => qc.setQueryData(["proxy", id], r);
+
+  const start = useMutation({ mutationFn: () => api.startProxy(id), onSuccess: onResult });
+  const stop = useMutation({ mutationFn: () => api.stopProxy(id), onSuccess: onResult });
+  const restart = useMutation({ mutationFn: () => api.restartProxy(id), onSuccess: onResult });
+  const viewLogs = useMutation({ mutationFn: () => api.getProxyLogs(id), onSuccess: (r) => setLogs(r.output || "—") });
+  const busy = start.isPending || stop.isPending || restart.isPending;
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontWeight: 600 }}>{t("servers.proxy")}</div>
+        {st && <StatusPill label={t(`servers.st_${st}`)} color={PROXY_COLOR[st]} />}
+        <div style={{ flex: 1 }} />
+        {canWrite && (
+          <>
+            <Btn variant="ghost" onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
+            <Btn variant="ghost" onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
+            <Btn variant="ghost" onClick={() => stop.mutate()} disabled={busy}>{t("servers.proxyStop")}</Btn>
+          </>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.proxyDesc")}</p>
+      <Btn variant="ghost" onClick={() => viewLogs.mutate()} disabled={viewLogs.isPending}>
+        {viewLogs.isPending ? "…" : t("servers.proxyViewLogs")}
+      </Btn>
+      <button onClick={refresh} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>↻</button>
+      {logs && (
+        <pre className="mono" style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs}</pre>
+      )}
     </Card>
   );
 }
