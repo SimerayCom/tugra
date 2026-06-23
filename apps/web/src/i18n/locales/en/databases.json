@@ -47,5 +47,11 @@
   "localDisk": "Local disk",
   "save": "Save",
   "noBackups": "No backups yet.",
-  "backupUnsupported": "Backups for this engine aren't available yet."
+  "backupUnsupported": "Backups for this engine aren't available yet.",
+  "limits": "Resources & health",
+  "limitsDesc": "Optional CPU/memory limits and a container health check. Applied on next provision.",
+  "healthCmd": "Health check command (e.g. pg_isready -U tugra || exit 1)",
+  "memoryMb": "Memory (MB)",
+  "cpus": "CPUs",
+  "limitsRedeploy": "Re-provision the database to apply."
 }

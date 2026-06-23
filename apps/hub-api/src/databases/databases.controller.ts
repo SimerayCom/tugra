@@ -18,6 +18,8 @@ import { DatabasesService } from "./databases.service";
 import {
   CreateDatabaseInput,
   CreateDatabaseSchema,
+  SetDatabaseLimitsInput,
+  SetDatabaseLimitsSchema,
   SetEnvironmentInput,
   SetEnvironmentSchema,
 } from "./dto";
@@ -77,6 +79,17 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetTagsSchema)) body: SetTagsInput,
   ) {
     await this.databases.setTags(user.userId, id, body.tags);
+    return { ok: true };
+  }
+
+  @Put(":id/limits")
+  @HttpCode(200)
+  async setLimits(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDatabaseLimitsSchema)) body: SetDatabaseLimitsInput,
+  ) {
+    await this.databases.setLimits(user.userId, id, body);
     return { ok: true };
   }
 

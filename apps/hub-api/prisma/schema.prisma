@@ -498,6 +498,9 @@ model Database {
   hostPort    Int?
   credentials String
   status      DbStatus @default(NEW)
+  healthCmd      String?
+  memoryMb       Int?
+  cpus           Float?
   backupEnabled       Boolean  @default(false)
   backupIntervalHours Int?
   backupRetention     Int      @default(7)

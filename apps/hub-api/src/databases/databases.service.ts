@@ -25,7 +25,7 @@ import {
   type DbSpec,
 } from "./database-script";
 import { normalizeTags } from "../common/tags";
-import type { CreateDatabaseInput } from "./dto";
+import type { CreateDatabaseInput, SetDatabaseLimitsInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const PROVISION_TIMEOUT_MS = 300_000; // image pull can be slow
@@ -47,6 +47,9 @@ export interface DatabaseView {
   username: string | null;
   password: string | null;
   database: string | null;
+  healthCmd: string | null;
+  memoryMb: number | null;
+  cpus: number | null;
   backupEnabled: boolean;
   backupIntervalHours: number | null;
   backupRetention: number;
@@ -173,6 +176,19 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "database.tags.update", target: id });
   }
 
+  async setLimits(userId: string, id: string, limits: SetDatabaseLimitsInput): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.database.update({
+      where: { id },
+      data: {
+        healthCmd: limits.healthCmd ?? null,
+        memoryMb: limits.memoryMb ?? null,
+        cpus: limits.cpus ?? null,
+      },
+    });
+    await this.audit.log({ actor: userId, action: "db.limits.update", target: id });
+  }
+
   // ── helpers ──
   private async assertEnvInTeam(environmentId: string, teamId: string): Promise<void> {
     const env = await this.prisma.environment.findUnique({
@@ -196,6 +212,9 @@ export class DatabasesService {
       port: db.port,
       hostPort: db.hostPort,
       credentials: this.creds(db),
+      healthCmd: db.healthCmd,
+      memoryMb: db.memoryMb,
+      cpus: db.cpus,
     };
   }
 
@@ -234,6 +253,9 @@ export class DatabasesService {
       username: conn?.username ?? null,
       password: conn?.password ?? null,
       database: conn?.database ?? null,
+      healthCmd: db.healthCmd,
+      memoryMb: db.memoryMb,
+      cpus: db.cpus,
       backupEnabled: db.backupEnabled,
       backupIntervalHours: db.backupIntervalHours,
       backupRetention: db.backupRetention,

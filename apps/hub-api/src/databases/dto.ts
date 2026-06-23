@@ -14,3 +14,10 @@ export const SetEnvironmentSchema = z.object({
   environmentId: z.string().min(1).nullable(),
 });
 export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
+
+export const SetDatabaseLimitsSchema = z.object({
+  healthCmd: z.string().min(1).nullable().optional(),
+  memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
+  cpus: z.number().min(0.1).max(64).nullable().optional(),
+});
+export type SetDatabaseLimitsInput = z.infer<typeof SetDatabaseLimitsSchema>;

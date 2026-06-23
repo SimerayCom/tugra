@@ -372,6 +372,9 @@ export interface Database {
   username: string | null;
   password: string | null;
   database: string | null;
+  healthCmd: string | null;
+  memoryMb: number | null;
+  cpus: number | null;
   backupEnabled: boolean;
   backupIntervalHours: number | null;
   backupRetention: number;

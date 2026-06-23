@@ -131,6 +131,9 @@ export default function DatabaseDetailPage() {
         <>
           <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />
           <div style={{ marginTop: 16 }}>
+            <DbLimitsCard id={id} healthCmd={db.healthCmd} memoryMb={db.memoryMb} cpus={db.cpus} />
+          </div>
+          <div style={{ marginTop: 16 }}>
             <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
           </div>
         </>
@@ -218,6 +221,46 @@ const linkBtn: React.CSSProperties = {
   cursor: "pointer",
   fontFamily: "inherit",
 };
+
+const limField: React.CSSProperties = {
+  padding: "6px 8px",
+  background: "var(--c-el)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 12,
+  fontFamily: "inherit",
+};
+
+function DbLimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: string | null; memoryMb: number | null; cpus: number | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [hc, setHc] = useState(healthCmd ?? "");
+  const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
+  const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
+  const save = useMutation({
+    mutationFn: () =>
+      api.setDatabaseLimits(id, {
+        healthCmd: hc.trim() || null,
+        memoryMb: mem ? Number(mem) : null,
+        cpus: cpu ? Number(cpu) : null,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
+  });
+  return (
+    <Card style={{ padding: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.limits")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.limitsDesc")}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input style={{ ...limField, flex: "1 1 100%" }} placeholder={t("databases.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
+        <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
+        <input style={{ ...limField, width: 130 }} type="number" step="0.1" placeholder={t("databases.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.limitsRedeploy")}</div>}
+    </Card>
+  );
+}
 
 function CopyRow({ label, value, copy, secret }: { label: string; value: string; copy: string; secret?: boolean }) {
   return (
