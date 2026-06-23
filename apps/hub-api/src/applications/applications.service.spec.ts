@@ -118,6 +118,32 @@ describe("ApplicationsService", () => {
       expect.objectContaining({ status: "SUCCESS", exitCode: 0, deploymentId: "d1" }),
     );
     expect(dep?.status).toBe("SUCCESS");
+    // a redacted config snapshot is persisted for the diff view
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ configSnapshot: expect.any(Object) }) }),
+    );
+  });
+
+  it("deployments() diffs each deploy's config against the previous one", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "d2", status: "SUCCESS", createdAt: new Date(2), configSnapshot: { env: {}, volumes: [], memoryMb: 512, hasGitToken: false, hasRegistryAuth: false } },
+          { id: "d1", status: "SUCCESS", createdAt: new Date(1), configSnapshot: { env: {}, volumes: [], memoryMb: 256, hasGitToken: false, hasRegistryAuth: false } },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    const list = await svc.deployments("u1", "app1");
+
+    expect(list[0].configChanges).toContainEqual(
+      expect.objectContaining({ field: "memoryMb", kind: "changed", before: "256", after: "512" }),
+    );
+    // oldest deploy has no previous snapshot → no changes; raw snapshot not leaked
+    expect(list[1].configChanges).toEqual([]);
+    expect(list[0]).not.toHaveProperty("configSnapshot");
   });
 
   it("refuses a second deploy while one is already running (409)", async () => {

@@ -82,6 +82,32 @@ export function parsePullRequest(payload: unknown): PullRequestEvent | null {
   return { action, prNumber, headRef, merged: p.pull_request?.merged === true };
 }
 
+/**
+ * Extract the head commit message from a push payload. GitHub uses
+ * `head_commit.message`; GitLab sends `commits[]` (last entry is the head).
+ */
+export function parseHeadCommitMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as {
+    head_commit?: { message?: unknown };
+    commits?: { message?: unknown }[];
+  };
+  const gh = p.head_commit?.message;
+  if (typeof gh === "string") return gh;
+  const list = Array.isArray(p.commits) ? p.commits : [];
+  const last = list[list.length - 1]?.message;
+  return typeof last === "string" ? last : null;
+}
+
+/**
+ * True when the commit message carries a CI/CD skip marker (e.g. `[skip ci]`,
+ * `[skip deploy]`) — standard convention for suppressing an auto-deploy.
+ */
+export function hasSkipMarker(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /\[(skip ci|ci skip|skip cd|cd skip|skip deploy|no deploy)\]/i.test(message);
+}
+
 export function generateWebhookToken(): string {
   return `tugra_wh_${randomBytes(24).toString("base64url")}`;
 }

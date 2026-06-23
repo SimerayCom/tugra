@@ -126,6 +126,18 @@ describe("Webhooks / auto-deploy (e2e)", () => {
     expect(commands.join("\n")).toContain("git clone");
   });
 
+  it("skips the deploy when the head commit has [skip ci]", async () => {
+    commands.length = 0;
+    const res = await request(app.getHttpServer())
+      .post(`/webhooks/deploy/${webhookToken}`)
+      .set("X-Gitlab-Token", webhookSecret)
+      .send({ ref: "refs/heads/main", head_commit: { message: "docs: tweak [skip ci]" } })
+      .expect(202);
+    expect(res.body.deployed).toBe(false);
+    await sleep(200);
+    expect(commands.join("\n")).not.toContain("git clone");
+  });
+
   it("deploys on a valid GitHub HMAC signature", async () => {
     commands.length = 0;
     const payload = { ref: "refs/heads/main" };

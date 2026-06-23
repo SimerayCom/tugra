@@ -27,6 +27,11 @@ import {
   type RegistryAuth,
 } from "../deploy/deploy-script";
 import {
+  buildConfigSnapshot,
+  diffSnapshots,
+  type ConfigSnapshot,
+} from "../deploy/config-snapshot";
+import {
   buildComposeDownScript,
   buildComposeStopScript,
   buildComposeUpScript,
@@ -368,6 +373,11 @@ export class ApplicationsService {
       if (app.gitSourceId && app.source === "GIT") {
         spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
       }
+      // Record a redacted config snapshot so the Deployments view can diff it.
+      await this.prisma.deployment.update({
+        where: { id: dep.id },
+        data: { configSnapshot: buildConfigSnapshot(spec) as object },
+      });
       const command = isCompose
         ? buildComposeUpScript(spec, noCache)
         : buildRunScript(spec, dep.id, true, noCache);
@@ -551,10 +561,18 @@ export class ApplicationsService {
 
   async deployments(userId: string, id: string) {
     await this.require(userId, id);
-    return this.prisma.deployment.findMany({
+    const rows = await this.prisma.deployment.findMany({
       where: { appId: id },
       orderBy: { createdAt: "desc" },
       take: 20,
+    });
+    // Diff each deploy's config against the immediately older one (rows are
+    // newest-first, so the previous deploy is the next index).
+    return rows.map((d, i) => {
+      const next = (d.configSnapshot as ConfigSnapshot | null) ?? null;
+      const prev = (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null;
+      const { configSnapshot: _snap, ...rest } = d;
+      return { ...rest, configChanges: next ? diffSnapshots(prev, next) : [] };
     });
   }
 

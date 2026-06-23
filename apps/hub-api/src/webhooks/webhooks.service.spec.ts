@@ -58,3 +58,37 @@ describe("WebhooksService.handleGithubApp", () => {
     expect(deployFromWebhook).not.toHaveBeenCalled();
   });
 });
+
+describe("WebhooksService.handle — [skip ci]", () => {
+  const appRow = { id: "a1", source: "GIT", gitBranch: "main", webhookToken: "tok", webhookSecret: "enc" };
+
+  function pushBody(message: string): string {
+    return JSON.stringify({ ref: "refs/heads/main", head_commit: { message } });
+  }
+
+  it("skips the deploy when the head commit carries a skip marker", async () => {
+    const deployFromWebhook = jest.fn();
+    const body = pushBody("chore: docs [skip ci]");
+    const svc = make(
+      { application: { findUnique: jest.fn().mockResolvedValue(appRow) } } as unknown as PrismaService,
+      { deployFromWebhook },
+    );
+    const r = await svc.handle("tok", { "x-hub-signature-256": sign(body) }, body);
+    expect(r.deployed).toBe(false);
+    expect(r.reason).toMatch(/skip/);
+    expect(deployFromWebhook).not.toHaveBeenCalled();
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.deploy.skipped" }));
+  });
+
+  it("deploys normally without a skip marker", async () => {
+    const deployFromWebhook = jest.fn().mockResolvedValue(undefined);
+    const body = pushBody("feat: ship it");
+    const svc = make(
+      { application: { findUnique: jest.fn().mockResolvedValue(appRow) } } as unknown as PrismaService,
+      { deployFromWebhook },
+    );
+    const r = await svc.handle("tok", { "x-hub-signature-256": sign(body) }, body);
+    expect(r.deployed).toBe(true);
+    expect(deployFromWebhook).toHaveBeenCalledWith("a1");
+  });
+});

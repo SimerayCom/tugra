@@ -477,6 +477,8 @@ model Deployment {
   logs        String?
   exitCode    Int?
   imageTag    String?
+  // Redacted config snapshot this deploy ran with (secrets fingerprinted, not stored).
+  configSnapshot Json?
   createdAt   DateTime         @default(now())
 
   @@index([appId])
