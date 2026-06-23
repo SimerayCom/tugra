@@ -7,11 +7,12 @@ import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { ProxyService } from "./proxy.service";
+import { AiService } from "./ai.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule],
   controllers: [ApplicationsController],
-  providers: [ApplicationsService, ProxyService],
+  providers: [ApplicationsService, ProxyService, AiService],
   exports: [ApplicationsService],
 })
 export class ApplicationsModule {}
