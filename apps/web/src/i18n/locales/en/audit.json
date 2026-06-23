@@ -1,0 +1,10 @@
+{
+  "title": "Audit Log",
+  "subtitle": "Who did what — recent actions across your team.",
+  "team": "Team",
+  "actor": "Actor",
+  "action": "Action",
+  "target": "Target",
+  "time": "Time",
+  "empty": "No audit entries yet."
+}

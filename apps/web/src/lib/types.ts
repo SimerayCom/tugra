@@ -144,6 +144,15 @@ export interface Channel {
   eventTypes: string[];
 }
 
+export interface AuditEntry {
+  id: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  meta: unknown;
+  createdAt: string;
+}
+
 export interface GitSource {
   id: string;
   name: string;
