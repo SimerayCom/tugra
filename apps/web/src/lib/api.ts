@@ -5,6 +5,7 @@ import type {
   BulkOperation,
   Backup,
   BackupDestination,
+  AuditEntry,
   Channel,
   Database,
   GitSource,
@@ -363,6 +364,9 @@ export const api = {
   },
 
   // ── git sources (GitHub App) ──
+  listAudit(teamId?: string) {
+    return apiFetch<AuditEntry[]>(`/audit${teamId ? `?teamId=${teamId}` : ""}`);
+  },
   listGitSources() {
     return apiFetch<GitSource[]>("/git-sources");
   },

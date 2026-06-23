@@ -23,6 +23,7 @@ import {
   LogOut,
   Moon,
   Plus,
+  ScrollText,
   Search,
   Server,
   Settings,
@@ -65,6 +66,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     group: "Account",
     items: [
       { key: "notifications", href: "/notifications", icon: Bell, impl: true },
+      { key: "audit", href: "/audit", icon: ScrollText, impl: true },
       { key: "teams", href: "/teams", icon: Users, impl: true },
       { key: "settings", href: "/settings", icon: Settings, impl: true },
     ],
