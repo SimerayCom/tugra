@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import type { AppVolume } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
+import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { EnvironmentCard } from "../../../../components/environment-card";
@@ -182,6 +183,15 @@ export default function AppDetailPage() {
               https={appData.https}
               domainRedirect={appData.domainRedirect}
               securityHeaders={appData.securityHeaders}
+            />
+          )}
+          {appData.source !== "COMPOSE" && appData.volumes.length > 0 && (
+            <VolumeBackupsCard
+              id={id}
+              enabled={appData.volumeBackupEnabled}
+              intervalHours={appData.volumeBackupIntervalHours}
+              retention={appData.volumeBackupRetention}
+              destinationId={appData.volumeBackupDestinationId}
             />
           )}
           <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />
@@ -647,6 +657,88 @@ function CredentialsCard({
         </div>
       )}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+const volField: React.CSSProperties = {
+  width: 64,
+  padding: "5px 8px",
+  background: "var(--c-el)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 12,
+  fontFamily: "inherit",
+};
+
+function VolumeBackupsCard({ id, enabled, intervalHours, retention, destinationId }: { id: string; enabled: boolean; intervalHours: number | null; retention: number; destinationId: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: backups = [] } = useQuery({ queryKey: ["volBackups", id], queryFn: () => api.listVolumeBackups(id), refetchInterval: 5000 });
+  const { data: destinations = [] } = useQuery({ queryKey: ["destinations"], queryFn: () => api.listDestinations() });
+  const [sched, setSched] = useState(enabled);
+  const [interval, setIntervalH] = useState(String(intervalHours ?? 24));
+  const [ret, setRet] = useState(String(retention));
+  const [dest, setDest] = useState(destinationId ?? "");
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["volBackups", id] });
+  const backupNow = useMutation({ mutationFn: () => api.volumeBackupNow(id), onSuccess: invalidate });
+  const restore = useMutation({ mutationFn: (bid: string) => api.restoreVolumeBackup(id, bid) });
+  const del = useMutation({ mutationFn: (bid: string) => api.deleteVolumeBackup(id, bid), onSuccess: invalidate });
+  const save = useMutation({
+    mutationFn: () => api.setVolumeBackupConfig(id, { enabled: sched, intervalHours: Number(interval) || 24, retention: Number(ret) || 7, destinationId: dest || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.volBackups")}</div>
+        <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
+          {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.volBackupsDesc")}</p>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={sched} onChange={(e) => setSched(e.target.checked)} />
+          {t("databases.schedule")}
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+          {t("databases.every")}
+          <input style={volField} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} />
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+          {t("databases.keep")}
+          <input style={volField} type="number" value={ret} onChange={(e) => setRet(e.target.value)} />
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+          {t("databases.destination")}
+          <select style={{ ...volField, width: "auto" }} value={dest} onChange={(e) => setDest(e.target.value)}>
+            <option value="">{t("databases.localDisk")}</option>
+            {destinations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </label>
+        <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {backups.map((b) => (
+          <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: backupColor(b.status) }}>{b.status}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", width: 90 }}>{b.volumeName}</span>
+            <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{formatSize(b.sizeBytes)}</span>
+            <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
+            <button onClick={() => { if (confirm(t("databases.restoreConfirm"))) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+              {t("databases.restore")}
+            </button>
+            <button onClick={() => del.mutate(b.id)} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+          </div>
+        ))}
+        {backups.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.noVolBackups")}</div>}
+      </div>
+      {restore.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(restore.error as Error).message}</div>}
     </Card>
   );
 }

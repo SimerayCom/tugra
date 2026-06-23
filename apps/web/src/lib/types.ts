@@ -295,10 +295,25 @@ export interface Application {
   prNumber: number | null;
   parentAppId: string | null;
   tags: string[];
+  volumeBackupEnabled: boolean;
+  volumeBackupIntervalHours: number | null;
+  volumeBackupRetention: number;
+  volumeBackupDestinationId: string | null;
   envCount: number;
   role: Role;
   canWrite: boolean;
   createdAt: string;
+}
+
+export interface VolumeBackup {
+  id: string;
+  volumeName: string;
+  status: BackupStatus;
+  filename: string;
+  sizeBytes: string | null;
+  createdBy: string;
+  createdAt: string;
+  completedAt: string | null;
 }
 
 export type DeploymentStatus = "RUNNING" | "SUCCESS" | "FAILED";

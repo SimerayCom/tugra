@@ -85,6 +85,10 @@ export interface AppView {
   prNumber: number | null;
   parentAppId: string | null;
   tags: string[];
+  volumeBackupEnabled: boolean;
+  volumeBackupIntervalHours: number | null;
+  volumeBackupRetention: number;
+  volumeBackupDestinationId: string | null;
   envCount: number;
   role: Role;
   canWrite: boolean;
@@ -814,6 +818,10 @@ export class ApplicationsService {
       prNumber: app.prNumber,
       parentAppId: app.parentAppId,
       tags: app.tags,
+      volumeBackupEnabled: app.volumeBackupEnabled,
+      volumeBackupIntervalHours: app.volumeBackupIntervalHours,
+      volumeBackupRetention: app.volumeBackupRetention,
+      volumeBackupDestinationId: app.volumeBackupDestinationId,
       envCount: Object.keys(this.appEnv(app)).length,
       role,
       canWrite,
