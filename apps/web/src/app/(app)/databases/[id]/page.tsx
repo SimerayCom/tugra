@@ -134,6 +134,9 @@ export default function DatabaseDetailPage() {
             <DbLimitsCard id={id} healthCmd={db.healthCmd} memoryMb={db.memoryMb} cpus={db.cpus} />
           </div>
           <div style={{ marginTop: 16 }}>
+            <DbPublicPortCard id={id} hostPort={db.hostPort} />
+          </div>
+          <div style={{ marginTop: 16 }}>
             <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
           </div>
         </>
@@ -258,6 +261,30 @@ function DbLimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.limitsRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [port, setPort] = useState(hostPort != null ? String(hostPort) : "");
+  const save = useMutation({
+    mutationFn: () => api.setDatabasePort(id, port.trim() ? Number(port) : null),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
+  });
+  return (
+    <Card style={{ padding: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.publicPort")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 4px" }}>{t("databases.publicPortDesc")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 12px" }}>
+        {hostPort != null ? t("databases.publicPortExposed", { port: hostPort }) : t("databases.publicPortInternal")}
+      </p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.publicPortField")} value={port} onChange={(e) => setPort(e.target.value)} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.publicPortRedeploy")}</div>}
     </Card>
   );
 }
