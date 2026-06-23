@@ -423,6 +423,7 @@ model Application {
   registryAuthEnc String?
   env            Json
   envEnc         String?
+  buildArgsEnc   String?
   hostPort       Int?
   containerPort  Int?         @default(80)
   domain         String?

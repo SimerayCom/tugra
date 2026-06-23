@@ -369,6 +369,7 @@ export class ApplicationsService {
       if (app.domain && !isCompose) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
+      spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
       // Private repo via a GitHub App: mint a fresh installation token for the clone.
       if (app.gitSourceId && app.source === "GIT") {
         spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
@@ -601,6 +602,21 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.env.update", target: id });
   }
 
+  /** Build-time variables (injected during image build, separate from runtime env). */
+  async getBuildArgs(userId: string, id: string): Promise<Record<string, string>> {
+    const app = await this.requireWrite(userId, id);
+    return this.appBuildArgs(app);
+  }
+
+  async setBuildArgs(userId: string, id: string, buildArgs: Record<string, string>): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: { buildArgsEnc: this.crypto.encrypt(JSON.stringify(buildArgs)) },
+    });
+    await this.audit.log({ actor: userId, action: "app.build_args.update", target: id });
+  }
+
   async setLimits(
     userId: string,
     id: string,
@@ -735,6 +751,15 @@ export class ApplicationsService {
       }
     }
     return (app.env as Record<string, string>) ?? {};
+  }
+
+  private appBuildArgs(app: Application): Record<string, string> {
+    if (!app.buildArgsEnc) return {};
+    try {
+      return JSON.parse(this.crypto.decrypt(app.buildArgsEnc)) as Record<string, string>;
+    } catch {
+      return {};
+    }
   }
 
   /** Env injected at deploy: team shared variables overlaid by app-specific ones. */

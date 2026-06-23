@@ -214,6 +214,18 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("stores build args encrypted on setBuildArgs", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setBuildArgs("u1", "app1", { API_URL: "x" });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { buildArgsEnc: 'enc({"API_URL":"x"})' } }),
+    );
+  });
+
   it("forbids a non-writer from setting resource limits", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

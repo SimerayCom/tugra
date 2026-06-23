@@ -27,6 +27,8 @@ import {
   FromTemplateSchema,
   PreviewConfigInput,
   PreviewConfigSchema,
+  SetBuildArgsInput,
+  SetBuildArgsSchema,
   SetCredentialsInput,
   SetCredentialsSchema,
   SetEnvInput,
@@ -126,6 +128,22 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetEnvSchema)) body: SetEnvInput,
   ) {
     await this.apps.setEnv(user.userId, id, body.env);
+    return { ok: true };
+  }
+
+  @Get(":id/build-args")
+  getBuildArgs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.getBuildArgs(user.userId, id);
+  }
+
+  @Put(":id/build-args")
+  @HttpCode(200)
+  async setBuildArgs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetBuildArgsSchema)) body: SetBuildArgsInput,
+  ) {
+    await this.apps.setBuildArgs(user.userId, id, body.buildArgs);
     return { ok: true };
   }
 

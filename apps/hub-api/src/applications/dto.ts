@@ -42,6 +42,11 @@ export const SetEnvSchema = z.object({
 });
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
+export const SetBuildArgsSchema = z.object({
+  buildArgs: z.record(z.string()),
+});
+export type SetBuildArgsInput = z.infer<typeof SetBuildArgsSchema>;
+
 export const SetLimitsSchema = z.object({
   healthCmd: z.string().min(1).nullable().optional(),
   memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
