@@ -27,6 +27,7 @@ import { ProjectsModule } from "./projects/projects.module";
 import { TeamsModule } from "./teams/teams.module";
 import { ScheduledTasksModule } from "./scheduled-tasks/scheduled-tasks.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
+import { ExpiryModule } from "./expiry/expiry.module";
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     TeamsModule,
     ScheduledTasksModule,
     WebhooksModule,
+    ExpiryModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
