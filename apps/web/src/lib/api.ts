@@ -409,7 +409,7 @@ export const api = {
     gitUrl?: string;
     gitBranch?: string;
     gitSourceId?: string;
-    buildType?: "NIXPACKS" | "DOCKERFILE" | "STATIC";
+    buildType?: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
     buildCommand?: string;
     outputDir?: string;
     composeFile?: string;

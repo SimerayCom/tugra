@@ -30,6 +30,8 @@
   "buildType": "Build",
   "source": "Source",
   "nixpacks": "Nixpacks",
+  "railpack": "Railpack",
+  "heroku": "Heroku buildpacks",
   "dockerfile": "Dockerfile",
   "static": "Static site",
   "buildCommand": "Build cmd (e.g. npm run build)",

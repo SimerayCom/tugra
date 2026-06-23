@@ -70,7 +70,7 @@ function Wizard() {
   const [image, setImage] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("");
-  const [buildType, setBuildType] = useState<"NIXPACKS" | "DOCKERFILE" | "STATIC">("NIXPACKS");
+  const [buildType, setBuildType] = useState<"NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU">("NIXPACKS");
   const [buildCommand, setBuildCommand] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [composeFile, setComposeFile] = useState("");
@@ -359,9 +359,11 @@ function Wizard() {
                         <TextInput value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder="main" />
                       </Field>
                       <Field label={t("apps.buildType")}>
-                        <Select value={buildType} onChange={(v) => setBuildType(v as "NIXPACKS" | "DOCKERFILE" | "STATIC")}
+                        <Select value={buildType} onChange={(v) => setBuildType(v as "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU")}
                           options={[
                             { value: "NIXPACKS", label: t("apps.nixpacks") },
+                            { value: "RAILPACK", label: t("apps.railpack") },
+                            { value: "HEROKU", label: t("apps.heroku") },
                             { value: "DOCKERFILE", label: t("apps.dockerfile") },
                             { value: "STATIC", label: t("apps.static") },
                           ]} />
