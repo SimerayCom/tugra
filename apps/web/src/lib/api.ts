@@ -530,6 +530,12 @@ export const api = {
       body: JSON.stringify({ buildArgs }),
     });
   },
+  setAppDockerOptions(id: string, dockerOptions: string | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/docker-options`, {
+      method: "PUT",
+      body: JSON.stringify({ dockerOptions }),
+    });
+  },
   setAppLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {
       method: "PUT",

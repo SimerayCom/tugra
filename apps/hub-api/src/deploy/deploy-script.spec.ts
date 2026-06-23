@@ -85,6 +85,18 @@ describe("deploy-script", () => {
     expect(s).not.toContain("--env ");
   });
 
+  it("appends custom docker options to docker run verbatim", () => {
+    const s = buildRunScript({ ...base, dockerOptions: "--cap-add=NET_ADMIN --dns 1.1.1.1" }, "v1");
+    expect(s).toContain("--cap-add=NET_ADMIN --dns 1.1.1.1");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped");
+  });
+
+  it("adds nothing when docker options are unset", () => {
+    const s = buildRunScript({ ...base }, "v1");
+    expect(s).not.toContain("--cap-add");
+    expect(s).not.toContain("--dns");
+  });
+
   it("injects env via an --env-file (0600) instead of -e, plus -p when no domain", () => {
     const s = buildRunScript({ ...base, env: { FOO: "bar baz" }, hostPort: 8080, containerPort: 3000 }, "v1");
     expect(s).toContain("--env-file /etc/tugra/env/abc.env");

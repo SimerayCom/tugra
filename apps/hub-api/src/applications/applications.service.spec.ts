@@ -238,6 +238,19 @@ describe("ApplicationsService", () => {
     await expect(make(prisma, access, {} as AgentWsServer).analyzeDeployment("u1", "app1", "d1")).rejects.toThrow(/not found/);
   });
 
+  it("stores custom docker options on setDockerOptions", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setDockerOptions("u1", "app1", "--dns 1.1.1.1");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { dockerOptions: "--dns 1.1.1.1" } }));
+    await svc.setDockerOptions("u1", "app1", null);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { dockerOptions: null } }));
+  });
+
   it("stores build args encrypted on setBuildArgs", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

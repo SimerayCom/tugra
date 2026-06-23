@@ -30,6 +30,8 @@ export interface AppSpec {
   env: Record<string, string>;
   /** Build-time variables injected during image build (separate from runtime env). */
   buildArgs?: Record<string, string>;
+  /** Raw extra flags appended to `docker run` (advanced; passed through verbatim). */
+  dockerOptions?: string | null;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
@@ -348,6 +350,8 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     `--name ${name}`,
     "--restart unless-stopped",
     limitArgs.join(" "),
+    // Operator-supplied raw flags (advanced, passed through verbatim).
+    app.dockerOptions?.trim() || "",
     envArg,
     netExpose.trim(),
     volArgs,

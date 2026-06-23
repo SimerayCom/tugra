@@ -47,6 +47,11 @@ export const SetBuildArgsSchema = z.object({
 });
 export type SetBuildArgsInput = z.infer<typeof SetBuildArgsSchema>;
 
+export const SetDockerOptionsSchema = z.object({
+  dockerOptions: z.string().max(2000).nullable(),
+});
+export type SetDockerOptionsInput = z.infer<typeof SetDockerOptionsSchema>;
+
 export const SetLimitsSchema = z.object({
   healthCmd: z.string().min(1).nullable().optional(),
   memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
