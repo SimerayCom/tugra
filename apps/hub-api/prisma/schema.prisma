@@ -339,6 +339,8 @@ enum BuildType {
   NIXPACKS
   DOCKERFILE
   STATIC
+  RAILPACK
+  HEROKU
 }
 
 enum DeploymentStatus {

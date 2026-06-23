@@ -8,7 +8,7 @@ export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
-export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC";
+export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
 
 export interface AppSpec {
   id: string;
@@ -212,6 +212,18 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${bd}/Dockerfile.tugra`,
         `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${bd}/tugra-nginx.conf`,
         `docker build ${nc}-t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
+      );
+    } else if (app.buildType === "RAILPACK") {
+      // Railpack (Railway's modern builder) — builds an OCI image via BuildKit.
+      steps.push(
+        "command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | sh",
+        `railpack build ${bd} --name ${tag}`,
+      );
+    } else if (app.buildType === "HEROKU") {
+      // Heroku / Cloud Native Buildpacks via the pack CLI.
+      steps.push(
+        "command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C /usr/local/bin -xz pack; }",
+        `pack build ${tag} --path ${bd} --builder heroku/builder:24 --pull-policy if-not-present`,
       );
     } else {
       steps.push(

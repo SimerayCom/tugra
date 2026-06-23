@@ -186,7 +186,7 @@ export interface BulkOperation {
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export type AppSource = "IMAGE" | "GIT" | "COMPOSE";
-export type BuildType = "NIXPACKS" | "DOCKERFILE" | "STATIC";
+export type BuildType = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
 
 export interface AppVolume {
   name: string;

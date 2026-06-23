@@ -53,6 +53,18 @@ describe("deploy-script", () => {
     expect(normal).not.toContain("--no-cache");
   });
 
+  it("RAILPACK: installs railpack and builds to the versioned tag", () => {
+    const s = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "RAILPACK" }, "v1");
+    expect(s).toContain("command -v railpack");
+    expect(s).toContain("railpack build /etc/tugra/builds/abc --name tugra_abc:v1");
+  });
+
+  it("HEROKU: builds via the pack CLI with the heroku builder", () => {
+    const s = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "HEROKU" }, "v1");
+    expect(s).toContain("command -v pack");
+    expect(s).toContain("pack build tugra_abc:v1 --path /etc/tugra/builds/abc --builder heroku/builder:24");
+  });
+
   it("injects env via an --env-file (0600) instead of -e, plus -p when no domain", () => {
     const s = buildRunScript({ ...base, env: { FOO: "bar baz" }, hostPort: 8080, containerPort: 3000 }, "v1");
     expect(s).toContain("--env-file /etc/tugra/env/abc.env");

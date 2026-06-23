@@ -56,7 +56,7 @@ export interface AppView {
   image: string | null;
   gitUrl: string | null;
   gitBranch: string | null;
-  buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC";
+  buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
   buildCommand: string | null;
   outputDir: string | null;
   composeFile: string | null;
