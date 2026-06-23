@@ -524,6 +524,12 @@ export const api = {
       body: JSON.stringify(limits),
     });
   },
+  setDatabaseLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null }) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/limits`, {
+      method: "PUT",
+      body: JSON.stringify(limits),
+    });
+  },
   setAppVolumes(id: string, volumes: AppVolume[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/volumes`, {
       method: "PUT",

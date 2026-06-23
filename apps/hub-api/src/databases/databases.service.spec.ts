@@ -92,6 +92,28 @@ describe("DatabasesService", () => {
     );
   });
 
+  it("forbids a non-writer from setting resource limits", async () => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+    } as unknown as TeamAccessService;
+    await expect(make(prisma, access).setLimits("u1", "db1", { memoryMb: 512 })).rejects.toThrow(/nope/);
+  });
+
+  it("persists resource limits + health-check for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access).setLimits("u1", "db1", { healthCmd: "pg_isready", memoryMb: 512, cpus: 1 });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { healthCmd: "pg_isready", memoryMb: 512, cpus: 1 } }),
+    );
+  });
+
   it("hides connection details from non-write (viewer) members", async () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db) },

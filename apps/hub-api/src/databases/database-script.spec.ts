@@ -132,6 +132,25 @@ describe("database-script", () => {
     });
   });
 
+  describe("resource limits + health-check", () => {
+    it("adds --memory/--cpus/--health-cmd flags when set", () => {
+      const s = buildDatabaseRunScript(
+        spec("POSTGRES", { memoryMb: 512, cpus: 0.5, healthCmd: "pg_isready -U tugra || exit 1" }),
+      );
+      expect(s).toContain("--memory 512m");
+      expect(s).toContain("--cpus 0.5");
+      expect(s).toContain("--health-cmd 'pg_isready -U tugra || exit 1'");
+      expect(s).toContain("--health-interval=30s");
+    });
+
+    it("omits limit flags when unset", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES"));
+      expect(s).not.toContain("--memory");
+      expect(s).not.toContain("--cpus");
+      expect(s).not.toContain("--health-cmd");
+    });
+  });
+
   describe("connectionInfo", () => {
     it("builds an engine-specific URI with the container name as host", () => {
       expect(connectionInfo(spec("POSTGRES")).uri).toBe("postgresql://tugra:p@ss@tugra_db_db1:5432/appdb");

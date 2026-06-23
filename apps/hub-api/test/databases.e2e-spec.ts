@@ -124,6 +124,32 @@ describe("Databases (e2e)", () => {
     expect(detail.body.tags).toEqual(["cache", "prod"]);
   });
 
+  it("applies resource limits + health-check at provision", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "limdb", serverId, engine: "POSTGRES" })
+      .expect(201);
+    const dbId = res.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/databases/${dbId}/limits`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ memoryMb: 512, cpus: 0.5, healthCmd: "pg_isready -U tugra || exit 1" })
+      .expect(200);
+
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/databases/${dbId}/provision`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    await sleep(100);
+    const sent = commands.join("\n");
+    expect(sent).toContain("--memory 512m");
+    expect(sent).toContain("--cpus 0.5");
+    expect(sent).toContain("--health-cmd 'pg_isready -U tugra || exit 1'");
+  });
+
   it("rejects creating a database on a server the user has no access to", async () => {
     await request(app.getHttpServer())
       .post("/databases")

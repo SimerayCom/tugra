@@ -55,6 +55,9 @@ export interface DbSpec {
   port: number;
   hostPort?: number | null;
   credentials: DbCredentials;
+  healthCmd?: string | null;
+  memoryMb?: number | null;
+  cpus?: number | null;
 }
 
 export function dbContainerName(db: { id: string }): string {
@@ -160,12 +163,27 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   const portFlag = db.hostPort ? `-p ${db.hostPort}:${db.port}` : "";
   const command = engineCommand(db.engine, db.credentials);
 
+  // Optional resource limits + container health check (mirrors app deploys).
+  const limitArgs: string[] = [];
+  if (db.memoryMb) limitArgs.push(`--memory ${db.memoryMb}m`);
+  if (db.cpus) limitArgs.push(`--cpus ${db.cpus}`);
+  if (db.healthCmd) {
+    limitArgs.push(
+      `--health-cmd ${shq(db.healthCmd)}`,
+      "--health-interval=30s",
+      "--health-timeout=5s",
+      "--health-retries=3",
+      "--health-start-period=10s",
+    );
+  }
+
   const runArgs = [
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
     `--network ${DB_NET}`,
     `-v ${vol}:${def.dataDir}`,
+    limitArgs.join(" "),
     envFlags,
     portFlag,
     shq(db.image),
