@@ -9,6 +9,7 @@ import type {
   Database,
   GitSource,
   SourceRepo,
+  VolumeBackup,
   DbEngine,
   Deployment,
   DomainView,
@@ -435,6 +436,21 @@ export const api = {
   },
   deployApp(id: string, opts?: { noCache?: boolean }) {
     return apiFetch<Deployment>(`/apps/${id}/deploy`, { method: "POST", body: JSON.stringify(opts ?? {}) });
+  },
+  listVolumeBackups(appId: string) {
+    return apiFetch<VolumeBackup[]>(`/apps/${appId}/volume-backups`);
+  },
+  volumeBackupNow(appId: string) {
+    return apiFetch<VolumeBackup[]>(`/apps/${appId}/volume-backups`, { method: "POST" });
+  },
+  restoreVolumeBackup(appId: string, id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${appId}/volume-backups/${id}/restore`, { method: "POST" });
+  },
+  deleteVolumeBackup(appId: string, id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${appId}/volume-backups/${id}`, { method: "DELETE" });
+  },
+  setVolumeBackupConfig(appId: string, cfg: { enabled: boolean; intervalHours?: number | null; retention?: number; destinationId?: string | null }) {
+    return apiFetch<Application>(`/apps/${appId}/volume-backups/config`, { method: "PUT", body: JSON.stringify(cfg) });
   },
   stopApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/stop`, { method: "POST" });
