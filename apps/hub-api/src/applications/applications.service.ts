@@ -69,6 +69,7 @@ export interface AppView {
   healthCmd: string | null;
   memoryMb: number | null;
   cpus: number | null;
+  dockerOptions: string | null;
   volumes: AppVolume[];
   hasGitToken: boolean;
   registryUrl: string | null;
@@ -634,6 +635,12 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.build_args.update", target: id });
   }
 
+  async setDockerOptions(userId: string, id: string, dockerOptions: string | null): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
+    await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
+  }
+
   async setLimits(
     userId: string,
     id: string,
@@ -810,6 +817,7 @@ export class ApplicationsService {
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
       gitToken: this.appGitToken(app),
       registryAuth: this.appRegistryAuth(app),
@@ -854,6 +862,7 @@ export class ApplicationsService {
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
       hasGitToken: !!app.gitTokenEnc,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,

@@ -29,6 +29,8 @@ import {
   PreviewConfigSchema,
   SetBuildArgsInput,
   SetBuildArgsSchema,
+  SetDockerOptionsInput,
+  SetDockerOptionsSchema,
   SetCredentialsInput,
   SetCredentialsSchema,
   SetEnvInput,
@@ -144,6 +146,17 @@ export class ApplicationsController {
   @Get(":id/build-args")
   getBuildArgs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.getBuildArgs(user.userId, id);
+  }
+
+  @Put(":id/docker-options")
+  @HttpCode(200)
+  async setDockerOptions(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDockerOptionsSchema)) body: SetDockerOptionsInput,
+  ) {
+    await this.apps.setDockerOptions(user.userId, id, body.dockerOptions);
+    return { ok: true };
   }
 
   @Put(":id/build-args")

@@ -424,6 +424,7 @@ model Application {
   env            Json
   envEnc         String?
   buildArgsEnc   String?
+  dockerOptions  String?
   hostPort       Int?
   containerPort  Int?         @default(80)
   domain         String?

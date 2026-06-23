@@ -168,6 +168,9 @@ export default function AppDetailPage() {
           {appData.source !== "COMPOSE" && (
             <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} />
           )}
+          {appData.source !== "COMPOSE" && (
+            <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />
+          )}
           {appData.source !== "COMPOSE" && <VolumesCard id={id} volumes={appData.volumes} />}
           {appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
           {!appData.isPreview && (
@@ -474,6 +477,32 @@ function LimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: 
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function DockerOptionsCard({ id, dockerOptions }: { id: string; dockerOptions: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [val, setVal] = useState(dockerOptions ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setAppDockerOptions(id, val.trim() || null),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.dockerOptions")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.dockerOptionsDesc")}</p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          style={{ ...envField, flex: 1 }}
+          placeholder="--cap-add=NET_ADMIN --sysctl net.core.somaxconn=1024"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+        />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.dockerOptionsRedeploy")}</div>}
     </Card>
   );
 }
