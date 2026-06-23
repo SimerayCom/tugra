@@ -1,0 +1,155 @@
+import { createHash } from "node:crypto";
+import type { AppSpec } from "./deploy-script";
+
+/**
+ * A redacted, persistable snapshot of the config a deploy ran with — so the
+ * Deployments view can show "what changed since the last deploy". SECRETS NEVER
+ * ENTER THE SNAPSHOT: env values become short fingerprints (sha256 prefix) used
+ * only for change detection, and git/registry credentials collapse to booleans.
+ */
+export interface ConfigSnapshot {
+  source?: string;
+  image?: string | null;
+  gitUrl?: string | null;
+  gitBranch?: string | null;
+  buildType?: string;
+  dockerfilePath?: string | null;
+  buildCommand?: string | null;
+  outputDir?: string | null;
+  composeFile?: string | null;
+  healthCmd?: string | null;
+  memoryMb?: number | null;
+  cpus?: number | null;
+  hostPort?: number | null;
+  containerPort?: number | null;
+  domain?: string | null;
+  domainRedirect?: "www" | "root" | null;
+  securityHeaders?: boolean;
+  volumes: { name: string; path: string }[];
+  /** env var name → 12-hex fingerprint of its value (value itself is never stored). */
+  env: Record<string, string>;
+  hasGitToken: boolean;
+  hasRegistryAuth: boolean;
+}
+
+export interface ConfigChange {
+  field: string;
+  kind: "added" | "removed" | "changed";
+  before?: string;
+  after?: string;
+}
+
+/** Placeholder shown for secret (env) values, which are never stored or revealed. */
+const SECRET = "•••";
+
+/** The scalar AppSpec fields that are safe to record verbatim and diff. */
+const SCALAR_FIELDS = [
+  "source",
+  "image",
+  "gitUrl",
+  "gitBranch",
+  "buildType",
+  "dockerfilePath",
+  "buildCommand",
+  "outputDir",
+  "composeFile",
+  "healthCmd",
+  "memoryMb",
+  "cpus",
+  "hostPort",
+  "containerPort",
+  "domain",
+  "domainRedirect",
+  "securityHeaders",
+] as const;
+
+function fingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
+/** Build a redacted snapshot from the (already env-resolved) deploy spec. */
+export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(spec.env ?? {})) env[k] = fingerprint(v);
+  return {
+    source: spec.source,
+    image: spec.image ?? null,
+    gitUrl: spec.gitUrl ?? null,
+    gitBranch: spec.gitBranch ?? null,
+    buildType: spec.buildType,
+    dockerfilePath: spec.dockerfilePath ?? null,
+    buildCommand: spec.buildCommand ?? null,
+    outputDir: spec.outputDir ?? null,
+    composeFile: spec.composeFile ?? null,
+    healthCmd: spec.healthCmd ?? null,
+    memoryMb: spec.memoryMb ?? null,
+    cpus: spec.cpus ?? null,
+    hostPort: spec.hostPort ?? null,
+    containerPort: spec.containerPort ?? null,
+    domain: spec.domain ?? null,
+    domainRedirect: spec.domainRedirect ?? null,
+    securityHeaders: spec.securityHeaders,
+    volumes: (spec.volumes ?? []).map((v) => ({ name: v.name, path: v.path })),
+    env,
+    hasGitToken: !!spec.gitToken,
+    hasRegistryAuth: !!spec.registryAuth,
+  };
+}
+
+function show(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  return String(v);
+}
+
+/**
+ * Diff two snapshots into a flat list of changes. `prev === null` (first deploy
+ * or a pre-snapshot row) yields no changes. env value changes are reported
+ * without revealing the value.
+ */
+export function diffSnapshots(
+  prev: ConfigSnapshot | null,
+  next: ConfigSnapshot,
+): ConfigChange[] {
+  if (!prev) return [];
+  const changes: ConfigChange[] = [];
+
+  for (const f of SCALAR_FIELDS) {
+    const a = (prev as unknown as Record<string, unknown>)[f];
+    const b = (next as unknown as Record<string, unknown>)[f];
+    if (show(a) !== show(b)) {
+      changes.push({ field: f, kind: "changed", before: show(a), after: show(b) });
+    }
+  }
+
+  // volumes: compare by name→path
+  const pv = new Map((prev.volumes ?? []).map((v) => [v.name, v.path]));
+  const nv = new Map((next.volumes ?? []).map((v) => [v.name, v.path]));
+  for (const [name, path] of nv) {
+    if (!pv.has(name)) changes.push({ field: `volume.${name}`, kind: "added", after: path });
+    else if (pv.get(name) !== path)
+      changes.push({ field: `volume.${name}`, kind: "changed", before: pv.get(name), after: path });
+  }
+  for (const [name] of pv) {
+    if (!nv.has(name)) changes.push({ field: `volume.${name}`, kind: "removed" });
+  }
+
+  // env: presence + fingerprint changes, never revealing values
+  const pe = prev.env ?? {};
+  const ne = next.env ?? {};
+  for (const k of Object.keys(ne)) {
+    if (!(k in pe)) changes.push({ field: `env.${k}`, kind: "added", after: SECRET });
+    else if (pe[k] !== ne[k])
+      changes.push({ field: `env.${k}`, kind: "changed", before: SECRET, after: SECRET });
+  }
+  for (const k of Object.keys(pe)) {
+    if (!(k in ne)) changes.push({ field: `env.${k}`, kind: "removed", before: SECRET });
+  }
+
+  // credential presence
+  if (prev.hasGitToken !== next.hasGitToken)
+    changes.push({ field: "gitToken", kind: next.hasGitToken ? "added" : "removed" });
+  if (prev.hasRegistryAuth !== next.hasRegistryAuth)
+    changes.push({ field: "registryAuth", kind: next.hasRegistryAuth ? "added" : "removed" });
+
+  return changes;
+}

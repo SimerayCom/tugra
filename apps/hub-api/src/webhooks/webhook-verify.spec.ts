@@ -2,6 +2,8 @@ import { createHmac } from "node:crypto";
 import {
   generateWebhookSecret,
   generateWebhookToken,
+  hasSkipMarker,
+  parseHeadCommitMessage,
   parsePullRequest,
   parseRef,
   refMatchesBranch,
@@ -104,6 +106,33 @@ describe("webhook-verify", () => {
       expect(parsePullRequest({ action: "opened" })).toBeNull();
       expect(parsePullRequest({ action: "opened", pull_request: { number: 1 } })).toBeNull();
       expect(parsePullRequest(null)).toBeNull();
+    });
+  });
+
+  describe("parseHeadCommitMessage", () => {
+    it("reads GitHub head_commit.message", () => {
+      expect(parseHeadCommitMessage({ head_commit: { message: "fix bug" } })).toBe("fix bug");
+    });
+    it("reads the last GitLab commit message", () => {
+      expect(
+        parseHeadCommitMessage({ commits: [{ message: "a" }, { message: "head" }] }),
+      ).toBe("head");
+    });
+    it("returns null when no message present", () => {
+      expect(parseHeadCommitMessage({ ref: "refs/heads/main" })).toBeNull();
+      expect(parseHeadCommitMessage(null)).toBeNull();
+    });
+  });
+
+  describe("hasSkipMarker", () => {
+    it("detects the standard skip markers (case-insensitive)", () => {
+      for (const m of ["[skip ci]", "[ci skip]", "[SKIP CD]", "[cd skip]", "[skip deploy]", "[no deploy]"]) {
+        expect(hasSkipMarker(`chore: release ${m}`)).toBe(true);
+      }
+    });
+    it("ignores normal messages and empty input", () => {
+      expect(hasSkipMarker("feat: add skipping logic")).toBe(false);
+      expect(hasSkipMarker(null)).toBe(false);
     });
   });
 

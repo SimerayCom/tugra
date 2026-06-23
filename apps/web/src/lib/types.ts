@@ -327,12 +327,20 @@ export interface VolumeBackup {
 
 export type DeploymentStatus = "RUNNING" | "SUCCESS" | "FAILED";
 
+export interface ConfigChange {
+  field: string;
+  kind: "added" | "removed" | "changed";
+  before?: string;
+  after?: string;
+}
+
 export interface Deployment {
   id: string;
   status: DeploymentStatus;
   logs: string | null;
   exitCode: number | null;
   imageTag: string | null;
+  configChanges?: ConfigChange[];
   createdAt: string;
 }
 

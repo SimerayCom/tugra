@@ -8,6 +8,8 @@ import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { ApplicationsService } from "../applications/applications.service";
 import {
+  hasSkipMarker,
+  parseHeadCommitMessage,
   parsePullRequest,
   parseRef,
   refMatchesBranch,
@@ -140,7 +142,8 @@ export class WebhooksService {
     app: Application,
     rawBody: Buffer | string,
   ): Promise<WebhookResult> {
-    const ref = parseRef(this.parseBody(rawBody));
+    const payload = this.parseBody(rawBody);
+    const ref = parseRef(payload);
     // Only deploy when the pushed branch matches the app's tracked branch.
     // A ping event (no ref) or a push to another branch is acknowledged but ignored.
     if (app.source === "GIT" && app.gitBranch) {
@@ -148,6 +151,18 @@ export class WebhooksService {
       if (!refMatchesBranch(ref, app.gitBranch)) {
         return { deployed: false, reason: "branch mismatch (ignored)" };
       }
+    }
+
+    // Standard CI/CD convention: a `[skip ci]`/`[skip deploy]` marker in the head
+    // commit message suppresses the auto-deploy (the push is acknowledged).
+    if (hasSkipMarker(parseHeadCommitMessage(payload))) {
+      await this.audit.log({
+        actor: "webhook",
+        action: "app.deploy.skipped",
+        target: app.id,
+        meta: { trigger: "git-push", ref: ref ?? null, reason: "skip marker" },
+      });
+      return { deployed: false, reason: "skipped by commit message" };
     }
 
     await this.audit.log({

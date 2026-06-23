@@ -222,6 +222,23 @@ export default function AppDetailPage() {
                       </button>
                     )}
                   </div>
+                  {d.configChanges && d.configChanges.length > 0 && (
+                    <details style={{ marginTop: 6 }}>
+                      <summary style={{ fontSize: 11, color: "var(--c-tx3)", cursor: "pointer" }}>
+                        {t("apps.configChanges", { count: d.configChanges.length })}
+                      </summary>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2, margin: "4px 0 0", paddingLeft: 4 }}>
+                        {d.configChanges.map((c) => (
+                          <div key={c.field} className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
+                            <span style={{ color: c.kind === "added" ? "var(--c-g)" : c.kind === "removed" ? "var(--c-r)" : "var(--c-a)" }}>{t(`apps.cfg_${c.kind}`)}</span>{" "}
+                            <span style={{ color: "var(--c-tx2)" }}>{c.field}</span>
+                            {c.kind === "changed" && <span>: {c.before} → {c.after}</span>}
+                            {c.kind === "added" && c.after != null && <span>: {c.after}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                   {d.logs && (
                     <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{d.logs}</pre>
                   )}
