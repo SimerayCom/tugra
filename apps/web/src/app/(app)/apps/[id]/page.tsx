@@ -193,6 +193,7 @@ export default function AppDetailPage() {
               https={appData.https}
               domainRedirect={appData.domainRedirect}
               securityHeaders={appData.securityHeaders}
+              forwardAuth={appData.forwardAuth}
             />
           )}
           {appData.source !== "COMPOSE" && appData.volumes.length > 0 && (
@@ -669,22 +670,26 @@ function DomainOptionsCard({
   https,
   domainRedirect,
   securityHeaders,
+  forwardAuth,
 }: {
   id: string;
   domain: string;
   https: boolean;
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
+  forwardAuth: string | null;
 }) {
   const t = useT();
   const qc = useQueryClient();
   const [redirect, setRedirect] = useState<string>(domainRedirect ?? "");
   const [sec, setSec] = useState(securityHeaders);
+  const [fa, setFa] = useState(forwardAuth ?? "");
   const save = useMutation({
     mutationFn: () =>
       api.setAppDomainOptions(id, {
         domainRedirect: redirect ? (redirect as "www" | "root") : null,
         securityHeaders: sec,
+        forwardAuth: fa.trim() || null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
@@ -707,6 +712,16 @@ function DomainOptionsCard({
           {t("apps.securityHeaders")}
         </label>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.forwardAuth")}</div>
+        <input
+          style={{ ...envField, width: "100%" }}
+          placeholder="https://auth.example.com/api/verify?rd=https://auth.example.com"
+          value={fa}
+          onChange={(e) => setFa(e.target.value)}
+        />
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.forwardAuthDesc")}</p>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>

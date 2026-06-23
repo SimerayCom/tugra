@@ -297,6 +297,7 @@ export interface Application {
   domain: string | null;
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
+  forwardAuth: string | null;
   https: boolean;
   url: string | null;
   webhookToken: string | null;

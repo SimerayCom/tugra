@@ -249,6 +249,21 @@ describe("deploy-script", () => {
     expect(s).toContain(`middlewares=tugra_${base.id}-sec`);
   });
 
+  it("forward-auth adds a forwardauth middleware first in the chain", () => {
+    const labels = traefikLabels({ ...base, domain: "x.com", securityHeaders: true, forwardAuth: "https://auth.x/verify" });
+    const s = labels.join("\n");
+    expect(s).toContain(`-fa.forwardauth.address=https://auth.x/verify`);
+    expect(s).toContain("-fa.forwardauth.trustForwardHeader=true");
+    const chain = labels.find((l) => l.includes(`routers.tugra_${base.id}.middlewares=`))!;
+    expect(chain).toContain(`tugra_${base.id}-fa`);
+    expect(chain.indexOf("-fa")).toBeLessThan(chain.indexOf("-sec")); // auth runs first
+  });
+
+  it("no forwardauth label without forwardAuth", () => {
+    const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(s).not.toContain("forwardauth");
+  });
+
   it("proxy setup script runs Traefik with ACME", () => {
     const s = buildProxySetupScript("me@x.com");
     expect(s).toContain("docker network create tugra-proxy");
