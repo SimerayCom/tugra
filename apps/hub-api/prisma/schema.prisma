@@ -372,6 +372,24 @@ enum BackupStatus {
   FAILED
 }
 
+model VolumeBackup {
+  id            String       @id @default(cuid())
+  app           Application  @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId         String
+  volumeName    String
+  status        BackupStatus @default(PENDING)
+  filename      String
+  path          String
+  destinationId String?
+  objectKey     String?
+  sizeBytes     BigInt?
+  createdBy     String
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  @@index([appId])
+}
+
 enum DestType {
   LOCAL
   S3
@@ -419,6 +437,12 @@ model Application {
   prNumber       Int?
   parentAppId    String?
   tags           String[]     @default([])
+  // Volume backups (Dokploy parity): back up the app's named volumes to a destination.
+  volumeBackupEnabled       Boolean @default(false)
+  volumeBackupIntervalHours Int?
+  volumeBackupRetention     Int     @default(7)
+  volumeBackupDestinationId String?
+  volumeBackups  VolumeBackup[]
   parent         Application?  @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
   previews       Application[] @relation("AppPreviews")
   deployments   Deployment[]

@@ -17,6 +17,7 @@ import { BulkModule } from "./bulk/bulk.module";
 import { ApplicationsModule } from "./applications/applications.module";
 import { DatabasesModule } from "./databases/databases.module";
 import { BackupsModule } from "./backups/backups.module";
+import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
@@ -44,6 +45,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     ApplicationsModule,
     DatabasesModule,
     BackupsModule,
+    VolumeBackupsModule,
     DestinationsModule,
     ServerOpsModule,
     ApiTokensModule,
