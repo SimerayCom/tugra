@@ -1,6 +1,10 @@
 import {
   buildImageRemoveScript,
   buildProxySetupScript,
+  buildProxyLogsScript,
+  buildProxyRestartScript,
+  buildProxyStatusScript,
+  buildProxyStopScript,
   buildRemoveScript,
   buildRunScript,
   containerName,
@@ -223,6 +227,17 @@ describe("deploy-script", () => {
     expect(s).toContain("traefik:v3.1");
     expect(s).toContain("acme.email='me@x.com'");
     expect(s).toContain("acme.json");
+  });
+
+  it("proxy control scripts target the tugra-proxy container", () => {
+    expect(buildProxyStopScript()).toBe("docker stop tugra-proxy");
+    expect(buildProxyRestartScript()).toBe("docker restart tugra-proxy");
+    expect(buildProxyStatusScript()).toContain("docker inspect -f '{{.State.Status}}' tugra-proxy");
+    expect(buildProxyStatusScript()).toContain("|| echo absent");
+    expect(buildProxyLogsScript(50)).toBe("docker logs --tail 50 tugra-proxy 2>&1");
+    // tail is clamped to [1,1000]
+    expect(buildProxyLogsScript(99999)).toContain("--tail 1000");
+    expect(buildProxyLogsScript(0)).toContain("--tail 1");
   });
 
   it("builds remove + image-remove scripts", () => {

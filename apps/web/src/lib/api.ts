@@ -20,6 +20,7 @@ import type {
   LogDrain,
   MyInvitation,
   PatchInfo,
+  ProxyStatus,
   PublicUser,
   Project,
   Role,
@@ -234,6 +235,21 @@ export const api = {
 
   cleanupServer(id: string) {
     return apiFetch<{ output: string }>(`/servers/${id}/cleanup`, { method: "POST" });
+  },
+  getProxyStatus(id: string) {
+    return apiFetch<{ status: ProxyStatus }>(`/servers/${id}/proxy`);
+  },
+  startProxy(id: string) {
+    return apiFetch<{ status: ProxyStatus }>(`/servers/${id}/proxy/start`, { method: "POST" });
+  },
+  stopProxy(id: string) {
+    return apiFetch<{ status: ProxyStatus }>(`/servers/${id}/proxy/stop`, { method: "POST" });
+  },
+  restartProxy(id: string) {
+    return apiFetch<{ status: ProxyStatus }>(`/servers/${id}/proxy/restart`, { method: "POST" });
+  },
+  getProxyLogs(id: string, tail?: number) {
+    return apiFetch<{ output: string }>(`/servers/${id}/proxy/logs${tail ? `?tail=${tail}` : ""}`);
   },
   setServerTags(id: string, tags: string[]) {
     return apiFetch<{ ok: true }>(`/servers/${id}/tags`, {

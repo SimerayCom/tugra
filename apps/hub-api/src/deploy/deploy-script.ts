@@ -389,6 +389,27 @@ export function buildProxySetupScript(acmeEmail?: string | null): string {
   ].join("\n");
 }
 
+/** Stop the Traefik proxy container. */
+export function buildProxyStopScript(): string {
+  return `docker stop ${PROXY_NAME}`;
+}
+
+/** Restart the Traefik proxy container. */
+export function buildProxyRestartScript(): string {
+  return `docker restart ${PROXY_NAME}`;
+}
+
+/** Report the proxy container state ("running"/"exited"/… or "absent"). */
+export function buildProxyStatusScript(): string {
+  return `docker inspect -f '{{.State.Status}}' ${PROXY_NAME} 2>/dev/null || echo absent`;
+}
+
+/** Tail the proxy container logs (combined stdout+stderr). */
+export function buildProxyLogsScript(tail = 200): string {
+  const n = Math.max(1, Math.min(1000, Math.floor(tail)));
+  return `docker logs --tail ${n} ${PROXY_NAME} 2>&1`;
+}
+
 export function buildStopScript(app: { id: string }): string {
   return `docker stop ${containerName(app)} 2>/dev/null || true`;
 }

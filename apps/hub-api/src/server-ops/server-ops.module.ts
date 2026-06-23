@@ -8,11 +8,12 @@ import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { PatchService } from "./patch.service";
 import { LogDrainService } from "./log-drain.service";
+import { ProxyOpsService } from "./proxy-ops.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule],
   controllers: [ServerOpsController],
-  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService],
+  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService],
 })
 export class ServerOpsModule implements OnModuleInit {
   constructor(
