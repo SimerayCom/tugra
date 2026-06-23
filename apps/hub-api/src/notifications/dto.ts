@@ -6,6 +6,8 @@ export const EVENT_TYPES = [
   "server_offline",
   "monitor_down",
   "monitor_up",
+  "ssl_expiring",
+  "token_expiring",
 ] as const;
 
 export const CreateChannelSchema = z.object({
