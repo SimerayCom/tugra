@@ -430,6 +430,7 @@ model Application {
   domain         String?
   domainRedirect  String?
   securityHeaders Boolean     @default(false)
+  forwardAuth    String?
   https          Boolean      @default(true)
   status         AppStatus    @default(NEW)
   webhookToken   String?      @unique

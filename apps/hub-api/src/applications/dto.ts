@@ -85,10 +85,15 @@ export const SetDomainOptionsSchema = z
   .object({
     domainRedirect: z.enum(["www", "root"]).nullable().optional(),
     securityHeaders: z.boolean().optional(),
+    forwardAuth: z.string().url().nullable().optional(),
   })
-  .refine((d) => d.domainRedirect !== undefined || d.securityHeaders !== undefined, {
-    message: "provide domainRedirect and/or securityHeaders",
-  });
+  .refine(
+    (d) =>
+      d.domainRedirect !== undefined ||
+      d.securityHeaders !== undefined ||
+      d.forwardAuth !== undefined,
+    { message: "provide domainRedirect, securityHeaders and/or forwardAuth" },
+  );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 
 export const PreviewConfigSchema = z.object({

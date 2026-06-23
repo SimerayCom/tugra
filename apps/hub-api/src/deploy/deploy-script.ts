@@ -37,6 +37,8 @@ export interface AppSpec {
   domain?: string | null;
   domainRedirect?: "www" | "root" | null;
   securityHeaders?: boolean;
+  /** External auth service URL — protects the app via a Traefik forwardauth middleware. */
+  forwardAuth?: string | null;
 }
 
 /** Credentials for pulling from a private container registry. */
@@ -145,6 +147,14 @@ export function traefikLabels(app: AppSpec): string[] {
       `traefik.http.middlewares.${r}-sec.headers.referrerPolicy=strict-origin-when-cross-origin`,
     );
     mw.push(`${r}-sec`);
+  }
+  if (app.forwardAuth) {
+    labels.push(
+      `traefik.http.middlewares.${r}-fa.forwardauth.address=${app.forwardAuth}`,
+      `traefik.http.middlewares.${r}-fa.forwardauth.trustForwardHeader=true`,
+      `traefik.http.middlewares.${r}-fa.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email`,
+    );
+    mw.unshift(`${r}-fa`); // auth runs first in the chain
   }
   if (mw.length) labels.push(`traefik.http.routers.${r}.middlewares=${mw.join(",")}`);
   return labels;

@@ -406,6 +406,19 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("persists forward-auth and clears it", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setDomainOptions("u1", "app1", { forwardAuth: "https://auth.x/verify" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { forwardAuth: "https://auth.x/verify" } }));
+    await svc.setDomainOptions("u1", "app1", { forwardAuth: null });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { forwardAuth: null } }));
+  });
+
   it("rejects moving an app to an environment in another team", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },

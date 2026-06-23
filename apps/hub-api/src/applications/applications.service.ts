@@ -83,6 +83,7 @@ export interface AppView {
   domain: string | null;
   domainRedirect: string | null;
   securityHeaders: boolean;
+  forwardAuth: string | null;
   https: boolean;
   url: string | null;
   webhookToken: string | null;
@@ -705,12 +706,13 @@ export class ApplicationsService {
   async setDomainOptions(
     userId: string,
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     const data: Prisma.ApplicationUpdateInput = {};
     if (opts.domainRedirect !== undefined) data.domainRedirect = opts.domainRedirect;
     if (opts.securityHeaders !== undefined) data.securityHeaders = opts.securityHeaders;
+    if (opts.forwardAuth !== undefined) data.forwardAuth = opts.forwardAuth;
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
   }
@@ -827,6 +829,7 @@ export class ApplicationsService {
       domain: app.domain,
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
       securityHeaders: app.securityHeaders,
+      forwardAuth: app.forwardAuth,
     };
   }
 
@@ -876,6 +879,7 @@ export class ApplicationsService {
       domain: app.domain,
       domainRedirect: app.domainRedirect,
       securityHeaders: app.securityHeaders,
+      forwardAuth: app.forwardAuth,
       https: app.https,
       url: app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null,
       // Webhook credentials are only exposed to members who can deploy.
