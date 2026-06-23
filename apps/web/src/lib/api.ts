@@ -530,6 +530,12 @@ export const api = {
       body: JSON.stringify(limits),
     });
   },
+  setDatabasePort(id: string, hostPort: number | null) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/port`, {
+      method: "PUT",
+      body: JSON.stringify({ hostPort }),
+    });
+  },
   setAppVolumes(id: string, volumes: AppVolume[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/volumes`, {
       method: "PUT",

@@ -150,6 +150,42 @@ describe("Databases (e2e)", () => {
     expect(sent).toContain("--health-cmd 'pg_isready -U tugra || exit 1'");
   });
 
+  it("exposes and removes the public host port across re-provisions", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "portdb", serverId, engine: "POSTGRES" })
+      .expect(201);
+    const dbId = res.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/databases/${dbId}/port`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ hostPort: 15432 })
+      .expect(200);
+    const detail = await request(app.getHttpServer())
+      .get(`/databases/${dbId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.hostPort).toBe(15432);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/databases/${dbId}/provision`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(100);
+    expect(commands.join("\n")).toContain("-p 15432:");
+
+    // remove public access → no -p flag on next provision
+    await request(app.getHttpServer())
+      .put(`/databases/${dbId}/port`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ hostPort: null })
+      .expect(200);
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/databases/${dbId}/provision`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(100);
+    expect(commands.join("\n")).not.toContain("-p 15432:");
+  });
+
   it("rejects creating a database on a server the user has no access to", async () => {
     await request(app.getHttpServer())
       .post("/databases")

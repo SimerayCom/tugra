@@ -189,6 +189,12 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "db.limits.update", target: id });
   }
 
+  async setPort(userId: string, id: string, hostPort: number | null): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.database.update({ where: { id }, data: { hostPort } });
+    await this.audit.log({ actor: userId, action: "db.port.update", target: id });
+  }
+
   // ── helpers ──
   private async assertEnvInTeam(environmentId: string, teamId: string): Promise<void> {
     const env = await this.prisma.environment.findUnique({

@@ -114,6 +114,29 @@ describe("DatabasesService", () => {
     );
   });
 
+  it("forbids a non-writer from changing the public port", async () => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+    } as unknown as TeamAccessService;
+    await expect(make(prisma, access).setPort("u1", "db1", 15432)).rejects.toThrow(/nope/);
+  });
+
+  it("sets and clears the public host port for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access);
+    await svc.setPort("u1", "db1", 15432);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { hostPort: 15432 } }));
+    await svc.setPort("u1", "db1", null);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { hostPort: null } }));
+  });
+
   it("hides connection details from non-write (viewer) members", async () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db) },

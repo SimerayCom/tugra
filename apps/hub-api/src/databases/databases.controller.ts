@@ -20,6 +20,8 @@ import {
   CreateDatabaseSchema,
   SetDatabaseLimitsInput,
   SetDatabaseLimitsSchema,
+  SetDatabasePortInput,
+  SetDatabasePortSchema,
   SetEnvironmentInput,
   SetEnvironmentSchema,
 } from "./dto";
@@ -90,6 +92,17 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetDatabaseLimitsSchema)) body: SetDatabaseLimitsInput,
   ) {
     await this.databases.setLimits(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/port")
+  @HttpCode(200)
+  async setPort(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDatabasePortSchema)) body: SetDatabasePortInput,
+  ) {
+    await this.databases.setPort(user.userId, id, body.hostPort);
     return { ok: true };
   }
 

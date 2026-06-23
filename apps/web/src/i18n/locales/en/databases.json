@@ -53,5 +53,11 @@
   "healthCmd": "Health check command (e.g. pg_isready -U tugra || exit 1)",
   "memoryMb": "Memory (MB)",
   "cpus": "CPUs",
-  "limitsRedeploy": "Re-provision the database to apply."
+  "limitsRedeploy": "Re-provision the database to apply.",
+  "publicPort": "Public access",
+  "publicPortDesc": "Expose this database on a host port so external clients can connect. Leave empty for internal-only access.",
+  "publicPortExposed": "Currently exposed on host port {port}.",
+  "publicPortInternal": "Currently internal-only (reachable by apps on the same network).",
+  "publicPortField": "Host port",
+  "publicPortRedeploy": "Re-provision the database to apply."
 }

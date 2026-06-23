@@ -21,3 +21,8 @@ export const SetDatabaseLimitsSchema = z.object({
   cpus: z.number().min(0.1).max(64).nullable().optional(),
 });
 export type SetDatabaseLimitsInput = z.infer<typeof SetDatabaseLimitsSchema>;
+
+export const SetDatabasePortSchema = z.object({
+  hostPort: z.number().int().min(1).max(65535).nullable(),
+});
+export type SetDatabasePortInput = z.infer<typeof SetDatabasePortSchema>;
