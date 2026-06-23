@@ -99,6 +99,13 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(detail.body.status).toBe("RUNNING");
+
+    // AI analysis is opt-in: with no ANTHROPIC_API_KEY in the test env it 503s
+    // (proves the wiring without any external call).
+    await request(app.getHttpServer())
+      .post(`/apps/${appId}/deployments/${deployments.body[0].id}/analyze`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(503);
   });
 
   it("deploys an app with a domain → proxy setup + Traefik labels", async () => {

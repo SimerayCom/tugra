@@ -47,6 +47,7 @@ import {
   type TemplateMeta,
 } from "../templates/catalog";
 import { probeSsl, type SslStatus } from "./ssl-probe";
+import { AiService } from "./ai.service";
 import { normalizeTags } from "../common/tags";
 import type { CreateAppInput } from "./dto";
 
@@ -124,6 +125,7 @@ export class ApplicationsService {
     private readonly monitors: MonitorsService,
     private readonly notifications: NotificationsService,
     private readonly gitSources: GitSourcesService,
+    private readonly ai: AiService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -575,6 +577,21 @@ export class ApplicationsService {
       const { configSnapshot: _snap, ...rest } = d;
       return { ...rest, configChanges: next ? diffSnapshots(prev, next) : [] };
     });
+  }
+
+  /** AI-powered diagnosis of a deployment's logs (opt-in; writer-only). */
+  async analyzeDeployment(userId: string, appId: string, depId: string): Promise<{ analysis: string }> {
+    const app = await this.requireWrite(userId, appId);
+    const dep = await this.prisma.deployment.findUnique({ where: { id: depId } });
+    if (!dep || dep.appId !== appId) throw new NotFoundException("deployment not found");
+    if (!dep.logs) throw new BadRequestException("deployment has no logs to analyze");
+    const analysis = await this.ai.analyze(dep.logs, {
+      appName: app.name,
+      status: dep.status,
+      exitCode: dep.exitCode,
+    });
+    await this.audit.log({ actor: userId, action: "app.deploy.analyze", target: appId });
+    return { analysis };
   }
 
   /**

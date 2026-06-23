@@ -35,6 +35,7 @@ function make(
   agentWs: Partial<AgentWsServer>,
   deployLogs: DeployLogHub = makeDeployLogs(),
   monitors: MonitorsMock = makeMonitors(),
+  ai: { analyze: jest.Mock } = { analyze: jest.fn().mockResolvedValue("analysis") },
 ) {
   return new ApplicationsService(
     prisma as PrismaService,
@@ -47,6 +48,7 @@ function make(
     monitors as unknown as import("../monitors/monitors.service").MonitorsService,
     { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService,
     { installationToken: jest.fn().mockResolvedValue("ghs_inst") } as unknown as import("../git-sources/git-sources.service").GitSourcesService,
+    ai as unknown as import("./ai.service").AiService,
   );
 }
 
@@ -212,6 +214,28 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { envEnc: 'enc({"FOO":"bar"})' } }),
     );
+  });
+
+  it("analyzeDeployment fetches the deployment and runs AI on its logs", async () => {
+    const dep = { id: "d1", appId: "app1", status: "FAILED", exitCode: 1, logs: "boom" };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: { findUnique: jest.fn().mockResolvedValue(dep) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const ai = { analyze: jest.fn().mockResolvedValue("fix it") };
+    const out = await make(prisma, access, {} as AgentWsServer, undefined, undefined, ai).analyzeDeployment("u1", "app1", "d1");
+    expect(ai.analyze).toHaveBeenCalledWith("boom", expect.objectContaining({ status: "FAILED", exitCode: 1 }));
+    expect(out.analysis).toBe("fix it");
+  });
+
+  it("analyzeDeployment 404s for a deployment of another app", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: { findUnique: jest.fn().mockResolvedValue({ id: "d1", appId: "other", logs: "x" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).analyzeDeployment("u1", "app1", "d1")).rejects.toThrow(/not found/);
   });
 
   it("stores build args encrypted on setBuildArgs", async () => {

@@ -55,6 +55,13 @@ export default function AppDetailPage() {
     mutationFn: (next: string[]) => api.setAppTags(id, next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
+  const [aiResults, setAiResults] = useState<Record<string, string>>({});
+  const analyze = useMutation({
+    mutationFn: (deploymentId: string) => api.analyzeDeployment(id, deploymentId),
+    onSuccess: (r, deploymentId) => setAiResults((m) => ({ ...m, [deploymentId]: r.analysis })),
+    onError: (e, deploymentId) =>
+      setAiResults((m) => ({ ...m, [deploymentId]: (e as Error).message || t("apps.aiFailed") })),
+  });
 
   // Deployments come newest-first; a leading RUNNING one means a live deploy.
   const deployActive = deployments[0]?.status === "RUNNING";
@@ -222,7 +229,22 @@ export default function AppDetailPage() {
                         {t("apps.rollback")}
                       </button>
                     )}
+                    {d.status === "FAILED" && appData.canWrite && (
+                      <button
+                        onClick={() => analyze.mutate(d.id)}
+                        disabled={analyze.isPending}
+                        style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-a)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
+                      >
+                        {analyze.isPending && analyze.variables === d.id ? t("apps.analyzing") : t("apps.analyzeAi")}
+                      </button>
+                    )}
                   </div>
+                  {aiResults[d.id] && (
+                    <div style={{ marginTop: 6, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-a)", marginBottom: 4 }}>{t("apps.aiAnalysis")}</div>
+                      <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap" }}>{aiResults[d.id]}</pre>
+                    </div>
+                  )}
                   {d.configChanges && d.configChanges.length > 0 && (
                     <details style={{ marginTop: 6 }}>
                       <summary style={{ fontSize: 11, color: "var(--c-tx3)", cursor: "pointer" }}>

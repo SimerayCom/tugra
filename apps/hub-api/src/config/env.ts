@@ -15,6 +15,9 @@ export const envSchema = z.object({
   // Public base URL the agent dials back to (e.g. https://hub.example.com). Used to
   // build the install command; falls back to the request Host when unset.
   HUB_PUBLIC_URL: z.string().url().optional(),
+  // Optional, opt-in: enables AI deploy-log analysis (logs are sent to Anthropic).
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_MODEL: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

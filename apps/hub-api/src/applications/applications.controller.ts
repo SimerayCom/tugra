@@ -93,6 +93,16 @@ export class ApplicationsController {
     return this.apps.deployments(user.userId, id);
   }
 
+  @Post(":id/deployments/:depId/analyze")
+  @HttpCode(200)
+  analyzeDeployment(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("depId") depId: string,
+  ) {
+    return this.apps.analyzeDeployment(user.userId, id, depId);
+  }
+
   /** Live build-log stream (SSE). Completes when no deploy is active. */
   @Sse(":id/deployments/stream")
   streamLogs(
