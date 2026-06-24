@@ -19,7 +19,9 @@ import { GitSourcesService } from "../git-sources/git-sources.service";
 import {
   buildImageRemoveScript,
   buildRemoveScript,
+  buildRestartScript,
   buildRunScript,
+  buildStartScript,
   buildStopScript,
   runTag,
   type AppSpec,
@@ -33,6 +35,8 @@ import {
 } from "../deploy/config-snapshot";
 import {
   buildComposeDownScript,
+  buildComposeRestartScript,
+  buildComposeStartScript,
   buildComposeStopScript,
   buildComposeUpScript,
   buildLogsScript,
@@ -551,6 +555,28 @@ export class ApplicationsService {
       data: { status: AppStatus.STOPPED },
     });
     await this.audit.log({ actor: userId, action: "app.stop", target: id });
+  }
+
+  async start(userId: string, id: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const cmd =
+      app.source === "COMPOSE"
+        ? buildComposeStartScript(this.toSpec(app))
+        : buildStartScript(app);
+    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
+    await this.audit.log({ actor: userId, action: "app.start", target: id });
+  }
+
+  async restart(userId: string, id: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const cmd =
+      app.source === "COMPOSE"
+        ? buildComposeRestartScript(this.toSpec(app))
+        : buildRestartScript(app);
+    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
+    await this.audit.log({ actor: userId, action: "app.restart", target: id });
   }
 
   async remove(userId: string, id: string): Promise<void> {

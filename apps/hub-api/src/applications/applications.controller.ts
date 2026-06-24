@@ -296,6 +296,20 @@ export class ApplicationsController {
     return { ok: true };
   }
 
+  @Post(":id/start")
+  @HttpCode(200)
+  async start(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.apps.start(user.userId, id);
+    return { ok: true };
+  }
+
+  @Post(":id/restart")
+  @HttpCode(200)
+  async restart(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.apps.restart(user.userId, id);
+    return { ok: true };
+  }
+
   @Delete(":id")
   @HttpCode(200)
   async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {

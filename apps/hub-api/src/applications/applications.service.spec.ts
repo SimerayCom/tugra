@@ -216,6 +216,21 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("start and restart run lifecycle commands and set RUNNING", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const svc = make(prisma, access, { sendCommand } as unknown as AgentWsServer);
+    await svc.start("u1", "app1");
+    expect(sendCommand).toHaveBeenCalledWith("s1", "docker start tugra_app1", "deploy");
+    await svc.restart("u1", "app1");
+    expect(sendCommand).toHaveBeenCalledWith("s1", "docker restart tugra_app1", "deploy");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "RUNNING" } }));
+  });
+
   it("appLogs runs docker logs via the agent for a writer", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

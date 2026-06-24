@@ -115,6 +115,14 @@ describe("Applications / deploy (e2e)", () => {
       .expect(200);
     expect(typeof logs.body.output).toBe("string");
     expect(commands.join("\n")).toContain(`docker logs --tail 50 tugra_${appId}`);
+
+    // Restart is a lifecycle action (no rebuild): docker restart + RUNNING.
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${appId}/restart`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(60);
+    expect(commands.join("\n")).toContain(`docker restart tugra_${appId}`);
+    const after = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(after.body.status).toBe("RUNNING");
   });
 
   it("deploys an app with a domain → proxy setup + Traefik labels", async () => {

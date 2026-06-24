@@ -70,6 +70,14 @@ export function buildComposeStopScript(app: AppSpec): string {
   return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} stop`;
 }
 
+export function buildComposeStartScript(app: AppSpec): string {
+  return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} start`;
+}
+
+export function buildComposeRestartScript(app: AppSpec): string {
+  return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} restart`;
+}
+
 /** Tail the running container's logs (compose: whole stack; else the app container). */
 export function buildLogsScript(app: AppSpec, tail = 200): string {
   const n = Math.max(1, Math.min(2000, Math.floor(tail)));
