@@ -9,6 +9,7 @@ import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../.
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
+import type { TerminalTarget } from "../../../../lib/ws";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
@@ -68,7 +69,8 @@ export default function AppDetailPage() {
   // Deployments come newest-first; a leading RUNNING one means a live deploy.
   const deployActive = deployments[0]?.status === "RUNNING";
   const live = useDeployLogStream(id, deployActive);
-  const [shellOpen, setShellOpen] = useState(false);
+  const [shell, setShell] = useState<TerminalTarget | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [tab, setTab] = useState("overview");
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
@@ -94,9 +96,7 @@ export default function AppDetailPage() {
                 <Btn variant="ghost" onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
               )}
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
-              {appData.source !== "COMPOSE" && (
-                <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("apps.openShell")}</Btn>
-              )}
+              <Btn variant="ghost" onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}>{t("apps.openShell")}</Btn>
               <Btn variant="danger" onClick={() => del.mutate()}>{t("apps.delete")}</Btn>
             </>
           ) : undefined
@@ -115,11 +115,18 @@ export default function AppDetailPage() {
         )}
       </PageHeader>
 
-      {shellOpen && (
+      {pickerOpen && (
+        <ContainerPickerModal
+          id={id}
+          onClose={() => setPickerOpen(false)}
+          onPick={(name) => { setPickerOpen(false); setShell({ app: id, container: name }); }}
+        />
+      )}
+      {shell && (
         <TerminalModal
-          target={{ app: id }}
+          target={shell}
           title={t("terminal.containerTitle", { name: appData.name })}
-          onClose={() => setShellOpen(false)}
+          onClose={() => setShell(null)}
         />
       )}
 
@@ -298,6 +305,37 @@ export default function AppDetailPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: () => void; onPick: (name: string) => void }) {
+  const t = useT();
+  const { data, isLoading, isError } = useQuery({ queryKey: ["appContainers", id], queryFn: () => api.listAppContainers(id) });
+  const containers = data?.containers ?? [];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--c-bg)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: 18, minWidth: 320, maxWidth: 480 }}>
+        <div style={{ fontWeight: 700, marginBottom: 10 }}>{t("apps.selectContainer")}</div>
+        {isLoading ? (
+          <Spinner />
+        ) : isError || containers.length === 0 ? (
+          <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("apps.noContainers")}</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {containers.map((c) => (
+              <button
+                key={c.name}
+                onClick={() => onPick(c.name)}
+                style={{ display: "flex", alignItems: "center", gap: 8, textAlign: "left", padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                <span className="mono" style={{ fontSize: 12, flex: 1 }}>{c.name}</span>
+                <span style={{ fontSize: 11, color: c.state === "running" ? "var(--c-g)" : "var(--c-tx3)" }}>{c.state}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

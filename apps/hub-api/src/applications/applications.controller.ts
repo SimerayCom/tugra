@@ -106,6 +106,11 @@ export class ApplicationsController {
     return this.apps.analyzeDeployment(user.userId, id, depId);
   }
 
+  @Get(":id/containers")
+  listContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.listContainers(user.userId, id);
+  }
+
   @Get(":id/logs")
   appLogs(
     @CurrentUser() user: AuthUser,

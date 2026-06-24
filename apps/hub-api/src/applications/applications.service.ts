@@ -39,7 +39,9 @@ import {
   buildComposeStartScript,
   buildComposeStopScript,
   buildComposeUpScript,
+  buildContainersScript,
   buildLogsScript,
+  parseContainers,
 } from "../deploy/compose-script";
 import {
   generateWebhookSecret,
@@ -621,6 +623,13 @@ export class ApplicationsService {
     });
     await this.audit.log({ actor: userId, action: "app.deploy.analyze", target: appId });
     return { analysis };
+  }
+
+  /** List the app's docker containers (compose: all services) — for the terminal picker. */
+  async listContainers(userId: string, id: string): Promise<{ containers: { name: string; state: string }[] }> {
+    const app = await this.requireWrite(userId, id);
+    const r = await this.agentWs.sendCommand(app.serverId, buildContainersScript(this.toSpec(app)), "deploy", 30_000);
+    return { containers: parseContainers(r.output) };
   }
 
   /** Tail the running container's logs — writer-only (output may contain secrets). */

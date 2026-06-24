@@ -78,6 +78,33 @@ export function buildComposeRestartScript(app: AppSpec): string {
   return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} restart`;
 }
 
+export interface ContainerInfo {
+  name: string;
+  state: string;
+}
+
+/** List the app's containers (compose: all services by project label; else the one). */
+export function buildContainersScript(app: AppSpec): string {
+  const filter =
+    app.source === "COMPOSE"
+      ? `--filter label=com.docker.compose.project=${composeProject(app)}`
+      : `--filter name=^${containerName(app)}$`;
+  return `docker ps -a ${filter} --format '{{.Names}}\t{{.State}}'`;
+}
+
+/** Parse `docker ps --format '{{.Names}}\t{{.State}}'` output into a list. */
+export function parseContainers(output: string): ContainerInfo[] {
+  return output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [name, state] = l.split("\t");
+      return { name: name ?? "", state: state ?? "" };
+    })
+    .filter((c) => c.name);
+}
+
 /** Tail the running container's logs (compose: whole stack; else the app container). */
 export function buildLogsScript(app: AppSpec, tail = 200): string {
   const n = Math.max(1, Math.min(2000, Math.floor(tail)));

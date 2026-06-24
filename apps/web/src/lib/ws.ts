@@ -1,7 +1,7 @@
 import { API_BASE, tokens } from "./api";
 
-/** Terminal target: an app container or a server host. */
-export type TerminalTarget = { app: string } | { server: string };
+/** Terminal target: an app container (optionally a specific compose service), or a server host. */
+export type TerminalTarget = { app: string; container?: string } | { server: string };
 
 /** A live terminal event from the hub. */
 export type TerminalEvent =
@@ -15,7 +15,10 @@ export function wsBase(apiBase: string = API_BASE): string {
 
 /** Build the /terminal WebSocket URL for a target. */
 export function terminalUrl(target: TerminalTarget, base: string = API_BASE): string {
-  const q = "app" in target ? `app=${encodeURIComponent(target.app)}` : `server=${encodeURIComponent(target.server)}`;
+  const q =
+    "app" in target
+      ? `app=${encodeURIComponent(target.app)}${target.container ? `&container=${encodeURIComponent(target.container)}` : ""}`
+      : `server=${encodeURIComponent(target.server)}`;
   return `${wsBase(base)}/terminal?${q}`;
 }
 

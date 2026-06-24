@@ -496,6 +496,9 @@ export const api = {
   getAppLogs(id: string, tail?: number) {
     return apiFetch<{ output: string }>(`/apps/${id}/logs${tail ? `?tail=${tail}` : ""}`);
   },
+  listAppContainers(id: string) {
+    return apiFetch<{ containers: { name: string; state: string }[] }>(`/apps/${id}/containers`);
+  },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
       method: "POST",

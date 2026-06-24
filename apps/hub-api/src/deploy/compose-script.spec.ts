@@ -4,8 +4,10 @@ import {
   buildComposeStartScript,
   buildComposeStopScript,
   buildComposeUpScript,
+  buildContainersScript,
   buildLogsScript,
   composeProject,
+  parseContainers,
 } from "./compose-script";
 import type { AppSpec } from "./deploy-script";
 
@@ -79,6 +81,20 @@ describe("compose-script", () => {
     expect(buildComposeRestartScript(base)).toBe(
       "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml restart",
     );
+  });
+
+  it("buildContainersScript: compose by project label, single by exact name", () => {
+    expect(buildContainersScript(base)).toContain("--filter label=com.docker.compose.project=tugra_abc");
+    const img: AppSpec = { ...base, source: "IMAGE", composeFile: undefined };
+    expect(buildContainersScript(img)).toContain("--filter name=^tugra_abc$");
+  });
+
+  it("parseContainers parses name\\tstate lines and drops blanks", () => {
+    expect(parseContainers("tugra_abc-web-1\trunning\ntugra_abc-db-1\texited\n\n")).toEqual([
+      { name: "tugra_abc-web-1", state: "running" },
+      { name: "tugra_abc-db-1", state: "exited" },
+    ]);
+    expect(parseContainers("")).toEqual([]);
   });
 
   it("buildLogsScript: compose stack vs single container, with tail clamp", () => {

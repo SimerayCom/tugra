@@ -80,6 +80,8 @@
   "dockerOptions": "Custom Docker options",
   "dockerOptionsDesc": "Advanced: raw flags appended to docker run (e.g. --cap-add, --sysctl, --dns, --add-host). Wrong flags can break the deploy. Applied on next deploy.",
   "dockerOptionsRedeploy": "Saved — redeploy to apply.",
+  "selectContainer": "Select a container",
+  "noContainers": "No containers found (deploy the app first).",
   "containerLogs": "Container logs",
   "containerLogsDesc": "Recent stdout/stderr from the running container (last 200 lines).",
   "refresh": "Refresh",
