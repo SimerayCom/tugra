@@ -21,6 +21,7 @@ describe("Terminal (e2e)", () => {
   let agent: WebSocket;
   let serverId = "";
   let appId = "";
+  let composeAppId = "";
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -52,6 +53,13 @@ describe("Terminal (e2e)", () => {
       .send({ name: "shellapp", serverId, image: "nginx:alpine" })
       .expect(201);
     appId = appRes.body.id;
+
+    const composeRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "stack", serverId, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx" })
+      .expect(201);
+    composeAppId = composeRes.body.id;
 
     // Agent simulator: a PTY-less echo shell driven by the term_* protocol.
     agent = new WebSocket(`ws://127.0.0.1:${port}/agent`);
@@ -118,6 +126,29 @@ describe("Terminal (e2e)", () => {
     await sleep(120);
     expect(got.lines()).toContain(`shell:tugra_${appId}`);
     ws.close();
+  });
+
+  it("opens a compose container shell targeting the chosen service", async () => {
+    const c = `tugra_${composeAppId}-web-1`;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/terminal?app=${composeAppId}&container=${c}`, ["tugra.bearer", token]);
+    const got = collect(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", () => resolve());
+      ws.on("error", reject);
+    });
+    await sleep(120);
+    expect(got.lines()).toContain(`shell:${c}`);
+    ws.close();
+  });
+
+  it("rejects a compose terminal targeting a foreign container (close 1008)", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/terminal?app=${composeAppId}&container=tugra_other-db-1`, ["tugra.bearer", token]);
+    const code = await new Promise<number>((resolve) => {
+      ws.on("open", () => ws.send(""));
+      ws.on("close", (c) => resolve(c));
+      ws.on("error", () => undefined);
+    });
+    expect(code).toBe(1008);
   });
 
   it("rejects a connection with an invalid token (close 1008)", async () => {

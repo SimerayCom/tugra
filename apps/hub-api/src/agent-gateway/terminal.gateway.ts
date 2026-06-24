@@ -99,9 +99,19 @@ export class TerminalGateway
         const app = await this.prisma.application.findUnique({ where: { id: appId } });
         if (!app) return ws.close(1008, "not found");
         await this.access.requireRole(userId, app.teamId, WRITE);
-        if (app.source === "COMPOSE") return ws.close(1008, "compose terminal not supported");
         serverId = app.serverId;
-        target = containerName(app);
+        if (app.source === "COMPOSE") {
+          // Compose stacks have multiple containers — the caller picks one.
+          // Validate it belongs to THIS app's project (can't exec into others).
+          const container = url.searchParams.get("container") ?? "";
+          const prefix = `tugra_${app.id}`;
+          if (container !== prefix && !container.startsWith(`${prefix}-`)) {
+            return ws.close(1008, "invalid container");
+          }
+          target = container;
+        } else {
+          target = containerName(app);
+        }
         auditTarget = app.id;
         kind = "container";
       } else if (serverParam) {

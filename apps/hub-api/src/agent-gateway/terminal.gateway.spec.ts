@@ -98,14 +98,38 @@ describe("TerminalGateway", () => {
     expect(agentWs.sendToAgent).not.toHaveBeenCalled();
   });
 
-  it("refuses a compose app (1008)", async () => {
+  it("opens a compose container terminal targeting the chosen service container", async () => {
+    const { gw, agentWs } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+      application: { id: "app1", teamId: "t1", serverId: "s1", source: "COMPOSE" },
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?app=app1&container=tugra_app1-web-1"));
+    expect(agentWs.sendToAgent).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ type: "term_start", target: "tugra_app1-web-1" }),
+    );
+  });
+
+  it("rejects a compose terminal without a container (1008)", async () => {
     const { gw, agentWs } = make({
       verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
       application: { id: "app1", teamId: "t1", serverId: "s1", source: "COMPOSE" },
     });
     const ws = fakeWs();
     await connect(gw, ws, req("/terminal?app=app1"));
-    expect(ws.close).toHaveBeenCalledWith(1008, expect.stringContaining("compose"));
+    expect(ws.close).toHaveBeenCalledWith(1008, expect.stringContaining("container"));
+    expect(agentWs.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a compose terminal targeting a foreign container (1008)", async () => {
+    const { gw, agentWs } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+      application: { id: "app1", teamId: "t1", serverId: "s1", source: "COMPOSE" },
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?app=app1&container=tugra_other-db-1"));
+    expect(ws.close).toHaveBeenCalledWith(1008, expect.stringContaining("container"));
     expect(agentWs.sendToAgent).not.toHaveBeenCalled();
   });
 
