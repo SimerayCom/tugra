@@ -416,6 +416,7 @@ model Application {
   healthCmd      String?
   memoryMb       Int?
   cpus           Float?
+  deployTimeoutSec Int?
   volumes        Json?
   gitTokenEnc     String?
   gitSource       GitSource?   @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)

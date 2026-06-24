@@ -326,10 +326,29 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { healthCmd: "ping", memoryMb: 256, cpus: 0.5 });
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { healthCmd: "ping", memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 });
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { healthCmd: "ping", memoryMb: 256, cpus: 0.5 } }),
+      expect.objectContaining({ data: { healthCmd: "ping", memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 } }),
     );
+  });
+
+  it("applies the per-app deploy timeout (default 300s)", async () => {
+    const mk = (timeoutSec: number | null) => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, deployTimeoutSec: timeoutSec }), update: jest.fn().mockResolvedValue({}) },
+        deployment: { create: jest.fn().mockResolvedValue({ id: "d1" }), update: jest.fn().mockResolvedValue({}), findUnique: jest.fn().mockResolvedValue({ id: "d1" }), findFirst: jest.fn().mockResolvedValue(null) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const access = { requireRole: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+      const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "deployed" });
+      return { svc: make(prisma, access, { sendCommand } as unknown as AgentWsServer), sendCommand };
+    };
+    const custom = mk(600);
+    await custom.svc.deploy("u1", "app1");
+    expect(custom.sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 600000, expect.any(Function));
+    const def = mk(null);
+    await def.svc.deploy("u1", "app1");
+    expect(def.sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 300000, expect.any(Function));
   });
 
   it("rejects an unknown template slug", async () => {
