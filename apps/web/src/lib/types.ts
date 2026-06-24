@@ -283,6 +283,7 @@ export interface Application {
   healthCmd: string | null;
   memoryMb: number | null;
   cpus: number | null;
+  deployTimeoutSec: number | null;
   dockerOptions: string | null;
   volumes: AppVolume[];
   hasGitToken: boolean;

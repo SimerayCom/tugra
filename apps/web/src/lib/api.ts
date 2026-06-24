@@ -548,7 +548,7 @@ export const api = {
       body: JSON.stringify({ dockerOptions }),
     });
   },
-  setAppLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null }) {
+  setAppLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {
       method: "PUT",
       body: JSON.stringify(limits),

@@ -99,6 +99,7 @@
   "healthCmd": "Health check command (e.g. curl -fsS http://localhost:80/ || exit 1)",
   "memoryMb": "Memory (MB)",
   "cpus": "CPUs",
+  "deployTimeout": "Deploy timeout (s)",
   "volumes": "Persistent storage",
   "volumesDesc": "Named volumes keep data across redeploys. Applied on next deploy.",
   "volumeName": "Name (e.g. data)",

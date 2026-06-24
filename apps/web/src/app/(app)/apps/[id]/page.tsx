@@ -179,7 +179,7 @@ export default function AppDetailPage() {
           )}
 
           {appData.source !== "COMPOSE" && (
-            <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} />
+            <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} deployTimeoutSec={appData.deployTimeoutSec} />
           )}
           {appData.source !== "COMPOSE" && (
             <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />
@@ -521,18 +521,20 @@ function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-function LimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: string | null; memoryMb: number | null; cpus: number | null }) {
+function LimitsCard({ id, healthCmd, memoryMb, cpus, deployTimeoutSec }: { id: string; healthCmd: string | null; memoryMb: number | null; cpus: number | null; deployTimeoutSec: number | null }) {
   const t = useT();
   const qc = useQueryClient();
   const [hc, setHc] = useState(healthCmd ?? "");
   const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
   const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
+  const [timeout, setTimeoutS] = useState(deployTimeoutSec != null ? String(deployTimeoutSec) : "");
   const save = useMutation({
     mutationFn: () =>
       api.setAppLimits(id, {
         healthCmd: hc.trim() || null,
         memoryMb: mem ? Number(mem) : null,
         cpus: cpu ? Number(cpu) : null,
+        deployTimeoutSec: timeout ? Number(timeout) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
@@ -545,6 +547,7 @@ function LimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: 
         <input style={{ ...envField, flex: "1 1 100%" }} placeholder={t("apps.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
         <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
         <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
+        <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.deployTimeout")} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}

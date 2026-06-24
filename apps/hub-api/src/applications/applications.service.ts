@@ -76,6 +76,7 @@ export interface AppView {
   healthCmd: string | null;
   memoryMb: number | null;
   cpus: number | null;
+  deployTimeoutSec: number | null;
   dockerOptions: string | null;
   volumes: AppVolume[];
   hasGitToken: boolean;
@@ -397,7 +398,7 @@ export class ApplicationsService {
         app.serverId,
         command,
         "deploy",
-        DEPLOY_TIMEOUT_MS,
+        this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
       const ok = r.exitCode === 0;
@@ -468,7 +469,7 @@ export class ApplicationsService {
         app.serverId,
         buildRunScript(spec, target.id, false),
         "deploy",
-        DEPLOY_TIMEOUT_MS,
+        this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
       const ok = r.exitCode === 0;
@@ -690,10 +691,15 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
   }
 
+  /** Per-app deploy/rollback timeout in ms (default 5 min). */
+  private deployTimeoutMs(app: Application): number {
+    return (app.deployTimeoutSec ?? 300) * 1000;
+  }
+
   async setLimits(
     userId: string,
     id: string,
-    limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null },
+    limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
@@ -702,6 +708,7 @@ export class ApplicationsService {
         healthCmd: limits.healthCmd ?? null,
         memoryMb: limits.memoryMb ?? null,
         cpus: limits.cpus ?? null,
+        deployTimeoutSec: limits.deployTimeoutSec ?? null,
       },
     });
     await this.audit.log({ actor: userId, action: "app.limits.update", target: id });
@@ -913,6 +920,7 @@ export class ApplicationsService {
       healthCmd: app.healthCmd,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
       hasGitToken: !!app.gitTokenEnc,

@@ -56,6 +56,7 @@ export const SetLimitsSchema = z.object({
   healthCmd: z.string().min(1).nullable().optional(),
   memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
   cpus: z.number().min(0.1).max(64).nullable().optional(),
+  deployTimeoutSec: z.number().int().min(30).max(3600).nullable().optional(),
 });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
 
