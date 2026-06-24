@@ -26,3 +26,8 @@ export const SetDatabasePortSchema = z.object({
   hostPort: z.number().int().min(1).max(65535).nullable(),
 });
 export type SetDatabasePortInput = z.infer<typeof SetDatabasePortSchema>;
+
+export const RenameSchema = z.object({
+  name: z.string().min(1).max(100),
+});
+export type RenameInput = z.infer<typeof RenameSchema>;

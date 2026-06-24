@@ -12,6 +12,7 @@ import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
+import { RenameModal } from "../../../../components/rename-modal";
 
 export default function DatabaseDetailPage() {
   const t = useT();
@@ -39,6 +40,11 @@ export default function DatabaseDetailPage() {
   const invalidateBackups = () => qc.invalidateQueries({ queryKey: ["backups", id] });
   const provision = useMutation({ mutationFn: () => api.provisionDatabase(id), onSuccess: invalidate });
   const stop = useMutation({ mutationFn: () => api.stopDatabase(id), onSuccess: invalidate });
+  const [renameOpen, setRenameOpen] = useState(false);
+  const rename = useMutation({
+    mutationFn: (name: string) => api.renameDatabase(id, name),
+    onSuccess: () => { setRenameOpen(false); invalidate(); },
+  });
   const del = useMutation({
     mutationFn: () => api.deleteDatabase(id),
     onSuccess: () => router.replace("/databases"),
@@ -89,6 +95,7 @@ export default function DatabaseDetailPage() {
                 {provision.isPending ? t("databases.provisioning") : t("databases.provision")}
               </Btn>
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("databases.stop")}</Btn>
+              <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("databases.rename")}</Btn>
               <Btn variant="danger" onClick={() => del.mutate()}>{t("databases.delete")}</Btn>
             </>
           ) : undefined
@@ -98,6 +105,16 @@ export default function DatabaseDetailPage() {
           {engineLabel(db.engine)} · {db.version} · :{db.port}{db.hostPort ? ` → host :${db.hostPort}` : ""}
         </p>
       </PageHeader>
+
+      {renameOpen && (
+        <RenameModal
+          current={db.name}
+          title={t("databases.rename")}
+          pending={rename.isPending}
+          onClose={() => setRenameOpen(false)}
+          onSave={(name) => rename.mutate(name)}
+        />
+      )}
 
       <Tabs
         active={tab}

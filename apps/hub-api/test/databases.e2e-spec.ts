@@ -186,6 +186,18 @@ describe("Databases (e2e)", () => {
     expect(commands.join("\n")).not.toContain("-p 15432:");
   });
 
+  it("renames a database", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "rendb", serverId, engine: "POSTGRES" })
+      .expect(201);
+    const dbId = res.body.id;
+    await request(app.getHttpServer()).put(`/databases/${dbId}/name`).set("Authorization", `Bearer ${token}`).send({ name: "renamed-db" }).expect(200);
+    const detail = await request(app.getHttpServer()).get(`/databases/${dbId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.name).toBe("renamed-db");
+  });
+
   it("rejects creating a database on a server the user has no access to", async () => {
     await request(app.getHttpServer())
       .post("/databases")

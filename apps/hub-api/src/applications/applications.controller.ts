@@ -28,6 +28,8 @@ import {
   FromTemplateSchema,
   PreviewConfigInput,
   PreviewConfigSchema,
+  RenameInput,
+  RenameSchema,
   SetBuildArgsInput,
   SetBuildArgsSchema,
   SetDockerOptionsInput,
@@ -161,6 +163,17 @@ export class ApplicationsController {
   @Get(":id/build-args")
   getBuildArgs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.getBuildArgs(user.userId, id);
+  }
+
+  @Put(":id/name")
+  @HttpCode(200)
+  async rename(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(RenameSchema)) body: RenameInput,
+  ) {
+    await this.apps.rename(user.userId, id, body.name);
+    return { ok: true };
   }
 
   @Put(":id/docker-options")

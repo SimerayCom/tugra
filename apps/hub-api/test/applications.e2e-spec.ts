@@ -123,6 +123,11 @@ describe("Applications / deploy (e2e)", () => {
     expect(commands.join("\n")).toContain(`docker restart tugra_${appId}`);
     const after = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
     expect(after.body.status).toBe("RUNNING");
+
+    // Rename (display-only; no redeploy).
+    await request(app.getHttpServer()).put(`/apps/${appId}/name`).set("Authorization", `Bearer ${token}`).send({ name: "renamed-web" }).expect(200);
+    const renamed = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(renamed.body.name).toBe("renamed-web");
   });
 
   it("deploys an app with a domain → proxy setup + Traefik labels", async () => {

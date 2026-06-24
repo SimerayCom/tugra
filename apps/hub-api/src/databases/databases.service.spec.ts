@@ -114,6 +114,15 @@ describe("DatabasesService", () => {
     );
   });
 
+  it("renames a database for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access).rename("u1", "db1", "renamed");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { name: "renamed" } }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.name.update" }));
+  });
+
   it("forbids a non-writer from changing the public port", async () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db) },
