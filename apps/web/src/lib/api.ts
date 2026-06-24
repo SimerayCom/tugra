@@ -487,6 +487,9 @@ export const api = {
   analyzeDeployment(id: string, deploymentId: string) {
     return apiFetch<{ analysis: string }>(`/apps/${id}/deployments/${deploymentId}/analyze`, { method: "POST" });
   },
+  getAppLogs(id: string, tail?: number) {
+    return apiFetch<{ output: string }>(`/apps/${id}/logs${tail ? `?tail=${tail}` : ""}`);
+  },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
       method: "POST",

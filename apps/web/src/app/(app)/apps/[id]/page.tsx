@@ -278,18 +278,44 @@ export default function AppDetailPage() {
       )}
 
       {tab === "logs" && (
-        deployActive && live.lines ? (
-          <LiveLogCard lines={live.lines} />
-        ) : deployments[0]?.logs ? (
-          <Card style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
-            <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{deployments[0].logs}</pre>
-          </Card>
-        ) : (
-          <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
-        )
+        <>
+          {appData.canWrite && <ContainerLogsCard id={id} />}
+          {deployActive && live.lines ? (
+            <LiveLogCard lines={live.lines} />
+          ) : deployments[0]?.logs ? (
+            <Card style={{ padding: 16 }}>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
+              <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{deployments[0].logs}</pre>
+            </Card>
+          ) : (
+            !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+function ContainerLogsCard({ id }: { id: string }) {
+  const t = useT();
+  const logs = useQuery({ queryKey: ["appLogs", id], queryFn: () => api.getAppLogs(id, 200) });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>{t("apps.containerLogs")}</div>
+        <Btn variant="ghost" onClick={() => logs.refetch()} disabled={logs.isFetching}>
+          {logs.isFetching ? "…" : t("apps.refresh")}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.containerLogsDesc")}</p>
+      {logs.isError ? (
+        <div style={{ fontSize: 12, color: "var(--c-r)" }}>{(logs.error as Error).message}</div>
+      ) : logs.data?.output ? (
+        <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs.data.output}</pre>
+      ) : (
+        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.logsEmpty")}</div>
+      )}
+    </Card>
   );
 }
 
