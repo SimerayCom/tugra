@@ -439,6 +439,16 @@ export function buildStopScript(app: { id: string }): string {
   return `docker stop ${containerName(app)} 2>/dev/null || true`;
 }
 
+/** Start a stopped app container (no rebuild). */
+export function buildStartScript(app: { id: string }): string {
+  return `docker start ${containerName(app)}`;
+}
+
+/** Restart the app container (no rebuild). */
+export function buildRestartScript(app: { id: string }): string {
+  return `docker restart ${containerName(app)}`;
+}
+
 export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = []): string {
   // Removing an app destroys its container and its named volumes (intentional).
   return [

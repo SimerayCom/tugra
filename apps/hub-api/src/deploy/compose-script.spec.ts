@@ -1,5 +1,7 @@
 import {
   buildComposeDownScript,
+  buildComposeRestartScript,
+  buildComposeStartScript,
   buildComposeStopScript,
   buildComposeUpScript,
   buildLogsScript,
@@ -68,6 +70,15 @@ describe("compose-script", () => {
     const down = buildComposeDownScript(base, { volumes: true });
     expect(down).toContain("down -v");
     expect(down).toContain("rm -rf /etc/tugra/compose/abc");
+  });
+
+  it("start/restart manage the whole compose stack", () => {
+    expect(buildComposeStartScript(base)).toBe(
+      "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml start",
+    );
+    expect(buildComposeRestartScript(base)).toBe(
+      "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml restart",
+    );
   });
 
   it("buildLogsScript: compose stack vs single container, with tail clamp", () => {

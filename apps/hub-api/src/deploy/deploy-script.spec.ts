@@ -1,5 +1,7 @@
 import {
   buildImageRemoveScript,
+  buildRestartScript,
+  buildStartScript,
   buildProxySetupScript,
   buildProxyLogsScript,
   buildProxyRestartScript,
@@ -270,6 +272,11 @@ describe("deploy-script", () => {
     expect(s).toContain("traefik:v3.1");
     expect(s).toContain("acme.email='me@x.com'");
     expect(s).toContain("acme.json");
+  });
+
+  it("start/restart scripts target the app container (no rebuild)", () => {
+    expect(buildStartScript({ id: "abc" })).toBe("docker start tugra_abc");
+    expect(buildRestartScript({ id: "abc" })).toBe("docker restart tugra_abc");
   });
 
   it("proxy control scripts target the tugra-proxy container", () => {

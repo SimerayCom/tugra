@@ -475,6 +475,12 @@ export const api = {
   stopApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/stop`, { method: "POST" });
   },
+  startApp(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/start`, { method: "POST" });
+  },
+  restartApp(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/restart`, { method: "POST" });
+  },
   deleteApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}`, { method: "DELETE" });
   },

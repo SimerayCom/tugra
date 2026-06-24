@@ -39,6 +39,8 @@ export default function AppDetailPage() {
   };
   const deploy = useMutation({ mutationFn: (opts?: { noCache?: boolean }) => api.deployApp(id, opts), onSuccess: invalidate });
   const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: invalidate });
+  const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: invalidate });
+  const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: invalidate });
   const del = useMutation({
     mutationFn: () => api.deleteApp(id),
     onSuccess: () => router.replace("/apps"),
@@ -87,6 +89,10 @@ export default function AppDetailPage() {
                 {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
               </Btn>
               <Btn variant="ghost" onClick={() => onDeploy({ noCache: true })} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>{t("apps.forceDeploy")}</Btn>
+              <Btn variant="ghost" onClick={() => restart.mutate()} disabled={restart.isPending}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
+              {appData.status === "STOPPED" && (
+                <Btn variant="ghost" onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
+              )}
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
               {appData.source !== "COMPOSE" && (
                 <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("apps.openShell")}</Btn>
