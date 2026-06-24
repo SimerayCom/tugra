@@ -10,6 +10,7 @@ import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import type { TerminalTarget } from "../../../../lib/ws";
+import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
@@ -428,6 +429,9 @@ function EnvCard({ id }: { id: string }) {
   const { data: env } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
   const [rows, setRows] = useState<{ key: string; value: string }[]>([]);
   const [reveal, setReveal] = useState(false);
+  const [query, setQuery] = useState("");
+  const [bulk, setBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
   useEffect(() => {
     if (env) setRows(Object.entries(env).map(([key, value]) => ({ key, value })));
   }, [env]);
@@ -446,31 +450,62 @@ function EnvCard({ id }: { id: string }) {
 
   const setRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const openBulk = () => { setBulkText(toDotenv(rows)); setBulk(true); };
+  const applyBulk = () => { setRows(parseDotenv(bulkText)); setBulk(false); };
+
+  const q = query.trim().toLowerCase();
+  const visible = rows.map((r, i) => ({ r, i })).filter(({ r }) => !q || r.key.toLowerCase().includes(q));
 
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.env")}</div>
-        <button onClick={() => setReveal((v) => !v)} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
-          {reveal ? t("apps.hideValues") : t("apps.showValues")}
+        <button onClick={() => (bulk ? setBulk(false) : openBulk())} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
+          {bulk ? t("apps.rowEdit") : t("apps.bulkEdit")}
         </button>
+        {!bulk && (
+          <button onClick={() => setReveal((v) => !v)} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
+            {reveal ? t("apps.hideValues") : t("apps.showValues")}
+          </button>
+        )}
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.envDesc")}</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {rows.map((r, i) => (
-          <div key={i} style={{ display: "flex", gap: 6 }}>
-            <input style={{ ...envField, width: 200 }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} />
-            <input style={{ ...envField, flex: 1 }} type={reveal ? "text" : "password"} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
-            <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)" }}>✕</button>
+      {bulk ? (
+        <>
+          <textarea
+            className="mono"
+            style={{ ...envField, width: "100%", minHeight: 180, resize: "vertical" }}
+            placeholder={t("apps.bulkPlaceholder")}
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <div style={{ flex: 1 }} />
+            <Btn onClick={applyBulk}>{t("apps.bulkApply")}</Btn>
           </div>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-        <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "" }])}>{t("apps.envAdd")}</Btn>
-        <div style={{ flex: 1 }} />
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
-      </div>
-      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+        </>
+      ) : (
+        <>
+          {rows.length > 3 && (
+            <input style={{ ...envField, width: "100%", marginBottom: 8 }} placeholder={t("apps.searchKeys")} value={query} onChange={(e) => setQuery(e.target.value)} />
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {visible.map(({ r, i }) => (
+              <div key={i} style={{ display: "flex", gap: 6 }}>
+                <input style={{ ...envField, width: 200 }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} />
+                <input style={{ ...envField, flex: 1 }} type={reveal ? "text" : "password"} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
+                <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)" }}>✕</button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "" }])}>{t("apps.envAdd")}</Btn>
+            <div style={{ flex: 1 }} />
+            <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+          </div>
+          {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+        </>
+      )}
     </Card>
   );
 }
