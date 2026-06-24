@@ -216,6 +216,25 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("appLogs runs docker logs via the agent for a writer", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "log line" });
+    const out = await make(prisma, access, { sendCommand } as unknown as AgentWsServer).appLogs("u1", "app1", 50);
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("docker logs --tail 50 tugra_app1"), "deploy", expect.any(Number));
+    expect(out.output).toBe("log line");
+  });
+
+  it("appLogs forbids a non-writer", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).appLogs("u1", "app1")).rejects.toThrow(/nope/);
+  });
+
   it("analyzeDeployment fetches the deployment and runs AI on its logs", async () => {
     const dep = { id: "d1", appId: "app1", status: "FAILED", exitCode: 1, logs: "boom" };
     const prisma = {

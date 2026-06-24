@@ -2,6 +2,7 @@ import {
   buildComposeDownScript,
   buildComposeStopScript,
   buildComposeUpScript,
+  buildLogsScript,
   composeProject,
 } from "./compose-script";
 import type { AppSpec } from "./deploy-script";
@@ -67,5 +68,15 @@ describe("compose-script", () => {
     const down = buildComposeDownScript(base, { volumes: true });
     expect(down).toContain("down -v");
     expect(down).toContain("rm -rf /etc/tugra/compose/abc");
+  });
+
+  it("buildLogsScript: compose stack vs single container, with tail clamp", () => {
+    expect(buildLogsScript(base, 50)).toBe(
+      "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml logs --no-color --tail 50 2>&1",
+    );
+    const img: AppSpec = { ...base, source: "IMAGE", composeFile: undefined };
+    expect(buildLogsScript(img, 50)).toBe("docker logs --tail 50 tugra_abc 2>&1");
+    expect(buildLogsScript(img, 0)).toContain("--tail 1");
+    expect(buildLogsScript(img, 99999)).toContain("--tail 2000");
   });
 });

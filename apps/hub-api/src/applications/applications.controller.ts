@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Sse,
   UseGuards,
 } from "@nestjs/common";
@@ -103,6 +104,15 @@ export class ApplicationsController {
     @Param("depId") depId: string,
   ) {
     return this.apps.analyzeDeployment(user.userId, id, depId);
+  }
+
+  @Get(":id/logs")
+  appLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("tail") tail?: string,
+  ) {
+    return this.apps.appLogs(user.userId, id, tail ? Number(tail) : undefined);
   }
 
   /** Live build-log stream (SSE). Completes when no deploy is active. */

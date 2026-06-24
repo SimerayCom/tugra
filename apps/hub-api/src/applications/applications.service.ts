@@ -35,6 +35,7 @@ import {
   buildComposeDownScript,
   buildComposeStopScript,
   buildComposeUpScript,
+  buildLogsScript,
 } from "../deploy/compose-script";
 import {
   generateWebhookSecret,
@@ -594,6 +595,18 @@ export class ApplicationsService {
     });
     await this.audit.log({ actor: userId, action: "app.deploy.analyze", target: appId });
     return { analysis };
+  }
+
+  /** Tail the running container's logs — writer-only (output may contain secrets). */
+  async appLogs(userId: string, id: string, tail?: number): Promise<{ output: string }> {
+    const app = await this.requireWrite(userId, id);
+    const r = await this.agentWs.sendCommand(
+      app.serverId,
+      buildLogsScript(this.toSpec(app), tail),
+      "deploy",
+      60_000,
+    );
+    return { output: r.output.slice(0, 65536) };
   }
 
   /**

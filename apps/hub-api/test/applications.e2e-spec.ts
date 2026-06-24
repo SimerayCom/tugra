@@ -106,6 +106,15 @@ describe("Applications / deploy (e2e)", () => {
       .post(`/apps/${appId}/deployments/${deployments.body[0].id}/analyze`)
       .set("Authorization", `Bearer ${token}`)
       .expect(503);
+
+    // Runtime container logs run docker logs on the agent.
+    commands.length = 0;
+    const logs = await request(app.getHttpServer())
+      .get(`/apps/${appId}/logs?tail=50`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(typeof logs.body.output).toBe("string");
+    expect(commands.join("\n")).toContain(`docker logs --tail 50 tugra_${appId}`);
   });
 
   it("deploys an app with a domain → proxy setup + Traefik labels", async () => {

@@ -6,6 +6,7 @@
  */
 
 import {
+  containerName,
   envFileB64,
   registryLoginPrelude,
   registryLogoutSteps,
@@ -67,6 +68,15 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
 
 export function buildComposeStopScript(app: AppSpec): string {
   return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} stop`;
+}
+
+/** Tail the running container's logs (compose: whole stack; else the app container). */
+export function buildLogsScript(app: AppSpec, tail = 200): string {
+  const n = Math.max(1, Math.min(2000, Math.floor(tail)));
+  if (app.source === "COMPOSE") {
+    return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} logs --no-color --tail ${n} 2>&1`;
+  }
+  return `docker logs --tail ${n} ${containerName(app)} 2>&1`;
 }
 
 export function buildComposeDownScript(
