@@ -189,6 +189,12 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "db.limits.update", target: id });
   }
 
+  async rename(userId: string, id: string, name: string): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.database.update({ where: { id }, data: { name } });
+    await this.audit.log({ actor: userId, action: "database.name.update", target: id });
+  }
+
   async setPort(userId: string, id: string, hostPort: number | null): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.database.update({ where: { id }, data: { hostPort } });

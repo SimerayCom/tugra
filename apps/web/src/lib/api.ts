@@ -499,6 +499,9 @@ export const api = {
   listAppContainers(id: string) {
     return apiFetch<{ containers: { name: string; state: string }[] }>(`/apps/${id}/containers`);
   },
+  renameApp(id: string, name: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
+  },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
       method: "POST",
@@ -565,6 +568,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ hostPort }),
     });
+  },
+  renameDatabase(id: string, name: string) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
   },
   setAppVolumes(id: string, volumes: AppVolume[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/volumes`, {

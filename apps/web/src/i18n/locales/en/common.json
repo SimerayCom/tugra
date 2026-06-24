@@ -5,5 +5,7 @@
   "pickTeam": "Select a team…",
   "select": "Select…",
   "back": "Back",
-  "backTo": "Back to {target}"
+  "backTo": "Back to {target}",
+  "save": "Save",
+  "cancel": "Cancel"
 }

@@ -685,6 +685,12 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.build_args.update", target: id });
   }
 
+  async rename(userId: string, id: string, name: string): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({ where: { id }, data: { name } });
+    await this.audit.log({ actor: userId, action: "app.name.update", target: id });
+  }
+
   async setDockerOptions(userId: string, id: string, dockerOptions: string | null): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });

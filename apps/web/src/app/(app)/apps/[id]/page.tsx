@@ -9,6 +9,7 @@ import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../.
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
+import { RenameModal } from "../../../../components/rename-modal";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
 import { EnvironmentCard } from "../../../../components/environment-card";
@@ -72,6 +73,11 @@ export default function AppDetailPage() {
   const live = useDeployLogStream(id, deployActive);
   const [shell, setShell] = useState<TerminalTarget | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const rename = useMutation({
+    mutationFn: (name: string) => api.renameApp(id, name),
+    onSuccess: () => { setRenameOpen(false); qc.invalidateQueries({ queryKey: ["app", id] }); },
+  });
   const [tab, setTab] = useState("overview");
 
   if (isLoading || !appData) return <div style={{ padding: 28 }}><Spinner /></div>;
@@ -98,6 +104,7 @@ export default function AppDetailPage() {
               )}
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
               <Btn variant="ghost" onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}>{t("apps.openShell")}</Btn>
+              <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("apps.rename")}</Btn>
               <Btn variant="danger" onClick={() => del.mutate()}>{t("apps.delete")}</Btn>
             </>
           ) : undefined
@@ -116,6 +123,15 @@ export default function AppDetailPage() {
         )}
       </PageHeader>
 
+      {renameOpen && (
+        <RenameModal
+          current={appData.name}
+          title={t("apps.rename")}
+          pending={rename.isPending}
+          onClose={() => setRenameOpen(false)}
+          onSave={(name) => rename.mutate(name)}
+        />
+      )}
       {pickerOpen && (
         <ContainerPickerModal
           id={id}

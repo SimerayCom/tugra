@@ -18,6 +18,8 @@ import { DatabasesService } from "./databases.service";
 import {
   CreateDatabaseInput,
   CreateDatabaseSchema,
+  RenameInput,
+  RenameSchema,
   SetDatabaseLimitsInput,
   SetDatabaseLimitsSchema,
   SetDatabasePortInput,
@@ -92,6 +94,17 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetDatabaseLimitsSchema)) body: SetDatabaseLimitsInput,
   ) {
     await this.databases.setLimits(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/name")
+  @HttpCode(200)
+  async rename(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(RenameSchema)) body: RenameInput,
+  ) {
+    await this.databases.rename(user.userId, id, body.name);
     return { ok: true };
   }
 

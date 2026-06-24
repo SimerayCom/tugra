@@ -283,6 +283,15 @@ describe("ApplicationsService", () => {
     await expect(make(prisma, access, {} as AgentWsServer).analyzeDeployment("u1", "app1", "d1")).rejects.toThrow(/not found/);
   });
 
+  it("renames an app for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).rename("u1", "app1", "renamed");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { name: "renamed" } }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.name.update" }));
+  });
+
   it("stores custom docker options on setDockerOptions", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

@@ -24,6 +24,7 @@
   "provision": "Provision",
   "provisioning": "Provisioning…",
   "stop": "Stop",
+  "rename": "Rename",
   "status": "Status",
   "connection": "Connection",
   "connectionDesc": "Apps on the same server reach this database by its internal host. Keep the credentials secret.",

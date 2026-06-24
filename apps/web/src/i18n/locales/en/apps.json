@@ -45,6 +45,7 @@
   "addServer": "Add a server →",
   "deploy": "Deploy",
   "stop": "Stop",
+  "rename": "Rename",
   "start": "Start",
   "starting": "Starting…",
   "restart": "Restart",
