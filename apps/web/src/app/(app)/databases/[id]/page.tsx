@@ -57,6 +57,13 @@ export default function DatabaseDetailPage() {
   const [schedEnabled, setSchedEnabled] = useState(false);
   const [interval, setIntervalH] = useState("24");
   const [retention, setRetention] = useState("7");
+  const [importUrl, setImportUrl] = useState("");
+  const [importGzip, setImportGzip] = useState(true);
+  const [importKey, setImportKey] = useState("");
+  const importMut = useMutation({
+    mutationFn: () => api.importDatabaseFromUrl(id, { url: importUrl.trim(), gzip: importGzip, encrypted: !!importKey.trim(), encryptionKey: importKey.trim() || undefined }),
+    onSuccess: () => { setImportUrl(""); setImportKey(""); invalidate(); },
+  });
   const [destinationId, setDestinationId] = useState("");
   useEffect(() => {
     if (db) {
@@ -215,6 +222,22 @@ export default function DatabaseDetailPage() {
               </div>
             ))}
             {backups.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("databases.noBackups")}</div>}
+          </div>
+
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--c-bd)" }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.import")}</div>
+            <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("databases.importDesc")}</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input style={{ ...fieldSm, width: 320, flex: "1 1 280px" }} placeholder={t("databases.importUrl")} value={importUrl} onChange={(e) => setImportUrl(e.target.value)} />
+              <input style={{ ...fieldSm, width: 160 }} type="password" placeholder={t("databases.importKey")} value={importKey} onChange={(e) => setImportKey(e.target.value)} />
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+                <input type="checkbox" checked={importGzip} onChange={(e) => setImportGzip(e.target.checked)} />
+                {t("databases.importGzip")}
+              </label>
+              <Btn onClick={() => { if (importUrl.trim() && confirm(t("databases.importConfirm"))) importMut.mutate(); }} disabled={importMut.isPending || !importUrl.trim()}>
+                {importMut.isPending ? "…" : t("databases.importRun")}
+              </Btn>
+            </div>
           </div>
         </Card>
       )}

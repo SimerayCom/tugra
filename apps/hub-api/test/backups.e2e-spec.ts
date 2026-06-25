@@ -116,6 +116,19 @@ describe("Database backups (e2e)", () => {
     expect(commands.join("\n")).toContain("psql");
   });
 
+  it("imports an external dump from a URL (curl → restore)", async () => {
+    commands.length = 0;
+    await request(app.getHttpServer())
+      .post(`/databases/${dbId}/backups/import-from-url`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ url: "https://example.com/dump.sql.gz", gzip: true })
+      .expect(200);
+    await sleep(50);
+    const sent = commands.join("\n");
+    expect(sent).toContain("curl -fsSL 'https://example.com/dump.sql.gz'");
+    expect(sent).toContain("psql");
+  });
+
   it("saves a backup schedule config", async () => {
     await request(app.getHttpServer())
       .put(`/databases/${dbId}/backup-config`)

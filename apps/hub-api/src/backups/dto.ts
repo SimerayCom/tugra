@@ -7,3 +7,15 @@ export const BackupConfigSchema = z.object({
   destinationId: z.string().nullable().optional(),
 });
 export type BackupConfigInput = z.infer<typeof BackupConfigSchema>;
+
+export const ImportFromUrlSchema = z
+  .object({
+    url: z.string().url(),
+    gzip: z.boolean().default(true),
+    encrypted: z.boolean().default(false),
+    encryptionKey: z.string().optional(),
+  })
+  .refine((d) => !d.encrypted || !!d.encryptionKey, {
+    message: "encryptionKey is required when encrypted is true",
+  });
+export type ImportFromUrlInput = z.infer<typeof ImportFromUrlSchema>;

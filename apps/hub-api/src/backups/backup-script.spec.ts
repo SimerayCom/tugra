@@ -3,6 +3,7 @@ import {
   backupPath,
   buildBackupScript,
   buildDeleteBackupScript,
+  buildImportScript,
   buildRestoreScript,
 } from "./backup-script";
 import { LOCAL_DEST, type DestinationSpec } from "./destination";
@@ -95,6 +96,24 @@ describe("backup-script", () => {
       const s = buildRestoreScript(spec("REDIS"), "t.rdb.gz", LOCAL_DEST);
       expect(s).toContain("docker cp /tmp/tugra_db_db1.rdb tugra_db_db1:/data/dump.rdb");
       expect(s).toContain("docker restart tugra_db_db1");
+    });
+  });
+
+  describe("buildImportScript", () => {
+    it("curls the URL and pipes through gunzip into the engine restore", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://x/d.sql.gz", { encrypted: false, key: "", gzip: true });
+      expect(s).toContain("curl -fsSL 'https://x/d.sql.gz'");
+      expect(s).toContain("gunzip");
+      expect(s).toContain("docker exec -i -e PGPASSWORD='pw' tugra_db_db1 psql -U 'tugra' -d 'appdb'");
+      expect(s).not.toContain("--decrypt");
+    });
+
+    it("adds gpg --decrypt when encrypted, and skips gunzip when gzip=false", () => {
+      const enc = buildImportScript(spec("POSTGRES"), "https://x/d.sql.gz.gpg", { encrypted: true, key: "pp", gzip: true });
+      expect(enc).toContain("--decrypt");
+      const plain = buildImportScript(spec("POSTGRES"), "https://x/d.sql", { encrypted: false, key: "", gzip: false });
+      expect(plain).not.toContain("gunzip");
+      expect(plain).toContain("curl -fsSL 'https://x/d.sql'");
     });
   });
 
