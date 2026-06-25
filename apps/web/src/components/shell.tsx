@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useT } from "../i18n/provider";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { Spinner } from "./ui";
 import { CommandPalette, type CommandDest } from "./command-palette";
 import {
@@ -21,6 +22,7 @@ import {
   HardDrive,
   LayoutDashboard,
   LogOut,
+  Menu,
   Moon,
   Plus,
   ScrollText,
@@ -106,7 +108,7 @@ export function CenteredSpinner() {
   );
 }
 
-function Sidebar({ openPalette }: { openPalette: () => void }) {
+function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { openPalette: () => void; mobile?: boolean; open?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { logout } = useAuth();
   const router = useRouter();
@@ -126,33 +128,37 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const offline = servers.filter((s) => s.status === "OFFLINE").length;
 
+  // On mobile the sidebar is a full-width off-canvas drawer (never icon-collapsed).
+  const col = mobile ? false : collapsed;
+
   return (
     <aside
       style={{
-        width: collapsed ? 56 : 232,
+        width: col ? 56 : 232,
         flexShrink: 0,
         background: "var(--c-sb)",
         borderRight: "1px solid var(--c-bd)",
         height: "100vh",
-        position: "sticky",
-        top: 0,
         display: "flex",
         flexDirection: "column",
-        transition: "width .15s",
+        transition: mobile ? "transform .2s" : "width .15s",
+        ...(mobile
+          ? { position: "fixed", top: 0, left: 0, zIndex: 60, transform: `translateX(${open ? "0" : "-100%"})` }
+          : { position: "sticky", top: 0 }),
       }}
     >
-      <div style={{ padding: collapsed ? "16px 0" : "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, marginBottom: 12 }}>
+      <div style={{ padding: col ? "16px 0" : "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, marginBottom: 12 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-seal.png" alt="Tugra" width={28} height={28} style={{ borderRadius: 7 }} />
-          {!collapsed && <div style={{ fontWeight: 700, fontSize: 15 }}>Tugra</div>}
+          {!col && <div style={{ fontWeight: 700, fontSize: 15 }}>Tugra</div>}
         </div>
         <button
           onClick={openPalette}
           title={t("nav.search")}
-          style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, width: collapsed ? 32 : "100%", margin: collapsed ? "0 auto" : undefined, padding: collapsed ? "6px 0" : "6px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", cursor: "pointer", color: "var(--c-tx3)", fontSize: 12, fontFamily: "inherit" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 8, width: col ? 32 : "100%", margin: col ? "0 auto" : undefined, padding: col ? "6px 0" : "6px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", cursor: "pointer", color: "var(--c-tx3)", fontSize: 12, fontFamily: "inherit" }}
         >
-          {collapsed ? (
+          {col ? (
             <Search size={15} />
           ) : (
             <>
@@ -166,7 +172,7 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
       <nav style={{ flex: 1, overflowY: "auto", padding: 8 }}>
         {NAV.map((g) => (
           <div key={g.group}>
-            {!collapsed && (
+            {!col && (
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "10px 10px 3px" }}>
                 {g.group}
               </div>
@@ -180,13 +186,14 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
                 <Link
                   key={it.key}
                   href={it.href}
-                  title={collapsed ? t(`nav.${it.key}`) : undefined}
-                  style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, padding: collapsed ? "8px 0" : "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
+                  onClick={onNavigate}
+                  title={col ? t(`nav.${it.key}`) : undefined}
+                  style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, padding: col ? "8px 0" : "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
                 >
                   <Icon size={15} strokeWidth={active ? 2.4 : 2} style={{ flexShrink: 0 }} />
-                  {!collapsed && <span style={{ flex: 1 }}>{t(`nav.${it.key}`)}</span>}
+                  {!col && <span style={{ flex: 1 }}>{t(`nav.${it.key}`)}</span>}
                   {badge > 0 && (
-                    collapsed ? (
+                    col ? (
                       <span style={{ position: "absolute", top: 5, right: 9, width: 7, height: 7, borderRadius: "50%", background: "var(--c-r)" }} />
                     ) : (
                       <span style={{ fontSize: 10, fontWeight: 700, background: "var(--c-r)", color: "#fff", borderRadius: 999, padding: "0 6px", minWidth: 16, textAlign: "center" }}>{badge}</span>
@@ -205,20 +212,22 @@ function Sidebar({ openPalette }: { openPalette: () => void }) {
             await logout();
             router.replace("/login");
           }}
-          title={collapsed ? t("nav.logout") : undefined}
-          style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+          title={col ? t("nav.logout") : undefined}
+          style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
         >
           <LogOut size={15} style={{ flexShrink: 0 }} />
-          {!collapsed && t("nav.logout")}
+          {!col && t("nav.logout")}
         </button>
-        <button
-          onClick={toggleCollapsed}
-          title={collapsed ? t("nav.expand") : t("nav.collapse")}
-          style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
-        >
-          {collapsed ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
-          {!collapsed && t("nav.collapse")}
-        </button>
+        {!mobile && (
+          <button
+            onClick={toggleCollapsed}
+            title={col ? t("nav.expand") : t("nav.collapse")}
+            style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+          >
+            {col ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
+            {!col && t("nav.collapse")}
+          </button>
+        )}
       </div>
     </aside>
   );
@@ -269,39 +278,54 @@ function NewMenu() {
   );
 }
 
-function TopHeader() {
+function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boolean }) {
   const { user } = useAuth();
+  const t = useT();
   const [theme, toggle] = useTheme();
   return (
     <header style={{ height: 52, flexShrink: 0, borderBottom: "1px solid var(--c-bd)", display: "flex", alignItems: "center", gap: 14, padding: "0 18px", background: "var(--c-bg)" }}>
+      {showMenu && (
+        <button onClick={onMenu} title={t("nav.menu")} aria-label={t("nav.menu")} style={{ display: "flex", alignItems: "center", background: "transparent", border: "none", padding: 4, cursor: "pointer", color: "var(--c-tx2)", marginLeft: -4 }}>
+          <Menu size={20} />
+        </button>
+      )}
       <NewMenu />
       <div style={{ flex: 1 }} />
       <button onClick={toggle} title="Toggle theme" style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
         {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
       </button>
-      <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{user?.email}</span>
+      {!showMenu && <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{user?.email}</span>}
     </header>
   );
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [palette, setPalette] = useState(false);
+  const [drawer, setDrawer] = useState(false);
+  const isMobile = useIsMobile();
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setPalette((p) => !p);
       }
-      if (e.key === "Escape") setPalette(false);
+      if (e.key === "Escape") { setPalette(false); setDrawer(false); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, []);
   return (
     <div style={{ display: "flex", height: "100%" }}>
-      <Sidebar openPalette={() => setPalette(true)} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <TopHeader />
+      {isMobile ? (
+        <Sidebar openPalette={() => { setDrawer(false); setPalette(true); }} mobile open={drawer} onNavigate={() => setDrawer(false)} />
+      ) : (
+        <Sidebar openPalette={() => setPalette(true)} />
+      )}
+      {isMobile && drawer && (
+        <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 55 }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <TopHeader onMenu={() => setDrawer(true)} showMenu={isMobile} />
         <main style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
       {palette && <CommandPalette dests={DESTS} onClose={() => setPalette(false)} />}

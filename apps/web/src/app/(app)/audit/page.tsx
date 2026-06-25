@@ -49,6 +49,7 @@ export default function AuditPage() {
         <EmptyState>{t("audit.empty")}</EmptyState>
       ) : (
         <Card>
+          <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ textAlign: "left", color: "var(--c-tx3)" }}>
@@ -73,6 +74,7 @@ export default function AuditPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
     </div>

@@ -45,6 +45,7 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow-x: hidden;
 }
 body {
   background: var(--c-bg);
