@@ -13,12 +13,14 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { RenameModal } from "../../../../components/rename-modal";
+import { useConfirm } from "../../../../components/confirm";
 
 export default function DatabaseDetailPage() {
   const t = useT();
   const id = String(useParams().id);
   const qc = useQueryClient();
   const router = useRouter();
+  const confirm = useConfirm();
 
   const { data: db, isLoading } = useQuery({
     queryKey: ["database", id],
@@ -103,7 +105,7 @@ export default function DatabaseDetailPage() {
               </Btn>
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("databases.stop")}</Btn>
               <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("databases.rename")}</Btn>
-              <Btn variant="danger" onClick={() => del.mutate()}>{t("databases.delete")}</Btn>
+              <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true })) del.mutate(); }}>{t("databases.delete")}</Btn>
             </>
           ) : undefined
         }
@@ -213,7 +215,7 @@ export default function DatabaseDetailPage() {
                 <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{formatSize(b.sizeBytes)}</span>
                 <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
                 <button
-                  onClick={() => { if (confirm(t("databases.restoreConfirm"))) restore.mutate(b.id); }}
+                  onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }}
                   style={linkBtn}
                 >
                   {t("databases.restore")}
@@ -234,7 +236,7 @@ export default function DatabaseDetailPage() {
                 <input type="checkbox" checked={importGzip} onChange={(e) => setImportGzip(e.target.checked)} />
                 {t("databases.importGzip")}
               </label>
-              <Btn onClick={() => { if (importUrl.trim() && confirm(t("databases.importConfirm"))) importMut.mutate(); }} disabled={importMut.isPending || !importUrl.trim()}>
+              <Btn onClick={async () => { if (importUrl.trim() && await confirm({ body: t("databases.importConfirm"), danger: true })) importMut.mutate(); }} disabled={importMut.isPending || !importUrl.trim()}>
                 {importMut.isPending ? "…" : t("databases.importRun")}
               </Btn>
             </div>

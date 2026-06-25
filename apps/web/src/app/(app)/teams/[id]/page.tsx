@@ -7,6 +7,7 @@ import { api } from "../../../../lib/api";
 import type { Role } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { useConfirm } from "../../../../components/confirm";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -23,6 +24,7 @@ export default function TeamDetailPage() {
   const id = String(useParams().id);
   const qc = useQueryClient();
   const router = useRouter();
+  const confirm = useConfirm();
 
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const team = teams.find((x) => x.id === id);
@@ -74,7 +76,7 @@ export default function TeamDetailPage() {
         <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{team.role}</span>
         <div style={{ flex: 1 }} />
         {isOwner && (
-          <Btn variant="danger" onClick={() => { if (confirm(t("teams.deleteConfirm"))) del.mutate(); }}>{t("teams.deleteTeam")}</Btn>
+          <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn>
         )}
       </div>
       {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 12 }}>{(del.error as Error).message}</div>}
