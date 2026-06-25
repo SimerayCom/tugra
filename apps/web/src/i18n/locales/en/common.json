@@ -7,5 +7,7 @@
   "back": "Back",
   "backTo": "Back to {target}",
   "save": "Save",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "confirm": "Confirm",
+  "confirmTitle": "Are you sure?"
 }

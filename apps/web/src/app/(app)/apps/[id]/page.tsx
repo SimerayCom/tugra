@@ -10,6 +10,7 @@ import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
+import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
 import { EnvironmentCard } from "../../../../components/environment-card";
@@ -24,6 +25,7 @@ export default function AppDetailPage() {
   const id = String(useParams().id);
   const qc = useQueryClient();
   const router = useRouter();
+  const confirm = useConfirm();
 
   const { data: appData, isLoading } = useQuery({
     queryKey: ["app", id],
@@ -105,7 +107,7 @@ export default function AppDetailPage() {
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
               <Btn variant="ghost" onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}>{t("apps.openShell")}</Btn>
               <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("apps.rename")}</Btn>
-              <Btn variant="danger" onClick={() => del.mutate()}>{t("apps.delete")}</Btn>
+              <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("apps.delete"), body: t("apps.deleteConfirm"), danger: true })) del.mutate(); }}>{t("apps.delete")}</Btn>
             </>
           ) : undefined
         }
@@ -188,7 +190,7 @@ export default function AppDetailPage() {
                 )}
               </div>
               <div style={{ marginTop: 12 }}>
-                <Btn variant="ghost" disabled={regen.isPending} onClick={() => { if (confirm(t("apps.regenerateConfirm"))) regen.mutate(); }}>
+                <Btn variant="ghost" disabled={regen.isPending} onClick={async () => { if (await confirm({ body: t("apps.regenerateConfirm"), danger: true })) regen.mutate(); }}>
                   {t("apps.regenerate")}
                 </Btn>
               </div>
@@ -256,7 +258,7 @@ export default function AppDetailPage() {
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
                     {canRollback && (
                       <button
-                        onClick={() => { if (confirm(t("apps.rollbackConfirm"))) rollback.mutate(d.id); }}
+                        onClick={async () => { if (await confirm({ body: t("apps.rollbackConfirm"), danger: true })) rollback.mutate(d.id); }}
                         disabled={rollback.isPending}
                         style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
                       >
@@ -929,6 +931,7 @@ const volField: React.CSSProperties = {
 function VolumeBackupsCard({ id, enabled, intervalHours, retention, destinationId }: { id: string; enabled: boolean; intervalHours: number | null; retention: number; destinationId: string | null }) {
   const t = useT();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: backups = [] } = useQuery({ queryKey: ["volBackups", id], queryFn: () => api.listVolumeBackups(id), refetchInterval: 5000 });
   const { data: destinations = [] } = useQuery({ queryKey: ["destinations"], queryFn: () => api.listDestinations() });
   const [sched, setSched] = useState(enabled);
@@ -984,7 +987,7 @@ function VolumeBackupsCard({ id, enabled, intervalHours, retention, destinationI
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", width: 90 }}>{b.volumeName}</span>
             <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{formatSize(b.sizeBytes)}</span>
             <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
-            <button onClick={() => { if (confirm(t("databases.restoreConfirm"))) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
               {t("databases.restore")}
             </button>
             <button onClick={() => del.mutate(b.id)} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>

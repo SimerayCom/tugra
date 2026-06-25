@@ -17,6 +17,7 @@
   "databases": "Databases",
   "searchResources": "Search resources…",
   "deleteProject": "Delete project",
+  "deleteConfirm": "Delete this empty project? This cannot be undone.",
   "rename": "Rename",
   "environment": "Environment",
   "unassigned": "Unassigned",

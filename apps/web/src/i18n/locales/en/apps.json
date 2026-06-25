@@ -11,6 +11,7 @@
   "tabDeployments": "Deployments",
   "tabLogs": "Logs",
   "delete": "Delete",
+  "deleteConfirm": "Delete this app and its container/volumes? This cannot be undone.",
   "overviewHint": "Use Deploy to build and start this app. Configuration holds environment variables, limits, volumes and more.",
   "readOnlyHint": "You have read-only access to this app.",
   "lastDeployLog": "Last deployment log",

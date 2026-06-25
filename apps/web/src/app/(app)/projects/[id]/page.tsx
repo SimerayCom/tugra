@@ -13,6 +13,7 @@ import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { TagChips } from "../../../../components/tags";
+import { useConfirm } from "../../../../components/confirm";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -29,6 +30,7 @@ export default function ProjectDetailPage() {
   const id = String(useParams().id);
   const qc = useQueryClient();
   const router = useRouter();
+  const confirm = useConfirm();
 
   const { data: project, isLoading } = useQuery({ queryKey: ["project", id], queryFn: () => api.getProject(id) });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", id] });
@@ -51,7 +53,7 @@ export default function ProjectDetailPage() {
       <PageHeader
         breadcrumb={[{ label: t("nav.projects"), href: "/projects" }, { label: project.name }]}
         title={project.name}
-        actions={project.canWrite && empty ? <Btn variant="danger" onClick={() => del.mutate()}>{t("projects.deleteProject")}</Btn> : undefined}
+        actions={project.canWrite && empty ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true })) del.mutate(); }}>{t("projects.deleteProject")}</Btn> : undefined}
       />
 
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("projects.environments")}</div>

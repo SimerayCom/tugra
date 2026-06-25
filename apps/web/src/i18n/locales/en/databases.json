@@ -8,6 +8,7 @@
   "engine": "Engine",
   "version": "Version",
   "delete": "Delete",
+  "deleteConfirm": "Delete this database and its volume? All data is lost. This cannot be undone.",
   "tabOverview": "Overview",
   "tabBackups": "Backups",
   "tabSettings": "Settings",
