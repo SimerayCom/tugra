@@ -10,10 +10,10 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { supportsBackup, type DbEngine } from "../databases/database-script";
-import { buildDeleteBackupScript, buildRestoreScript } from "./backup-script";
+import { buildDeleteBackupScript, buildImportScript, buildRestoreScript } from "./backup-script";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
-import type { BackupConfigInput } from "./dto";
+import type { BackupConfigInput, ImportFromUrlInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
@@ -69,6 +69,25 @@ export class BackupsService {
       300_000,
     );
     await this.audit.log({ actor: userId, action: "database.restore", target: dbId, meta: { backupId } });
+  }
+
+  /** Import an external dump from a URL into the database (overwrites current data). */
+  async importFromUrl(userId: string, dbId: string, input: ImportFromUrlInput): Promise<void> {
+    const db = await this.requireWrite(userId, dbId);
+    if (!supportsBackup(db.engine as DbEngine)) {
+      throw new BadRequestException(`import not supported for ${db.engine}`);
+    }
+    await this.agentWs.sendCommand(
+      db.serverId,
+      buildImportScript(this.runner.toSpec(db), input.url, {
+        encrypted: input.encrypted,
+        key: input.encryptionKey ?? "",
+        gzip: input.gzip,
+      }),
+      "backup",
+      300_000,
+    );
+    await this.audit.log({ actor: userId, action: "database.import", target: dbId });
   }
 
   async removeBackup(userId: string, dbId: string, backupId: string): Promise<void> {

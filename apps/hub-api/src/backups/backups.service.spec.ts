@@ -69,4 +69,23 @@ describe("BackupsService", () => {
     await svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6, retention: 5 });
     expect(scheduler.schedule).toHaveBeenCalledWith("db1", 6 * 3600);
   });
+
+  it("imports from a URL by sending a curl restore command to the agent", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const runner = {
+      toSpec: jest.fn().mockReturnValue({ id: "db1", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "tugra", password: "pw", database: "appdb" } }),
+    } as unknown as BackupRunnerService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const svc = make(prisma, access, runner, {}, { sendCommand } as unknown as AgentWsServer);
+    await svc.importFromUrl("u1", "db1", { url: "https://x/d.sql.gz", gzip: true, encrypted: false });
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("curl -fsSL 'https://x/d.sql.gz'"), "backup", expect.any(Number));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.import" }));
+  });
+
+  it("rejects import for an engine without backup support", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "DRAGONFLY" }) } } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access).importFromUrl("u1", "db1", { url: "https://x/d", gzip: true, encrypted: false })).rejects.toThrow(/not supported/);
+  });
 });

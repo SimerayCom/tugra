@@ -14,7 +14,12 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BackupsService } from "./backups.service";
-import { BackupConfigInput, BackupConfigSchema } from "./dto";
+import {
+  BackupConfigInput,
+  BackupConfigSchema,
+  ImportFromUrlInput,
+  ImportFromUrlSchema,
+} from "./dto";
 
 @Controller("databases/:id")
 @UseGuards(ApiAuthGuard)
@@ -29,6 +34,17 @@ export class BackupsController {
   @Post("backups")
   backupNow(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.backups.backupNow(user.userId, id);
+  }
+
+  @Post("backups/import-from-url")
+  @HttpCode(200)
+  async importFromUrl(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(ImportFromUrlSchema)) body: ImportFromUrlInput,
+  ) {
+    await this.backups.importFromUrl(user.userId, id, body);
+    return { ok: true };
   }
 
   @Post("backups/:backupId/restore")

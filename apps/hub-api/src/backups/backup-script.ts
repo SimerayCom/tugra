@@ -113,19 +113,36 @@ export function buildBackupScript(db: DbSpec, filename: string, dest: Destinatio
 }
 
 export function buildRestoreScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
+  // source → [gpg -d] → gunzip → engine restore. Source is a stored backup
+  // (S3 object or local file); the pipeline + engine handling is shared.
+  const source =
+    dest.type === "S3" && dest.s3
+      ? `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, db.id, filename)}`
+      : `cat ${backupPath(db.id, filename)}`;
+  return restorePipeline(db, source, dest, true);
+}
+
+/**
+ * Import an external dump straight from a URL into the DB (migrate-in). Reuses
+ * the same decode + engine-restore pipeline; only the source differs (`curl`).
+ */
+export function buildImportScript(
+  db: DbSpec,
+  url: string,
+  opts: { encrypted: boolean; key: string; gzip: boolean },
+): string {
+  const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
+  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip);
+}
+
+/** Shared: pipe an arbitrary source command through optional gpg/gunzip into the engine's restore client. */
+function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, gzip: boolean): string {
   const name = dbContainerName(db);
   const { username, password, database } = db.credentials;
 
-  // source → [gpg -d] → gunzip → restore
-  let source: string;
-  if (dest.type === "S3" && dest.s3) {
-    source = `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, db.id, filename)}`;
-  } else {
-    source = `cat ${backupPath(db.id, filename)}`;
-  }
-  const decode = [source];
+  const decode = [sourceCmd];
   if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
-  decode.push("gunzip");
+  if (gzip) decode.push("gunzip");
 
   const lines = ["set -e", "set -o pipefail"];
   switch (db.engine) {

@@ -572,6 +572,9 @@ export const api = {
   renameDatabase(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/databases/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
   },
+  importDatabaseFromUrl(id: string, body: { url: string; gzip: boolean; encrypted: boolean; encryptionKey?: string }) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/backups/import-from-url`, { method: "POST", body: JSON.stringify(body) });
+  },
   setAppVolumes(id: string, volumes: AppVolume[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/volumes`, {
       method: "PUT",
