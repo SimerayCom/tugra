@@ -12,6 +12,7 @@ import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
 import { filterTemplates, presentCategories } from "../../../../lib/template-filter";
 import { wizardStep } from "../../../../lib/wizard-step";
+import { parseKind, visibleGroups, backTarget, type ResourceKind } from "../../../../lib/resource-new";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
@@ -62,6 +63,8 @@ function Wizard() {
   }, [project, envId]);
 
   const [sel, setSel] = useState<Sel>(null);
+  const [kindFilter, setKindFilter] = useState<ResourceKind | null>(parseKind(sp.get("kind")));
+  const [editDest, setEditDest] = useState(false);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
 
@@ -87,6 +90,18 @@ function Wizard() {
   });
 
   const noServer = servers.length === 0;
+
+  const projectParam = sp.get("project");
+  const vg = visibleGroups(kindFilter);
+  const bt = backTarget({ projectParam, kind: kindFilter });
+  const backName =
+    bt.key === "project"
+      ? projects.find((p) => p.id === projectParam)?.name ?? t("nav.projects")
+      : bt.key === "apps"
+        ? t("nav.apps")
+        : bt.key === "databases"
+          ? t("nav.databases")
+          : t("nav.projects");
 
   const pick = (s: Sel) => {
     setSel(s);
@@ -174,7 +189,7 @@ function Wizard() {
 
   return (
     <div style={{ padding: 28, maxWidth: sel === null ? 1040 : 880 }}>
-      <BackLink href="/projects" label={t("common.backTo", { target: t("nav.projects") })} />
+      <BackLink href={bt.href} label={t("common.backTo", { target: backName })} />
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("resources.newTitle")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("resources.subtitle")}</p>
 
@@ -184,6 +199,25 @@ function Wizard() {
         </Card>
       ) : (
         <>
+          {/* Creating-in context (compact; read-only when scoped via URL) */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 18, fontSize: 13 }}>
+            <span style={{ color: "var(--c-tx3)" }}>{t("resources.creatingIn")}:</span>
+            {projectParam && !editDest ? (
+              <>
+                <span style={{ fontWeight: 600 }}>{project?.name}</span>
+                <span style={{ color: "var(--c-tx3)" }}>/</span>
+                <span style={{ fontWeight: 600 }}>{project?.environments.find((e) => e.id === envId)?.name}</span>
+                <button type="button" onClick={() => setEditDest(true)} style={backLinkBtn}>{t("resources.change")}</button>
+              </>
+            ) : (
+              <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <Select value={projectId} onChange={setProjectId} options={projects.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
+                <span style={{ color: "var(--c-tx3)" }}>/</span>
+                <Select value={envId} onChange={setEnvId} options={(project?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))} style={{ width: "auto", minWidth: 130 }} />
+              </span>
+            )}
+          </div>
+
           {(() => {
             const cur = wizardStep(sel !== null, !!serverId);
             const steps = [t("resources.stepType"), t("resources.stepServer"), t("resources.stepConfigure")];
@@ -213,21 +247,13 @@ function Wizard() {
             );
           })()}
 
-          {/* Destination */}
-          <Card style={{ padding: 16, marginBottom: 18 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("resources.destination")}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label={t("resources.project")}>
-                <Select value={projectId} onChange={setProjectId} options={projects.map((p) => ({ value: p.id, label: p.name }))} />
-              </Field>
-              <Field label={t("resources.environment")}>
-                <Select value={envId} onChange={setEnvId} options={(project?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))} />
-              </Field>
-            </div>
-          </Card>
-
           {sel === null ? (
             <>
+              {kindFilter && (
+                <button type="button" onClick={() => setKindFilter(null)} style={{ ...backLinkBtn, marginBottom: 14 }}>← {t("resources.allTypes")}</button>
+              )}
+              {vg.app && (
+              <>
               <div style={groupTitle}>{t("resources.applications")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18, marginBottom: 20 }}>
                 <div>
@@ -245,7 +271,11 @@ function Wizard() {
                   </div>
                 </div>
               </div>
+              </>
+              )}
 
+              {vg.db && (
+              <>
               <div style={groupTitle}>{t("resources.databases")}</div>
               <div style={grid3}>
                 {ENGINES.map((e) =>
@@ -258,8 +288,10 @@ function Wizard() {
                   ),
                 )}
               </div>
+              </>
+              )}
 
-              {templates.length > 0 && (() => {
+              {vg.service && templates.length > 0 && (() => {
                 const matches = filterTemplates(templates, q, cat);
                 const chips = ["all", ...presentCategories(templates)];
                 return (
