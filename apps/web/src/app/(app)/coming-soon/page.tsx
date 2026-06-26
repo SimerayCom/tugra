@@ -3,10 +3,12 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { Stub } from "../../../components/stub";
+import { useT } from "../../../i18n/provider";
 
 function ComingSoon() {
   const params = useSearchParams();
-  return <Stub title={params.get("f") ?? "Yakında"} />;
+  const t = useT();
+  return <Stub title={params.get("f") ?? t("common.comingSoon")} />;
 }
 
 export default function ComingSoonPage() {
