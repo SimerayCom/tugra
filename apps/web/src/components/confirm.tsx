@@ -1,8 +1,9 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
+import { Modal } from "./modal";
 
 export interface ConfirmOptions {
   title?: string;
@@ -36,41 +37,21 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     setState(null);
   };
 
-  useEffect(() => {
-    if (!state) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
-
   const opts = state?.opts;
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}
       {state && (
-        <div
-          onClick={() => close(false)}
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70 }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-            style={{ background: "var(--c-bg)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: 18, minWidth: 320, maxWidth: 440 }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: opts?.body ? 8 : 14 }}>{opts?.title ?? t("common.confirmTitle")}</div>
-            {opts?.body && <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px", lineHeight: 1.5 }}>{opts.body}</p>}
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => close(false)}>{opts?.cancelLabel ?? t("common.cancel")}</Btn>
-              <Btn autoFocus variant={opts?.danger ? "danger" : "primary"} onClick={() => close(true)}>
-                {opts?.confirmLabel ?? t("common.confirm")}
-              </Btn>
-            </div>
+        <Modal onClose={() => close(false)} zIndex={70}>
+          <div style={{ fontWeight: 700, marginBottom: opts?.body ? 8 : 14 }}>{opts?.title ?? t("common.confirmTitle")}</div>
+          {opts?.body && <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px", lineHeight: 1.5 }}>{opts.body}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="ghost" onClick={() => close(false)}>{opts?.cancelLabel ?? t("common.cancel")}</Btn>
+            <Btn variant={opts?.danger ? "danger" : "primary"} onClick={() => close(true)}>
+              {opts?.confirmLabel ?? t("common.confirm")}
+            </Btn>
           </div>
-        </div>
+        </Modal>
       )}
     </ConfirmContext.Provider>
   );
