@@ -7,7 +7,8 @@ import { api } from "../../../../lib/api";
 import { monitorColor, uptimeText } from "../../../../lib/monitors";
 import type { Monitor } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
-import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { Btn, Card, Spinner } from "../../../../components/ui";
+import { PageHeader } from "../../../../components/page-header";
 import { Field, TextInput } from "../../../../components/form";
 import { MonitorFavicon } from "../../../../components/monitor-favicon";
 
@@ -44,29 +45,29 @@ export default function MonitorDetailPage() {
 
   return (
     <div style={{ padding: 28 }}>
-      <BackLink href="/monitors" label={t("common.backTo", { target: t("nav.uptime") })} />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-        <span style={{ width: 11, height: 11, borderRadius: "50%", background: monitorColor(m.status) }} />
-        <MonitorFavicon type={m.type} target={m.target} size={20} />
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{m.name}</h1>
-      </div>
-      <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: "0 0 18px" }}>{m.type} · {m.target}</p>
-
-      <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
-        <Card style={{ padding: 16, flex: 1 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("monitors.status")}</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: monitorColor(m.status) }}>{m.status}</div>
-        </Card>
-        <Card style={{ padding: 16, flex: 1 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("monitors.uptime24h")}</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{uptime ? uptimeText(uptime.percent) : "—"}</div>
-        </Card>
-        <Card style={{ padding: 16, display: "flex", alignItems: "center" }}>
-          {m.canWrite && (
+      <PageHeader
+        breadcrumb={[{ label: t("nav.uptime"), href: "/monitors" }, { label: m.name }]}
+        title={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <MonitorFavicon type={m.type} target={m.target} size={20} /> {m.name}
+          </span>
+        }
+        status={{ label: m.status, color: monitorColor(m.status) }}
+        actions={
+          m.canWrite ? (
             <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
               {check.isPending ? "…" : t("monitors.checkNow")}
             </Btn>
-          )}
+          ) : undefined
+        }
+      >
+        <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>{m.type} · {m.target}</p>
+      </PageHeader>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
+        <Card style={{ padding: 16, flex: 1 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("monitors.uptime24h")}</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{uptime ? uptimeText(uptime.percent) : "—"}</div>
         </Card>
       </div>
 
