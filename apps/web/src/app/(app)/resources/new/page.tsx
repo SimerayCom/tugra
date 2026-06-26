@@ -11,6 +11,7 @@ import type { DbEngine, ServerStatus } from "../../../../lib/types";
 import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
 import { filterTemplates, presentCategories } from "../../../../lib/template-filter";
+import { wizardStep } from "../../../../lib/wizard-step";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
@@ -183,6 +184,35 @@ function Wizard() {
         </Card>
       ) : (
         <>
+          {(() => {
+            const cur = wizardStep(sel !== null, !!serverId);
+            const steps = [t("resources.stepType"), t("resources.stepServer"), t("resources.stepConfigure")];
+            const goto = (n: number) => { if (n === 1) setSel(null); else if (n === 2) setServerId(""); };
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+                {steps.map((label, i) => {
+                  const n = i + 1;
+                  const done = n < cur;
+                  const active = n === cur;
+                  return (
+                    <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <button
+                        type="button"
+                        disabled={!done}
+                        onClick={() => done && goto(n)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", padding: 0, cursor: done ? "pointer" : "default", fontFamily: "inherit", color: active || done ? "var(--c-a)" : "var(--c-tx3)", fontWeight: active ? 700 : 500, fontSize: 13 }}
+                      >
+                        <span style={{ width: 20, height: 20, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, background: active || done ? "var(--c-a)" : "var(--c-el)", color: active || done ? "#0d0d11" : "var(--c-tx3)", border: "1px solid var(--c-bd)" }}>{n}</span>
+                        {label}
+                      </button>
+                      {n < 3 && <span style={{ width: 24, height: 1, background: "var(--c-bd)" }} />}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* Destination */}
           <Card style={{ padding: 16, marginBottom: 18 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("resources.destination")}</div>
