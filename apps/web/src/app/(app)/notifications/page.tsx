@@ -65,7 +65,7 @@ export default function NotificationsPage() {
   const toggleEvent = (e: string) => setEvents((es) => (es.includes(e) ? es.filter((x) => x !== e) : [...es, e]));
 
   return (
-    <div style={{ padding: 28, maxWidth: 880 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 880 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
         <Bell size={20} color="var(--c-a)" /> {t("notifications.title")}
       </h1>

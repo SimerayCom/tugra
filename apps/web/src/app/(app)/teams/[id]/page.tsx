@@ -64,12 +64,12 @@ export default function TeamDetailPage() {
     onSuccess: () => { setNewName(""); qc.invalidateQueries({ queryKey: ["teams"] }); },
   });
 
-  if (isLoading || !team) return <div style={{ padding: 28 }}><Spinner /></div>;
+  if (isLoading || !team) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
   const ownerCount = members.filter((m) => m.role === "OWNER").length;
   const inviteLink = lastToken ? `${typeof location !== "undefined" ? location.origin : ""}/teams?invite=${lastToken}` : "";
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <BackLink href="/teams" label={t("common.backTo", { target: t("nav.teams") })} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{team.name}</h1>

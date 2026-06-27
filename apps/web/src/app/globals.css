@@ -20,6 +20,7 @@
   --r1: 8px;
   --r2: 12px;
   --r3: 16px;
+  --page-pad: clamp(16px, 4vw, 28px); /* page-root padding: 28 on desktop, tighter on mobile */
   --font: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
@@ -59,4 +60,14 @@ body {
 }
 .mono {
   font-family: var(--font-mono);
+}
+
+/* Mobile: 16px form controls so iOS Safari never auto-zooms on focus.
+   Scoped to the small breakpoint so desktop typography is untouched. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }

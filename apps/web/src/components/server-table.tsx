@@ -44,8 +44,8 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
         <span style={{ color: "var(--c-tx3)" }}>{t("servers.total", { n: servers.length })}</span>
       </div>
 
-      <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflowX: "auto" }}>
+        <table style={{ width: "100%", minWidth: 640, borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "var(--c-sb)", color: "var(--c-tx3)", textAlign: "left" }}>
               <th style={{ ...cell, width: 36 }}></th>

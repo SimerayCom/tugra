@@ -41,10 +41,10 @@ export default function MonitorDetailPage() {
     },
   });
 
-  if (isLoading || !m) return <div style={{ padding: 28 }}><Spinner /></div>;
+  if (isLoading || !m) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
         breadcrumb={[{ label: t("nav.uptime"), href: "/monitors" }, { label: m.name }]}
         title={

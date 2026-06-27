@@ -145,7 +145,7 @@ function Wizard() {
     onSuccess: (href) => router.push(href),
   });
 
-  if (isLoading) return <div style={{ padding: 28 }}><Spinner /></div>;
+  if (isLoading) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   // Coolify-style "coolbox": logo square + name + 2-line description
   const logoBox: React.CSSProperties = {
@@ -188,7 +188,7 @@ function Wizard() {
   const backLinkBtn: React.CSSProperties = { background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: 0 };
 
   return (
-    <div style={{ padding: 28, maxWidth: sel === null ? 1040 : 880 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: sel === null ? 1040 : 880 }}>
       <BackLink href={bt.href} label={t("common.backTo", { target: backName })} />
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("resources.newTitle")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("resources.subtitle")}</p>
@@ -509,7 +509,7 @@ function Wizard() {
 
 export default function NewResourcePage() {
   return (
-    <Suspense fallback={<div style={{ padding: 28 }}><Spinner /></div>}>
+    <Suspense fallback={<div style={{ padding: "var(--page-pad)" }}><Spinner /></div>}>
       <Wizard />
     </Suspense>
   );

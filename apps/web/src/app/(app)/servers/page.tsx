@@ -20,7 +20,7 @@ export default function ServersPage() {
   const visible = (servers ?? []).filter((s) => selectedTags.every((tag) => s.tags.includes(tag)));
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{t("servers.title")}</h1>
         <Link href="/servers/new">

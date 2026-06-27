@@ -32,7 +32,7 @@ export default function NewServerPage() {
   };
 
   return (
-    <div style={{ padding: 28, maxWidth: 480 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 480 }}>
       <BackLink href="/servers" label={t("common.backTo", { target: t("nav.servers") })} />
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 16px" }}>{t("servers.newTitle")}</h1>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
