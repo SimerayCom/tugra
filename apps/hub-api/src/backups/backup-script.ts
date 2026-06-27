@@ -16,7 +16,9 @@ import {
 import {
   mcHostEnv,
   mcTarget,
+  MC_ALIAS,
   type DestinationSpec,
+  type S3Config,
 } from "./destination";
 
 export const BACKUP_DIR = "/etc/tugra/backups";
@@ -181,4 +183,9 @@ export function buildDeleteBackupScript(
     return `${mcHostEnv(dest.s3)} mc rm ${mcTarget(dest.s3, dbId, filename)} 2>/dev/null || true`;
   }
   return `rm -f ${backupPath(dbId, filename)} 2>/dev/null || true`;
+}
+
+/** Reachability/credentials check for an S3 destination: `mc ls <alias>/<bucket>`. Exit 0 = OK. */
+export function buildDestinationTestScript(s3: S3Config): string {
+  return [MC_INSTALL, `${mcHostEnv(s3)} mc ls ${MC_ALIAS}/${s3.bucket}`].join("\n");
 }

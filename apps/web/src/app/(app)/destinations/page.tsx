@@ -7,6 +7,7 @@ import { destSummary, destTypeLabel } from "../../../lib/destinations";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
 import { useConfirm } from "../../../components/confirm";
+import { useToast } from "../../../components/toast";
 import { Select } from "../../../components/form";
 
 const field: React.CSSProperties = {
@@ -22,6 +23,7 @@ const field: React.CSSProperties = {
 export default function DestinationsPage() {
   const t = useT();
   const confirm = useConfirm();
+  const toast = useToast();
   const qc = useQueryClient();
   const { data: destinations = [], isLoading } = useQuery({
     queryKey: ["destinations"],
@@ -62,6 +64,10 @@ export default function DestinationsPage() {
   const del = useMutation({
     mutationFn: (id: string) => api.deleteDestination(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["destinations"] }),
+  });
+  const test = useMutation({
+    mutationFn: (id: string) => api.testDestination(id),
+    onSuccess: (r) => toast(r.message, r.ok ? "success" : "error"),
   });
 
   return (
@@ -105,6 +111,7 @@ export default function DestinationsPage() {
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name} <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>· {destTypeLabel(d.type)}</span></div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{destSummary(d)}</div>
               </div>
+              {d.canWrite && <Btn variant="ghost" onClick={() => test.mutate(d.id)} disabled={test.isPending}>{test.isPending ? "…" : t("destinations.test")}</Btn>}
               {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
             </div>
           ))}

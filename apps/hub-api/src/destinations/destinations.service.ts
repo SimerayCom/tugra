@@ -9,6 +9,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { buildDestinationTestScript } from "../backups/backup-script";
+import type { S3Config } from "../backups/destination";
 import type { CreateDestinationInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -37,7 +40,35 @@ export class DestinationsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly crypto: CryptoService,
+    private readonly agentWs: AgentWsServer,
   ) {}
+
+  /** Validate an S3 destination's reachability + credentials by running `mc ls` on an online server. */
+  async testConnection(userId: string, id: string): Promise<{ ok: boolean; message: string }> {
+    const dest = await this.requireWrite(userId, id);
+    if (dest.type !== "S3") return { ok: true, message: "Local destination — nothing to test" };
+    const server = await this.prisma.server.findFirst({ where: { teamId: dest.teamId, status: "ONLINE" } });
+    if (!server) return { ok: false, message: "Need an online server in this team to run the test" };
+    try {
+      const r = await this.agentWs.sendCommand(server.id, buildDestinationTestScript(this.toS3Config(dest)), "backup", 30_000);
+      return r.exitCode === 0
+        ? { ok: true, message: "Connection OK" }
+        : { ok: false, message: (r.output || "").trim().slice(0, 300) || "Test failed" };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : "Test failed" };
+    }
+  }
+
+  private toS3Config(d: BackupDestination): S3Config {
+    return {
+      bucket: d.s3Bucket ?? "",
+      region: d.s3Region ?? "",
+      endpoint: d.s3Endpoint ?? "",
+      accessKey: d.s3AccessKey ? this.crypto.decrypt(d.s3AccessKey) : "",
+      secretKey: d.s3SecretKey ? this.crypto.decrypt(d.s3SecretKey) : "",
+      prefix: d.s3Prefix ?? "",
+    };
+  }
 
   async create(userId: string, dto: CreateDestinationInput): Promise<DestinationView> {
     await this.access.requireRole(userId, dto.teamId, WRITE);

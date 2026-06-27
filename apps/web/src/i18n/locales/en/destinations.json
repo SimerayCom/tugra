@@ -11,6 +11,7 @@
   "prefix": "Prefix (optional)",
   "encrypt": "Encrypt (AES-256)",
   "create": "Add",
+  "test": "Test connection",
   "delete": "Delete",
   "empty": "No backup storage yet — backups stay on the server's disk."
 }
