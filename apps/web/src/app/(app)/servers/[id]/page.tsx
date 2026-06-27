@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { installPhase } from "../../../../lib/server-install";
+import { CopyBtn } from "../../../../components/copy-row";
+import { IconBtn } from "../../../../components/icon-btn";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import type { ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
@@ -195,7 +197,7 @@ function ServerInstallCard({ id }: { id: string }) {
       ) : (
         <>
           <pre className="mono" style={{ background: "var(--c-el)", padding: 12, borderRadius: "var(--r1)", fontSize: 12, overflowX: "auto", margin: 0 }}>{cmd}</pre>
-          <Btn variant="ghost" style={{ marginTop: 10 }} onClick={() => cmd && navigator.clipboard?.writeText(cmd)}>{t("servers.copy")}</Btn>
+          <div style={{ marginTop: 10 }}><CopyBtn text={cmd ?? ""} label={t("servers.copy")} /></div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
             <Spinner /><span style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("servers.waiting")}</span>
@@ -327,7 +329,7 @@ function LogDrainCard({ id }: { id: string }) {
             <input type="checkbox" checked={d.enabled} onChange={(e) => toggle.mutate({ drainId: d.id, enabled: e.target.checked })} />
             <span style={{ fontWeight: 600, width: 130, overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{d.endpoint}</span>
-            <button onClick={() => del.mutate(d.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+            <IconBtn label={t("common.delete")} danger onClick={() => del.mutate(d.id)}>×</IconBtn>
           </div>
         ))}
         {drains.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("logdrains.empty")}</div>}

@@ -12,6 +12,8 @@ import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { Modal } from "../../../../components/modal";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
+import { CopyRow } from "../../../../components/copy-row";
+import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
@@ -406,31 +408,6 @@ function LiveLogCard({ lines }: { lines: string }) {
   );
 }
 
-function CopyRow({ label, value, copy, secret }: { label: string; value: string; copy: string; secret?: boolean }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: 11, color: "var(--c-tx3)", width: 80, flexShrink: 0 }}>{label}</span>
-      <code
-        className="mono"
-        style={{
-          flex: 1,
-          fontSize: 12,
-          background: "var(--c-el)",
-          border: "1px solid var(--c-bd)",
-          borderRadius: "var(--r1)",
-          padding: "6px 10px",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {secret ? "•".repeat(Math.min(value.length, 32)) : value}
-      </code>
-      <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(value)}>{copy}</Btn>
-    </div>
-  );
-}
-
 const envField: React.CSSProperties = {
   padding: "6px 9px",
   background: "var(--c-el)",
@@ -707,7 +684,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{tk.schedule}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.command}</span>
             {tk.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(tk.lastRunAt).toLocaleString()}</span>}
-            <button onClick={() => del.mutate(tk.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+            <IconBtn label={t("common.delete")} danger onClick={() => del.mutate(tk.id)}>×</IconBtn>
           </div>
         ))}
       </div>
@@ -778,7 +755,7 @@ function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnable
                       {p.url} {t("apps.open")}
                     </a>
                   )}
-                  <button onClick={() => del.mutate(p.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+                  <IconBtn label={t("common.delete")} danger onClick={() => del.mutate(p.id)}>×</IconBtn>
                 </div>
               ))}
             </div>

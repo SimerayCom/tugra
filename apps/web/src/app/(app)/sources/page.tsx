@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import type { SourceRepo } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { IconBtn } from "../../../components/icon-btn";
 import { Field, Select, TextInput } from "../../../components/form";
 
 export default function SourcesPage() {
@@ -94,7 +95,7 @@ function SourceRow({ id, name, appId, installationId, onDelete }: { id: string; 
           </div>
         </div>
         <Btn variant="ghost" onClick={() => load.mutate()} disabled={load.isPending}>{load.isPending ? "…" : t("sources.loadRepos")}</Btn>
-        <Btn variant="ghost" onClick={onDelete} title={t("sources.delete")}><Trash2 size={15} /></Btn>
+        <IconBtn label={t("sources.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>
       </div>
       {repos && (
         <div style={{ marginTop: 10, fontSize: 12, color: "var(--c-tx2)" }}>

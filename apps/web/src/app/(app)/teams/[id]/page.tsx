@@ -7,6 +7,7 @@ import { api } from "../../../../lib/api";
 import type { Role } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 
 const field: React.CSSProperties = {
@@ -111,7 +112,7 @@ export default function TeamDetailPage() {
                   <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.role}</span>
                 )}
                 {canManage && !lastOwner && (
-                  <button onClick={() => removeMember.mutate(m.userId)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}>×</button>
+                  <IconBtn label={t("common.remove")} danger onClick={() => removeMember.mutate(m.userId)}>×</IconBtn>
                 )}
               </div>
             );
