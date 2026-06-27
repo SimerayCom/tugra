@@ -76,6 +76,17 @@ export class ServersController {
     return this.servers.createServer(user.userId, body.name, body.teamId, publicUrlFrom(req));
   }
 
+  @Get(":id/install")
+  getInstall(@CurrentUser() user: AuthUser, @Param("id") id: string, @Req() req: ReqLike) {
+    return this.servers.getInstall(user.userId, id, publicUrlFrom(req));
+  }
+
+  @Post(":id/reissue")
+  @HttpCode(200)
+  reissue(@CurrentUser() user: AuthUser, @Param("id") id: string, @Req() req: ReqLike) {
+    return this.servers.reissueEnroll(user.userId, id, publicUrlFrom(req));
+  }
+
   @Put(":id/tags")
   @HttpCode(200)
   async setTags(

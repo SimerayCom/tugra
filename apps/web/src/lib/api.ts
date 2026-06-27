@@ -25,6 +25,7 @@ import type {
   Project,
   Role,
   ScheduledTask,
+  ServerStatus,
   ServerView,
   SharedVariable,
   Team,
@@ -294,6 +295,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, teamId }),
     });
+  },
+  getServerInstall(id: string) {
+    return apiFetch<{ status: ServerStatus; installCommand: string | null; expiresAt: string | null }>(
+      `/servers/${id}/install`,
+    );
+  },
+  reissueServerEnroll(id: string) {
+    return apiFetch<{ installCommand: string; expiresAt: string }>(`/servers/${id}/reissue`, { method: "POST" });
   },
 
   // ── monitors ──

@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -90,8 +91,61 @@ export class ServersService {
     return {
       server: this.toView(created, Role.OWNER),
       enrollToken,
-      installCommand: `tugra-agent --hub ${this.agentWsUrl(publicUrl)} --token ${enrollToken}`,
+      installCommand: this.buildInstallCommand(enrollToken, publicUrl),
     };
+  }
+
+  /** The one-line agent install command (enroll token embedded). */
+  private buildInstallCommand(token: string, publicUrl?: string): string {
+    return `tugra-agent --hub ${this.agentWsUrl(publicUrl)} --token ${token}`;
+  }
+
+  /**
+   * The install command for an EXISTING server, so the PENDING enroll state can
+   * live at a stable /servers/[id] URL (refresh-safe, recoverable). The embedded
+   * enroll token is only revealed to a team writer while the server is PENDING
+   * and the token has not expired — never via the normal getServer payload.
+   */
+  async getInstall(
+    userId: string,
+    id: string,
+    publicUrl?: string,
+  ): Promise<{ status: ServerStatus; installCommand: string | null; expiresAt: Date | null }> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    const valid =
+      server.status === ServerStatus.PENDING &&
+      !!server.enrollToken &&
+      !!server.enrollTokenExpiresAt &&
+      server.enrollTokenExpiresAt.getTime() > Date.now();
+    return {
+      status: server.status,
+      installCommand: valid ? this.buildInstallCommand(server.enrollToken!, publicUrl) : null,
+      expiresAt: server.enrollTokenExpiresAt,
+    };
+  }
+
+  /** Mint a fresh enroll token for a still-PENDING server (recover an expired/lost command). */
+  async reissueEnroll(
+    userId: string,
+    id: string,
+    publicUrl?: string,
+  ): Promise<{ installCommand: string; expiresAt: Date }> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    if (server.status !== ServerStatus.PENDING) {
+      throw new ConflictException("server already enrolled");
+    }
+    const enrollToken = generateEnrollToken();
+    const expiresAt = new Date(Date.now() + ENROLL_TTL_MS);
+    await this.prisma.server.update({
+      where: { id },
+      data: { enrollToken, enrollTokenExpiresAt: expiresAt },
+    });
+    await this.audit.log({ actor: userId, action: "server.enroll.reissue", target: id });
+    return { installCommand: this.buildInstallCommand(enrollToken, publicUrl), expiresAt };
   }
 
   /**
