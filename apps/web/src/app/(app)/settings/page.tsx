@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
+import { Field, TextInput } from "../../../components/form";
 import { CopyBtn } from "../../../components/copy-row";
 import { useConfirm } from "../../../components/confirm";
+import { useToast } from "../../../components/toast";
 
 export default function SettingsPage() {
   const t = useT();
@@ -38,11 +40,8 @@ export default function SettingsPage() {
     <div style={{ padding: "var(--page-pad)", maxWidth: 520 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 18px" }}>{t("settings.title")}</h1>
 
-      <Card style={{ padding: 18, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: "var(--c-tx3)", marginBottom: 4 }}>{t("settings.account")}</div>
-        <div style={{ fontWeight: 600 }}>{user?.name ?? user?.email}</div>
-        <div className="mono" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{user?.email}</div>
-      </Card>
+      <AccountCard />
+      <PasswordCard />
 
       <Card style={{ padding: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -79,6 +78,76 @@ export default function SettingsPage() {
         <Link href="/notifications"><Btn variant="ghost">{t("settings.channelsManage")}</Btn></Link>
       </Card>
     </div>
+  );
+}
+
+function AccountCard() {
+  const t = useT();
+  const { user, reload } = useAuth();
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  useEffect(() => {
+    setName(user?.name ?? "");
+    setEmail(user?.email ?? "");
+  }, [user]);
+  const save = useMutation({
+    mutationFn: () => api.updateProfile({ name: name.trim() || undefined, email: email.trim() || undefined }),
+    onSuccess: async () => { await reload(); toast(t("settings.profileSaved"), "success"); },
+  });
+  return (
+    <Card style={{ padding: 18, marginBottom: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 12 }}>{t("settings.account")}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Field label={t("settings.name")} htmlFor="acc-name">
+          <TextInput id="acc-name" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label={t("settings.email")} htmlFor="acc-email">
+          <TextInput id="acc-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !email.trim()}>{save.isPending ? "…" : t("settings.save")}</Btn>
+      </div>
+    </Card>
+  );
+}
+
+function PasswordCard() {
+  const t = useT();
+  const toast = useToast();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [err, setErr] = useState("");
+  const change = useMutation({
+    mutationFn: () => api.changePassword({ currentPassword: current, newPassword: next }),
+    onSuccess: () => { setCurrent(""); setNext(""); setConfirmPw(""); setErr(""); toast(t("settings.passwordChanged"), "success"); },
+  });
+  const submit = () => {
+    setErr("");
+    if (next.length < 8) { setErr(t("settings.passwordMin")); return; }
+    if (next !== confirmPw) { setErr(t("settings.passwordMismatch")); return; }
+    change.mutate();
+  };
+  return (
+    <Card style={{ padding: 18, marginTop: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 12 }}>{t("settings.password")}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Field label={t("settings.currentPassword")}>
+          <TextInput type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        </Field>
+        <Field label={t("settings.newPassword")}>
+          <TextInput type="password" value={next} onChange={(e) => setNext(e.target.value)} />
+        </Field>
+        <Field label={t("settings.confirmPassword")} error={err || undefined}>
+          <TextInput type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} />
+        </Field>
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <Btn onClick={submit} disabled={change.isPending || !current || !next}>{change.isPending ? "…" : t("settings.changePassword")}</Btn>
+      </div>
+    </Card>
   );
 }
 
