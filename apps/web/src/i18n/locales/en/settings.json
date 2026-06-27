@@ -9,6 +9,8 @@
   "enabled2fa": "2FA enabled ✓",
   "codeWrong": "Invalid code",
   "channels": "Notification Channels",
+  "channelsDesc": "Deploy, server and SSL alerts over email, Slack, Discord and more.",
+  "channelsManage": "Manage channels →",
   "channelName": "Channel name",
   "add": "+ Add",
   "test": "Test",

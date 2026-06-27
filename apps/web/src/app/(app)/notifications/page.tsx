@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
+import { visibleChannels } from "../../../lib/channels";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { Field, Select, TextInput } from "../../../components/form";
@@ -38,6 +39,7 @@ export default function NotificationsPage() {
 
   const [teamId, setTeamId] = useState("");
   const activeTeam = teamId || teams[0]?.id || "";
+  const visible = visibleChannels(channels, activeTeam);
   const [name, setName] = useState("");
   const [type, setType] = useState("smtp");
   const [config, setConfig] = useState<Record<string, string>>({});
@@ -69,13 +71,19 @@ export default function NotificationsPage() {
       </h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("notifications.subtitle")}</p>
 
+      {teams.length > 1 && (
+        <div style={{ maxWidth: 240, marginBottom: 18 }}>
+          <Select value={activeTeam} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+        </div>
+      )}
+
       {isLoading ? (
         <Spinner />
-      ) : channels.length === 0 ? (
+      ) : visible.length === 0 ? (
         <Card style={{ padding: 16, marginBottom: 20 }}><EmptyState>{t("notifications.noChannels")}</EmptyState></Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-          {channels.map((c) => (
+          {visible.map((c) => (
             <Card key={c.id} style={{ padding: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -107,9 +115,6 @@ export default function NotificationsPage() {
             </Field>
             <Field label={t("notifications.channelType")}>
               <Select value={type} onChange={(v) => { setType(v); setConfig({}); }} options={TYPES.map((tp) => ({ value: tp, label: tp.toUpperCase() }))} />
-            </Field>
-            <Field label={t("notifications.team")}>
-              <Select value={activeTeam} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
             </Field>
             {(FIELDS[type] ?? []).map((k) => (
               <Field key={k} label={t(`notifications.f_${k}`)}>
