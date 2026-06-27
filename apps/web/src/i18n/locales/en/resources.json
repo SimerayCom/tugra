@@ -20,7 +20,7 @@
   "gitBased": "Git Based",
   "dockerBased": "Docker Based",
   "databases": "Databases",
-  "services": "Services",
+  "services": "App Store",
   "dockerImage": "Docker Image",
   "dockerImageDesc": "Deploy any image from a registry",
   "publicRepo": "Public Git Repository",

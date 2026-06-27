@@ -1,6 +1,6 @@
 {
   "title": "Backup Storage",
-  "subtitle": "Off-site destinations (S3 / R2) where database backups are stored.",
+  "subtitle": "Off-site storage (S3 / R2) where database backups are kept.",
   "team": "Team",
   "name": "Name",
   "bucket": "Bucket",
@@ -12,5 +12,5 @@
   "encrypt": "Encrypt (AES-256)",
   "create": "Add",
   "delete": "Delete",
-  "empty": "No backup destinations yet — backups stay on the server's disk."
+  "empty": "No backup storage yet — backups stay on the server's disk."
 }

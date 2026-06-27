@@ -36,7 +36,7 @@ export function EnvironmentCard({
 
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("projects.environment")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("projects.assignTitle")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("projects.moveDesc")}</p>
       <select
         style={{ ...field, minWidth: 240 }}
