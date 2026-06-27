@@ -53,4 +53,19 @@ describe("Modal", () => {
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(last);
   });
+
+  it("does not close on Escape when closeOnEsc is false (terminal: ESC is a real key)", () => {
+    const onClose = vi.fn();
+    render(<Modal onClose={onClose} closeOnEsc={false}><button>only</button></Modal>);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not trap Tab when trapTab is false (terminal: Tab goes to the shell)", () => {
+    render(<Modal onClose={vi.fn()} trapTab={false}><button>first</button><button>last</button></Modal>);
+    const last = screen.getByText("last");
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(last); // not wrapped back to first
+  });
 });
