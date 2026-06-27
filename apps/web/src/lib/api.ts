@@ -748,6 +748,9 @@ export const api = {
   deleteDestination(id: string) {
     return apiFetch<{ ok: true }>(`/backup-destinations/${id}`, { method: "DELETE" });
   },
+  testDestination(id: string) {
+    return apiFetch<{ ok: boolean; message: string }>(`/backup-destinations/${id}/test`, { method: "POST" });
+  },
 
   // ── API tokens ──
   listApiTokens() {

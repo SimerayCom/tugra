@@ -38,6 +38,12 @@ export class DestinationsController {
     return this.destinations.get(user.userId, id);
   }
 
+  @Post(":id/test")
+  @HttpCode(200)
+  test(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.destinations.testConnection(user.userId, id);
+  }
+
   @Delete(":id")
   @HttpCode(200)
   async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
