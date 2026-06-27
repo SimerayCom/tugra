@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { NotificationsService } from "../notifications/notifications.service";
 import {
   supportsBackup,
   type DbCredentials,
@@ -28,6 +29,7 @@ export class BackupRunnerService {
     private readonly audit: AuditService,
     private readonly crypto: CryptoService,
     private readonly agentWs: AgentWsServer,
+    private readonly notifications: NotificationsService,
   ) {}
 
   toSpec(db: Database): DbSpec {
@@ -97,6 +99,7 @@ export class BackupRunnerService {
       },
     });
 
+    let succeeded = false;
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
@@ -104,12 +107,12 @@ export class BackupRunnerService {
         "backup",
         BACKUP_TIMEOUT_MS,
       );
-      const ok = r.exitCode === 0;
+      succeeded = r.exitCode === 0;
       await this.prisma.backup.update({
         where: { id: backup.id },
         data: {
-          status: ok ? "SUCCESS" : "FAILED",
-          sizeBytes: ok ? parseSize(r.output) : null,
+          status: succeeded ? "SUCCESS" : "FAILED",
+          sizeBytes: succeeded ? parseSize(r.output) : null,
           completedAt: new Date(),
         },
       });
@@ -120,6 +123,12 @@ export class BackupRunnerService {
       });
     }
     await this.audit.log({ actor, action: "database.backup", target: db.id });
+    if (!succeeded) {
+      // Don't let a silent backup failure go unnoticed (best-effort).
+      await this.notifications
+        .fireForEvent(db.teamId, "backup_failed", `Backup failed for "${db.name}"`)
+        .catch(() => undefined);
+    }
     await this.prune(db, dest);
     return this.prisma.backup.findUnique({ where: { id: backup.id } }) as Promise<Backup>;
   }

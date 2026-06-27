@@ -17,6 +17,7 @@
   "eventServerOffline": "Server offline",
   "eventSslExpiring": "SSL certificate expiring",
   "eventTokenExpiring": "API token expiring",
+  "eventBackupFailed": "Backup failed",
   "f_url": "Webhook URL",
   "f_webhookUrl": "Webhook URL",
   "f_botToken": "Bot token",
