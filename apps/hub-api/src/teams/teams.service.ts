@@ -65,6 +65,17 @@ export class TeamsService {
     }));
   }
 
+  async get(userId: string, id: string): Promise<TeamView> {
+    const team = await this.prisma.team.findUnique({
+      where: { id },
+      include: { _count: { select: { memberships: true } } },
+    });
+    if (!team) throw new NotFoundException("team not found");
+    const role = await this.access.teamRole(userId, id);
+    if (!role) throw new ForbiddenException("not a member of this team");
+    return { id: team.id, name: team.name, role, memberCount: team._count.memberships };
+  }
+
   async create(userId: string, name: string): Promise<TeamView> {
     const team = await this.prisma.team.create({
       data: { name, memberships: { create: { userId, role: Role.OWNER } } },

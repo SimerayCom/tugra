@@ -6,7 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import type { Role } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
-import { BackLink, Btn, Card, Spinner } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { PageHeader } from "../../../../components/page-header";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 
@@ -27,12 +28,11 @@ export default function TeamDetailPage() {
   const router = useRouter();
   const confirm = useConfirm();
 
-  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
-  const team = teams.find((x) => x.id === id);
+  const { data: team, isLoading: teamLoading, isError } = useQuery({ queryKey: ["team", id], queryFn: () => api.getTeam(id), retry: false });
   const canManage = team?.role === "OWNER" || team?.role === "ADMIN";
   const isOwner = team?.role === "OWNER";
 
-  const { data: members = [], isLoading } = useQuery({ queryKey: ["teamMembers", id], queryFn: () => api.listTeamMembers(id) });
+  const { data: members = [] } = useQuery({ queryKey: ["teamMembers", id], queryFn: () => api.listTeamMembers(id) });
   const { data: invitations = [] } = useQuery({
     queryKey: ["teamInvitations", id],
     queryFn: () => api.listTeamInvitations(id),
@@ -65,21 +65,26 @@ export default function TeamDetailPage() {
     onSuccess: () => { setNewName(""); qc.invalidateQueries({ queryKey: ["teams"] }); },
   });
 
-  if (isLoading || !team) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
+  if (teamLoading) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
+  if (isError || !team) {
+    return (
+      <div style={{ padding: "var(--page-pad)" }}>
+        <PageHeader breadcrumb={[{ label: t("nav.teams"), href: "/teams" }, { label: t("teams.notFound") }]} title={t("teams.notFound")} />
+        <Card style={{ padding: 16 }}><EmptyState>{t("teams.notFoundDesc")}</EmptyState></Card>
+      </div>
+    );
+  }
   const ownerCount = members.filter((m) => m.role === "OWNER").length;
   const inviteLink = lastToken ? `${typeof location !== "undefined" ? location.origin : ""}/teams?invite=${lastToken}` : "";
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <BackLink href="/teams" label={t("common.backTo", { target: t("nav.teams") })} />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{team.name}</h1>
-        <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{team.role}</span>
-        <div style={{ flex: 1 }} />
-        {isOwner && (
-          <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn>
-        )}
-      </div>
+      <PageHeader
+        breadcrumb={[{ label: t("nav.teams"), href: "/teams" }, { label: team.name }]}
+        title={team.name}
+        badge={<Badge tone={isOwner ? "gold" : "muted"}>{team.role}</Badge>}
+        actions={isOwner ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn> : undefined}
+      />
       {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 12 }}>{(del.error as Error).message}</div>}
 
       {canManage && (

@@ -181,6 +181,9 @@ export const api = {
   listTeams() {
     return apiFetch<Team[]>("/teams");
   },
+  getTeam(id: string) {
+    return apiFetch<Team>(`/teams/${id}`);
+  },
   createTeam(name: string) {
     return apiFetch<Team>("/teams", { method: "POST", body: JSON.stringify({ name }) });
   },
