@@ -7,6 +7,7 @@ import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
+import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
@@ -89,7 +90,12 @@ export default function DatabaseDetailPage() {
     onSuccess: invalidate,
   });
 
-  const [tab, setTab] = useState("overview");
+  const tabDefs = [
+    { key: "overview", label: t("databases.tabOverview") },
+    { key: "backups", label: t("databases.tabBackups") },
+    ...(db?.canWrite ? [{ key: "settings", label: t("databases.tabSettings") }] : []),
+  ];
+  const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
   if (isLoading || !db) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
@@ -127,15 +133,7 @@ export default function DatabaseDetailPage() {
         />
       )}
 
-      <Tabs
-        active={tab}
-        onChange={setTab}
-        tabs={[
-          { key: "overview", label: t("databases.tabOverview") },
-          { key: "backups", label: t("databases.tabBackups") },
-          ...(db.canWrite ? [{ key: "settings", label: t("databases.tabSettings") }] : []),
-        ]}
-      />
+      <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
 
       {tab === "overview" && (
         db.canWrite && db.connectionUri ? (

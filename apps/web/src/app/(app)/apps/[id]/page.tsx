@@ -12,6 +12,7 @@ import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { Modal } from "../../../../components/modal";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
+import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
@@ -84,7 +85,13 @@ export default function AppDetailPage() {
     mutationFn: (name: string) => api.renameApp(id, name),
     onSuccess: () => { setRenameOpen(false); qc.invalidateQueries({ queryKey: ["app", id] }); },
   });
-  const [tab, setTab] = useState("overview");
+  const tabDefs = [
+    { key: "overview", label: t("apps.tabOverview") },
+    ...(appData?.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration") }] : []),
+    { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length },
+    { key: "logs", label: t("apps.tabLogs") },
+  ];
+  const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
@@ -153,16 +160,7 @@ export default function AppDetailPage() {
         />
       )}
 
-      <Tabs
-        active={tab}
-        onChange={setTab}
-        tabs={[
-          { key: "overview", label: t("apps.tabOverview") },
-          ...(appData.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration") }] : []),
-          { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length },
-          { key: "logs", label: t("apps.tabLogs") },
-        ]}
-      />
+      <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
 
       {tab === "overview" && (
         appData.source === "COMPOSE" && appData.composeFile ? (

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { installPhase } from "../../../../lib/server-install";
+import { useTabState } from "../../../../hooks/useTabState";
 import { CopyBtn } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
@@ -44,7 +45,13 @@ export default function ServerDetailPage() {
     refetchInterval: 5000,
   });
   const [shellOpen, setShellOpen] = useState(false);
-  const [tab, setTab] = useState("overview");
+  const tabDefs = [
+    { key: "overview", label: t("servers.tabOverview") },
+    { key: "monitoring", label: t("servers.tabMonitoring") },
+    ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates") }, { key: "drains", label: t("servers.tabDrains") }] : []),
+    { key: "maintenance", label: t("servers.tabMaintenance") },
+  ];
+  const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
   // Celebrate the PENDING → ONLINE moment with a forward CTA (no dead-end).
   const prevStatus = useRef<ServerStatus | null>(null);
@@ -90,16 +97,7 @@ export default function ServerDetailPage() {
         )
       ) : (
       <>
-      <Tabs
-        active={tab}
-        onChange={setTab}
-        tabs={[
-          { key: "overview", label: t("servers.tabOverview") },
-          { key: "monitoring", label: t("servers.tabMonitoring") },
-          ...(server.canWrite ? [{ key: "updates", label: t("servers.tabUpdates") }, { key: "drains", label: t("servers.tabDrains") }] : []),
-          { key: "maintenance", label: t("servers.tabMaintenance") },
-        ]}
-      />
+      <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
 
       {tab === "overview" && (
         <>
