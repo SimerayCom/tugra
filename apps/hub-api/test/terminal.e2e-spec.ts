@@ -22,6 +22,7 @@ describe("Terminal (e2e)", () => {
   let serverId = "";
   let appId = "";
   let composeAppId = "";
+  let databaseId = "";
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -60,6 +61,13 @@ describe("Terminal (e2e)", () => {
       .send({ name: "stack", serverId, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx" })
       .expect(201);
     composeAppId = composeRes.body.id;
+
+    const dbRes = await request(app.getHttpServer())
+      .post("/databases")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "shelldb", serverId, engine: "POSTGRES" })
+      .expect(201);
+    databaseId = dbRes.body.id;
 
     // Agent simulator: a PTY-less echo shell driven by the term_* protocol.
     agent = new WebSocket(`ws://127.0.0.1:${port}/agent`);
@@ -125,6 +133,18 @@ describe("Terminal (e2e)", () => {
     });
     await sleep(120);
     expect(got.lines()).toContain(`shell:tugra_${appId}`);
+    ws.close();
+  });
+
+  it("opens a database container shell targeting tugra_db_<id>", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/terminal?database=${databaseId}`, ["tugra.bearer", token]);
+    const got = collect(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", () => resolve());
+      ws.on("error", reject);
+    });
+    await sleep(120);
+    expect(got.lines()).toContain(`shell:tugra_db_${databaseId}`);
     ws.close();
   });
 

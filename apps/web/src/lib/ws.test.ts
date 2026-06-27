@@ -16,8 +16,9 @@ describe("ws url helpers", () => {
     expect(wsBase("https://hub.example.com")).toBe("wss://hub.example.com");
   });
 
-  it("builds terminal URLs for app and server targets", () => {
+  it("builds terminal URLs for app, database and server targets", () => {
     expect(terminalUrl({ app: "a1" }, "http://localhost:3000")).toBe("ws://localhost:3000/terminal?app=a1");
+    expect(terminalUrl({ database: "d1" }, "https://h")).toBe("wss://h/terminal?database=d1");
     expect(terminalUrl({ server: "s1" }, "https://h")).toBe("wss://h/terminal?server=s1");
   });
 });
