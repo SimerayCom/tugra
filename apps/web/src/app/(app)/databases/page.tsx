@@ -8,9 +8,12 @@ import { dbColor, engineLabel } from "../../../lib/databases";
 import { useT } from "../../../i18n/provider";
 import { Spinner } from "../../../components/ui";
 import { TagChips, TagFilter } from "../../../components/tags";
+import { scopeByTeam } from "../../../lib/team-scope";
+import { useTeamScope } from "../../../components/team-scope";
 
 export default function DatabasesPage() {
   const t = useT();
+  const { teamId } = useTeamScope();
   const { data: databases = [], isLoading } = useQuery({
     queryKey: ["databases"],
     queryFn: () => api.listDatabases(),
@@ -18,8 +21,9 @@ export default function DatabasesPage() {
   });
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const allTags = [...new Set(databases.flatMap((d) => d.tags))].sort();
-  const visible = databases.filter((d) => selectedTags.every((tag) => d.tags.includes(tag)));
+  const scoped = scopeByTeam(databases, teamId);
+  const allTags = [...new Set(scoped.flatMap((d) => d.tags))].sort();
+  const visible = scoped.filter((d) => selectedTags.every((tag) => d.tags.includes(tag)));
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
