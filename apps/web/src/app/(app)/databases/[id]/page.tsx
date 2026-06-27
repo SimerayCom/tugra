@@ -7,6 +7,7 @@ import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
+import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
@@ -332,27 +333,3 @@ function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | nul
   );
 }
 
-function CopyRow({ label, value, copy, secret }: { label: string; value: string; copy: string; secret?: boolean }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ fontSize: 11, color: "var(--c-tx3)", width: 110, flexShrink: 0 }}>{label}</span>
-      <code
-        className="mono"
-        style={{
-          flex: 1,
-          fontSize: 12,
-          background: "var(--c-el)",
-          border: "1px solid var(--c-bd)",
-          borderRadius: "var(--r1)",
-          padding: "6px 10px",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {secret ? "•".repeat(Math.min(value.length, 40)) : value}
-      </code>
-      <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(value)}>{copy}</Btn>
-    </div>
-  );
-}

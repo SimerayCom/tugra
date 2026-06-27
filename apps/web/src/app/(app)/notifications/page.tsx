@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { visibleChannels } from "../../../lib/channels";
+import { IconBtn } from "../../../components/icon-btn";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { Field, Select, TextInput } from "../../../components/form";
@@ -98,7 +99,7 @@ export default function NotificationsPage() {
               <Btn variant="ghost" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
                 {test.isPending ? "…" : t("notifications.test")}
               </Btn>
-              <Btn variant="ghost" onClick={() => del.mutate(c.id)} title={t("notifications.delete")}><Trash2 size={15} /></Btn>
+              <IconBtn label={t("notifications.delete")} danger onClick={() => del.mutate(c.id)}><Trash2 size={15} /></IconBtn>
             </Card>
           ))}
         </div>

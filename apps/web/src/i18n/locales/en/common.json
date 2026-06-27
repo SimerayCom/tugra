@@ -10,5 +10,9 @@
   "save": "Save",
   "cancel": "Cancel",
   "confirm": "Confirm",
-  "confirmTitle": "Are you sure?"
+  "confirmTitle": "Are you sure?",
+  "copy": "Copy",
+  "copied": "Copied ✓",
+  "delete": "Delete",
+  "remove": "Remove"
 }

@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
+import { CopyBtn } from "../../../components/copy-row";
 
 export default function SettingsPage() {
   const t = useT();
@@ -120,7 +121,7 @@ function ApiTokensCard() {
           <div style={{ fontSize: 11, color: "var(--c-am)", marginBottom: 4 }}>{t("settings.tokenOnce")}</div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <code className="mono" style={{ flex: 1, fontSize: 12, wordBreak: "break-all" }}>{fresh}</code>
-            <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(fresh)}>{t("settings.copy")}</Btn>
+            <CopyBtn text={fresh} label={t("settings.copy")} />
           </div>
         </div>
       )}
