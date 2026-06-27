@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import { installPhase } from "../../../../lib/server-install";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import type { ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
@@ -41,6 +43,14 @@ export default function ServerDetailPage() {
   const [shellOpen, setShellOpen] = useState(false);
   const [tab, setTab] = useState("overview");
 
+  // Celebrate the PENDING → ONLINE moment with a forward CTA (no dead-end).
+  const prevStatus = useRef<ServerStatus | null>(null);
+  const [enrolled, setEnrolled] = useState(false);
+  useEffect(() => {
+    if (prevStatus.current === "PENDING" && server?.status === "ONLINE") setEnrolled(true);
+    if (server) prevStatus.current = server.status;
+  }, [server?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (isLoading || !server) return <div style={{ padding: 28 }}><Spinner /></div>;
 
   const cpu = metrics.map((m) => m.cpu);
@@ -58,6 +68,25 @@ export default function ServerDetailPage() {
         <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>{server.hostname ?? "—"}</p>
       </PageHeader>
 
+      {enrolled && (
+        <Card style={{ padding: 14, marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", borderColor: "var(--c-g)" }}>
+          <span style={{ fontWeight: 600 }}>{t("servers.enrolledTitle")}</span>
+          <div style={{ flex: 1 }} />
+          <Link href="/resources/new"><Btn>{t("servers.addFirstApp")}</Btn></Link>
+          <Btn variant="ghost" onClick={() => setEnrolled(false)}>{t("common.cancel")}</Btn>
+        </Card>
+      )}
+
+      {server.status === "PENDING" ? (
+        server.canWrite ? (
+          <ServerInstallCard id={id} />
+        ) : (
+          <Card style={{ padding: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <Spinner /><span style={{ color: "var(--c-tx3)" }}>{t("servers.waiting")}</span>
+          </Card>
+        )
+      ) : (
+      <>
       <Tabs
         active={tab}
         onChange={setTab}
@@ -112,6 +141,8 @@ export default function ServerDetailPage() {
           {server.canWrite && <CleanupCard id={id} server={server} />}
         </>
       )}
+      </>
+      )}
 
       {shellOpen && (
         <TerminalModal
@@ -121,6 +152,68 @@ export default function ServerDetailPage() {
         />
       )}
     </div>
+  );
+}
+
+function ServerInstallCard({ id }: { id: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [waitedMs, setWaitedMs] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const iv = setInterval(() => setWaitedMs(Date.now() - start), 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const install = useQuery({
+    queryKey: ["serverInstall", id],
+    queryFn: () => api.getServerInstall(id),
+    refetchInterval: 10000,
+  });
+  const reissue = useMutation({
+    mutationFn: () => api.reissueServerEnroll(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["serverInstall", id] }),
+  });
+
+  if (install.isLoading) return <Card style={{ padding: 16 }}><Spinner /></Card>;
+
+  const cmd = install.data?.installCommand ?? null;
+  const phase = installPhase(cmd, waitedMs);
+
+  return (
+    <Card style={{ padding: 16 }}>
+      <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>{t("servers.installTitle")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.installDesc")}</p>
+
+      {phase === "expired" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: "var(--c-am)" }}>{t("servers.tokenExpired")}</span>
+          <Btn onClick={() => reissue.mutate()} disabled={reissue.isPending}>
+            {reissue.isPending ? "…" : t("servers.getFreshCommand")}
+          </Btn>
+        </div>
+      ) : (
+        <>
+          <pre className="mono" style={{ background: "var(--c-el)", padding: 12, borderRadius: "var(--r1)", fontSize: 12, overflowX: "auto", margin: 0 }}>{cmd}</pre>
+          <Btn variant="ghost" style={{ marginTop: 10 }} onClick={() => cmd && navigator.clipboard?.writeText(cmd)}>{t("servers.copy")}</Btn>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
+            <Spinner /><span style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("servers.waiting")}</span>
+          </div>
+
+          {phase === "troubleshoot" && (
+            <div style={{ marginTop: 16, padding: 12, background: "var(--c-el)", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)" }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{t("servers.troubleshootTitle")}</div>
+              <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: 0, lineHeight: 1.6 }}>{t("servers.troubleshootHint")}</p>
+              <Btn variant="ghost" style={{ marginTop: 10 }} onClick={() => reissue.mutate()} disabled={reissue.isPending}>
+                {reissue.isPending ? "…" : t("servers.getFreshCommand")}
+              </Btn>
+            </div>
+          )}
+        </>
+      )}
+      {reissue.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(reissue.error as Error).message}</div>}
+    </Card>
   );
 }
 

@@ -214,3 +214,80 @@ function row(id: string, teamId: string) {
     createdAt: new Date(),
   };
 }
+
+const owner = (role: Role = Role.OWNER) => ({ membership: { findUnique: jest.fn().mockResolvedValue({ role }) } });
+
+describe("ServersService.getInstall", () => {
+  it("reveals the install command for a valid PENDING server to a writer", async () => {
+    const prisma = {
+      ...owner(),
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "teamA", status: ServerStatus.PENDING,
+          enrollToken: "tugra_en_abc", enrollTokenExpiresAt: new Date(Date.now() + 60_000),
+        }),
+      },
+    } as unknown as PrismaService;
+    const res = await svcWith(prisma).getInstall("u1", "s1");
+    expect(res.installCommand).toContain("tugra_en_abc");
+    expect(res.status).toBe(ServerStatus.PENDING);
+  });
+
+  it("returns null command when the token has expired", async () => {
+    const prisma = {
+      ...owner(),
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "teamA", status: ServerStatus.PENDING,
+          enrollToken: "tugra_en_abc", enrollTokenExpiresAt: new Date(Date.now() - 1000),
+        }),
+      },
+    } as unknown as PrismaService;
+    expect((await svcWith(prisma).getInstall("u1", "s1")).installCommand).toBeNull();
+  });
+
+  it("returns null command once the server is ONLINE", async () => {
+    const prisma = {
+      ...owner(),
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "teamA", status: ServerStatus.ONLINE,
+          enrollToken: "tugra_en_abc", enrollTokenExpiresAt: new Date(Date.now() + 60_000),
+        }),
+      },
+    } as unknown as PrismaService;
+    expect((await svcWith(prisma).getInstall("u1", "s1")).installCommand).toBeNull();
+  });
+
+  it("forbids a non-writer (VIEWER)", async () => {
+    const prisma = {
+      ...owner(Role.VIEWER),
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+    } as unknown as PrismaService;
+    await expect(svcWith(prisma).getInstall("u1", "s1")).rejects.toThrow(/insufficient role/);
+  });
+});
+
+describe("ServersService.reissueEnroll", () => {
+  it("mints a fresh token + command for a PENDING server", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      ...owner(),
+      server: {
+        findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "teamA", status: ServerStatus.PENDING }),
+        update,
+      },
+    } as unknown as PrismaService;
+    const res = await svcWith(prisma).reissueEnroll("u1", "s1");
+    expect(res.installCommand).toMatch(/tugra_en_/);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "s1" } }));
+  });
+
+  it("rejects reissue once the server is enrolled (ONLINE)", async () => {
+    const prisma = {
+      ...owner(),
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "teamA", status: ServerStatus.ONLINE }) },
+    } as unknown as PrismaService;
+    await expect(svcWith(prisma).reissueEnroll("u1", "s1")).rejects.toThrow(/already enrolled/);
+  });
+});

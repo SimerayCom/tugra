@@ -107,6 +107,26 @@ describe("Servers + Agent (e2e)", () => {
       .expect(200);
   });
 
+  it("returns the install command for a PENDING server via :id/install", async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/servers/${serverId}/install`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(res.body.status).toBe("PENDING");
+    expect(res.body.installCommand).toContain("/agent");
+    expect(res.body.installCommand).toContain("tugra_en_");
+  });
+
+  it("reissues a fresh enroll command for a PENDING server", async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/servers/${serverId}/reissue`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(res.body.installCommand).toMatch(/tugra_en_/);
+    // the reissued token replaces the old one — enroll below uses the latest
+    enrollToken = res.body.installCommand.split("--token ")[1].trim();
+  });
+
   it("enrolls an agent over WS, goes ONLINE, and ingests metrics", async () => {
     const { publicKey } = generateKeyPairSync("ed25519");
     const spkiB64 = publicKey
@@ -219,6 +239,19 @@ describe("Servers + Agent (e2e)", () => {
     expect(updates.body.packages[0].name).toBe("docker-ce");
 
     ws.close();
+  });
+
+  it("stops revealing the install command once ONLINE and refuses reissue", async () => {
+    const inst = await request(app.getHttpServer())
+      .get(`/servers/${serverId}/install`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(inst.body.status).toBe("ONLINE");
+    expect(inst.body.installCommand).toBeNull();
+    await request(app.getHttpServer())
+      .post(`/servers/${serverId}/reissue`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(409);
   });
 
   it("rejects an agent with a bad enroll token", async () => {
