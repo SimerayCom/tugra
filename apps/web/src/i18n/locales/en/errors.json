@@ -1,0 +1,8 @@
+{
+  "notFoundTitle": "Page not found",
+  "notFoundDesc": "The page you're looking for doesn't exist or was moved.",
+  "backHome": "Back to dashboard",
+  "errorTitle": "Something went wrong",
+  "errorDesc": "An unexpected error occurred while loading this page.",
+  "retry": "Try again"
+}
