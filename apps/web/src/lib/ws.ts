@@ -1,7 +1,7 @@
 import { API_BASE, tokens } from "./api";
 
-/** Terminal target: an app container (optionally a specific compose service), or a server host. */
-export type TerminalTarget = { app: string; container?: string } | { server: string };
+/** Terminal target: an app container (optionally a specific compose service), a database container, or a server host. */
+export type TerminalTarget = { app: string; container?: string } | { database: string } | { server: string };
 
 /** A live terminal event from the hub. */
 export type TerminalEvent =
@@ -18,7 +18,9 @@ export function terminalUrl(target: TerminalTarget, base: string = API_BASE): st
   const q =
     "app" in target
       ? `app=${encodeURIComponent(target.app)}${target.container ? `&container=${encodeURIComponent(target.container)}` : ""}`
-      : `server=${encodeURIComponent(target.server)}`;
+      : "database" in target
+        ? `database=${encodeURIComponent(target.database)}`
+        : `server=${encodeURIComponent(target.server)}`;
   return `${wsBase(base)}/terminal?${q}`;
 }
 

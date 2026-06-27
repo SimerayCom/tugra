@@ -19,6 +19,7 @@ import { AuditService } from "../audit/audit.service";
 import { isApiToken } from "../api-tokens/api-token.util";
 import type { AccessTokenPayload } from "../auth/strategies/jwt.strategy";
 import { containerName } from "../deploy/deploy-script";
+import { dbContainerName } from "../databases/database-script";
 import { AgentWsServer, type TerminalDelegate } from "./agent-ws.server";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -113,6 +114,15 @@ export class TerminalGateway
           target = containerName(app);
         }
         auditTarget = app.id;
+        kind = "container";
+      } else if (url.searchParams.get("database")) {
+        const dbId = url.searchParams.get("database")!;
+        const db = await this.prisma.database.findUnique({ where: { id: dbId } });
+        if (!db) return ws.close(1008, "not found");
+        await this.access.requireRole(userId, db.teamId, WRITE);
+        serverId = db.serverId;
+        target = dbContainerName(db);
+        auditTarget = db.id;
         kind = "container";
       } else if (serverParam) {
         const server = await this.prisma.server.findUnique({ where: { id: serverParam } });

@@ -16,6 +16,7 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { RenameModal } from "../../../../components/rename-modal";
+import { TerminalModal } from "../../../../components/terminal-modal";
 import { useConfirm } from "../../../../components/confirm";
 
 export default function DatabaseDetailPage() {
@@ -46,6 +47,7 @@ export default function DatabaseDetailPage() {
   const provision = useMutation({ mutationFn: () => api.provisionDatabase(id), onSuccess: invalidate });
   const stop = useMutation({ mutationFn: () => api.stopDatabase(id), onSuccess: invalidate });
   const [renameOpen, setRenameOpen] = useState(false);
+  const [shellOpen, setShellOpen] = useState(false);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameDatabase(id, name),
     onSuccess: () => { setRenameOpen(false); invalidate(); },
@@ -112,6 +114,7 @@ export default function DatabaseDetailPage() {
                 {provision.isPending ? t("databases.provisioning") : t("databases.provision")}
               </Btn>
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("databases.stop")}</Btn>
+              <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("databases.openShell")}</Btn>
               <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("databases.rename")}</Btn>
               <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true })) del.mutate(); }}>{t("databases.delete")}</Btn>
             </>
@@ -130,6 +133,13 @@ export default function DatabaseDetailPage() {
           pending={rename.isPending}
           onClose={() => setRenameOpen(false)}
           onSave={(name) => rename.mutate(name)}
+        />
+      )}
+      {shellOpen && (
+        <TerminalModal
+          target={{ database: id }}
+          title={t("terminal.containerTitle", { name: db.name })}
+          onClose={() => setShellOpen(false)}
         />
       )}
 

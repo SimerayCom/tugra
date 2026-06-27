@@ -21,7 +21,7 @@ export default function TerminalView({
   onClose?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const tkey = "app" in target ? `app:${target.app}` : `server:${target.server}`;
+  const tkey = "app" in target ? `app:${target.app}` : "database" in target ? `database:${target.database}` : `server:${target.server}`;
 
   useEffect(() => {
     const host = ref.current;
