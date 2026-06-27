@@ -9,6 +9,7 @@ import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { loadProjectCtx, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
@@ -83,6 +84,9 @@ export interface AppView {
   registryUrl: string | null;
   registryUser: string | null;
   environmentId: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  environmentName: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -222,7 +226,8 @@ export class ApplicationsService {
   async get(userId: string, id: string): Promise<AppView> {
     const app = await this.require(userId, id);
     const role = (await this.access.teamRole(userId, app.teamId))!;
-    return this.view(app, role);
+    const ctx = await loadProjectCtx(this.prisma, app.environmentId);
+    return this.view(app, role, ctx);
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }) {
@@ -910,7 +915,7 @@ export class ApplicationsService {
     return app;
   }
 
-  private view(app: Application, role: Role): AppView {
+  private view(app: Application, role: Role, ctx?: ResourceProjectCtx): AppView {
     const canWrite = WRITE.includes(role);
     return {
       id: app.id,
@@ -933,6 +938,9 @@ export class ApplicationsService {
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
       registryUser: this.appRegistryAuth(app)?.user ?? null,
       environmentId: app.environmentId,
+      projectId: ctx?.projectId ?? null,
+      projectName: ctx?.projectName ?? null,
+      environmentName: ctx?.environmentName ?? null,
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,

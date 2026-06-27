@@ -9,6 +9,7 @@ import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { loadProjectCtx, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
 import {
@@ -36,6 +37,9 @@ export interface DatabaseView {
   engine: DbEngine;
   version: string;
   environmentId: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  environmentName: string | null;
   serverId: string;
   teamId: string;
   status: DbStatus;
@@ -123,7 +127,8 @@ export class DatabasesService {
   async get(userId: string, id: string): Promise<DatabaseView> {
     const db = await this.require(userId, id);
     const role = (await this.access.teamRole(userId, db.teamId))!;
-    return this.view(db, role);
+    const ctx = await loadProjectCtx(this.prisma, db.environmentId);
+    return this.view(db, role, ctx);
   }
 
   async provision(userId: string, id: string): Promise<DatabaseView> {
@@ -246,7 +251,7 @@ export class DatabasesService {
     return db;
   }
 
-  private view(db: Database, role: Role): DatabaseView {
+  private view(db: Database, role: Role, ctx?: ResourceProjectCtx): DatabaseView {
     const canWrite = WRITE.includes(role);
     const conn = canWrite ? connectionInfo(this.toSpec(db)) : null;
     return {
@@ -255,6 +260,9 @@ export class DatabasesService {
       engine: db.engine as DbEngine,
       version: db.version,
       environmentId: db.environmentId,
+      projectId: ctx?.projectId ?? null,
+      projectName: ctx?.projectName ?? null,
+      environmentName: ctx?.environmentName ?? null,
       serverId: db.serverId,
       teamId: db.teamId,
       status: db.status,

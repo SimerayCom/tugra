@@ -290,6 +290,9 @@ export interface Application {
   registryUrl: string | null;
   registryUser: string | null;
   environmentId: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  environmentName: string | null;
   serverId: string;
   teamId: string;
   status: AppStatus;
@@ -365,6 +368,9 @@ export interface Database {
   engine: DbEngine;
   version: string;
   environmentId: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  environmentName: string | null;
   serverId: string;
   teamId: string;
   status: DbStatus;
