@@ -657,6 +657,7 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
 function ScheduledTasksCard({ id }: { id: string }) {
   const t = useT();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: tasks = [] } = useQuery({ queryKey: ["appTasks", id], queryFn: () => api.listAppTasks(id) });
   const [name, setName] = useState("");
   const [schedule, setSchedule] = useState("");
@@ -684,7 +685,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{tk.schedule}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.command}</span>
             {tk.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(tk.lastRunAt).toLocaleString()}</span>}
-            <IconBtn label={t("common.delete")} danger onClick={() => del.mutate(tk.id)}>×</IconBtn>
+            <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(tk.id); }}>×</IconBtn>
           </div>
         ))}
       </div>
@@ -702,6 +703,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
 function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnabled: boolean; domain: string | null }) {
   const t = useT();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: previews = [] } = useQuery({
     queryKey: ["appPreviews", id],
     queryFn: () => api.getAppPreviews(id),
@@ -755,7 +757,7 @@ function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnable
                       {p.url} {t("apps.open")}
                     </a>
                   )}
-                  <IconBtn label={t("common.delete")} danger onClick={() => del.mutate(p.id)}>×</IconBtn>
+                  <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(p.id); }}>×</IconBtn>
                 </div>
               ))}
             </div>
@@ -967,7 +969,7 @@ function VolumeBackupsCard({ id, enabled, intervalHours, retention, destinationI
             <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
               {t("databases.restore")}
             </button>
-            <button onClick={() => del.mutate(b.id)} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+            <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
           </div>
         ))}
         {backups.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.noVolBackups")}</div>}

@@ -8,6 +8,7 @@ import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 import { CopyBtn } from "../../../components/copy-row";
+import { useConfirm } from "../../../components/confirm";
 
 export default function SettingsPage() {
   const t = useT();
@@ -83,6 +84,7 @@ export default function SettingsPage() {
 
 function ApiTokensCard() {
   const t = useT();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { data: tokens = [] } = useQuery({ queryKey: ["apiTokens"], queryFn: () => api.listApiTokens() });
   const [name, setName] = useState("");
@@ -135,7 +137,7 @@ function ApiTokensCard() {
             <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>
               {tk.lastUsedAt ? `${t("settings.tokenUsed")} ${new Date(tk.lastUsedAt).toLocaleDateString()}` : t("settings.tokenUnused")}
             </span>
-            <button onClick={() => revoke.mutate(tk.id)} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>
+            <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) revoke.mutate(tk.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>
               {t("settings.revoke")}
             </button>
           </div>

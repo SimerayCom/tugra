@@ -8,6 +8,7 @@ import { api } from "../../../../lib/api";
 import { installPhase } from "../../../../lib/server-install";
 import { CopyBtn } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
+import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import type { ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
@@ -302,6 +303,7 @@ function PatchCard({ id }: { id: string }) {
 function LogDrainCard({ id }: { id: string }) {
   const t = useT();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: drains = [] } = useQuery({ queryKey: ["logDrains", id], queryFn: () => api.listLogDrains(id) });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["logDrains", id] });
   const [name, setName] = useState("");
@@ -329,7 +331,7 @@ function LogDrainCard({ id }: { id: string }) {
             <input type="checkbox" checked={d.enabled} onChange={(e) => toggle.mutate({ drainId: d.id, enabled: e.target.checked })} />
             <span style={{ fontWeight: 600, width: 130, overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{d.endpoint}</span>
-            <IconBtn label={t("common.delete")} danger onClick={() => del.mutate(d.id)}>×</IconBtn>
+            <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(d.id); }}>×</IconBtn>
           </div>
         ))}
         {drains.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("logdrains.empty")}</div>}

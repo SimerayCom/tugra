@@ -14,5 +14,6 @@
   "copy": "Copy",
   "copied": "Copied ✓",
   "delete": "Delete",
-  "remove": "Remove"
+  "remove": "Remove",
+  "deleteConfirm": "This can't be undone."
 }

@@ -8,11 +8,13 @@ import type { SourceRepo } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { IconBtn } from "../../../components/icon-btn";
+import { useConfirm } from "../../../components/confirm";
 import { Field, Select, TextInput } from "../../../components/form";
 
 export default function SourcesPage() {
   const t = useT();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: sources = [], isLoading } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
 
@@ -44,7 +46,7 @@ export default function SourcesPage() {
         <Card style={{ padding: 16, marginBottom: 20 }}><EmptyState>{t("sources.noSources")}</EmptyState></Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-          {sources.map((s) => <SourceRow key={s.id} id={s.id} name={s.name} appId={s.appId} installationId={s.installationId} onDelete={() => del.mutate(s.id)} />)}
+          {sources.map((s) => <SourceRow key={s.id} id={s.id} name={s.name} appId={s.appId} installationId={s.installationId} onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(s.id); }} />)}
         </div>
       )}
 
