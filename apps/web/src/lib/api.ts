@@ -145,6 +145,12 @@ export const api = {
   me() {
     return apiFetch<PublicUser>("/auth/me");
   },
+  updateProfile(input: { name?: string; email?: string }) {
+    return apiFetch<PublicUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) });
+  },
+  changePassword(input: { currentPassword: string; newPassword: string }) {
+    return apiFetch<{ ok: true }>("/auth/change-password", { method: "POST", body: JSON.stringify(input) });
+  },
 
   async logout() {
     const rt = tokens.refresh();

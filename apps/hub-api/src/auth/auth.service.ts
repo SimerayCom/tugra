@@ -233,6 +233,35 @@ export class AuthService {
     return this.toPublicUser(await this.requireUser(userId));
   }
 
+  /** Update the current user's display name and/or email. */
+  async updateProfile(userId: string, input: { name?: string; email?: string }): Promise<PublicUser> {
+    const user = await this.requireUser(userId);
+    if (input.email && input.email !== user.email) {
+      const taken = await this.prisma.user.findUnique({ where: { email: input.email } });
+      if (taken && taken.id !== userId) throw new ConflictException("email already in use");
+    }
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.email !== undefined ? { email: input.email } : {}),
+      },
+    });
+    await this.audit.log({ actor: userId, action: "auth.profile.update" });
+    return this.toPublicUser(updated);
+  }
+
+  /** Change the current user's password (verifies the current one first). */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.requireUser(userId);
+    if (!(await argon2.verify(user.password, currentPassword))) {
+      throw new UnauthorizedException("current password is incorrect");
+    }
+    const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+    await this.prisma.user.update({ where: { id: userId }, data: { password: passwordHash } });
+    await this.audit.log({ actor: userId, action: "auth.password.change" });
+  }
+
   private async requireUser(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {

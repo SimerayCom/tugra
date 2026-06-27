@@ -115,3 +115,41 @@ describe("AuthService login", () => {
     );
   });
 });
+
+describe("AuthService.updateProfile", () => {
+  const me = { id: "u1", email: "a@b.c", name: "Old", twoFaEnabled: false, password: "h" };
+
+  it("updates the display name", async () => {
+    const update = jest.fn().mockResolvedValue({ ...me, name: "New" });
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(me), update } } as unknown as PrismaService;
+    const res = await makeService(prisma).updateProfile("u1", { name: "New" });
+    expect(res.name).toBe("New");
+    expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { name: "New" } });
+  });
+
+  it("rejects an email already used by someone else", async () => {
+    const findUnique = jest.fn(({ where }: { where: { id?: string; email?: string } }) =>
+      Promise.resolve(where.id ? me : where.email === "taken@x.c" ? { id: "other" } : null),
+    );
+    const prisma = { user: { findUnique, update: jest.fn() } } as unknown as PrismaService;
+    await expect(makeService(prisma).updateProfile("u1", { email: "taken@x.c" })).rejects.toThrow(/already in use/);
+  });
+});
+
+describe("AuthService.changePassword", () => {
+  it("rejects when the current password is wrong", async () => {
+    const passwordHash = await argon2.hash("correct-horse", { type: argon2.argon2id });
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", password: passwordHash }), update: jest.fn() } } as unknown as PrismaService;
+    await expect(makeService(prisma).changePassword("u1", "wrong", "newpass1234")).rejects.toThrow(/current password/);
+  });
+
+  it("hashes and stores the new password when the current one is correct", async () => {
+    const passwordHash = await argon2.hash("correct-horse", { type: argon2.argon2id });
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", password: passwordHash }), update } } as unknown as PrismaService;
+    await makeService(prisma).changePassword("u1", "correct-horse", "newpass1234");
+    const data = update.mock.calls[0][0].data;
+    expect(data.password).toBeTruthy();
+    expect(data.password).not.toBe("newpass1234"); // stored hashed, not plaintext
+  });
+});

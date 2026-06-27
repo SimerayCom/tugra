@@ -60,6 +60,46 @@ describe("Auth (e2e)", () => {
     await request(app.getHttpServer()).get("/auth/me").expect(401);
   });
 
+  it("updates the profile name via PATCH /auth/me", async () => {
+    await request(app.getHttpServer())
+      .patch("/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ name: "Renamed" })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .get("/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(res.body.name).toBe("Renamed");
+  });
+
+  it("rejects change-password with a wrong current password", async () => {
+    await request(app.getHttpServer())
+      .post("/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: "not-the-password", newPassword: "brand-new-pw-123" })
+      .expect(401);
+  });
+
+  it("changes the password (and restores it for later tests)", async () => {
+    await request(app.getHttpServer())
+      .post("/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: password, newPassword: "temp-rotated-pw-123" })
+      .expect(200);
+    // logging in with the new password works
+    await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ email, password: "temp-rotated-pw-123" })
+      .expect(200);
+    // restore so the rest of the suite (which uses `password`) keeps passing
+    await request(app.getHttpServer())
+      .post("/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: "temp-rotated-pw-123", newPassword: password })
+      .expect(200);
+  });
+
   it("logs in and rotates refresh tokens; reuse is rejected", async () => {
     const login = await request(app.getHttpServer())
       .post("/auth/login")

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  Patch,
   Post,
   UseGuards,
 } from "@nestjs/common";
@@ -13,6 +14,8 @@ import { CurrentUser } from "./decorators/current-user.decorator";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { AuthUser } from "./strategies/jwt.strategy";
 import {
+  ChangePasswordInput,
+  ChangePasswordSchema,
   Enable2faInput,
   Enable2faSchema,
   LoginInput,
@@ -21,6 +24,8 @@ import {
   RefreshSchema,
   RegisterInput,
   RegisterSchema,
+  UpdateProfileInput,
+  UpdateProfileSchema,
 } from "./dto/auth.schemas";
 
 @Controller("auth")
@@ -58,6 +63,26 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: AuthUser) {
     return this.auth.me(user.userId);
+  }
+
+  @Patch("me")
+  @UseGuards(JwtAuthGuard)
+  updateProfile(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(UpdateProfileSchema)) body: UpdateProfileInput,
+  ) {
+    return this.auth.updateProfile(user.userId, body);
+  }
+
+  @Post("change-password")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  async changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ChangePasswordSchema)) body: ChangePasswordInput,
+  ) {
+    await this.auth.changePassword(user.userId, body.currentPassword, body.newPassword);
+    return { ok: true };
   }
 
   @Post("2fa/setup")
