@@ -6,6 +6,7 @@ import { Bell, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { visibleChannels } from "../../../lib/channels";
 import { IconBtn } from "../../../components/icon-btn";
+import { useConfirm } from "../../../components/confirm";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { Field, Select, TextInput } from "../../../components/form";
@@ -35,6 +36,7 @@ const EVENT_LABEL: Record<string, string> = {
 export default function NotificationsPage() {
   const t = useT();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: channels = [], isLoading } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
 
@@ -99,7 +101,7 @@ export default function NotificationsPage() {
               <Btn variant="ghost" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
                 {test.isPending ? "…" : t("notifications.test")}
               </Btn>
-              <IconBtn label={t("notifications.delete")} danger onClick={() => del.mutate(c.id)}><Trash2 size={15} /></IconBtn>
+              <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
             </Card>
           ))}
         </div>

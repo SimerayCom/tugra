@@ -6,6 +6,7 @@ import { api } from "../../../lib/api";
 import { destSummary, destTypeLabel } from "../../../lib/destinations";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
+import { useConfirm } from "../../../components/confirm";
 import { Select } from "../../../components/form";
 
 const field: React.CSSProperties = {
@@ -20,6 +21,7 @@ const field: React.CSSProperties = {
 
 export default function DestinationsPage() {
   const t = useT();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { data: destinations = [], isLoading } = useQuery({
     queryKey: ["destinations"],
@@ -103,7 +105,7 @@ export default function DestinationsPage() {
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name} <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>· {destTypeLabel(d.type)}</span></div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{destSummary(d)}</div>
               </div>
-              {d.canWrite && <Btn variant="danger" onClick={() => del.mutate(d.id)}>{t("destinations.delete")}</Btn>}
+              {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
             </div>
           ))}
           {destinations.length === 0 && (

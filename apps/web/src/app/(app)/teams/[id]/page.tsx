@@ -112,7 +112,7 @@ export default function TeamDetailPage() {
                   <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.role}</span>
                 )}
                 {canManage && !lastOwner && (
-                  <IconBtn label={t("common.remove")} danger onClick={() => removeMember.mutate(m.userId)}>×</IconBtn>
+                  <IconBtn label={t("common.remove")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) removeMember.mutate(m.userId); }}>×</IconBtn>
                 )}
               </div>
             );
@@ -147,7 +147,7 @@ export default function TeamDetailPage() {
                 <div key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                   <span style={{ flex: 1, fontSize: 13 }}>{inv.email}</span>
                   <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{inv.role}</span>
-                  <button onClick={() => revoke.mutate(inv.id)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.revoke")}</button>
+                  <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) revoke.mutate(inv.id); }} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.revoke")}</button>
                 </div>
               ))}
             </div>

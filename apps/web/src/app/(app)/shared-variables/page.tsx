@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
+import { useConfirm } from "../../../components/confirm";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -18,6 +19,7 @@ const field: React.CSSProperties = {
 
 export default function SharedVariablesPage() {
   const t = useT();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [teamId, setTeamId] = useState("");
@@ -74,7 +76,7 @@ export default function SharedVariablesPage() {
               <code className="mono" style={{ flex: 1, fontSize: 12, color: "var(--c-tx2)" }}>
                 {reveal ? (v.value ?? "—") : "••••••••"}
               </code>
-              <button onClick={() => del.mutate(v.id)} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>{t("shared.delete")}</button>
+              <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(v.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>{t("shared.delete")}</button>
             </div>
           ))}
           {vars.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("shared.empty")}</div>}

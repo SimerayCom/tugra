@@ -222,7 +222,7 @@ export default function DatabaseDetailPage() {
                 >
                   {t("databases.restore")}
                 </button>
-                <button onClick={() => delBackup.mutate(b.id)} style={{ ...linkBtn, color: "var(--c-r)" }}>✕</button>
+                <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)" }}>✕</button>
               </div>
             ))}
             {backups.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("databases.noBackups")}</div>}
