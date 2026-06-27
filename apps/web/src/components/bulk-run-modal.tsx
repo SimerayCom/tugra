@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { bulkSummary } from "../lib/bulk";
 import { useT } from "../i18n/provider";
 import type { BulkTaskStatus, ServerView } from "../lib/types";
+import { Modal } from "./modal";
 import { Btn } from "./ui";
 
 function taskColor(s: BulkTaskStatus): string {
@@ -41,9 +42,13 @@ export function BulkRunModal({
   });
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "10vh" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 600, maxWidth: "92vw", background: "var(--c-sb)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: 20, maxHeight: "76vh", overflowY: "auto" }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 14px" }}>{t("bulk.title", { n: selectedIds.length })}</h2>
+    <Modal
+      onClose={onClose}
+      zIndex={9000}
+      backdropStyle={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", alignItems: "flex-start", paddingTop: "10vh" }}
+      cardStyle={{ width: 600, maxWidth: "92vw", background: "var(--c-sb)", padding: 20, maxHeight: "76vh", overflowY: "auto" }}
+    >
+      <h2 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 14px" }}>{t("bulk.title", { n: selectedIds.length })}</h2>
 
         {!opId ? (
           <form
@@ -90,7 +95,6 @@ export function BulkRunModal({
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -15,12 +15,20 @@ export function Modal({
   width = 440,
   zIndex = 50,
   labelledBy,
+  cardStyle: cardStyleOverride,
+  backdropStyle: backdropStyleOverride,
+  closeOnEsc = true,
+  trapTab = true,
 }: {
   onClose: () => void;
   children: ReactNode;
   width?: number;
   zIndex?: number;
   labelledBy?: string;
+  cardStyle?: CSSProperties;
+  backdropStyle?: CSSProperties;
+  closeOnEsc?: boolean;
+  trapTab?: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -32,12 +40,12 @@ export function Modal({
     (focusables()[0] ?? card)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (closeOnEsc && e.key === "Escape") {
         e.stopPropagation();
         onClose();
         return;
       }
-      if (e.key === "Tab") {
+      if (trapTab && e.key === "Tab") {
         const f = focusables();
         if (f.length === 0) {
           e.preventDefault();
@@ -61,7 +69,7 @@ export function Modal({
       document.removeEventListener("keydown", onKey, true);
       previouslyFocused?.focus?.();
     };
-  }, [onClose]);
+  }, [onClose, closeOnEsc, trapTab]);
 
   const backdrop: CSSProperties = {
     position: "fixed",
@@ -71,6 +79,7 @@ export function Modal({
     alignItems: "center",
     justifyContent: "center",
     zIndex,
+    ...backdropStyleOverride,
   };
   const cardStyle: CSSProperties = {
     background: "var(--c-bg)",
@@ -79,6 +88,7 @@ export function Modal({
     padding: 18,
     minWidth: 320,
     maxWidth: width,
+    ...cardStyleOverride,
   };
 
   return (
