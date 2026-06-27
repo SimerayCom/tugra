@@ -24,13 +24,14 @@ const FIELDS: Record<string, string[]> = {
   gotify: ["server", "token"],
 };
 const SECRET_FIELDS = new Set(["pass", "token", "botToken"]);
-const EVENTS = ["deploy_success", "deploy_failed", "server_offline", "ssl_expiring", "token_expiring"];
+const EVENTS = ["deploy_success", "deploy_failed", "server_offline", "ssl_expiring", "token_expiring", "backup_failed"];
 const EVENT_LABEL: Record<string, string> = {
   deploy_success: "eventDeploySuccess",
   deploy_failed: "eventDeployFailed",
   server_offline: "eventServerOffline",
   ssl_expiring: "eventSslExpiring",
   token_expiring: "eventTokenExpiring",
+  backup_failed: "eventBackupFailed",
 };
 
 export default function NotificationsPage() {
