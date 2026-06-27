@@ -298,7 +298,7 @@ function Wizard() {
                   <>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 0 10px" }}>
                       <div style={{ ...groupTitle, margin: 0 }}>{t("resources.services")}</div>
-                      <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>· {t("resources.appStore")} · {templates.length}</span>
+                      <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>· {templates.length}</span>
                     </div>
                     <div style={{ maxWidth: 480, marginBottom: 10 }}>
                       <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("resources.searchServices")} />

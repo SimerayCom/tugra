@@ -20,6 +20,7 @@
   "deleteConfirm": "Delete this empty project? This cannot be undone.",
   "rename": "Rename",
   "environment": "Environment",
+  "assignTitle": "Project / Environment",
   "unassigned": "Unassigned",
   "moveDesc": "Assign this resource to a project environment."
 }
