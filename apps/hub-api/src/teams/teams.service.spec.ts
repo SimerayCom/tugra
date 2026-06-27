@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { TeamsService } from "./teams.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -85,5 +85,27 @@ describe("TeamsService", () => {
       user: { findUnique: jest.fn().mockResolvedValue({ email: "other@x.com" }) },
     } as unknown as PrismaService;
     await expect(make(prisma, {} as TeamAccessService).acceptInvitation("u2", "tok")).rejects.toThrow(/different account/);
+  });
+});
+
+describe("TeamsService.get", () => {
+  const teamRow = { id: "t1", name: "Shop", _count: { memberships: 3 } };
+
+  it("returns the team view for a member", async () => {
+    const prisma = { team: { findUnique: jest.fn().mockResolvedValue(teamRow) } } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.ADMIN) } as unknown as TeamAccessService;
+    const view = await make(prisma, access).get("u1", "t1");
+    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3 });
+  });
+
+  it("throws NotFound when the team does not exist", async () => {
+    const prisma = { team: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    await expect(make(prisma, {} as TeamAccessService).get("u1", "gone")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("forbids a non-member", async () => {
+    const prisma = { team: { findUnique: jest.fn().mockResolvedValue(teamRow) } } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(null) } as unknown as TeamAccessService;
+    await expect(make(prisma, access).get("u9", "t1")).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

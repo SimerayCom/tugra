@@ -85,6 +85,27 @@ describe("Teams (e2e)", () => {
       .expect(200);
   });
 
+  it("returns a single team via GET /teams/:id (with memberCount)", async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/teams/${teamId}`)
+      .set("Authorization", `Bearer ${tokenA}`)
+      .expect(200);
+    expect(res.body.id).toBe(teamId);
+    expect(res.body.role).toBe("OWNER");
+    expect(res.body.memberCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("404s an unknown team and forbids a non-member", async () => {
+    await request(app.getHttpServer())
+      .get(`/teams/does-not-exist`)
+      .set("Authorization", `Bearer ${tokenA}`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/teams/${teamId}`)
+      .set("Authorization", `Bearer ${tokenB}`)
+      .expect(403); // B was removed above
+  });
+
   it("rejects accepting an invitation meant for another account", async () => {
     const inv = await request(app.getHttpServer())
       .post(`/teams/${teamId}/members/invite`)

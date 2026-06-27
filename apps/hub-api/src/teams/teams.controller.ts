@@ -64,6 +64,11 @@ export class TeamsController {
     return { ok: true };
   }
 
+  @Get(":id")
+  get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.teams.get(user.userId, id);
+  }
+
   @Put(":id")
   @HttpCode(200)
   async rename(
