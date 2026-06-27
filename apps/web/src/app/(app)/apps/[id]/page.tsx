@@ -11,6 +11,7 @@ import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { Modal } from "../../../../components/modal";
+import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
@@ -90,7 +91,7 @@ export default function AppDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={[{ label: t("nav.apps"), href: "/apps" }, { label: appData.name }]}
+        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
         status={{ label: appData.status, color: appColor(appData.status) }}
         badge={appData.isPreview ? <Badge tone="lapis">{t("apps.previewBadge", { n: appData.prNumber ?? "?" })}</Badge> : undefined}

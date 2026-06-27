@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize } from "../../../../lib/backups";
+import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
@@ -94,7 +95,7 @@ export default function DatabaseDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={[{ label: t("nav.databases"), href: "/databases" }, { label: db.name }]}
+        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
         title={db.name}
         status={{ label: db.status, color: dbColor(db.status) }}
         actions={
