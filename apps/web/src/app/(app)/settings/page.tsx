@@ -33,7 +33,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div style={{ padding: 28, maxWidth: 520 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 520 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 18px" }}>{t("settings.title")}</h1>
 
       <Card style={{ padding: 18, marginBottom: 16 }}>

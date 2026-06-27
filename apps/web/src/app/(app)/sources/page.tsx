@@ -31,7 +31,7 @@ export default function SourcesPage() {
   const del = useMutation({ mutationFn: (id: string) => api.deleteGitSource(id), onSuccess: invalidate });
 
   return (
-    <div style={{ padding: 28, maxWidth: 880 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 880 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
         <GitBranch size={20} color="var(--c-a)" /> {t("sources.title")}
       </h1>

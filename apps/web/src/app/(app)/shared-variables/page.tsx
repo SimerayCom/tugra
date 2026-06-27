@@ -41,7 +41,7 @@ export default function SharedVariablesPage() {
   const del = useMutation({ mutationFn: (id: string) => api.deleteSharedVar(id), onSuccess: invalidate });
 
   return (
-    <div style={{ padding: 28, maxWidth: 720 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 720 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("shared.title")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("shared.subtitle")}</p>
 

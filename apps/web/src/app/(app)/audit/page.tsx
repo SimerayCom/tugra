@@ -26,7 +26,7 @@ export default function AuditPage() {
   });
 
   return (
-    <div style={{ padding: 28, maxWidth: 960 }}>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 960 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
         <ScrollText size={20} color="var(--c-a)" /> {t("audit.title")}
       </h1>

@@ -25,7 +25,7 @@ export default function AppsPage() {
   const visibleApps = apps.filter((a) => selectedTags.every((tag) => a.tags.includes(tag)));
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 22 }}>
         <div style={{ flex: 1 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("apps.title")}</h1>

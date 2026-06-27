@@ -45,11 +45,11 @@ export default function ProjectDetailPage() {
     onSuccess: () => router.replace("/projects"),
   });
 
-  if (isLoading || !project) return <div style={{ padding: 28 }}><Spinner /></div>;
+  if (isLoading || !project) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
   const empty = project.environments.every((e) => e.appCount + e.dbCount === 0);
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
         breadcrumb={[{ label: t("nav.projects"), href: "/projects" }, { label: project.name }]}
         title={project.name}

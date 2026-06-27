@@ -89,10 +89,10 @@ export default function DatabaseDetailPage() {
 
   const [tab, setTab] = useState("overview");
 
-  if (isLoading || !db) return <div style={{ padding: 28 }}><Spinner /></div>;
+  if (isLoading || !db) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
         breadcrumb={[{ label: t("nav.databases"), href: "/databases" }, { label: db.name }]}
         title={db.name}

@@ -51,13 +51,13 @@ export default function ServerDetailPage() {
     if (server) prevStatus.current = server.status;
   }, [server?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (isLoading || !server) return <div style={{ padding: 28 }}><Spinner /></div>;
+  if (isLoading || !server) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   const cpu = metrics.map((m) => m.cpu);
   const ram = metrics.map((m) => pct(m.memUsed, m.memTotal));
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
         breadcrumb={[{ label: t("nav.servers"), href: "/servers" }, { label: server.name }]}
         title={server.name}
