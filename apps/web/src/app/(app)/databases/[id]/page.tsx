@@ -18,6 +18,10 @@ import { TagsCard } from "../../../../components/tags";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { useConfirm } from "../../../../components/confirm";
+import { useToast } from "../../../../components/toast";
+import { Modal } from "../../../../components/modal";
+import { Select } from "../../../../components/form";
+import { compatibleRestoreTargets } from "../../../../lib/restore";
 
 export default function DatabaseDetailPage() {
   const t = useT();
@@ -25,6 +29,7 @@ export default function DatabaseDetailPage() {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
+  const toast = useToast();
 
   const { data: db, isLoading } = useQuery({
     queryKey: ["database", id],
@@ -57,8 +62,15 @@ export default function DatabaseDetailPage() {
     onSuccess: () => router.replace("/databases"),
   });
   const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups });
-  const restore = useMutation({ mutationFn: (bid: string) => api.restoreBackup(id, bid) });
+  const restore = useMutation({ mutationFn: (bid: string) => api.restoreBackup(id, bid), onSuccess: () => toast(t("databases.restoreStarted"), "success") });
   const delBackup = useMutation({ mutationFn: (bid: string) => api.deleteBackup(id, bid), onSuccess: invalidateBackups });
+  const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  const [restoreToBackup, setRestoreToBackup] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState("");
+  const restoreToMut = useMutation({
+    mutationFn: ({ backupId, targetId }: { backupId: string; targetId: string }) => api.restoreBackupTo(id, backupId, targetId),
+    onSuccess: () => { setRestoreToBackup(null); setRestoreTarget(""); toast(t("databases.restoreStarted"), "success"); },
+  });
   const tags = useMutation({ mutationFn: (next: string[]) => api.setDatabaseTags(id, next), onSuccess: invalidate });
 
   const [schedEnabled, setSchedEnabled] = useState(false);
@@ -141,6 +153,24 @@ export default function DatabaseDetailPage() {
           title={t("terminal.containerTitle", { name: db.name })}
           onClose={() => setShellOpen(false)}
         />
+      )}
+      {restoreToBackup && (
+        <Modal onClose={() => setRestoreToBackup(null)} width={420}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("databases.restoreToTitle")}</div>
+          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.restoreToConfirm")}</p>
+          <Select
+            value={restoreTarget}
+            onChange={setRestoreTarget}
+            placeholder={t("databases.restoreToTarget")}
+            options={compatibleRestoreTargets(allDatabases, db).map((d) => ({ value: d.id, label: d.name }))}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+            <Btn variant="ghost" onClick={() => setRestoreToBackup(null)}>{t("common.cancel")}</Btn>
+            <Btn variant="danger" disabled={!restoreTarget || restoreToMut.isPending} onClick={() => restoreToMut.mutate({ backupId: restoreToBackup, targetId: restoreTarget })}>
+              {restoreToMut.isPending ? "…" : t("databases.restore")}
+            </Btn>
+          </div>
+        </Modal>
       )}
 
       <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
@@ -230,6 +260,9 @@ export default function DatabaseDetailPage() {
                 >
                   {t("databases.restore")}
                 </button>
+                {b.status === "SUCCESS" && db.canWrite && compatibleRestoreTargets(allDatabases, db).length > 0 && (
+                  <button onClick={() => { setRestoreTarget(""); setRestoreToBackup(b.id); }} style={linkBtn}>{t("databases.restoreTo")}</button>
+                )}
                 <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)" }}>✕</button>
               </div>
             ))}

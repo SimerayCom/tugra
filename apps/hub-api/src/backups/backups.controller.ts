@@ -58,6 +58,18 @@ export class BackupsController {
     return { ok: true };
   }
 
+  @Post("backups/:backupId/restore-to/:targetId")
+  @HttpCode(200)
+  async restoreTo(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("backupId") backupId: string,
+    @Param("targetId") targetId: string,
+  ) {
+    await this.backups.restoreTo(user.userId, id, backupId, targetId);
+    return { ok: true };
+  }
+
   @Delete("backups/:backupId")
   @HttpCode(200)
   async remove(

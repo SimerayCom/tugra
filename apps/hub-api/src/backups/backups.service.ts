@@ -71,6 +71,34 @@ export class BackupsService {
     await this.audit.log({ actor: userId, action: "database.restore", target: dbId, meta: { backupId } });
   }
 
+  /**
+   * Restore a backup taken from one database INTO a different, compatible one
+   * ("take from A, load into B"). Overwrites the target's data. Requires WRITE
+   * on both, same team, matching engine; LOCAL backups can only cross machines
+   * via an S3 destination (the file lives on the source server's disk).
+   */
+  async restoreTo(userId: string, sourceId: string, backupId: string, targetId: string): Promise<void> {
+    const source = await this.requireWrite(userId, sourceId);
+    const target = await this.requireWrite(userId, targetId);
+    const backup = await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: sourceId } });
+    if (!backup || backup.status !== "SUCCESS") throw new NotFoundException("backup not found");
+    if (source.teamId !== target.teamId) throw new ForbiddenException("cross-team restore is not allowed");
+    if (source.engine !== target.engine) {
+      throw new BadRequestException(`engine mismatch: ${source.engine} backup cannot restore into ${target.engine}`);
+    }
+    if (!backup.destinationId && source.serverId !== target.serverId) {
+      throw new BadRequestException("cross-server restore needs an S3 backup destination");
+    }
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
+    await this.agentWs.sendCommand(
+      target.serverId,
+      buildRestoreScript(this.runner.toSpec(target), backup.filename, dest),
+      "backup",
+      300_000,
+    );
+    await this.audit.log({ actor: userId, action: "database.restore", target: targetId, meta: { backupId, from: sourceId } });
+  }
+
   /** Import an external dump from a URL into the database (overwrites current data). */
   async importFromUrl(userId: string, dbId: string, input: ImportFromUrlInput): Promise<void> {
     const db = await this.requireWrite(userId, dbId);
