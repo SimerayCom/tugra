@@ -705,6 +705,9 @@ export const api = {
   restoreBackup(dbId: string, backupId: string) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}/restore`, { method: "POST" });
   },
+  restoreBackupTo(sourceId: string, backupId: string, targetId: string) {
+    return apiFetch<{ ok: true }>(`/databases/${sourceId}/backups/${backupId}/restore-to/${targetId}`, { method: "POST" });
+  },
   deleteBackup(dbId: string, backupId: string) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}`, { method: "DELETE" });
   },

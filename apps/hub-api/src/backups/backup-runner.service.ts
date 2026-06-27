@@ -44,9 +44,15 @@ export class BackupRunnerService {
 
   /** Resolve a database's configured backup destination (or LOCAL by default). */
   async destinationSpec(db: Database): Promise<DestinationSpec> {
-    if (!db.backupDestinationId) return LOCAL_DEST;
+    return this.destinationSpecById(db.backupDestinationId);
+  }
+
+  /** Resolve a destination by id (or LOCAL when none). Used by cross-resource restore
+   *  to read the backup from the destination it was WRITTEN to, not the target's. */
+  async destinationSpecById(destinationId: string | null): Promise<DestinationSpec> {
+    if (!destinationId) return LOCAL_DEST;
     const d = await this.prisma.backupDestination.findUnique({
-      where: { id: db.backupDestinationId },
+      where: { id: destinationId },
     });
     if (!d || d.type !== "S3") return LOCAL_DEST;
     return {
