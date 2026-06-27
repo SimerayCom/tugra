@@ -10,6 +10,7 @@ import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { Spinner } from "./ui";
 import { CommandPalette, type CommandDest } from "./command-palette";
+import { TeamScopeSelect } from "./team-scope";
 import {
   Activity,
   ArrowLeftRight,
@@ -291,6 +292,7 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
       )}
       <NewMenu />
       <div style={{ flex: 1 }} />
+      <TeamScopeSelect />
       <button onClick={toggle} title="Toggle theme" style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
         {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
       </button>

@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Box, Database, FolderTree, Plus, Server, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
 import { statusCounts } from "../../../lib/fleet";
+import { scopeByTeam } from "../../../lib/team-scope";
+import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, StatusPill } from "../../../components/ui";
@@ -22,10 +24,15 @@ const sectionTitle: React.CSSProperties = {
 
 export default function DashboardPage() {
   const t = useT();
-  const { data: servers = [], isLoading } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
-  const { data: projects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
-  const { data: apps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
-  const { data: databases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  const { teamId } = useTeamScope();
+  const { data: allServers = [], isLoading } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
+  const { data: allApps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  const servers = scopeByTeam(allServers, teamId);
+  const projects = scopeByTeam(allProjects, teamId);
+  const apps = scopeByTeam(allApps, teamId);
+  const databases = scopeByTeam(allDatabases, teamId);
   const counts = statusCounts(servers);
 
   const stat = (label: string, value: number | string, color = "var(--c-tx)") => (

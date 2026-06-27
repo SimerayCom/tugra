@@ -9,11 +9,14 @@ import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Spinner, StatusPill } from "../../../components/ui";
 import { TagChips, TagFilter } from "../../../components/tags";
+import { scopeByTeam } from "../../../lib/team-scope";
+import { useTeamScope } from "../../../components/team-scope";
 
 const SOURCE_ICON = { IMAGE: Box, GIT: GitBranch, COMPOSE: Layers } as const;
 
 export default function AppsPage() {
   const t = useT();
+  const { teamId } = useTeamScope();
   const { data: apps = [], isLoading } = useQuery({
     queryKey: ["apps"],
     queryFn: () => api.listApps(),
@@ -21,8 +24,9 @@ export default function AppsPage() {
   });
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const allTags = [...new Set(apps.flatMap((a) => a.tags))].sort();
-  const visibleApps = apps.filter((a) => selectedTags.every((tag) => a.tags.includes(tag)));
+  const scoped = scopeByTeam(apps, teamId);
+  const allTags = [...new Set(scoped.flatMap((a) => a.tags))].sort();
+  const visibleApps = scoped.filter((a) => selectedTags.every((tag) => a.tags.includes(tag)));
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>

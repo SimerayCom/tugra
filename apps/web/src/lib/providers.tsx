@@ -7,6 +7,7 @@ import { emitToast } from "./toast-bus";
 import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "../components/confirm";
 import { ToastProvider } from "../components/toast";
+import { TeamScopeProvider } from "../components/team-scope";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
@@ -24,7 +25,9 @@ export function Providers({ children }: { children: ReactNode }) {
       <I18nProvider>
         <ToastProvider>
           <ConfirmProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider>
+              <TeamScopeProvider>{children}</TeamScopeProvider>
+            </AuthProvider>
           </ConfirmProvider>
         </ToastProvider>
       </I18nProvider>
