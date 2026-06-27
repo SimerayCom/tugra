@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
-import { ChannelsCard } from "../../../components/channels-card";
 
 export default function SettingsPage() {
   const t = useT();
@@ -69,7 +69,13 @@ export default function SettingsPage() {
 
       <ApiTokensCard />
 
-      <ChannelsCard />
+      <Card style={{ padding: 18, marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>{t("settings.channels")}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.channelsDesc")}</div>
+        </div>
+        <Link href="/notifications"><Btn variant="ghost">{t("settings.channelsManage")}</Btn></Link>
+      </Card>
     </div>
   );
 }
