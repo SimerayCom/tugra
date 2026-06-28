@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import { scopeByTeam } from "../../../../lib/team-scope";
 import { monitorColor, uptimeText } from "../../../../lib/monitors";
 import type { Monitor } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
@@ -99,7 +101,7 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
   const t = useT();
   const qc = useQueryClient();
   const { data: channels = [] } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
-  const teamChannels = channels.filter((c) => c.teamId === monitor.teamId);
+  const teamChannels = scopeByTeam(channels, monitor.teamId);
 
   const [intervalSec, setIntervalSec] = useState(String(monitor.intervalSec));
   const [retries, setRetries] = useState(String(monitor.retries));
@@ -139,9 +141,12 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         {t("monitors.enabled")}
       </label>
-      {teamChannels.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("monitors.channels")}</div>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("monitors.channels")}</span>
+          <Link href="/notifications" style={{ fontSize: 11, color: "var(--c-lapis)" }}>{t("monitors.manageChannels")}</Link>
+        </div>
+        {teamChannels.length > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
             {teamChannels.map((c) => (
               <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
@@ -150,8 +155,12 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
               </label>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+            {t("monitors.channelsEmpty")} <Link href="/notifications" style={{ color: "var(--c-a)" }}>{t("monitors.createChannel")}</Link>
+          </div>
+        )}
+      </div>
       <Btn onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "…" : t("monitors.save")}</Btn>
       {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
     </Card>
