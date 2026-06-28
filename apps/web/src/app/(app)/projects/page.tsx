@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderTree, Plus, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, Spinner } from "../../../components/ui";
+import { useTeamScope } from "../../../components/team-scope";
+import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -35,16 +37,21 @@ const rowChip: React.CSSProperties = {
 export default function ProjectsPage() {
   const t = useT();
   const qc = useQueryClient();
+  const { teamId: scope } = useTeamScope();
   const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
 
   const [name, setName] = useState("");
-  const [teamId, setTeamId] = useState("");
-  const activeTeam = teamId || teams[0]?.id || "";
+  // List follows the global scope (filter); create needs a concrete target team.
+  const visible = scopeByTeam(projects, scope);
+  const [createTeam, setCreateTeam] = useState("");
+  const target = createTeam || defaultTeamId(scope, teams);
+  useEffect(() => setCreateTeam(""), [scope]);
   const create = useMutation({
-    mutationFn: () => api.createProject(activeTeam, name),
+    mutationFn: () => api.createProject(target, name),
     onSuccess: () => {
       setName("");
+      setCreateTeam("");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -60,10 +67,12 @@ export default function ProjectsPage() {
           style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
           <input style={{ ...field, flex: 1, minWidth: 160 }} placeholder={t("projects.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-          <select style={field} value={activeTeam} onChange={(e) => setTeamId(e.target.value)}>
-            {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-          </select>
-          <button type="submit" disabled={create.isPending || !activeTeam} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
+          {teams.length > 1 && (
+            <select style={field} value={target} onChange={(e) => setCreateTeam(e.target.value)} aria-label={t("common.team")}>
+              {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
+            </select>
+          )}
+          <button type="submit" disabled={create.isPending || !target} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
             {create.isPending ? "…" : t("projects.create")}
           </button>
         </form>
@@ -74,7 +83,7 @@ export default function ProjectsPage() {
         <Spinner />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-          {projects.map((p) => {
+          {visible.map((p) => {
             const apps = p.environments.reduce((n, e) => n + e.appCount, 0);
             const dbs = p.environments.reduce((n, e) => n + e.dbCount, 0);
             return (
@@ -95,7 +104,7 @@ export default function ProjectsPage() {
               </div>
             );
           })}
-          {projects.length === 0 && (
+          {visible.length === 0 && (
             <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("projects.empty")}</div>
           )}
         </div>

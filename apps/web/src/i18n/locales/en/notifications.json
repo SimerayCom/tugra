@@ -1,7 +1,6 @@
 {
   "title": "Notifications",
   "subtitle": "Send deploy, server and monitor alerts to email and chat channels.",
-  "team": "Team",
   "create": "New channel",
   "channelName": "Channel name",
   "channelType": "Type",
