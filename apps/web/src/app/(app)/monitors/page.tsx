@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
+import { scopeByTeam } from "../../../lib/team-scope";
 import { monitorColor } from "../../../lib/monitors";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../components/ui";
@@ -27,6 +28,7 @@ export default function MonitorsPage() {
   });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const { data: channels = [] } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
 
   const [name, setName] = useState("");
   const [type, setType] = useState<"HTTP" | "TCP" | "METRIC">("HTTP");
@@ -35,6 +37,11 @@ export default function MonitorsPage() {
   const [metric, setMetric] = useState<"DISK" | "CPU" | "MEM">("DISK");
   const [thresholdPct, setThresholdPct] = useState("80");
   const [teamId, setTeamId] = useState("");
+  const [channelIds, setChannelIds] = useState<string[]>([]);
+  const teamChannels = scopeByTeam(channels, teamId);
+  useEffect(() => { setChannelIds([]); }, [teamId]); // channels are team-scoped
+  const toggleChannel = (cid: string) =>
+    setChannelIds((cur) => (cur.includes(cid) ? cur.filter((x) => x !== cid) : [...cur, cid]));
   const [intervalSec, setIntervalSec] = useState("30");
   const [retries, setRetries] = useState("1");
   const [timeoutMs, setTimeoutMs] = useState("10000");
@@ -57,13 +64,15 @@ export default function MonitorsPage() {
               metric,
               thresholdPct: Number(thresholdPct) || 80,
               teamId,
+              channelIds,
               ...tuning,
             }
-          : { name, type, target, teamId, ...tuning },
+          : { name, type, target, teamId, channelIds, ...tuning },
       ),
     onSuccess: () => {
       setName("");
       setTarget("");
+      setChannelIds([]);
       qc.invalidateQueries({ queryKey: ["monitors"] });
     },
   });
@@ -132,6 +141,23 @@ export default function MonitorsPage() {
             <Field label={t("monitors.timeoutMs")}>
               <TextInput type="number" min={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(e.target.value)} />
             </Field>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("monitors.channels")}</div>
+            {teamChannels.length > 0 ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {teamChannels.map((c) => (
+                  <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                    <input type="checkbox" checked={channelIds.includes(c.id)} onChange={() => toggleChannel(c.id)} />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+                {t("monitors.channelsEmpty")} <Link href="/notifications" style={{ color: "var(--c-a)" }}>{t("monitors.createChannel")}</Link>
+              </div>
+            )}
           </div>
           <div style={{ marginTop: 14 }}>
             <Btn type="submit" disabled={create.isPending || noServer}>
