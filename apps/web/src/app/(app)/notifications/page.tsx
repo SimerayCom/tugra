@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
-import { visibleChannels } from "../../../lib/channels";
+import { useTeamScope } from "../../../components/team-scope";
+import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
 import { useT } from "../../../i18n/provider";
@@ -38,12 +39,15 @@ export default function NotificationsPage() {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const { teamId: scope } = useTeamScope();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: channels = [], isLoading } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
 
-  const [teamId, setTeamId] = useState("");
-  const activeTeam = teamId || teams[0]?.id || "";
-  const visible = visibleChannels(channels, activeTeam);
+  // List follows the global scope (filter); create needs a concrete target team.
+  const visible = scopeByTeam(channels, scope);
+  const [createTeam, setCreateTeam] = useState("");
+  const target = createTeam || defaultTeamId(scope, teams);
+  useEffect(() => setCreateTeam(""), [scope]);
   const [name, setName] = useState("");
   const [type, setType] = useState("smtp");
   const [config, setConfig] = useState<Record<string, string>>({});
@@ -56,11 +60,11 @@ export default function NotificationsPage() {
       api.createChannel({
         name,
         type,
-        teamId: activeTeam,
+        teamId: target,
         config: type === "smtp" ? { ...config, secure } : config,
         eventTypes: events,
       }),
-    onSuccess: () => { setName(""); setConfig({}); setSecure(false); invalidate(); },
+    onSuccess: () => { setName(""); setConfig({}); setSecure(false); setCreateTeam(""); invalidate(); },
   });
   const test = useMutation({ mutationFn: (id: string) => api.testChannel(id) });
   const del = useMutation({ mutationFn: (id: string) => api.deleteChannel(id), onSuccess: invalidate });
@@ -74,12 +78,6 @@ export default function NotificationsPage() {
         <Bell size={20} color="var(--c-a)" /> {t("notifications.title")}
       </h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("notifications.subtitle")}</p>
-
-      {teams.length > 1 && (
-        <div style={{ maxWidth: 240, marginBottom: 18 }}>
-          <Select value={activeTeam} onChange={setTeamId} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
-        </div>
-      )}
 
       {isLoading ? (
         <Spinner />
@@ -112,8 +110,13 @@ export default function NotificationsPage() {
 
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{t("notifications.create")}</div>
-        <form onSubmit={(e) => { e.preventDefault(); if (name && activeTeam) create.mutate(); }}>
+        <form onSubmit={(e) => { e.preventDefault(); if (name && target) create.mutate(); }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            {teams.length > 1 && (
+              <Field label={t("common.team")}>
+                <Select value={target} onChange={setCreateTeam} options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
+              </Field>
+            )}
             <Field label={t("notifications.channelName")} htmlFor="ch-name">
               <TextInput id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required />
             </Field>
@@ -149,7 +152,7 @@ export default function NotificationsPage() {
           </div>
 
           <div style={{ marginTop: 14 }}>
-            <Btn type="submit" disabled={create.isPending || !name || !activeTeam}>{create.isPending ? "…" : t("notifications.add")}</Btn>
+            <Btn type="submit" disabled={create.isPending || !name || !target}>{create.isPending ? "…" : t("notifications.add")}</Btn>
           </div>
           {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
         </form>
