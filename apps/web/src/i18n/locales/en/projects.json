@@ -3,6 +3,8 @@
   "subtitle": "Group apps and databases by project and environment (prod, staging…).",
   "name": "Project name",
   "create": "Create",
+  "newTitle": "New project",
+  "newSubtitle": "Group apps and databases under a project and its environments.",
   "team": "Team",
   "emptyTitle": "No projects yet",
   "empty": "Create a project to organize apps and databases by environment.",

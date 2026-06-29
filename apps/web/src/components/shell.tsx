@@ -251,7 +251,7 @@ function NewMenu() {
 
   const items = [
     { label: t("nav.newResource"), href: "/resources/new" },
-    { label: t("nav.newProject"), href: "/projects" },
+    { label: t("nav.newProject"), href: "/projects/new" },
     { label: t("nav.newServer"), href: "/servers/new" },
   ];
 

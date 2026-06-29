@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { scopeByTeam } from "../../../../lib/team-scope";
-import { monitorColor, uptimeText } from "../../../../lib/monitors";
+import { monitorColor, uptimeText, heartbeatSummary } from "../../../../lib/monitors";
 import type { Monitor } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
@@ -75,9 +75,14 @@ export default function MonitorDetailPage() {
 
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("monitors.lastChecks")}</div>
-        <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 40, marginBottom: 14 }}>
+        <div
+          style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 40, marginBottom: 14 }}
+          {...(beats.length > 0
+            ? { role: "img", "aria-label": t("monitors.uptimeAria", heartbeatSummary(beats)) }
+            : {})}
+        >
           {beats.map((b, i) => (
-            <span key={i} title={`${b.status} · ${b.ms}ms`} style={{ width: 6, height: 40, borderRadius: 2, background: monitorColor(b.status), opacity: 0.85 }} />
+            <span key={i} title={`${b.status} · ${b.ms}ms`} aria-hidden="true" style={{ width: 6, height: 40, borderRadius: 2, background: monitorColor(b.status), opacity: 0.85 }} />
           ))}
           {beats.length === 0 && <span style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("monitors.noChecks")}</span>}
         </div>

@@ -1,4 +1,11 @@
-import type { MonitorStatus } from "./types";
+import type { Heartbeat, MonitorStatus } from "./types";
+
+/** Up/down/total counts across a heartbeat window (drives the screen-reader summary). */
+export function heartbeatSummary(beats: Heartbeat[]): { up: number; down: number; total: number } {
+  const up = beats.filter((b) => b.status === "UP").length;
+  const down = beats.filter((b) => b.status === "DOWN").length;
+  return { up, down, total: beats.length };
+}
 
 export function monitorColor(status: MonitorStatus): string {
   if (status === "UP") return "var(--c-g)";

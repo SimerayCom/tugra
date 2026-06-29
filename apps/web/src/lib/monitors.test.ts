@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { monitorColor, uptimeText, CHANNEL_FIELDS } from "./monitors";
+import { monitorColor, uptimeText, CHANNEL_FIELDS, heartbeatSummary } from "./monitors";
+import type { Heartbeat } from "./types";
+
+const beat = (status: Heartbeat["status"]): Heartbeat => ({ ts: 0, status, ms: 100, msg: null, important: false });
+
+describe("heartbeatSummary", () => {
+  it("counts up / down / total", () => {
+    expect(heartbeatSummary([beat("UP"), beat("UP"), beat("DOWN"), beat("PENDING")])).toEqual({ up: 2, down: 1, total: 4 });
+  });
+  it("handles an empty window", () => {
+    expect(heartbeatSummary([])).toEqual({ up: 0, down: 0, total: 0 });
+  });
+});
 
 describe("monitor helpers", () => {
   it("maps status to a color", () => {
