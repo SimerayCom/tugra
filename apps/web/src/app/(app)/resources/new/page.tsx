@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import { api } from "../../../../lib/api";
 import type { DbEngine, ServerStatus } from "../../../../lib/types";
 import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
-import { filterTemplates, presentCategories } from "../../../../lib/template-filter";
+import { TemplateGrid } from "../../../../components/template-grid";
 import { wizardStep } from "../../../../lib/wizard-step";
 import { parseKind, visibleGroups, backTarget, type ResourceKind } from "../../../../lib/resource-new";
 import { useT } from "../../../../i18n/provider";
@@ -65,8 +65,6 @@ function Wizard() {
   const [sel, setSel] = useState<Sel>(null);
   const [kindFilter, setKindFilter] = useState<ResourceKind | null>(parseKind(sp.get("kind")));
   const [editDest, setEditDest] = useState(false);
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("all");
 
   // config fields
   const [name, setName] = useState("");
@@ -109,6 +107,19 @@ function Wizard() {
     if (s?.group === "template") setName(s.slug);
     if (s?.group === "db") setVersion(engineVersions(s.engine)[0] ?? "");
   };
+
+  // Deep-link from the standalone App Store: /resources/new?template=<slug>
+  // preselects that template once, landing the wizard on the server step.
+  const appliedTpl = useRef(false);
+  useEffect(() => {
+    if (appliedTpl.current) return;
+    const slug = sp.get("template");
+    if (!slug || !templates.length) return;
+    const tpl = templates.find((x) => x.slug === slug);
+    if (!tpl) return;
+    appliedTpl.current = true;
+    pick({ group: "template", slug: tpl.slug, name: tpl.name });
+  }, [templates, sp]);
 
   const create = useMutation({
     mutationFn: async (): Promise<string> => {
@@ -291,58 +302,15 @@ function Wizard() {
               </>
               )}
 
-              {vg.service && templates.length > 0 && (() => {
-                const matches = filterTemplates(templates, q, cat);
-                const chips = ["all", ...presentCategories(templates)];
-                return (
-                  <>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 0 10px" }}>
-                      <div style={{ ...groupTitle, margin: 0 }}>{t("resources.services")}</div>
-                      <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>· {templates.length}</span>
-                    </div>
-                    <div style={{ maxWidth: 480, marginBottom: 10 }}>
-                      <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("resources.searchServices")} />
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-                      {chips.map((c) => {
-                        const active = c === cat;
-                        return (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => setCat(c)}
-                            style={{
-                              fontFamily: "inherit", fontSize: 12, fontWeight: active ? 600 : 500,
-                              padding: "5px 11px", borderRadius: 999, cursor: "pointer",
-                              border: "1px solid var(--c-bd)",
-                              background: active ? "var(--c-a)" : "transparent",
-                              color: active ? "#0d0d11" : "var(--c-tx3)",
-                            }}
-                          >
-                            {c === "all" ? t("resources.allCategories") : t(`resources.cat_${c}`)}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {matches.length === 0 ? (
-                      <div style={{ fontSize: 13, color: "var(--c-tx3)", marginBottom: 18 }}>{t("resources.noMatches")}</div>
-                    ) : (
-                      <div style={grid3}>
-                        {matches.map((tpl) =>
-                          card(
-                            tpl.slug,
-                            <TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} size={36} />,
-                            tpl.name,
-                            tpl.description,
-                            () => pick({ group: "template", slug: tpl.slug, name: tpl.name }),
-                            tpl.documentation,
-                          ),
-                        )}
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
+              {vg.service && templates.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "4px 0 10px" }}>
+                    <div style={{ ...groupTitle, margin: 0 }}>{t("resources.services")}</div>
+                    <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>· {templates.length}</span>
+                  </div>
+                  <TemplateGrid templates={templates} onPick={(tpl) => pick({ group: "template", slug: tpl.slug, name: tpl.name })} />
+                </>
+              )}
             </>
           ) : !serverId ? (
             <Card style={{ padding: 16 }}>

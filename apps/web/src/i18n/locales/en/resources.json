@@ -35,6 +35,8 @@
   "stepType": "Type",
   "stepServer": "Server",
   "stepConfigure": "Configure",
+  "storeTitle": "App Store",
+  "storeSubtitle": "One-click deploy hundreds of self-hosted apps and services.",
   "searchServices": "Search the app store…",
   "noMatches": "No services match your search.",
   "allCategories": "All",

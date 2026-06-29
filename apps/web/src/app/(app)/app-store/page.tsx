@@ -1,0 +1,33 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { Store } from "lucide-react";
+import { api } from "../../../lib/api";
+import { useT } from "../../../i18n/provider";
+import { EmptyState, Spinner } from "../../../components/ui";
+import { TemplateGrid } from "../../../components/template-grid";
+
+export default function AppStorePage() {
+  const t = useT();
+  const router = useRouter();
+  const { data: templates = [], isLoading } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
+
+  return (
+    <div style={{ padding: "var(--page-pad)", maxWidth: 1040 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
+        <Store size={20} color="var(--c-a)" /> {t("resources.storeTitle")}
+        {templates.length > 0 && <span style={{ fontSize: 13, fontWeight: 500, color: "var(--c-tx3)" }}>· {templates.length}</span>}
+      </h1>
+      <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("resources.storeSubtitle")}</p>
+
+      {isLoading ? (
+        <Spinner />
+      ) : templates.length === 0 ? (
+        <EmptyState icon={Store} title={t("resources.storeTitle")}>{t("resources.noMatches")}</EmptyState>
+      ) : (
+        <TemplateGrid templates={templates} onPick={(tpl) => router.push(`/resources/new?template=${tpl.slug}`)} />
+      )}
+    </div>
+  );
+}
