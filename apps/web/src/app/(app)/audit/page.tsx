@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ScrollText } from "lucide-react";
+import { Download, ScrollText } from "lucide-react";
 import { api } from "../../../lib/api";
+import { filterAudit, auditToCsv } from "../../../lib/audit";
 import { useT } from "../../../i18n/provider";
-import { Card, EmptyState, Spinner } from "../../../components/ui";
+import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { TextInput } from "../../../components/form";
 import { useTeamScope } from "../../../components/team-scope";
 
 function fmt(iso: string) {
@@ -17,11 +20,24 @@ export default function AuditPage() {
   // Scope follows the global team switcher. null ("All teams") shows only your
   // own actions; picking a team shows that team's activity (if you admin it).
   const { teamId } = useTeamScope();
+  const [q, setQ] = useState("");
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ["audit", teamId],
     queryFn: () => api.listAudit(teamId ?? undefined),
   });
+
+  const shown = filterAudit(entries, q);
+
+  const exportCsv = () => {
+    const blob = new Blob([auditToCsv(shown)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "audit-log.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 960 }}>
@@ -35,7 +51,20 @@ export default function AuditPage() {
       ) : entries.length === 0 ? (
         <EmptyState icon={ScrollText} title={t("audit.emptyTitle")}>{t("audit.empty")}</EmptyState>
       ) : (
-        <Card>
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("audit.search")} />
+            </div>
+            <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{shown.length}/{entries.length}</span>
+            <Btn variant="ghost" onClick={exportCsv} disabled={shown.length === 0}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> {t("audit.exportCsv")}</span>
+            </Btn>
+          </div>
+          {shown.length === 0 ? (
+            <EmptyState icon={ScrollText} title={t("audit.noMatchTitle")}>{t("audit.noMatch")}</EmptyState>
+          ) : (
+          <Card>
           <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
@@ -47,7 +76,7 @@ export default function AuditPage() {
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => (
+              {shown.map((e) => (
                 <tr key={e.id} style={{ borderTop: "1px solid var(--c-bd)" }}>
                   <td style={{ padding: "8px 10px", color: "var(--c-tx2)" }}>{e.actor}</td>
                   <td style={{ padding: "8px 10px" }}>
@@ -63,6 +92,8 @@ export default function AuditPage() {
           </table>
           </div>
         </Card>
+          )}
+        </>
       )}
     </div>
   );

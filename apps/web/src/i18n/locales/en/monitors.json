@@ -31,5 +31,6 @@
   "uptime24h": "24h uptime",
   "checkNow": "Check now",
   "lastChecks": "Recent checks",
-  "noChecks": "No checks yet."
+  "noChecks": "No checks yet.",
+  "uptimeAria": "Recent checks: {up} of {total} up, {down} down."
 }
