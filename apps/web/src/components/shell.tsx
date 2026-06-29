@@ -30,6 +30,7 @@ import {
   Search,
   Server,
   Settings,
+  Store,
   Sun,
   Users,
   Variable,
@@ -57,6 +58,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       // Coolify-style: resources live under Projects → environment. Apps/Databases
       // aren't top-level nav; reach them via a project, the dashboard, or ⌘K.
       { key: "projects", href: "/projects", icon: FolderTree, impl: true },
+      { key: "appStore", href: "/app-store", icon: Store, impl: true },
       { key: "servers", href: "/servers", icon: Server, impl: true },
       { key: "sources", href: "/sources", icon: GitBranch, impl: true },
       { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
