@@ -82,7 +82,7 @@ export default function NotificationsPage() {
       {isLoading ? (
         <Spinner />
       ) : visible.length === 0 ? (
-        <Card style={{ padding: 16, marginBottom: 20 }}><EmptyState>{t("notifications.noChannels")}</EmptyState></Card>
+        <Card style={{ marginBottom: 20 }}><EmptyState icon={Bell} title={t("notifications.emptyTitle")}>{t("notifications.noChannels")}</EmptyState></Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
           {visible.map((c) => (

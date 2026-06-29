@@ -1,10 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Globe } from "lucide-react";
 import { api } from "../../../lib/api";
 import type { DomainView } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
-import { Spinner } from "../../../components/ui";
+import { Card, EmptyState, Spinner } from "../../../components/ui";
 
 function sslColor(state: DomainView["ssl"]["state"]): string {
   if (state === "ok") return "var(--c-g)";
@@ -28,9 +29,7 @@ export default function DomainsPage() {
       {isLoading ? (
         <Spinner />
       ) : domains.length === 0 ? (
-        <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13, border: "1px solid var(--c-bd)", borderRadius: "var(--r2)" }}>
-          {t("domains.empty")}
-        </div>
+        <Card><EmptyState icon={Globe} title={t("domains.emptyTitle")}>{t("domains.empty")}</EmptyState></Card>
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
           {domains.map((d) => {

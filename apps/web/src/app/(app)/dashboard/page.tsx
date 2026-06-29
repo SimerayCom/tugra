@@ -9,7 +9,7 @@ import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
-import { Badge, Card, StatusPill } from "../../../components/ui";
+import { Badge, Btn, Card, EmptyState, StatusPill } from "../../../components/ui";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -77,8 +77,14 @@ export default function DashboardPage() {
       {/* Projects (Coolify-style cards with quick actions) */}
       <div style={sectionTitle}>{t("dashboard.projects")}</div>
       {projects.length === 0 ? (
-        <Card style={{ padding: 20, marginBottom: 28, fontSize: 13, color: "var(--c-tx3)" }}>
-          {t("dashboard.noProjects")} <Link href="/projects" style={{ color: "var(--c-a)" }}>{t("projects.create")}</Link>
+        <Card style={{ marginBottom: 28 }}>
+          <EmptyState
+            icon={FolderTree}
+            title={t("dashboard.noProjectsTitle")}
+            action={<Link href="/projects"><Btn>{t("projects.create")}</Btn></Link>}
+          >
+            {t("dashboard.noProjects")}
+          </EmptyState>
         </Card>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12, marginBottom: 28 }}>
@@ -123,9 +129,13 @@ export default function DashboardPage() {
           </Link>
         ))}
         {servers.length === 0 && (
-          <div style={{ padding: 24, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>
-            <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("dashboard.addServer")}</Link>
-          </div>
+          <EmptyState
+            icon={Server}
+            title={t("dashboard.noServersTitle")}
+            action={<Link href="/servers/new"><Btn>{t("dashboard.addServer")}</Btn></Link>}
+          >
+            {t("dashboard.noServers")}
+          </EmptyState>
         )}
       </div>
     </div>

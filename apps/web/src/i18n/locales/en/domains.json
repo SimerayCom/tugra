@@ -1,7 +1,8 @@
 {
   "title": "Domains & SSL",
   "subtitle": "Every app domain across your fleet with its live SSL certificate status.",
-  "empty": "No app domains yet. Add a domain to an app to see it here.",
+  "emptyTitle": "No domains yet",
+  "empty": "Add a domain to an app and it will appear here with its SSL status.",
   "domain": "Domain",
   "app": "App",
   "ssl": "SSL",

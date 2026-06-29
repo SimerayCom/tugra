@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Users } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
-import { Btn, Card, Spinner } from "../../../components/ui";
+import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -82,7 +83,7 @@ export default function TeamsPage() {
             </Link>
           ))}
           {teams.length === 0 && (
-            <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("teams.empty")}</div>
+            <EmptyState icon={Users} title={t("teams.emptyTitle")}>{t("teams.empty")}</EmptyState>
           )}
         </div>
       )}

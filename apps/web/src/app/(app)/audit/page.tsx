@@ -33,7 +33,7 @@ export default function AuditPage() {
       {isLoading ? (
         <Spinner />
       ) : entries.length === 0 ? (
-        <EmptyState>{t("audit.empty")}</EmptyState>
+        <EmptyState icon={ScrollText} title={t("audit.emptyTitle")}>{t("audit.empty")}</EmptyState>
       ) : (
         <Card>
           <div style={{ overflowX: "auto" }}>

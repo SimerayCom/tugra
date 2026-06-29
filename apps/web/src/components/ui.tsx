@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import type { ServerStatus } from "../lib/types";
 
@@ -157,10 +157,33 @@ export function SectionCard({
   );
 }
 
-/** Centred placeholder for empty lists/sections. */
-export function EmptyState({ children }: { children: ReactNode }) {
+/**
+ * Centred placeholder for empty lists/sections. Backward compatible: passing
+ * only children renders them as the description (the old behaviour). Add an
+ * icon + title + action (CTA) for a friendlier first-run state.
+ */
+export function EmptyState({
+  icon: Icon,
+  title,
+  children,
+  action,
+}: {
+  icon?: LucideIcon;
+  title?: string;
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
   return (
-    <div style={{ padding: 28, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{children}</div>
+    <div style={{ padding: "44px 28px", textAlign: "center" }}>
+      {Icon && (
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+          <Icon size={20} color="var(--c-tx3)" />
+        </div>
+      )}
+      {title && <div style={{ fontSize: 15, fontWeight: 600, color: "var(--c-tx)", marginBottom: 4 }}>{title}</div>}
+      {children && <div style={{ fontSize: 13, color: "var(--c-tx3)", maxWidth: 380, margin: "0 auto", lineHeight: 1.5 }}>{children}</div>}
+      {action && <div style={{ marginTop: 16 }}>{action}</div>}
+    </div>
   );
 }
 

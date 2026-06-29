@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { KeyRound } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
-import { Btn, Card } from "../../../components/ui";
+import { Btn, Card, EmptyState } from "../../../components/ui";
 import { Field, TextInput } from "../../../components/form";
 import { CopyBtn } from "../../../components/copy-row";
 import { useConfirm } from "../../../components/confirm";
@@ -211,7 +212,7 @@ function ApiTokensCard() {
             </button>
           </div>
         ))}
-        {tokens.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.noTokens")}</div>}
+        {tokens.length === 0 && <EmptyState icon={KeyRound} title={t("settings.noTokensTitle")}>{t("settings.noTokens")}</EmptyState>}
       </div>
     </Card>
   );

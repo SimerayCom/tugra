@@ -43,7 +43,7 @@ export default function SourcesPage() {
       {isLoading ? (
         <Spinner />
       ) : sources.length === 0 ? (
-        <Card style={{ padding: 16, marginBottom: 20 }}><EmptyState>{t("sources.noSources")}</EmptyState></Card>
+        <Card style={{ marginBottom: 20 }}><EmptyState icon={GitBranch} title={t("sources.emptyTitle")}>{t("sources.noSources")}</EmptyState></Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
           {sources.map((s) => <SourceRow key={s.id} id={s.id} name={s.name} appId={s.appId} installationId={s.installationId} onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(s.id); }} />)}

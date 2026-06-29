@@ -39,5 +39,6 @@
   "tokenUsed": "used",
   "tokenUnused": "never used",
   "revoke": "Revoke",
-  "noTokens": "No API tokens yet."
+  "noTokensTitle": "No API tokens yet",
+  "noTokens": "Create a token to use the REST API or CLI."
 }
