@@ -151,8 +151,8 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
       <div style={{ padding: col ? "16px 0" : "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, marginBottom: 12 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-seal.png" alt="Tugra" width={28} height={28} style={{ borderRadius: 7 }} />
-          {!col && <div style={{ fontWeight: 700, fontSize: 15 }}>Tugra</div>}
+          <img src="/logo-seal.png" alt="Tugra" width={36} height={36} style={{ borderRadius: 9 }} />
+          {!col && <div style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.01em" }}>Tugra</div>}
         </div>
         <button
           onClick={openPalette}
