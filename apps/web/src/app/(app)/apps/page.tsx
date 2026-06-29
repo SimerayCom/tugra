@@ -7,7 +7,7 @@ import { Box, GitBranch, Layers } from "lucide-react";
 import { api } from "../../../lib/api";
 import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
-import { Spinner, StatusPill } from "../../../components/ui";
+import { Btn, EmptyState, Spinner, StatusPill } from "../../../components/ui";
 import { TagChips, TagFilter } from "../../../components/tags";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
@@ -65,7 +65,13 @@ export default function AppsPage() {
               );
             })}
             {visibleApps.length === 0 && (
-              <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.empty")}</div>
+              <EmptyState
+                icon={Box}
+                title={t("apps.emptyTitle")}
+                action={<Link href="/resources/new?kind=app"><Btn>{t("apps.newApp")}</Btn></Link>}
+              >
+                {t("apps.empty")}
+              </EmptyState>
             )}
           </div>
         </>

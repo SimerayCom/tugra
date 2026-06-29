@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Variable } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
-import { Btn, Card, Spinner } from "../../../components/ui";
+import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { useConfirm } from "../../../components/confirm";
 
 const field: React.CSSProperties = {
@@ -79,7 +80,7 @@ export default function SharedVariablesPage() {
               <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(v.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>{t("shared.delete")}</button>
             </div>
           ))}
-          {vars.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("shared.empty")}</div>}
+          {vars.length === 0 && <EmptyState icon={Variable} title={t("shared.emptyTitle")}>{t("shared.empty")}</EmptyState>}
         </div>
       )}
     </div>

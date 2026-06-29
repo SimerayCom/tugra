@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { Server } from "lucide-react";
 import type { ServerView } from "../lib/types";
 import { relativeTime, statusCounts, writableIds } from "../lib/fleet";
 import { useT } from "../i18n/provider";
-import { Badge, Btn, StatusDot } from "./ui";
+import { Badge, Btn, EmptyState, StatusDot } from "./ui";
 import { TagChips } from "./tags";
 import { BulkRunModal } from "./bulk-run-modal";
 
@@ -90,8 +91,14 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
             ))}
             {servers.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ ...cell, textAlign: "center", color: "var(--c-tx3)", padding: 40 }}>
-                  {t("servers.empty")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("servers.emptyAdd")}</Link>
+                <td colSpan={6} style={{ ...cell, padding: 0 }}>
+                  <EmptyState
+                    icon={Server}
+                    title={t("servers.emptyTitle")}
+                    action={<Link href="/servers/new"><Btn>{t("servers.emptyAdd")}</Btn></Link>}
+                  >
+                    {t("servers.empty")}
+                  </EmptyState>
                 </td>
               </tr>
             )}

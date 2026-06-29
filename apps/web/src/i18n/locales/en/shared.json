@@ -5,7 +5,8 @@
   "key": "KEY",
   "value": "value",
   "add": "Add",
-  "empty": "No shared variables yet.",
+  "emptyTitle": "No shared variables yet",
+  "empty": "Define team-wide variables to inject into every deploy.",
   "delete": "Delete",
   "reveal": "Show values",
   "hide": "Hide values"

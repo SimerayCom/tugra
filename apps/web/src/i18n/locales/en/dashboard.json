@@ -12,7 +12,10 @@
   "offline": "Offline",
   "goToFleet": "Go to fleet table →",
   "servers": "Servers",
-  "noProjects": "No projects yet.",
+  "noProjectsTitle": "No projects yet",
+  "noProjects": "Create a project to get started.",
+  "noServersTitle": "No servers yet",
+  "noServers": "Connect a server to deploy your first app.",
   "addResource": "New resource",
   "settings": "Settings",
   "addServer": "Add your first server →"

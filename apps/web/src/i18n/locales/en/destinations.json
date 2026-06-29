@@ -13,5 +13,6 @@
   "create": "Add",
   "test": "Test connection",
   "delete": "Delete",
-  "empty": "No backup storage yet — backups stay on the server's disk."
+  "emptyTitle": "No backup storage yet",
+  "empty": "Add S3-compatible storage below — until then, backups stay on the server's disk."
 }

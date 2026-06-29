@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderTree, Plus, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
-import { Badge, Card, Spinner } from "../../../components/ui";
+import { Badge, Card, EmptyState, Spinner } from "../../../components/ui";
 import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 
@@ -105,7 +105,7 @@ export default function ProjectsPage() {
             );
           })}
           {visible.length === 0 && (
-            <div style={{ padding: 32, textAlign: "center", color: "var(--c-tx3)", fontSize: 13 }}>{t("projects.empty")}</div>
+            <EmptyState icon={FolderTree} title={t("projects.emptyTitle")}>{t("projects.empty")}</EmptyState>
           )}
         </div>
       )}

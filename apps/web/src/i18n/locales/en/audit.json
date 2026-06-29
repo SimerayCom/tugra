@@ -5,5 +5,6 @@
   "action": "Action",
   "target": "Target",
   "time": "Time",
-  "empty": "No audit entries yet."
+  "emptyTitle": "No activity yet",
+  "empty": "Actions across your team will show up here."
 }
