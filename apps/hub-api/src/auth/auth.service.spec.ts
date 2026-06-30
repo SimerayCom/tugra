@@ -153,3 +153,41 @@ describe("AuthService.changePassword", () => {
     expect(data.password).not.toBe("newpass1234"); // stored hashed, not plaintext
   });
 });
+
+describe("AuthService.loginWithGithub", () => {
+  it("creates a user + team + membership on first GitHub sign-in", async () => {
+    const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "gh@x.io", name: "GH" });
+    const teamCreate = jest.fn().mockResolvedValue({ id: "t1" });
+    const memberCreate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
+        cb({ user: { create: userCreate }, team: { create: teamCreate }, membership: { create: memberCreate } }),
+      ),
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    const issue = jest.spyOn(svc, "issueTokens");
+
+    const pair = await svc.loginWithGithub("gh@x.io", "GH");
+
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ email: "gh@x.io", name: "GH" }) });
+    expect(memberCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: "OWNER" }) });
+    expect(issue).toHaveBeenCalledWith("u1");
+    expect(pair.accessToken).toBeTruthy();
+  });
+
+  it("logs an existing user in without creating anything", async () => {
+    const tx = jest.fn();
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u9", email: "gh@x.io" }) },
+      $transaction: tx,
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    const issue = jest.spyOn(svc, "issueTokens");
+
+    await svc.loginWithGithub("gh@x.io");
+
+    expect(tx).not.toHaveBeenCalled();
+    expect(issue).toHaveBeenCalledWith("u9");
+  });
+});
