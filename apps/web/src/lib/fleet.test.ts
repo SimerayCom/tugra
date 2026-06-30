@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupByTeam, statusCounts, writableIds, pct, formatUptime, fmtBytesStr } from "./fleet";
+import { groupByTeam, statusCounts, writableIds, pct, formatUptime, fmtBytesStr, teamLabel, filterByStatus } from "./fleet";
 import type { ServerView } from "./types";
 
 const s = (
@@ -70,5 +70,18 @@ describe("fleet helpers", () => {
   it("formats byte strings from the API", () => {
     expect(fmtBytesStr(null)).toBe("—");
     expect(fmtBytesStr(String(1 << 30))).toBe("1.0 GB");
+  });
+
+  it("resolves a team label with a short-id fallback", () => {
+    const teams = [{ id: "team-abc123", name: "Acme Production" }];
+    expect(teamLabel(teams, "team-abc123")).toBe("Acme Production");
+    expect(teamLabel(teams, "unknown99")).toBe("unknow");
+  });
+
+  it("filters the fleet by status (null = all)", () => {
+    const servers = [s("a", "t", true, "ONLINE"), s("b", "t", true, "OFFLINE"), s("c", "t", true, "ONLINE")];
+    expect(filterByStatus(servers, null)).toHaveLength(3);
+    expect(filterByStatus(servers, "ONLINE").map((x) => x.id)).toEqual(["a", "c"]);
+    expect(filterByStatus(servers, "PENDING")).toEqual([]);
   });
 });
