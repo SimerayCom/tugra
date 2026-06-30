@@ -154,6 +154,11 @@ export interface AuditEntry {
   createdAt: string;
 }
 
+export interface AuditPage {
+  entries: AuditEntry[];
+  nextCursor: string | null;
+}
+
 export interface GitSource {
   id: string;
   name: string;

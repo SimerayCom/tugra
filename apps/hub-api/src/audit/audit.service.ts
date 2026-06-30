@@ -19,6 +19,12 @@ export interface AuditView {
 }
 
 const ADMIN: Role[] = [Role.OWNER, Role.ADMIN];
+const PAGE = 100;
+
+export interface AuditPage {
+  entries: AuditView[];
+  nextCursor: string | null;
+}
 
 @Injectable()
 export class AuditService {
@@ -42,7 +48,7 @@ export class AuditService {
    * member of the selected team (actor-based scope); everyone else sees only
    * their own actions. No write-side teamId needed.
    */
-  async list(userId: string, teamId?: string): Promise<AuditView[]> {
+  async list(userId: string, teamId?: string, cursor?: string): Promise<AuditPage> {
     const memberships = await this.prisma.membership.findMany({ where: { userId } });
     const adminTeams = new Set(memberships.filter((m) => ADMIN.includes(m.role)).map((m) => m.teamId));
 
@@ -57,7 +63,8 @@ export class AuditService {
     const rows = await this.prisma.auditLog.findMany({
       where: { actor: { in: actors } },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      take: PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
     const users = await this.prisma.user.findMany({
@@ -66,7 +73,7 @@ export class AuditService {
     });
     const emailById = new Map(users.map((u) => [u.id, u.email]));
 
-    return rows.map((r) => ({
+    const entries = rows.map((r) => ({
       id: r.id,
       actor: emailById.get(r.actor) ?? r.actor,
       action: r.action,
@@ -74,5 +81,8 @@ export class AuditService {
       meta: r.meta,
       createdAt: r.createdAt,
     }));
+    // A full page implies there may be older rows; the last id is the next cursor.
+    const nextCursor = rows.length === PAGE ? rows[rows.length - 1].id : null;
+    return { entries, nextCursor };
   }
 }

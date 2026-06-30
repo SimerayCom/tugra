@@ -10,5 +10,6 @@
   "search": "Filter by actor, action or target…",
   "exportCsv": "Export CSV",
   "noMatchTitle": "No matching entries",
-  "noMatch": "No audit entries match your filter."
+  "noMatch": "No audit entries match your filter.",
+  "loadMore": "Load more"
 }
