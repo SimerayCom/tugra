@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Box, Database, FolderTree, Plus, Server, Settings } from "lucide-react";
+import { AlertTriangle, Box, Database, FolderTree, Plus, ScrollText, Server, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
-import { statusCounts } from "../../../lib/fleet";
+import { statusCounts, relativeTime } from "../../../lib/fleet";
+import { fleetAttention } from "../../../lib/dashboard";
+import { monitorColor } from "../../../lib/monitors";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
@@ -29,11 +31,16 @@ export default function DashboardPage() {
   const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: allApps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  const { data: allMonitors = [] } = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
+  const { data: audit } = useQuery({ queryKey: ["audit", teamId], queryFn: () => api.listAudit(teamId ?? undefined) });
   const servers = scopeByTeam(allServers, teamId);
   const projects = scopeByTeam(allProjects, teamId);
   const apps = scopeByTeam(allApps, teamId);
   const databases = scopeByTeam(allDatabases, teamId);
+  const monitors = scopeByTeam(allMonitors, teamId);
   const counts = statusCounts(servers);
+  const attention = fleetAttention(servers, monitors);
+  const recent = audit?.entries.slice(0, 8) ?? [];
 
   const stat = (label: string, value: number | string, color = "var(--c-tx)") => (
     <Card style={{ padding: 18, flex: 1, minWidth: 130 }}>
@@ -73,6 +80,26 @@ export default function DashboardPage() {
         {stat(t("dashboard.pending"), counts.PENDING, "var(--c-am)")}
         {stat(t("dashboard.offline"), counts.OFFLINE, "var(--c-r)")}
       </div>
+
+      <div style={sectionTitle}>{t("dashboard.attention")}</div>
+      {attention.length === 0 ? (
+        <Card style={{ padding: 14, marginBottom: 28, fontSize: 13, color: "var(--c-tx2)", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c-g)" }} /> {t("dashboard.allGood")}
+        </Card>
+      ) : (
+        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden", marginBottom: 28 }}>
+          {attention.map((it) => (
+            <Link key={`${it.kind}-${it.id}`} href={it.kind === "server" ? `/servers/${it.id}` : `/monitors/${it.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+              <AlertTriangle size={15} color={it.kind === "server" ? "var(--c-r)" : monitorColor("DOWN")} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
+                <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{it.kind === "server" ? t("dashboard.attentionServer") : t("dashboard.attentionMonitor")}</div>
+              </div>
+              <span style={{ fontSize: 12, color: "var(--c-r)", fontWeight: 600 }}>{it.status}</span>
+            </Link>
+          ))}
+        </div>
+      )}
 
       {/* Projects (Coolify-style cards with quick actions) */}
       <div style={sectionTitle}>{t("dashboard.projects")}</div>
@@ -138,6 +165,27 @@ export default function DashboardPage() {
           </EmptyState>
         )}
       </div>
+
+      <div style={{ ...sectionTitle, marginTop: 28, display: "flex", alignItems: "center", gap: 8 }}>
+        {t("dashboard.recentActivity")}
+        <div style={{ flex: 1 }} />
+        <Link href="/audit" style={{ fontSize: 11, color: "var(--c-lapis)", textTransform: "none", letterSpacing: 0, fontWeight: 500, textDecoration: "none" }}>{t("dashboard.viewAll")}</Link>
+      </div>
+      {recent.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("dashboard.noActivity")}</div>
+      ) : (
+        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
+          {recent.map((e) => (
+            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", borderTop: "1px solid var(--c-bd)", fontSize: 13 }}>
+              <ScrollText size={13} color="var(--c-tx3)" style={{ flexShrink: 0 }} />
+              <span style={{ color: "var(--c-tx2)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.actor}</span>
+              <code style={{ fontSize: 12, color: "var(--c-tx3)" }}>{e.action}</code>
+              <div style={{ flex: 1 }} />
+              <span style={{ color: "var(--c-tx3)", fontSize: 11, whiteSpace: "nowrap" }}>{relativeTime(e.createdAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
