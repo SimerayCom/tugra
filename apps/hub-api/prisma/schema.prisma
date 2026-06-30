@@ -29,8 +29,22 @@ model User {
   twoFaEnabled Boolean      @default(false)
   memberships  Membership[]
   apiTokens    ApiToken[]
+  savedViews   SavedView[]
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+}
+
+// A user's named fleet filter (status + tags) for the servers/fleet table.
+model SavedView {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  name      String
+  status    String? // ONLINE | PENDING | OFFLINE | null (all)
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model ApiToken {

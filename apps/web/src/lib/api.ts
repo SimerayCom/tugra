@@ -1,5 +1,6 @@
 import type {
   ApiToken,
+  SavedView,
   Application,
   AppVolume,
   BulkOperation,
@@ -774,6 +775,15 @@ export const api = {
   },
 
   // ── API tokens ──
+  listSavedViews() {
+    return apiFetch<SavedView[]>("/saved-views");
+  },
+  createSavedView(input: { name: string; status: SavedView["status"]; tags: string[] }) {
+    return apiFetch<SavedView>("/saved-views", { method: "POST", body: JSON.stringify(input) });
+  },
+  deleteSavedView(id: string) {
+    return apiFetch<{ ok: true }>(`/saved-views/${id}`, { method: "DELETE" });
+  },
   listApiTokens() {
     return apiFetch<ApiToken[]>("/api-tokens");
   },

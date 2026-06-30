@@ -18,23 +18,32 @@ function teamColor(teamId: string): string {
   return TEAM_COLORS[h % TEAM_COLORS.length];
 }
 
-export function ServerTable({ servers, teams = [] }: { servers: ServerView[]; teams?: { id: string; name: string }[] }) {
+export function ServerTable({
+  servers,
+  teams = [],
+  status = null,
+  onStatusChange,
+}: {
+  servers: ServerView[];
+  teams?: { id: string; name: string }[];
+  status?: ServerStatus | null;
+  onStatusChange?: (s: ServerStatus | null) => void;
+}) {
   const t = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulk, setShowBulk] = useState(false);
   const [showCleanup, setShowCleanup] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<ServerStatus | null>(null);
   const counts = useMemo(() => statusCounts(servers), [servers]);
-  const rows = filterByStatus(servers, statusFilter);
+  const rows = filterByStatus(servers, status);
   const writable = writableIds(servers, selected);
   const skipped = selected.size - writable.length;
 
-  const statusChip = (status: ServerStatus | null, label: string, color: string) => {
-    const active = statusFilter === status;
+  const statusChip = (s: ServerStatus | null, label: string, color: string) => {
+    const active = status === s;
     return (
       <button
         type="button"
-        onClick={() => setStatusFilter(status)}
+        onClick={() => onStatusChange?.(s)}
         style={{ fontFamily: "inherit", fontSize: 12, cursor: "pointer", border: "1px solid", borderColor: active ? color : "var(--c-bd)", background: active ? `${color}22` : "transparent", color, borderRadius: 999, padding: "3px 11px" }}
       >
         {label}

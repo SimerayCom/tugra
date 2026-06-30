@@ -72,5 +72,7 @@
   "cleanupVolumes": "Also unused volumes",
   "lastCleanup": "Last",
   "save": "Save",
+  "saveView": "Save view",
+  "viewName": "View name (e.g. prod-eu)",
   "openHostShell": "Open host shell"
 }

@@ -6,10 +6,12 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { ServerTable } from "../../../components/server-table";
+import { SavedViewsBar } from "../../../components/saved-views-bar";
 import { TagFilter } from "../../../components/tags";
 import { Btn, Spinner } from "../../../components/ui";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
+import type { ServerStatus } from "../../../lib/types";
 
 export default function ServersPage() {
   const t = useT();
@@ -20,6 +22,7 @@ export default function ServersPage() {
   });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [status, setStatus] = useState<ServerStatus | null>(null);
   const scoped = scopeByTeam(servers ?? [], teamId);
   const allTags = [...new Set(scoped.flatMap((s) => s.tags))].sort();
   const visible = scoped.filter((s) => selectedTags.every((tag) => s.tags.includes(tag)));
@@ -36,8 +39,9 @@ export default function ServersPage() {
       {error && <div style={{ color: "var(--c-r)" }}>{t("servers.loadFailed", { msg: (error as Error).message })}</div>}
       {servers && (
         <>
+          <SavedViewsBar status={status} tags={selectedTags} onApply={(v) => { setStatus(v.status); setSelectedTags(v.tags); }} />
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
-          <ServerTable servers={visible} teams={teams} />
+          <ServerTable servers={visible} teams={teams} status={status} onStatusChange={setStatus} />
         </>
       )}
     </div>
