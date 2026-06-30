@@ -164,4 +164,24 @@ describe("Bulk ops (e2e)", () => {
 
     await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
   });
+
+  it("bulk-sets notification channels on writable monitors (same-team only)", async () => {
+    const mon = await prisma.monitor.create({ data: { teamId, name: "m-bulk", type: "HTTP", target: "https://x.test" } });
+    const ch = await prisma.notificationChannel.create({ data: { teamId, name: "ch-bulk", type: "webhook", configEnc: "x" } });
+    const otherTeam = await prisma.team.create({ data: { name: "mon-other" } });
+    const foreignMon = await prisma.monitor.create({ data: { teamId: otherTeam.id, name: "m-foreign", type: "HTTP", target: "https://y.test" } });
+
+    const res = await request(app.getHttpServer())
+      .post("/monitors/channels/bulk")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ monitorIds: [mon.id, foreignMon.id], channelIds: [ch.id] })
+      .expect(200);
+    expect(res.body.applied).toEqual([mon.id]);
+    expect(res.body.skipped).toEqual([foreignMon.id]);
+
+    const links = await prisma.monitorChannel.findMany({ where: { monitorId: mon.id } });
+    expect(links.map((l) => l.channelId)).toEqual([ch.id]);
+
+    await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
+  });
 });

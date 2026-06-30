@@ -6,11 +6,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
 import { api } from "../../../lib/api";
 import { scopeByTeam } from "../../../lib/team-scope";
+import { writableIds } from "../../../lib/fleet";
 import { monitorColor } from "../../../lib/monitors";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { Field, Select, TextInput } from "../../../components/form";
 import { MonitorFavicon } from "../../../components/monitor-favicon";
+import { MonitorChannelsBulkModal } from "../../../components/monitor-channels-bulk-modal";
 
 const formGrid: React.CSSProperties = {
   display: "grid",
@@ -28,6 +30,18 @@ export default function MonitorsPage() {
     refetchInterval: 10000,
   });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showChannels, setShowChannels] = useState(false);
+  const writable = writableIds(monitors, selected);
+  const skipped = selected.size - writable.length;
+  const toggleSel = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: channels = [] } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
 
@@ -179,23 +193,47 @@ export default function MonitorsPage() {
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
           {monitors.map((m) => (
-            <Link key={m.id} href={`/monitors/${m.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-              <span style={{ width: 9, height: 9, borderRadius: "50%", background: monitorColor(m.status) }} />
-              <MonitorFavicon type={m.type} target={m.target} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                  {m.name}
-                  {m.auto && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: 4, padding: "0 5px" }}>{t("monitors.autoBadge")}</span>}
+            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)" }}>
+              <input
+                type="checkbox"
+                disabled={!m.canWrite}
+                checked={selected.has(m.id)}
+                onChange={() => toggleSel(m.id)}
+                title={m.canWrite ? "" : t("servers.readonly")}
+                style={{ flexShrink: 0 }}
+              />
+              <Link href={`/monitors/${m.id}`} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, textDecoration: "none", color: "var(--c-tx)" }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: monitorColor(m.status), flexShrink: 0 }} />
+                <MonitorFavicon type={m.type} target={m.target} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                    {m.name}
+                    {m.auto && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: 4, padding: "0 5px" }}>{t("monitors.autoBadge")}</span>}
+                  </div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{m.type} · {m.target}</div>
                 </div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{m.type} · {m.target}</div>
-              </div>
-              <span style={{ fontSize: 12, color: monitorColor(m.status), fontWeight: 600 }}>{m.status}</span>
-            </Link>
+                <span style={{ fontSize: 12, color: monitorColor(m.status), fontWeight: 600 }}>{m.status}</span>
+              </Link>
+            </div>
           ))}
           {monitors.length === 0 && (
             <EmptyState icon={Activity} title={t("monitors.emptyTitle")}>{t("monitors.empty")}</EmptyState>
           )}
         </div>
+      )}
+
+      {selected.size > 0 && (
+        <div style={{ position: "sticky", bottom: 16, marginTop: 16, display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "var(--c-sb)", border: "1px solid var(--c-a)", borderRadius: "var(--r2)", boxShadow: "0 10px 30px rgba(0,0,0,0.4)" }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            {t("servers.selected", { n: writable.length })}
+            {skipped > 0 && <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}> {t("servers.skipped", { n: skipped })}</span>}
+          </span>
+          <div style={{ flex: 1 }} />
+          <Btn onClick={() => setShowChannels(true)} disabled={writable.length === 0}>{t("bulk.applyChannels")}</Btn>
+        </div>
+      )}
+      {showChannels && (
+        <MonitorChannelsBulkModal monitors={monitors} selectedIds={[...selected]} onClose={() => setShowChannels(false)} />
       )}
     </div>
   );

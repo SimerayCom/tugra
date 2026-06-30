@@ -324,6 +324,12 @@ export const api = {
   listMonitors() {
     return apiFetch<Monitor[]>("/monitors");
   },
+  bulkSetMonitorChannels(monitorIds: string[], channelIds: string[]) {
+    return apiFetch<{ applied: string[]; skipped: string[] }>(`/monitors/channels/bulk`, {
+      method: "POST",
+      body: JSON.stringify({ monitorIds, channelIds }),
+    });
+  },
   getMonitor(id: string) {
     return apiFetch<Monitor>(`/monitors/${id}`);
   },
