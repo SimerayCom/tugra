@@ -30,12 +30,12 @@ export function groupByTeam(
   return out;
 }
 
-/** Of the selected servers, only those the user may write to (bulk-eligible). */
-export function writableIds(
-  servers: ServerView[],
+/** Of the selected items (servers or databases), only those the user may write to. */
+export function writableIds<T extends { id: string; canWrite: boolean }>(
+  items: T[],
   selected: Set<string>,
 ): string[] {
-  return servers
+  return items
     .filter((s) => selected.has(s.id) && s.canWrite)
     .map((s) => s.id);
 }

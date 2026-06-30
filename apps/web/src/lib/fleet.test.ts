@@ -45,6 +45,15 @@ describe("fleet helpers", () => {
     expect(writableIds(servers, selected).sort()).toEqual(["a", "c"]);
   });
 
+  it("writableIds is generic over any {id, canWrite} (e.g. databases)", () => {
+    const dbs = [
+      { id: "d1", canWrite: true },
+      { id: "d2", canWrite: false },
+      { id: "d3", canWrite: true },
+    ];
+    expect(writableIds(dbs, new Set(["d1", "d2", "d3"]))).toEqual(["d1", "d3"]);
+  });
+
   it("counts statuses", () => {
     const counts = statusCounts([
       s("a", "t", true, "ONLINE"),

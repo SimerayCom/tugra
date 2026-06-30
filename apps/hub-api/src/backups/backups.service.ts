@@ -13,6 +13,7 @@ import { supportsBackup, type DbEngine } from "../databases/database-script";
 import { buildDeleteBackupScript, buildImportScript, buildRestoreScript } from "./backup-script";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
+import { planTargets } from "../bulk/bulk.service";
 import type { BackupConfigInput, ImportFromUrlInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -132,6 +133,47 @@ export class BackupsService {
 
   async setSchedule(userId: string, dbId: string, cfg: BackupConfigInput): Promise<Database> {
     await this.requireWrite(userId, dbId);
+    const db = await this.apply(dbId, cfg);
+    await this.audit.log({ actor: userId, action: "database.backup.schedule", target: dbId });
+    return db;
+  }
+
+  /**
+   * Apply one backup schedule to many databases (fleet bulk op). Each db is
+   * gated by the caller's role in its team — non-writable / cross-team / unknown
+   * databases are SKIPPED (not an error). destinationId is not touched.
+   */
+  async setScheduleBulk(
+    userId: string,
+    dbIds: string[],
+    cfg: BackupConfigInput,
+  ): Promise<{ applied: string[]; skipped: string[] }> {
+    const dbs = await this.prisma.database.findMany({
+      where: { id: { in: dbIds } },
+      select: { id: true, teamId: true },
+    });
+    const roleByTeam = await this.access.roleByTeam(userId);
+    const plan = planTargets(dbIds, dbs, roleByTeam);
+    const applied: string[] = [];
+    for (const target of plan) {
+      if (!target.run) continue;
+      await this.apply(target.serverId, cfg);
+      applied.push(target.serverId);
+    }
+    const skipped = plan.filter((p) => !p.run).map((p) => p.serverId);
+    if (applied.length > 0) {
+      await this.audit.log({
+        actor: userId,
+        action: "database.backup.config.bulk",
+        target: applied.join(","),
+        meta: { count: applied.length },
+      });
+    }
+    return { applied, skipped };
+  }
+
+  /** Persist the backup schedule + (re)schedule. Caller handles authz; destinationId untouched when absent. */
+  private async apply(dbId: string, cfg: BackupConfigInput): Promise<Database> {
     const db = await this.prisma.database.update({
       where: { id: dbId },
       data: {
@@ -146,7 +188,6 @@ export class BackupsService {
     } else {
       await this.scheduler.unschedule(dbId);
     }
-    await this.audit.log({ actor: userId, action: "database.backup.schedule", target: dbId });
     return db;
   }
 
