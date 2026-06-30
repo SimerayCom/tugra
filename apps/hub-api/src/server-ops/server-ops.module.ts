@@ -3,6 +3,7 @@ import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoModule } from "../crypto/crypto.module";
 import { ServerOpsController } from "./server-ops.controller";
+import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
@@ -12,7 +13,7 @@ import { ProxyOpsService } from "./proxy-ops.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule],
-  controllers: [ServerOpsController],
+  controllers: [ServerOpsController, FleetController],
   providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService],
 })
 export class ServerOpsModule implements OnModuleInit {
