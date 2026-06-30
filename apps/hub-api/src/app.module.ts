@@ -21,6 +21,7 @@ import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
+import { SavedViewsModule } from "./saved-views/saved-views.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
 import { GitSourcesModule } from "./git-sources/git-sources.module";
 import { ProjectsModule } from "./projects/projects.module";
@@ -50,6 +51,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
     DestinationsModule,
     ServerOpsModule,
     ApiTokensModule,
+    SavedViewsModule,
     SharedVariablesModule,
     GitSourcesModule,
     ProjectsModule,

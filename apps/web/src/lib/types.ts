@@ -404,6 +404,14 @@ export interface ApiToken {
   createdAt: string;
 }
 
+export interface SavedView {
+  id: string;
+  name: string;
+  status: ServerStatus | null;
+  tags: string[];
+  createdAt: string;
+}
+
 export interface SharedVariable {
   id: string;
   teamId: string;
