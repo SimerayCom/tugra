@@ -16,6 +16,8 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MonitorsService } from "./monitors.service";
 import {
+  BulkMonitorChannelsInput,
+  BulkMonitorChannelsSchema,
   CreateMonitorInput,
   CreateMonitorSchema,
   UpdateMonitorInput,
@@ -38,6 +40,16 @@ export class MonitorsController {
     @Body(new ZodValidationPipe(CreateMonitorSchema)) body: CreateMonitorInput,
   ) {
     return this.monitors.create(user.userId, body);
+  }
+
+  // Static segment before ":id" so it isn't matched as a monitor id.
+  @Post("channels/bulk")
+  @HttpCode(200)
+  bulkChannels(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(BulkMonitorChannelsSchema)) body: BulkMonitorChannelsInput,
+  ) {
+    return this.monitors.setChannelsBulk(user.userId, body.monitorIds, body.channelIds);
   }
 
   @Get(":id")

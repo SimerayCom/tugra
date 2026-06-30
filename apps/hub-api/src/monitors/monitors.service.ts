@@ -10,6 +10,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 import { uptimePercent } from "./transition";
+import { planTargets } from "../bulk/bulk.service";
 import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -130,6 +131,57 @@ export class MonitorsService {
     await this.audit.log({ actor: userId, action: "monitor.update", target: id });
     const role = (await this.access.teamRole(userId, m.teamId))!;
     return this.view(updated, role, dto.channelIds);
+  }
+
+  /**
+   * Set the same notification channels on many monitors (fleet alert op). Each
+   * monitor is role-gated; channels are team-scoped, so a monitor only receives
+   * the picked channels that belong to ITS team. A writable monitor with no
+   * matching-team channel is SKIPPED (its existing channels are left intact).
+   */
+  async setChannelsBulk(
+    userId: string,
+    monitorIds: string[],
+    channelIds: string[],
+  ): Promise<{ applied: string[]; skipped: string[] }> {
+    const monitors = await this.prisma.monitor.findMany({
+      where: { id: { in: monitorIds } },
+      select: { id: true, teamId: true },
+    });
+    const channels = await this.prisma.notificationChannel.findMany({
+      where: { id: { in: channelIds } },
+      select: { id: true, teamId: true },
+    });
+    const roleByTeam = await this.access.roleByTeam(userId);
+    const plan = planTargets(monitorIds, monitors, roleByTeam);
+
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    for (const target of plan) {
+      const mon = monitors.find((x) => x.id === target.serverId);
+      const matching = mon ? channels.filter((c) => c.teamId === mon.teamId).map((c) => c.id) : [];
+      if (!target.run || matching.length === 0) {
+        skipped.push(target.serverId);
+        continue;
+      }
+      await this.prisma.$transaction([
+        this.prisma.monitorChannel.deleteMany({ where: { monitorId: target.serverId } }),
+        this.prisma.monitorChannel.createMany({
+          data: matching.map((channelId) => ({ monitorId: target.serverId, channelId })),
+          skipDuplicates: true,
+        }),
+      ]);
+      applied.push(target.serverId);
+    }
+    if (applied.length > 0) {
+      await this.audit.log({
+        actor: userId,
+        action: "monitor.channels.bulk",
+        target: applied.join(","),
+        meta: { count: applied.length },
+      });
+    }
+    return { applied, skipped };
   }
 
   /** Auto-create an uptime monitor for an app's domain (system; no RBAC). */

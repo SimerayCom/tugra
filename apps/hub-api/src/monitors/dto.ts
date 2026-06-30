@@ -38,3 +38,11 @@ export const UpdateMonitorSchema = z.object({
   channelIds: z.array(z.string()).optional(),
 });
 export type UpdateMonitorInput = z.infer<typeof UpdateMonitorSchema>;
+
+// Set the same notification channels on many monitors at once (fleet alert op).
+// Each monitor receives only the channels that belong to its own team.
+export const BulkMonitorChannelsSchema = z.object({
+  monitorIds: z.array(z.string().min(1)).min(1),
+  channelIds: z.array(z.string().min(1)).min(1),
+});
+export type BulkMonitorChannelsInput = z.infer<typeof BulkMonitorChannelsSchema>;

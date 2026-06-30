@@ -75,6 +75,50 @@ describe("MonitorsService.update", () => {
   });
 });
 
+describe("MonitorsService.setChannelsBulk (fleet alert)", () => {
+  it("applies same-team channels to writable monitors, skipping the rest", async () => {
+    const $transaction = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      monitor: {
+        // m1=t1 (OWNER, has a t1 channel) · m2=t2 (VIEWER, skip) · m3=t3 (OWNER, but no t3 channel)
+        findMany: jest.fn().mockResolvedValue([
+          { id: "m1", teamId: "t1" },
+          { id: "m2", teamId: "t2" },
+          { id: "m3", teamId: "t3" },
+        ]),
+      },
+      notificationChannel: { findMany: jest.fn().mockResolvedValue([{ id: "c1", teamId: "t1" }]) },
+      monitorChannel: { deleteMany: jest.fn().mockReturnValue({}), createMany: jest.fn().mockReturnValue({}) },
+      $transaction,
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"], ["t2", "VIEWER"], ["t3", "OWNER"]])),
+    } as unknown as TeamAccessService;
+
+    const res = await make(prisma, access, {}).setChannelsBulk("u1", ["m1", "m2", "m3"], ["c1"]);
+
+    expect(res.applied).toEqual(["m1"]);
+    expect(res.skipped.sort()).toEqual(["m2", "m3"]);
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "monitor.channels.bulk" }));
+  });
+
+  it("applies nothing when no monitor is writable", async () => {
+    const $transaction = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      monitor: { findMany: jest.fn().mockResolvedValue([{ id: "m2", teamId: "t2" }]) },
+      notificationChannel: { findMany: jest.fn().mockResolvedValue([{ id: "c2", teamId: "t2" }]) },
+      monitorChannel: { deleteMany: jest.fn(), createMany: jest.fn() },
+      $transaction,
+    } as unknown as PrismaService;
+    const access = { roleByTeam: jest.fn().mockResolvedValue(new Map([["t2", "VIEWER"]])) } as unknown as TeamAccessService;
+    const res = await make(prisma, access, {}).setChannelsBulk("u1", ["m2"], ["c2"]);
+    expect(res.applied).toEqual([]);
+    expect(res.skipped).toEqual(["m2"]);
+    expect($transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe("MonitorsService.createForApp / removeForApp", () => {
   const app = { id: "app1", name: "web", teamId: "t1", domain: "x.com", https: true, isPreview: false };
 
