@@ -6,7 +6,7 @@ import type {
   BulkOperation,
   Backup,
   BackupDestination,
-  AuditEntry,
+  AuditPage,
   Channel,
   Database,
   GitSource,
@@ -411,8 +411,12 @@ export const api = {
   },
 
   // ── git sources (GitHub App) ──
-  listAudit(teamId?: string) {
-    return apiFetch<AuditEntry[]>(`/audit${teamId ? `?teamId=${teamId}` : ""}`);
+  listAudit(teamId?: string, cursor?: string) {
+    const params = new URLSearchParams();
+    if (teamId) params.set("teamId", teamId);
+    if (cursor) params.set("cursor", cursor);
+    const qs = params.toString();
+    return apiFetch<AuditPage>(`/audit${qs ? `?${qs}` : ""}`);
   },
   listGitSources() {
     return apiFetch<GitSource[]>("/git-sources");

@@ -10,7 +10,11 @@ export class AuditController {
   constructor(private readonly svc: AuditService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser, @Query("teamId") teamId?: string) {
-    return this.svc.list(user.userId, teamId);
+  list(
+    @CurrentUser() user: AuthUser,
+    @Query("teamId") teamId?: string,
+    @Query("cursor") cursor?: string,
+  ) {
+    return this.svc.list(user.userId, teamId, cursor);
   }
 }

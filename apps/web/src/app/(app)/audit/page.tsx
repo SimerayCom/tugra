@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Download, ScrollText } from "lucide-react";
 import { api } from "../../../lib/api";
 import { filterAudit, auditToCsv } from "../../../lib/audit";
@@ -22,10 +22,14 @@ export default function AuditPage() {
   const { teamId } = useTeamScope();
   const [q, setQ] = useState("");
 
-  const { data: entries = [], isLoading } = useQuery({
+  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ["audit", teamId],
-    queryFn: () => api.listAudit(teamId ?? undefined),
+    queryFn: ({ pageParam }) => api.listAudit(teamId ?? undefined, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
+  // Client-side filter narrows the already-loaded pages; "Load more" fetches older.
+  const entries = data?.pages.flatMap((p) => p.entries) ?? [];
 
   const shown = filterAudit(entries, q);
 
@@ -92,6 +96,13 @@ export default function AuditPage() {
           </table>
           </div>
         </Card>
+          )}
+          {hasNextPage && (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
+              <Btn variant="ghost" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                {isFetchingNextPage ? "…" : t("audit.loadMore")}
+              </Btn>
+            </div>
           )}
         </>
       )}
