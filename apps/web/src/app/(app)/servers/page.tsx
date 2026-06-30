@@ -18,6 +18,7 @@ export default function ServersPage() {
     queryKey: ["servers"],
     queryFn: () => api.listServers(),
   });
+  const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const scoped = scopeByTeam(servers ?? [], teamId);
   const allTags = [...new Set(scoped.flatMap((s) => s.tags))].sort();
@@ -36,7 +37,7 @@ export default function ServersPage() {
       {servers && (
         <>
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
-          <ServerTable servers={visible} />
+          <ServerTable servers={visible} teams={teams} />
         </>
       )}
     </div>

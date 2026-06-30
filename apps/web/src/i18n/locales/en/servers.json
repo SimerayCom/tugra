@@ -19,6 +19,7 @@
   "pending": "{n} pending",
   "offline": "{n} offline",
   "total": "· {n} total (all teams)",
+  "noMatch": "No servers match this filter.",
   "server": "Server",
   "team": "Team",
   "role": "Role",

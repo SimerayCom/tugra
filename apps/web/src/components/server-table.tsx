@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Server } from "lucide-react";
-import type { ServerView } from "../lib/types";
-import { relativeTime, statusCounts, writableIds } from "../lib/fleet";
+import type { ServerView, ServerStatus } from "../lib/types";
+import { relativeTime, statusCounts, writableIds, teamLabel, filterByStatus } from "../lib/fleet";
 import { useT } from "../i18n/provider";
 import { Badge, Btn, EmptyState, StatusDot } from "./ui";
 import { TagChips } from "./tags";
@@ -17,13 +17,28 @@ function teamColor(teamId: string): string {
   return TEAM_COLORS[h % TEAM_COLORS.length];
 }
 
-export function ServerTable({ servers }: { servers: ServerView[] }) {
+export function ServerTable({ servers, teams = [] }: { servers: ServerView[]; teams?: { id: string; name: string }[] }) {
   const t = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulk, setShowBulk] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ServerStatus | null>(null);
   const counts = useMemo(() => statusCounts(servers), [servers]);
+  const rows = filterByStatus(servers, statusFilter);
   const writable = writableIds(servers, selected);
   const skipped = selected.size - writable.length;
+
+  const statusChip = (status: ServerStatus | null, label: string, color: string) => {
+    const active = statusFilter === status;
+    return (
+      <button
+        type="button"
+        onClick={() => setStatusFilter(status)}
+        style={{ fontFamily: "inherit", fontSize: 12, cursor: "pointer", border: "1px solid", borderColor: active ? color : "var(--c-bd)", background: active ? `${color}22` : "transparent", color, borderRadius: 999, padding: "3px 11px" }}
+      >
+        {label}
+      </button>
+    );
+  };
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -38,11 +53,11 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 14, marginBottom: 14, fontSize: 12, color: "var(--c-tx2)" }}>
-        <span>● {t("servers.online", { n: counts.ONLINE })}</span>
-        <span style={{ color: "var(--c-am)" }}>● {t("servers.pending", { n: counts.PENDING })}</span>
-        <span style={{ color: "var(--c-r)" }}>● {t("servers.offline", { n: counts.OFFLINE })}</span>
-        <span style={{ color: "var(--c-tx3)" }}>{t("servers.total", { n: servers.length })}</span>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {statusChip(null, t("servers.total", { n: servers.length }), "var(--c-tx3)")}
+        {statusChip("ONLINE", `● ${t("servers.online", { n: counts.ONLINE })}`, "var(--c-g)")}
+        {statusChip("PENDING", `● ${t("servers.pending", { n: counts.PENDING })}`, "var(--c-am)")}
+        {statusChip("OFFLINE", `● ${t("servers.offline", { n: counts.OFFLINE })}`, "var(--c-r)")}
       </div>
 
       <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflowX: "auto" }}>
@@ -58,7 +73,7 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
             </tr>
           </thead>
           <tbody>
-            {servers.map((s) => (
+            {rows.map((s) => (
               <tr key={s.id} style={{ borderTop: "1px solid var(--c-bd)", opacity: s.canWrite ? 1 : 0.6 }}>
                 <td style={cell}>
                   <input type="checkbox" disabled={!s.canWrite} checked={selected.has(s.id)} onChange={() => toggle(s.id)} title={s.canWrite ? "" : t("servers.readonly")} />
@@ -77,7 +92,7 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
                 </td>
                 <td style={cell}>
                   <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 6, background: `${teamColor(s.teamId)}22`, color: teamColor(s.teamId), fontWeight: 600 }}>
-                    {s.teamId.slice(0, 6)}
+                    {teamLabel(teams, s.teamId)}
                   </span>
                 </td>
                 <td style={cell}>
@@ -100,6 +115,11 @@ export function ServerTable({ servers }: { servers: ServerView[] }) {
                     {t("servers.empty")}
                   </EmptyState>
                 </td>
+              </tr>
+            )}
+            {servers.length > 0 && rows.length === 0 && (
+              <tr>
+                <td colSpan={6} style={{ ...cell, textAlign: "center", color: "var(--c-tx3)", padding: 24 }}>{t("servers.noMatch")}</td>
               </tr>
             )}
           </tbody>

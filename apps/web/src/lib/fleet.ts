@@ -12,6 +12,16 @@ export function statusCounts(
   return acc;
 }
 
+/** Human team label for a fleet row; falls back to a short id when unknown. */
+export function teamLabel(teams: { id: string; name: string }[], id: string): string {
+  return teams.find((t) => t.id === id)?.name ?? id.slice(0, 6);
+}
+
+/** Filter the fleet to a single status (null = all). */
+export function filterByStatus(servers: ServerView[], status: ServerStatus | null): ServerView[] {
+  return status ? servers.filter((s) => s.status === status) : servers;
+}
+
 export function groupByTeam(
   servers: ServerView[],
 ): Record<string, ServerView[]> {

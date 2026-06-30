@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { bulkSummary } from "../lib/bulk";
+import { BULK_PRESETS } from "../lib/bulk-presets";
 import { useT } from "../i18n/provider";
 import type { BulkTaskStatus, ServerView } from "../lib/types";
 import { Modal } from "./modal";
@@ -57,6 +58,19 @@ export function BulkRunModal({
               run.mutate();
             }}
           >
+            <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 6 }}>{t("bulk.presets")}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {BULK_PRESETS.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => setCommand(p.command)}
+                  style={{ fontFamily: "inherit", fontSize: 12, cursor: "pointer", border: "1px solid var(--c-bd)", background: command === p.command ? "var(--c-ad)" : "transparent", color: command === p.command ? "var(--c-a)" : "var(--c-tx2)", borderRadius: 999, padding: "4px 11px" }}
+                >
+                  {t(`bulk.${p.labelKey}`)}
+                </button>
+              ))}
+            </div>
             <input
               autoFocus
               className="mono"
