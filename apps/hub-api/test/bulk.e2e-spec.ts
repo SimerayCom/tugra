@@ -141,4 +141,27 @@ describe("Bulk ops (e2e)", () => {
 
     await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
   });
+
+  it("bulk-applies backup schedule to writable databases and skips foreign ones", async () => {
+    const dbData = { serverId: "srv-x", name: "d", engine: "POSTGRES" as const, version: "16", image: "postgres:16-alpine", port: 5432, credentials: "x" };
+    const mineDb = await prisma.database.create({ data: { ...dbData, teamId, name: "bulk-db" } });
+    const otherTeam = await prisma.team.create({ data: { name: "db-other" } });
+    const foreignDb = await prisma.database.create({ data: { ...dbData, teamId: otherTeam.id, name: "db-foreign" } });
+
+    // enabled:false → no long-lived scheduler timer; still exercises route + role-gating + persistence.
+    const res = await request(app.getHttpServer())
+      .post("/fleet/backup-config")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ databaseIds: [mineDb.id, foreignDb.id], enabled: false, intervalHours: 12, retention: 5 })
+      .expect(200);
+    expect(res.body.applied).toEqual([mineDb.id]);
+    expect(res.body.skipped).toEqual([foreignDb.id]);
+
+    const got = await prisma.database.findUnique({ where: { id: mineDb.id } });
+    expect(got?.backupIntervalHours).toBe(12);
+    expect(got?.backupRetention).toBe(5);
+    expect(got?.backupEnabled).toBe(false);
+
+    await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
+  });
 });

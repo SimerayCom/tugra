@@ -90,6 +90,53 @@ describe("BackupsService", () => {
   });
 });
 
+describe("BackupsService.setScheduleBulk (fleet)", () => {
+  it("applies the schedule to writable databases and skips the rest (role-gated, cross-team)", async () => {
+    const update = jest.fn().mockResolvedValue({ ...db, backupEnabled: true, backupIntervalHours: 24 });
+    const prisma = {
+      database: {
+        // d3 unknown; d1=t1 (OWNER, write), d2=t2 (VIEWER, skip)
+        findMany: jest.fn().mockResolvedValue([
+          { id: "d1", teamId: "t1" },
+          { id: "d2", teamId: "t2" },
+        ]),
+        update,
+      },
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"], ["t2", "VIEWER"]])),
+    } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as BackupSchedulerService;
+
+    const res = await make(prisma, access, {}, scheduler).setScheduleBulk(
+      "u1",
+      ["d1", "d2", "d3"],
+      { enabled: true, intervalHours: 24, retention: 7 },
+    );
+
+    expect(res.applied).toEqual(["d1"]);
+    expect(res.skipped.sort()).toEqual(["d2", "d3"]);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "d1" } }));
+    expect(scheduler.schedule).toHaveBeenCalledWith("d1", 24 * 3600);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.backup.config.bulk" }));
+  });
+
+  it("applies nothing when no database is writable", async () => {
+    const update = jest.fn();
+    const prisma = {
+      database: { findMany: jest.fn().mockResolvedValue([{ id: "d2", teamId: "t2" }]), update },
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["t2", "VIEWER"]])),
+    } as unknown as TeamAccessService;
+    const res = await make(prisma, access).setScheduleBulk("u1", ["d2"], { enabled: false });
+    expect(res.applied).toEqual([]);
+    expect(res.skipped).toEqual(["d2"]);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
 describe("BackupsService.restoreTo (cross-resource)", () => {
   const dbA = { id: "A", teamId: "t1", serverId: "s1", engine: "POSTGRES", credentials: "c" };
   const dbB = { id: "B", teamId: "t1", serverId: "s1", engine: "POSTGRES", credentials: "c" };

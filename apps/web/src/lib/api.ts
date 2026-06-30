@@ -732,6 +732,12 @@ export const api = {
       body: JSON.stringify(cfg),
     });
   },
+  bulkSetBackupConfig(databaseIds: string[], cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
+    return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/backup-config`, {
+      method: "POST",
+      body: JSON.stringify({ databaseIds, ...cfg }),
+    });
+  },
 
   // ── backup destinations ──
   listDestinations() {
