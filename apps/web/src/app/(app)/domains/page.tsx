@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Globe } from "lucide-react";
 import { api } from "../../../lib/api";
+import { appColor } from "../../../lib/apps";
 import type { DomainView } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Card, EmptyState, Spinner } from "../../../components/ui";
@@ -47,10 +49,15 @@ export default function DomainsPage() {
                   <a href={d.url ?? `https://${d.domain}`} target="_blank" rel="noreferrer" style={{ fontWeight: 600, fontSize: 14, color: "var(--c-lapis)", textDecoration: "none" }}>
                     {d.domain}
                   </a>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
-                    {d.name}
-                    {d.domainRedirect ? ` · ${t("domains.redirect")}:${d.domainRedirect}` : ""}
-                    {d.securityHeaders ? ` · ${t("domains.headers")}` : ""}
+                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                    <span title={d.appStatus} style={{ width: 7, height: 7, borderRadius: "50%", background: appColor(d.appStatus), flexShrink: 0 }} />
+                    <Link href={`/apps/${d.appId}`} style={{ color: "var(--c-tx2)", textDecoration: "none" }}>{d.name}</Link>
+                    {(d.domainRedirect || d.securityHeaders) && (
+                      <span>
+                        {d.domainRedirect ? `· ${t("domains.redirect")}:${d.domainRedirect}` : ""}
+                        {d.securityHeaders ? ` · ${t("domains.headers")}` : ""}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
