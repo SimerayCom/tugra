@@ -80,6 +80,33 @@ export class AuthService {
     return { user: this.toPublicUser(user), tokens };
   }
 
+  /**
+   * Log a user in from a verified OAuth email. Creates the account (+ default
+   * team) on first sign-in, reusing the register flow. OAuth users get a random
+   * unusable password hash — they can't password-login, only via the provider.
+   */
+  async loginWithGithub(email: string, name?: string): Promise<TokenPair> {
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      const passwordHash = await argon2.hash(randomUUID(), { type: argon2.argon2id });
+      user = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: { email, password: passwordHash, name: name ?? null },
+        });
+        const team = await tx.team.create({
+          data: { name: name ? `${name}'s Team` : "My Team" },
+        });
+        await tx.membership.create({
+          data: { userId: created.id, teamId: team.id, role: Role.OWNER },
+        });
+        return created;
+      });
+      await this.audit.log({ actor: user.id, action: "auth.register", meta: { provider: "github" } });
+    }
+    await this.audit.log({ actor: user.id, action: "auth.login", meta: { provider: "github" } });
+    return this.issueTokens(user.id);
+  }
+
   async login(
     email: string,
     password: string,
