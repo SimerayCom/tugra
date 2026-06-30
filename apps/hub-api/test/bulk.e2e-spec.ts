@@ -111,4 +111,34 @@ describe("Bulk ops (e2e)", () => {
 
     await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
   });
+
+  it("bulk-applies cleanup config to writable servers and skips foreign ones", async () => {
+    const mine = await request(app.getHttpServer())
+      .post("/servers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "fleet-1", teamId })
+      .expect(201);
+    const mineId = mine.body.server.id;
+
+    const otherTeam = await prisma.team.create({ data: { name: "fleet-other" } });
+    const foreign = await prisma.server.create({
+      data: { name: "fleet-foreign", teamId: otherTeam.id, enrollToken: `ftok-${Date.now()}` },
+    });
+
+    // enabled:false → exercises route + zod + role-gating + persistence without
+    // scheduling a real long-lived cleanup timer in the test process.
+    const res = await request(app.getHttpServer())
+      .post("/fleet/cleanup-config")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ serverIds: [mineId, foreign.id], enabled: false, intervalHours: 24 })
+      .expect(200);
+    expect(res.body.applied).toEqual([mineId]);
+    expect(res.body.skipped).toEqual([foreign.id]);
+
+    const srv = await prisma.server.findUnique({ where: { id: mineId } });
+    expect(srv?.cleanupIntervalHours).toBe(24);
+    expect(srv?.cleanupEnabled).toBe(false);
+
+    await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
+  });
 });

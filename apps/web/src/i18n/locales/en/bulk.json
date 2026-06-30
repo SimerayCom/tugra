@@ -1,5 +1,8 @@
 {
   "runCommand": "Run command",
+  "applyCleanup": "Apply cleanup",
+  "cleanupTitle": "Apply cleanup schedule to {n} server(s)",
+  "cleanupResult": "{applied} applied · {skipped} skipped (read-only)",
   "title": "Run command on {n} server(s)",
   "command": "Command (sh -c)",
   "presets": "Quick actions",

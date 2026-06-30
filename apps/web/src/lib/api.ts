@@ -294,6 +294,12 @@ export const api = {
       body: JSON.stringify(cfg),
     });
   },
+  bulkSetCleanupConfig(serverIds: string[], cfg: { enabled: boolean; intervalHours?: number; volumes?: boolean }) {
+    return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/cleanup-config`, {
+      method: "POST",
+      body: JSON.stringify({ serverIds, ...cfg }),
+    });
+  },
 
   createServer(name: string, teamId: string) {
     return apiFetch<{

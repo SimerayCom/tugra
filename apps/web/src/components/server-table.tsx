@@ -9,6 +9,7 @@ import { useT } from "../i18n/provider";
 import { Badge, Btn, EmptyState, StatusDot } from "./ui";
 import { TagChips } from "./tags";
 import { BulkRunModal } from "./bulk-run-modal";
+import { CleanupBulkModal } from "./cleanup-bulk-modal";
 
 const TEAM_COLORS = ["#C9A84C", "#3D6FE5", "#2FBF71", "#E5484D", "#A855F7", "#F5A524"];
 function teamColor(teamId: string): string {
@@ -21,6 +22,7 @@ export function ServerTable({ servers, teams = [] }: { servers: ServerView[]; te
   const t = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulk, setShowBulk] = useState(false);
+  const [showCleanup, setShowCleanup] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ServerStatus | null>(null);
   const counts = useMemo(() => statusCounts(servers), [servers]);
   const rows = filterByStatus(servers, statusFilter);
@@ -133,6 +135,9 @@ export function ServerTable({ servers, teams = [] }: { servers: ServerView[]; te
             {skipped > 0 && <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}> {t("servers.skipped", { n: skipped })}</span>}
           </span>
           <div style={{ flex: 1 }} />
+          <Btn variant="ghost" onClick={() => setShowCleanup(true)} disabled={writable.length === 0}>
+            {t("bulk.applyCleanup")}
+          </Btn>
           <Btn onClick={() => setShowBulk(true)} disabled={writable.length === 0}>
             {t("bulk.runCommand")}
           </Btn>
@@ -141,6 +146,9 @@ export function ServerTable({ servers, teams = [] }: { servers: ServerView[]; te
 
       {showBulk && (
         <BulkRunModal servers={servers} selectedIds={[...selected]} onClose={() => setShowBulk(false)} />
+      )}
+      {showCleanup && (
+        <CleanupBulkModal servers={servers} selectedIds={[...selected]} onClose={() => setShowCleanup(false)} />
       )}
     </div>
   );

@@ -7,6 +7,12 @@ export const CleanupConfigSchema = z.object({
 });
 export type CleanupConfigInput = z.infer<typeof CleanupConfigSchema>;
 
+// Apply the same cleanup schedule to many servers at once (fleet bulk op).
+export const CleanupConfigBulkSchema = CleanupConfigSchema.extend({
+  serverIds: z.array(z.string().min(1)).min(1),
+});
+export type CleanupConfigBulkInput = z.infer<typeof CleanupConfigBulkSchema>;
+
 export const CreateLogDrainSchema = z.object({
   name: z.string().min(1),
   endpoint: z.string().url(),
