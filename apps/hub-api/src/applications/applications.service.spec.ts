@@ -8,6 +8,11 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
 
+// listDomains probes TLS over the network; stub it so the unit test stays offline.
+jest.mock("./ssl-probe", () => ({
+  probeSsl: jest.fn().mockResolvedValue({ state: "ok", daysRemaining: 90, issuer: "Let's Encrypt" }),
+}));
+
 const audit = { log: jest.fn() } as unknown as AuditService;
 const crypto = {
   encrypt: (s: string) => `enc(${s})`,
@@ -786,5 +791,21 @@ describe("ApplicationsService", () => {
     expect(depUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", imageTag: "tugra_app1:dep1" }) }),
     );
+  });
+});
+
+describe("ApplicationsService.listDomains", () => {
+  it("returns domained apps with appId + appStatus for deep-linking", async () => {
+    const svc = make({}, {}, {});
+    jest.spyOn(svc, "list").mockResolvedValue([
+      { id: "app1", name: "web", status: "RUNNING", domain: "shop.acme.dev", https: true, url: "https://shop.acme.dev", domainRedirect: null, securityHeaders: false },
+      { id: "app2", name: "api", status: "STOPPED", domain: null }, // no domain → filtered out
+    ] as never);
+
+    const res = await svc.listDomains("u1");
+
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({ id: "app1", appId: "app1", appStatus: "RUNNING", name: "web", domain: "shop.acme.dev" });
+    expect(res[0].ssl.state).toBe("ok");
   });
 });

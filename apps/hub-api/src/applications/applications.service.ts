@@ -117,6 +117,8 @@ export interface AppView {
 
 export interface DomainView {
   id: string;
+  appId: string;
+  appStatus: AppStatus;
   name: string;
   domain: string;
   https: boolean;
@@ -789,6 +791,8 @@ export class ApplicationsService {
     return Promise.all(
       apps.map(async (a) => ({
         id: a.id,
+        appId: a.id,
+        appStatus: a.status,
         name: a.name,
         domain: a.domain!,
         https: a.https,

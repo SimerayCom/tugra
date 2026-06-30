@@ -250,6 +250,8 @@ export interface Project {
 
 export interface DomainView {
   id: string;
+  appId: string;
+  appStatus: AppStatus;
   name: string;
   domain: string;
   https: boolean;
