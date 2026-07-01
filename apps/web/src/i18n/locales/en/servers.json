@@ -74,5 +74,7 @@
   "save": "Save",
   "saveView": "Save view",
   "viewName": "View name (e.g. prod-eu)",
+  "viewPersonal": "Personal",
+  "viewShareWith": "Share with…",
   "openHostShell": "Open host shell"
 }
