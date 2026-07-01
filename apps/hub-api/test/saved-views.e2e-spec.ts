@@ -61,4 +61,30 @@ describe("Saved views (e2e)", () => {
       .send({ name: "" })
       .expect(400);
   });
+
+  it("shares a view with the user's team and refuses foreign teams", async () => {
+    const teamId = (await prisma.membership.findFirst({ where: { userId } }))!.teamId;
+
+    const shared = await request(app.getHttpServer())
+      .post("/saved-views")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "team-eu", teamId })
+      .expect(201);
+    expect(shared.body).toMatchObject({ name: "team-eu", teamId, canDelete: true });
+
+    const list = await request(app.getHttpServer())
+      .get("/saved-views")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(list.body.find((v: { id: string }) => v.id === shared.body.id)?.teamId).toBe(teamId);
+
+    // Sharing with a team the user isn't a member of is forbidden.
+    const other = await prisma.team.create({ data: { name: "views-foreign" } });
+    await request(app.getHttpServer())
+      .post("/saved-views")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "nope", teamId: other.id })
+      .expect(403);
+    await prisma.team.deleteMany({ where: { id: other.id } }).catch(() => undefined);
+  });
 });

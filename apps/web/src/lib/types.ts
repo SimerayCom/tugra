@@ -416,6 +416,8 @@ export interface SavedView {
   name: string;
   status: ServerStatus | null;
   tags: string[];
+  teamId: string | null;
+  canDelete: boolean;
   createdAt: string;
 }
 

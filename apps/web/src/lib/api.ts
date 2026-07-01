@@ -782,7 +782,7 @@ export const api = {
   listSavedViews() {
     return apiFetch<SavedView[]>("/saved-views");
   },
-  createSavedView(input: { name: string; status: SavedView["status"]; tags: string[] }) {
+  createSavedView(input: { name: string; status: SavedView["status"]; tags: string[]; teamId?: string }) {
     return apiFetch<SavedView>("/saved-views", { method: "POST", body: JSON.stringify(input) });
   },
   deleteSavedView(id: string) {

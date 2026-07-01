@@ -39,12 +39,16 @@ model SavedView {
   id        String   @id @default(cuid())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
+  // null = personal (only the owner); set = shared with everyone on the team.
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String?
   name      String
   status    String? // ONLINE | PENDING | OFFLINE | null (all)
   tags      String[] @default([])
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([teamId])
 }
 
 model ApiToken {
@@ -75,6 +79,7 @@ model Team {
   projects     Project[]
   invitations  TeamInvitation[]
   gitSources   GitSource[]
+  savedViews   SavedView[]
   createdAt    DateTime     @default(now())
 }
 
