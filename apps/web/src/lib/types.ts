@@ -252,6 +252,7 @@ export interface DomainView {
   id: string;
   appId: string;
   appStatus: AppStatus;
+  teamId: string;
   name: string;
   domain: string;
   https: boolean;

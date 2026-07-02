@@ -798,14 +798,14 @@ describe("ApplicationsService.listDomains", () => {
   it("returns domained apps with appId + appStatus for deep-linking", async () => {
     const svc = make({}, {}, {});
     jest.spyOn(svc, "list").mockResolvedValue([
-      { id: "app1", name: "web", status: "RUNNING", domain: "shop.acme.dev", https: true, url: "https://shop.acme.dev", domainRedirect: null, securityHeaders: false },
-      { id: "app2", name: "api", status: "STOPPED", domain: null }, // no domain → filtered out
+      { id: "app1", teamId: "t1", name: "web", status: "RUNNING", domain: "shop.acme.dev", https: true, url: "https://shop.acme.dev", domainRedirect: null, securityHeaders: false },
+      { id: "app2", teamId: "t1", name: "api", status: "STOPPED", domain: null }, // no domain → filtered out
     ] as never);
 
     const res = await svc.listDomains("u1");
 
     expect(res).toHaveLength(1);
-    expect(res[0]).toMatchObject({ id: "app1", appId: "app1", appStatus: "RUNNING", name: "web", domain: "shop.acme.dev" });
+    expect(res[0]).toMatchObject({ id: "app1", appId: "app1", appStatus: "RUNNING", teamId: "t1", name: "web", domain: "shop.acme.dev" });
     expect(res[0].ssl.state).toBe("ok");
   });
 });
