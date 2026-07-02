@@ -6,7 +6,6 @@ import { AlertTriangle, Box, Database, FolderTree, Plus, ScrollText, Server, Set
 import { api } from "../../../lib/api";
 import { statusCounts, relativeTime } from "../../../lib/fleet";
 import { fleetAttention } from "../../../lib/dashboard";
-import { monitorColor } from "../../../lib/monitors";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
@@ -32,14 +31,16 @@ export default function DashboardPage() {
   const { data: allApps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
   const { data: allMonitors = [] } = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
+  const { data: allDomains = [] } = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
   const { data: audit } = useQuery({ queryKey: ["audit", teamId], queryFn: () => api.listAudit(teamId ?? undefined) });
   const servers = scopeByTeam(allServers, teamId);
   const projects = scopeByTeam(allProjects, teamId);
   const apps = scopeByTeam(allApps, teamId);
   const databases = scopeByTeam(allDatabases, teamId);
   const monitors = scopeByTeam(allMonitors, teamId);
+  const domains = scopeByTeam(allDomains, teamId);
   const counts = statusCounts(servers);
-  const attention = fleetAttention(servers, monitors);
+  const attention = fleetAttention(servers, monitors, domains);
   const recent = audit?.entries.slice(0, 8) ?? [];
 
   const stat = (label: string, value: number | string, color = "var(--c-tx)") => (
@@ -88,16 +89,22 @@ export default function DashboardPage() {
         </Card>
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden", marginBottom: 28 }}>
-          {attention.map((it) => (
-            <Link key={`${it.kind}-${it.id}`} href={it.kind === "server" ? `/servers/${it.id}` : `/monitors/${it.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-              <AlertTriangle size={15} color={it.kind === "server" ? "var(--c-r)" : monitorColor("DOWN")} style={{ flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
-                <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{it.kind === "server" ? t("dashboard.attentionServer") : t("dashboard.attentionMonitor")}</div>
-              </div>
-              <span style={{ fontSize: 12, color: "var(--c-r)", fontWeight: 600 }}>{it.status}</span>
-            </Link>
-          ))}
+          {attention.map((it) => {
+            const href = it.kind === "server" ? `/servers/${it.id}` : it.kind === "monitor" ? `/monitors/${it.id}` : `/apps/${it.id}`;
+            const amber = it.kind === "domain" && it.status === "expiring";
+            const color = amber ? "var(--c-am)" : "var(--c-r)";
+            const label = it.kind === "server" ? t("dashboard.attentionServer") : it.kind === "monitor" ? t("dashboard.attentionMonitor") : amber ? t("dashboard.attentionSslExpiring") : t("dashboard.attentionSslError");
+            return (
+              <Link key={`${it.kind}-${it.id}`} href={href} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+                <AlertTriangle size={15} color={color} style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{label}</div>
+                </div>
+                <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.status}</span>
+              </Link>
+            );
+          })}
         </div>
       )}
 
