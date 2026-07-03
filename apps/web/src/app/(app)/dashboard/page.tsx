@@ -1,12 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Box, Database, FolderTree, Plus, ScrollText, Server, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
-import { useAuth } from "../../../lib/auth";
 import { statusCounts, relativeTime } from "../../../lib/fleet";
 import { fleetAttention } from "../../../lib/dashboard";
 import { scopeByTeam } from "../../../lib/team-scope";
@@ -29,12 +26,6 @@ const sectionTitle: React.CSSProperties = {
 export default function DashboardPage() {
   const t = useT();
   const { teamId } = useTeamScope();
-  // Home-mode users belong on the launcher, not the fleet command center.
-  const { user } = useAuth();
-  const router = useRouter();
-  useEffect(() => {
-    if (user?.uiMode === "home") router.replace("/home");
-  }, [user?.uiMode, router]);
   const { data: allServers = [], isLoading } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: allApps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
