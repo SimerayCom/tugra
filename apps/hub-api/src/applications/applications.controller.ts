@@ -38,6 +38,8 @@ import {
   SetCredentialsSchema,
   SetEnvInput,
   SetEnvSchema,
+  SetDomainInput,
+  SetDomainSchema,
   SetDomainOptionsInput,
   SetDomainOptionsSchema,
   SetEnvironmentInput,
@@ -239,6 +241,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetEnvironmentSchema)) body: SetEnvironmentInput,
   ) {
     await this.apps.setEnvironment(user.userId, id, body.environmentId);
+    return { ok: true };
+  }
+
+  @Put(":id/domain")
+  @HttpCode(200)
+  async setDomain(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDomainSchema)) body: SetDomainInput,
+  ) {
+    await this.apps.setDomain(user.userId, id, body.domain);
     return { ok: true };
   }
 

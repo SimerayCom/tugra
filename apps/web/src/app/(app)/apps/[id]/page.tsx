@@ -18,6 +18,7 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
+import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
@@ -220,6 +221,9 @@ export default function AppDetailPage() {
             registryUrl={appData.registryUrl}
             registryUser={appData.registryUser}
           />
+          {appData.canWrite && !appData.isPreview && (
+            <DomainCard id={id} domain={appData.domain} https={appData.https} />
+          )}
           {appData.domain && (
             <DomainOptionsCard
               id={id}
@@ -763,6 +767,42 @@ function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnable
         </>
       )}
       {toggle.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(toggle.error as Error).message}</div>}
+    </Card>
+  );
+}
+
+function DomainCard({ id, domain, https }: { id: string; domain: string | null; https: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [value, setValue] = useState(domain ?? "");
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["app", id] });
+  const save = useMutation({
+    mutationFn: () => api.setAppDomain(id, cleanDomain(value) || null),
+    onSuccess: invalidate,
+  });
+  const clear = useMutation({
+    mutationFn: () => api.setAppDomain(id, null),
+    onSuccess: () => { setValue(""); invalidate(); },
+  });
+  const pending = save.isPending || clear.isPending;
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.setDomain")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.domainRedeployNote")}</p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          style={{ ...envField, minWidth: 240, flex: 1 }}
+          value={value}
+          placeholder={t("apps.domainPlaceholder")}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <Btn onClick={() => save.mutate()} disabled={pending || !cleanDomain(value)}>{t("apps.domainSave")}</Btn>
+        {domain && <Btn variant="ghost" onClick={() => clear.mutate()} disabled={pending}>{t("apps.domainClear")}</Btn>}
+      </div>
+      {https && cleanDomain(value) && (
+        <div className="mono" style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 10 }}>https://{cleanDomain(value)}</div>
+      )}
     </Card>
   );
 }

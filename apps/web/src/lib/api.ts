@@ -646,6 +646,12 @@ export const api = {
   listDomains() {
     return apiFetch<DomainView[]>("/apps/domains");
   },
+  setAppDomain(id: string, domain: string | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/domain`, {
+      method: "PUT",
+      body: JSON.stringify({ domain }),
+    });
+  },
   setAppDomainOptions(
     id: string,
     opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null },

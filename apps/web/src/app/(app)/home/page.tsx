@@ -1,16 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, ExternalLink } from "lucide-react";
+import { Boxes, ExternalLink, Plus } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { launcherTiles, launcherIcon, type LauncherTile } from "../../../lib/launcher";
 import { appColor } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
+import { SetDomainModal } from "../../../components/set-domain-modal";
 
 const grid: React.CSSProperties = {
   display: "grid",
@@ -29,6 +30,7 @@ export default function HomePage() {
 
   const { data: apps = [], isLoading } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const tiles = launcherTiles(apps);
+  const [addDomainFor, setAddDomainFor] = useState<string | null>(null);
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -47,14 +49,18 @@ export default function HomePage() {
         </EmptyState>
       ) : (
         <div style={grid}>
-          {tiles.map((tile) => <Tile key={tile.id} tile={tile} openLabel={t("home.open")} noDomain={t("home.noDomain")} />)}
+          {tiles.map((tile) => (
+            <Tile key={tile.id} tile={tile} openLabel={t("home.open")} addDomain={t("home.addDomain")} onAddDomain={() => setAddDomainFor(tile.id)} />
+          ))}
         </div>
       )}
+
+      {addDomainFor && <SetDomainModal appId={addDomainFor} onClose={() => setAddDomainFor(null)} />}
     </div>
   );
 }
 
-function Tile({ tile, openLabel, noDomain }: { tile: LauncherTile; openLabel: string; noDomain: string }) {
+function Tile({ tile, openLabel, addDomain, onAddDomain }: { tile: LauncherTile; openLabel: string; addDomain: string; onAddDomain: () => void }) {
   const Icon = launcherIcon(tile.source);
   const inner = (
     <>
@@ -65,9 +71,11 @@ function Tile({ tile, openLabel, noDomain }: { tile: LauncherTile; openLabel: st
         <span title={tile.status} style={{ width: 9, height: 9, borderRadius: "50%", background: appColor(tile.status), flexShrink: 0 }} />
       </div>
       <div style={{ fontWeight: 600, fontSize: 15, marginTop: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tile.name}</div>
-      <div style={{ fontSize: 12, color: tile.url ? "var(--c-lapis)" : "var(--c-tx3)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-        {tile.url ? (<><ExternalLink size={12} /> {openLabel}</>) : noDomain}
-      </div>
+      {tile.url && (
+        <div style={{ fontSize: 12, color: "var(--c-lapis)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+          <ExternalLink size={12} /> {openLabel}
+        </div>
+      )}
     </>
   );
 
@@ -76,8 +84,19 @@ function Tile({ tile, openLabel, noDomain }: { tile: LauncherTile; openLabel: st
     background: "var(--c-el)", textDecoration: "none", color: "var(--c-tx)",
   };
 
+  // No domain → not openable; offer to add one so it becomes a launch tile.
   if (!tile.url) {
-    return <div style={{ ...boxStyle, opacity: 0.6 }}>{inner}</div>;
+    return (
+      <div style={boxStyle}>
+        {inner}
+        <button
+          onClick={onAddDomain}
+          style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 4, background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "var(--c-tx3)", fontSize: 12, fontFamily: "inherit" }}
+        >
+          <Plus size={12} /> {addDomain}
+        </button>
+      </div>
+    );
   }
   return (
     <a href={tile.url} target="_blank" rel="noreferrer" style={boxStyle}>

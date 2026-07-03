@@ -772,6 +772,13 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.environment.update", target: id });
   }
 
+  /** Assign, change or clear an app's domain after creation (applied on next deploy). */
+  async setDomain(userId: string, id: string, domain: string | null): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({ where: { id }, data: { domain } });
+    await this.audit.log({ actor: userId, action: "app.domain.update", target: id });
+  }
+
   async setDomainOptions(
     userId: string,
     id: string,
