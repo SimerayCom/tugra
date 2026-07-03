@@ -28,8 +28,12 @@ export const UpdateProfileSchema = z
   .object({
     name: z.string().min(1).max(100).optional(),
     email: z.string().email().optional(),
+    uiMode: z.enum(["fleet", "home"]).optional(),
   })
-  .refine((v) => v.name !== undefined || v.email !== undefined, "nothing to update");
+  .refine(
+    (v) => v.name !== undefined || v.email !== undefined || v.uiMode !== undefined,
+    "nothing to update",
+  );
 export type UpdateProfileInput = z.infer<typeof UpdateProfileSchema>;
 
 export const ChangePasswordSchema = z.object({

@@ -146,7 +146,7 @@ export const api = {
   me() {
     return apiFetch<PublicUser>("/auth/me");
   },
-  updateProfile(input: { name?: string; email?: string }) {
+  updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home" }) {
     return apiFetch<PublicUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) });
   },
   changePassword(input: { currentPassword: string; newPassword: string }) {

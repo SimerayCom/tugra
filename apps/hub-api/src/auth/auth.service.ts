@@ -27,6 +27,7 @@ export interface PublicUser {
   email: string;
   name: string | null;
   twoFaEnabled: boolean;
+  uiMode: string;
 }
 
 interface RefreshPayload {
@@ -261,7 +262,10 @@ export class AuthService {
   }
 
   /** Update the current user's display name and/or email. */
-  async updateProfile(userId: string, input: { name?: string; email?: string }): Promise<PublicUser> {
+  async updateProfile(
+    userId: string,
+    input: { name?: string; email?: string; uiMode?: "fleet" | "home" },
+  ): Promise<PublicUser> {
     const user = await this.requireUser(userId);
     if (input.email && input.email !== user.email) {
       const taken = await this.prisma.user.findUnique({ where: { email: input.email } });
@@ -272,6 +276,7 @@ export class AuthService {
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.email !== undefined ? { email: input.email } : {}),
+        ...(input.uiMode !== undefined ? { uiMode: input.uiMode } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "auth.profile.update" });
@@ -302,12 +307,14 @@ export class AuthService {
     email: string;
     name: string | null;
     twoFaEnabled: boolean;
+    uiMode: string;
   }): PublicUser {
     return {
       id: user.id,
       email: user.email,
       name: user.name,
       twoFaEnabled: user.twoFaEnabled,
+      uiMode: user.uiMode,
     };
   }
 }
