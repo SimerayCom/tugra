@@ -14,6 +14,13 @@ export function uiMode(v: unknown): UiMode {
   return isUiMode(v) ? v : "fleet";
 }
 
+// Routes a Home-mode user is allowed to visit; everything else redirects to /home.
+export const HOME_ROUTES = ["/home", "/app-store", "/settings"];
+
+export function isHomeAllowed(pathname: string): boolean {
+  return HOME_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+}
+
 type NavGroup<T> = { group: string; items: T[] };
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { navForMode, uiMode, isUiMode } from "./ui-mode";
+import { navForMode, uiMode, isUiMode, isHomeAllowed } from "./ui-mode";
 
 const NAV: { group: string; items: { key: string; home?: boolean; fleet?: boolean }[] }[] = [
   {
@@ -46,6 +46,20 @@ describe("navForMode", () => {
       { group: "OnlyFleet", items: [{ key: "x" }, { key: "y" }] },
     ];
     expect(navForMode(fleetOnly, "home")).toEqual([]);
+  });
+});
+
+describe("isHomeAllowed", () => {
+  it("allows the home surface routes", () => {
+    expect(isHomeAllowed("/home")).toBe(true);
+    expect(isHomeAllowed("/app-store")).toBe(true);
+    expect(isHomeAllowed("/settings")).toBe(true);
+  });
+
+  it("blocks fleet routes", () => {
+    for (const p of ["/dashboard", "/servers", "/databases", "/teams", "/audit", "/"]) {
+      expect(isHomeAllowed(p)).toBe(false);
+    }
   });
 });
 
