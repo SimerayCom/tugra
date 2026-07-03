@@ -18,15 +18,16 @@ type NavGroup<T> = { group: string; items: T[] };
 
 /**
  * Filter navigation groups for the active UI mode.
- * - "fleet": the full nav, unchanged.
- * - "home": only items flagged `home: true`; groups left empty are dropped.
+ * - "home": only items flagged `home: true`.
+ * - "fleet": everything except items flagged `fleet: false` (home-only items).
+ * Groups left empty are dropped.
  */
-export function navForMode<T extends { home?: boolean }>(
+export function navForMode<T extends { home?: boolean; fleet?: boolean }>(
   groups: NavGroup<T>[],
   mode: UiMode,
 ): NavGroup<T>[] {
-  if (mode !== "home") return groups;
+  const keep = (i: T) => (mode === "home" ? i.home === true : i.fleet !== false);
   return groups
-    .map((g) => ({ ...g, items: g.items.filter((i) => i.home === true) }))
+    .map((g) => ({ ...g, items: g.items.filter(keep) }))
     .filter((g) => g.items.length > 0);
 }

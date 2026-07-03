@@ -22,11 +22,14 @@ describe("sidebar NAV", () => {
 describe("home mode nav", () => {
   it("shows only Home, App Store and Settings in home mode", () => {
     const keys = navForMode(NAV, "home").flatMap((g) => g.items.map((i) => i.key));
-    expect(keys).toEqual(["dashboard", "appStore", "settings"]);
+    expect(keys).toEqual(["home", "appStore", "settings"]);
   });
 
-  it("leaves the full nav untouched in fleet mode", () => {
-    expect(navForMode(NAV, "fleet")).toBe(NAV);
+  it("shows the fleet command center (not the home launcher) in fleet mode", () => {
+    const keys = navForMode(NAV, "fleet").flatMap((g) => g.items.map((i) => i.key));
+    expect(keys).toContain("dashboard");
+    expect(keys).toContain("servers");
+    expect(keys).not.toContain("home");
   });
 });
 

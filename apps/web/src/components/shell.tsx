@@ -22,6 +22,7 @@ import {
   GitBranch,
   Globe,
   HardDrive,
+  Home,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -44,13 +45,15 @@ interface NavItem {
   icon: LucideIcon;
   impl?: boolean;
   home?: boolean; // shown in the simplified Home mode sidebar
+  fleet?: boolean; // default true; set false for home-only items (hidden in fleet)
 }
 
 export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Monitor",
     items: [
-      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard, impl: true, home: true },
+      { key: "home", href: "/home", icon: Home, impl: true, home: true, fleet: false },
+      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard, impl: true },
       { key: "uptime", href: "/monitors", icon: Activity, impl: true },
     ],
   },
