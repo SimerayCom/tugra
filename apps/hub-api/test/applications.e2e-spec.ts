@@ -566,6 +566,27 @@ describe("Applications / deploy (e2e)", () => {
     expect(row.ssl).toHaveProperty("state");
   });
 
+  it("remembers the template slug and exposes its logo after install", async () => {
+    const listRes = await request(app.getHttpServer())
+      .get("/apps/templates")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const slug = listRes.body[0].slug as string;
+
+    const appRes = await request(app.getHttpServer())
+      .post(`/apps/templates/${slug}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "from-tpl", serverId })
+      .expect(201);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${appRes.body.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.templateSlug).toBe(slug);
+    expect(detail.body.templateLogo).toBeTruthy();
+  });
+
   it("assigns, exposes url for, and clears a domain after creation", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

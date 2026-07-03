@@ -281,6 +281,8 @@ export interface Template {
 export interface Application {
   id: string;
   name: string;
+  templateSlug: string | null;
+  templateLogo: string | null;
   source: AppSource;
   image: string | null;
   gitUrl: string | null;

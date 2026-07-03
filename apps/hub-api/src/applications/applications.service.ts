@@ -83,6 +83,8 @@ export interface AppView {
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
+  templateSlug: string | null;
+  templateLogo: string | null;
   environmentId: string | null;
   projectId: string | null;
   projectName: string | null;
@@ -160,6 +162,7 @@ export class ApplicationsService {
     const app = await this.prisma.application.create({
       data: {
         name: dto.name,
+        templateSlug: dto.templateSlug ?? null,
         environmentId: dto.environmentId ?? null,
         source: dto.source ?? "IMAGE",
         image: dto.image ?? null,
@@ -207,6 +210,7 @@ export class ApplicationsService {
     return this.create(userId, {
       name: input.name,
       serverId: input.serverId,
+      templateSlug: slug,
       source: "COMPOSE",
       composeFile: tpl.composeFile,
       env: buildTemplateEnv(tpl),
@@ -950,6 +954,8 @@ export class ApplicationsService {
       hasGitToken: !!app.gitTokenEnc,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
       registryUser: this.appRegistryAuth(app)?.user ?? null,
+      templateSlug: app.templateSlug,
+      templateLogo: app.templateSlug ? (TEMPLATES[app.templateSlug]?.logo ?? app.templateSlug) : null,
       environmentId: app.environmentId,
       projectId: ctx?.projectId ?? null,
       projectName: ctx?.projectName ?? null,

@@ -424,6 +424,7 @@ model Application {
   environmentId  String?
   serverId       String
   name           String
+  templateSlug   String?      // catalog slug when installed from a template (for its logo)
   source         AppSource    @default(IMAGE)
   image          String?
   gitUrl         String?
