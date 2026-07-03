@@ -5,5 +5,13 @@
   "noDomain": "No domain yet",
   "noAppsTitle": "No apps yet",
   "noApps": "Install something from the App Store and it will show up here.",
-  "browseStore": "Browse the App Store"
+  "browseStore": "Browse the App Store",
+  "installTitle": "Install {name}",
+  "appName": "Name",
+  "chooseServer": "Server",
+  "install": "Install",
+  "installing": "Installing…",
+  "installed": "Installing {name} — it will appear on your Home.",
+  "noServer": "You need a server to install apps.",
+  "connectServer": "Connect a server →"
 }
