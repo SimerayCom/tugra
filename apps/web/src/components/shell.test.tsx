@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { NAV, DESTS } from "./shell";
+import { navForMode } from "../lib/ui-mode";
 
 describe("sidebar NAV", () => {
   it("defines an icon for every nav item (no bare text entries)", () => {
@@ -15,6 +16,17 @@ describe("sidebar NAV", () => {
     expect(keys).not.toContain("apps");
     expect(keys).not.toContain("databases");
     expect(keys).toContain("projects");
+  });
+});
+
+describe("home mode nav", () => {
+  it("shows only Home, App Store and Settings in home mode", () => {
+    const keys = navForMode(NAV, "home").flatMap((g) => g.items.map((i) => i.key));
+    expect(keys).toEqual(["dashboard", "appStore", "settings"]);
+  });
+
+  it("leaves the full nav untouched in fleet mode", () => {
+    expect(navForMode(NAV, "fleet")).toBe(NAV);
   });
 });
 

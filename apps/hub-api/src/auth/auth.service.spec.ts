@@ -117,7 +117,7 @@ describe("AuthService login", () => {
 });
 
 describe("AuthService.updateProfile", () => {
-  const me = { id: "u1", email: "a@b.c", name: "Old", twoFaEnabled: false, password: "h" };
+  const me = { id: "u1", email: "a@b.c", name: "Old", twoFaEnabled: false, uiMode: "fleet", password: "h" };
 
   it("updates the display name", async () => {
     const update = jest.fn().mockResolvedValue({ ...me, name: "New" });
@@ -125,6 +125,14 @@ describe("AuthService.updateProfile", () => {
     const res = await makeService(prisma).updateProfile("u1", { name: "New" });
     expect(res.name).toBe("New");
     expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { name: "New" } });
+  });
+
+  it("switches the UI mode and exposes it on the public user", async () => {
+    const update = jest.fn().mockResolvedValue({ ...me, uiMode: "home" });
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(me), update } } as unknown as PrismaService;
+    const res = await makeService(prisma).updateProfile("u1", { uiMode: "home" });
+    expect(res.uiMode).toBe("home");
+    expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { uiMode: "home" } });
   });
 
   it("rejects an email already used by someone else", async () => {

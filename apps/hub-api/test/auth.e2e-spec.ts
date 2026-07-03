@@ -73,6 +73,33 @@ describe("Auth (e2e)", () => {
     expect(res.body.name).toBe("Renamed");
   });
 
+  it("defaults uiMode to fleet and switches it via PATCH /auth/me", async () => {
+    const before = await request(app.getHttpServer())
+      .get("/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(before.body.uiMode).toBe("fleet");
+
+    await request(app.getHttpServer())
+      .patch("/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ uiMode: "home" })
+      .expect(200);
+    const after = await request(app.getHttpServer())
+      .get("/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(after.body.uiMode).toBe("home");
+  });
+
+  it("rejects an invalid uiMode", async () => {
+    await request(app.getHttpServer())
+      .patch("/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ uiMode: "tablet" })
+      .expect(400);
+  });
+
   it("rejects change-password with a wrong current password", async () => {
     await request(app.getHttpServer())
       .post("/auth/change-password")

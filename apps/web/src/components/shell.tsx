@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { navForMode, uiMode } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { Spinner } from "./ui";
@@ -42,13 +43,14 @@ interface NavItem {
   href: string;
   icon: LucideIcon;
   impl?: boolean;
+  home?: boolean; // shown in the simplified Home mode sidebar
 }
 
 export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Monitor",
     items: [
-      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard, impl: true },
+      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard, impl: true, home: true },
       { key: "uptime", href: "/monitors", icon: Activity, impl: true },
     ],
   },
@@ -58,7 +60,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       // Coolify-style: resources live under Projects → environment. Apps/Databases
       // aren't top-level nav; reach them via a project, the dashboard, or ⌘K.
       { key: "projects", href: "/projects", icon: FolderTree, impl: true },
-      { key: "appStore", href: "/app-store", icon: Store, impl: true },
+      { key: "appStore", href: "/app-store", icon: Store, impl: true, home: true },
       { key: "servers", href: "/servers", icon: Server, impl: true },
       { key: "sources", href: "/sources", icon: GitBranch, impl: true },
       { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
@@ -73,7 +75,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "notifications", href: "/notifications", icon: Bell, impl: true },
       { key: "audit", href: "/audit", icon: ScrollText, impl: true },
       { key: "teams", href: "/teams", icon: Users, impl: true },
-      { key: "settings", href: "/settings", icon: Settings, impl: true },
+      { key: "settings", href: "/settings", icon: Settings, impl: true, home: true },
     ],
   },
 ];
@@ -113,7 +115,9 @@ export function CenteredSpinner() {
 
 function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { openPalette: () => void; mobile?: boolean; open?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
+  const mode = uiMode(user?.uiMode);
+  const nav = navForMode(NAV, mode);
   const router = useRouter();
   const t = useT();
   const [collapsed, setCollapsed] = useState(false);
@@ -173,7 +177,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
       </div>
 
       <nav style={{ flex: 1, overflowY: "auto", padding: 8 }}>
-        {NAV.map((g) => (
+        {nav.map((g) => (
           <div key={g.group}>
             {!col && (
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "10px 10px 3px" }}>
@@ -184,7 +188,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
               const base = it.href.split("?")[0];
               const active = pathname === base || pathname.startsWith(`${base}/`);
               const Icon = it.icon;
-              const badge = it.key === "servers" && offline > 0 ? offline : 0;
+              const badge = mode !== "home" && it.key === "servers" && offline > 0 ? offline : 0;
               return (
                 <Link
                   key={it.key}
@@ -285,6 +289,8 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
   const { user } = useAuth();
   const t = useT();
   const [theme, toggle] = useTheme();
+  // Home mode hides fleet-only chrome (bulk "New", team scoping).
+  const isHome = uiMode(user?.uiMode) === "home";
   return (
     <header style={{ height: 52, flexShrink: 0, borderBottom: "1px solid var(--c-bd)", display: "flex", alignItems: "center", gap: 14, padding: "0 18px", background: "var(--c-bg)" }}>
       {showMenu && (
@@ -292,9 +298,9 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
           <Menu size={20} />
         </button>
       )}
-      <NewMenu />
+      {!isHome && <NewMenu />}
       <div style={{ flex: 1 }} />
-      <TeamScopeSelect />
+      {!isHome && <TeamScopeSelect />}
       <button onClick={toggle} title="Toggle theme" style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
         {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
       </button>

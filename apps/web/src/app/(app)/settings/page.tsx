@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound } from "lucide-react";
+import { KeyRound, Home, Server } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
@@ -42,6 +42,7 @@ export default function SettingsPage() {
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 18px" }}>{t("settings.title")}</h1>
 
       <AccountCard />
+      <UiModeCard />
       <PasswordCard />
 
       <Card style={{ padding: 18 }}>
@@ -109,6 +110,54 @@ function AccountCard() {
       </div>
       <div style={{ marginTop: 14 }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !email.trim()}>{save.isPending ? "…" : t("settings.save")}</Btn>
+      </div>
+    </Card>
+  );
+}
+
+function UiModeCard() {
+  const t = useT();
+  const { user, reload } = useAuth();
+  const toast = useToast();
+  const mode = user?.uiMode ?? "fleet";
+  const set = useMutation({
+    mutationFn: (uiMode: "fleet" | "home") => api.updateProfile({ uiMode }),
+    onSuccess: async () => { await reload(); toast(t("settings.uiModeSaved"), "success"); },
+  });
+  const opts: { value: "fleet" | "home"; label: string; desc: string; icon: typeof Home }[] = [
+    { value: "fleet", label: t("settings.uiModeFleet"), desc: t("settings.uiModeFleetDesc"), icon: Server },
+    { value: "home", label: t("settings.uiModeHome"), desc: t("settings.uiModeHomeDesc"), icon: Home },
+  ];
+  return (
+    <Card style={{ padding: 18, marginBottom: 16 }}>
+      <div style={{ fontWeight: 600 }}>{t("settings.uiMode")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.uiModeDesc")}</div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {opts.map((o) => {
+          const active = mode === o.value;
+          const Icon = o.icon;
+          return (
+            <button
+              key={o.value}
+              onClick={() => { if (!active) set.mutate(o.value); }}
+              disabled={set.isPending}
+              aria-pressed={active}
+              style={{
+                flex: "1 1 200px", textAlign: "left", cursor: active ? "default" : "pointer",
+                display: "flex", gap: 10, alignItems: "flex-start", padding: 12,
+                background: active ? "var(--c-ad)" : "var(--c-el)",
+                border: `1px solid ${active ? "var(--c-a)" : "var(--c-bd)"}`,
+                borderRadius: "var(--r1)", color: "var(--c-tx)", fontFamily: "inherit",
+              }}
+            >
+              <Icon size={18} style={{ flexShrink: 0, marginTop: 1, color: active ? "var(--c-a)" : "var(--c-tx3)" }} />
+              <span>
+                <span style={{ display: "block", fontWeight: 600, fontSize: 13 }}>{o.label}</span>
+                <span style={{ display: "block", fontSize: 12, color: "var(--c-tx3)", marginTop: 2 }}>{o.desc}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
     </Card>
   );

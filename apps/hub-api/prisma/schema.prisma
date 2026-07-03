@@ -27,6 +27,7 @@ model User {
   name         String?
   twoFaSecret  String?
   twoFaEnabled Boolean      @default(false)
+  uiMode       String       @default("fleet") // "fleet" | "home"
   memberships  Membership[]
   apiTokens    ApiToken[]
   savedViews   SavedView[]

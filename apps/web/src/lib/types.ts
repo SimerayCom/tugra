@@ -36,6 +36,7 @@ export interface PublicUser {
   email: string;
   name: string | null;
   twoFaEnabled: boolean;
+  uiMode: "fleet" | "home";
 }
 
 export interface ServerView {
