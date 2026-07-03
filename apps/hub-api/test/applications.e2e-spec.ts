@@ -566,6 +566,49 @@ describe("Applications / deploy (e2e)", () => {
     expect(row.ssl).toHaveProperty("state");
   });
 
+  it("assigns, exposes url for, and clears a domain after creation", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "latecomer", serverId, image: "nginx:alpine" })
+      .expect(201);
+    const appId = appRes.body.id;
+    expect(appRes.body.url).toBeNull();
+
+    // invalid domain rejected
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/domain`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ domain: "http://nope" })
+      .expect(400);
+
+    // assign → url is derived from the domain
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/domain`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ domain: "late.example.com" })
+      .expect(200);
+    let detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.domain).toBe("late.example.com");
+    expect(detail.body.url).toBe("https://late.example.com");
+
+    // clear → url gone
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/domain`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ domain: null })
+      .expect(200);
+    detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.domain).toBeNull();
+    expect(detail.body.url).toBeNull();
+  });
+
   it("streams live build logs over SSE (agent command_log → hub → client)", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

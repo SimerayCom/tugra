@@ -497,6 +497,19 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { forwardAuth: null } }));
   });
 
+  it("sets and clears an app domain for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setDomain("u1", "app1", "app.example.com");
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: "app.example.com" } });
+    await svc.setDomain("u1", "app1", null);
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null } });
+  });
+
   it("rejects moving an app to an environment in another team", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },

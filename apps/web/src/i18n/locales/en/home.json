@@ -13,5 +13,7 @@
   "installing": "Installing…",
   "installed": "Installing {name} — it will appear on your Home.",
   "noServer": "You need a server to install apps.",
-  "connectServer": "Connect a server →"
+  "connectServer": "Connect a server →",
+  "addDomain": "Add domain",
+  "setDomainTitle": "Add a domain"
 }
