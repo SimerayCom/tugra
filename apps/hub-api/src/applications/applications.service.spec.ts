@@ -412,6 +412,48 @@ describe("ApplicationsService", () => {
     expect(create.mock.calls[0][0].data.environmentId).toBe("e1");
   });
 
+  it("remembers the template slug and resolves its logo on the view", async () => {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ ...app, ...data }),
+    );
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "activepieces", {
+      name: "flows",
+      serverId: "s1",
+    });
+    expect(create.mock.calls[0][0].data.templateSlug).toBe("activepieces");
+    expect(view.templateSlug).toBe("activepieces");
+    expect(view.templateLogo).toBeTruthy();
+  });
+
+  it("leaves templateSlug/templateLogo null for a non-template app", async () => {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ ...app, ...data }),
+    );
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).create("u1", {
+      name: "plain",
+      serverId: "s1",
+      image: "nginx:alpine",
+    });
+    expect(view.templateSlug).toBeNull();
+    expect(view.templateLogo).toBeNull();
+  });
+
   it("forbids a non-writer from setting credentials", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },

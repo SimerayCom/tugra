@@ -4,6 +4,7 @@ export const CreateAppSchema = z
   .object({
     name: z.string().min(1),
     serverId: z.string().min(1),
+    templateSlug: z.string().min(1).optional(),
     source: z.enum(["IMAGE", "GIT", "COMPOSE"]).optional(),
     image: z.string().min(1).optional(),
     gitUrl: z.string().min(1).optional(),

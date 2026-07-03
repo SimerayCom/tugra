@@ -17,9 +17,11 @@ describe("launcherTiles", () => {
     expect(launcherTiles(apps).map((t) => t.id)).toEqual(["a", "c", "b", "d"]);
   });
 
-  it("passes url and status through and returns [] for no apps", () => {
-    const [t] = launcherTiles([app({ id: "z", name: "z", url: "https://z.io", status: "FAILED" })]);
-    expect(t).toMatchObject({ id: "z", url: "https://z.io", status: "FAILED" });
+  it("passes url, status and template branding through and returns [] for no apps", () => {
+    const [t] = launcherTiles([
+      app({ id: "z", name: "z", url: "https://z.io", status: "FAILED", templateSlug: "n8n", templateLogo: "n8n" }),
+    ]);
+    expect(t).toMatchObject({ id: "z", url: "https://z.io", status: "FAILED", templateSlug: "n8n", templateLogo: "n8n" });
     expect(launcherTiles([])).toEqual([]);
   });
 });

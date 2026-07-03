@@ -8,6 +8,8 @@ export interface LauncherTile {
   url: string | null; // pre-built public URL, or null when the app has no domain yet
   status: AppStatus;
   source: AppSource;
+  templateSlug: string | null; // catalog slug → brand logo, when installed from a template
+  templateLogo: string | null;
 }
 
 const SOURCE_ICON: Record<AppSource, LucideIcon> = {
@@ -29,6 +31,14 @@ function rank(t: LauncherTile): number {
 
 export function launcherTiles(apps: Application[]): LauncherTile[] {
   return apps
-    .map((a) => ({ id: a.id, name: a.name, url: a.url, status: a.status, source: a.source }))
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      url: a.url,
+      status: a.status,
+      source: a.source,
+      templateSlug: a.templateSlug,
+      templateLogo: a.templateLogo,
+    }))
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
