@@ -1,16 +1,22 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Store } from "lucide-react";
 import { api } from "../../../lib/api";
+import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { EmptyState, Spinner } from "../../../components/ui";
 import { TemplateGrid } from "../../../components/template-grid";
+import { InstallModal } from "../../../components/install-modal";
+import type { Template } from "../../../lib/types";
 
 export default function AppStorePage() {
   const t = useT();
   const router = useRouter();
+  const { user } = useAuth();
+  const [installing, setInstalling] = useState<Template | null>(null);
   const { data: templates = [], isLoading } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
 
   return (
@@ -26,8 +32,16 @@ export default function AppStorePage() {
       ) : templates.length === 0 ? (
         <EmptyState icon={Store} title={t("resources.storeTitle")}>{t("resources.noMatches")}</EmptyState>
       ) : (
-        <TemplateGrid templates={templates} onPick={(tpl) => router.push(`/resources/new?template=${tpl.slug}`)} />
+        <TemplateGrid
+          templates={templates}
+          onPick={(tpl) =>
+            user?.uiMode === "home"
+              ? setInstalling(tpl)
+              : router.push(`/resources/new?template=${tpl.slug}`)
+          }
+        />
       )}
+      {installing && <InstallModal template={installing} onClose={() => setInstalling(null)} />}
     </div>
   );
 }
