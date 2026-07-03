@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { navForMode, uiMode, isUiMode } from "./ui-mode";
 
-const NAV = [
+const NAV: { group: string; items: { key: string; home?: boolean; fleet?: boolean }[] }[] = [
   {
     group: "Monitor",
     items: [
-      { key: "dashboard", home: true },
+      { key: "home", home: true, fleet: false }, // home-only launcher
+      { key: "dashboard" }, // fleet-only command center
       { key: "uptime" },
     ],
   },
@@ -23,18 +24,21 @@ const NAV = [
   },
 ];
 
+const keysOf = (groups: typeof NAV) => groups.flatMap((g) => g.items.map((i) => i.key));
+
 describe("navForMode", () => {
-  it("returns the full nav unchanged in fleet mode", () => {
-    expect(navForMode(NAV, "fleet")).toBe(NAV);
+  it("keeps everything except home-only items in fleet mode", () => {
+    const keys = keysOf(navForMode(NAV, "fleet"));
+    expect(keys).toContain("dashboard");
+    expect(keys).toContain("servers");
+    expect(keys).not.toContain("home"); // home-only, hidden in fleet
   });
 
   it("keeps only home-flagged items in home mode", () => {
-    const out = navForMode(NAV, "home");
-    const keys = out.flatMap((g) => g.items.map((i) => i.key));
-    expect(keys).toEqual(["dashboard", "appStore", "settings"]);
-    // fleet-only items are gone
+    const keys = keysOf(navForMode(NAV, "home"));
+    expect(keys).toEqual(["home", "appStore", "settings"]);
+    expect(keys).not.toContain("dashboard");
     expect(keys).not.toContain("servers");
-    expect(keys).not.toContain("audit");
   });
 
   it("drops groups that become empty in home mode", () => {
