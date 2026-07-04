@@ -1,14 +1,7 @@
 import { z } from "zod";
+import { EVENT_TYPES } from "@tugra/shared";
 
-export const EVENT_TYPES = [
-  "deploy_success",
-  "deploy_failed",
-  "server_offline",
-  "monitor_down",
-  "monitor_up",
-  "ssl_expiring",
-  "token_expiring",
-] as const;
+export { EVENT_TYPES };
 
 export const CreateChannelSchema = z.object({
   name: z.string().min(1),

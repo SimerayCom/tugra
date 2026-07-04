@@ -6,6 +6,22 @@
 export const PROTOCOL_VERSION = 1;
 
 /**
+ * Notification event types — single source of truth for the hub (Zod enum) and
+ * the web UI. Add new events here so backend validation and the UI never drift.
+ */
+export const EVENT_TYPES = [
+  "deploy_success",
+  "deploy_failed",
+  "server_offline",
+  "monitor_down",
+  "monitor_up",
+  "ssl_expiring",
+  "token_expiring",
+  "backup_failed",
+] as const;
+export type EventType = (typeof EVENT_TYPES)[number];
+
+/**
  * Canonical strings the hub signs (ed25519) and the agent verifies. Fixed,
  * delimited format (NOT JSON) so TS and Go produce byte-identical input.
  * The Go agent mirrors these exactly.
