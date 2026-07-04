@@ -74,6 +74,13 @@ describe("backup-script", () => {
       expect(buildBackupScript(spec("MONGO"), "t", s3Dest)).toContain("mongodump --username");
       expect(buildBackupScript(spec("REDIS"), "t", s3Dest)).toContain("redis-cli");
     });
+
+    it("dumps MySQL/MariaDB with consistent-snapshot flags (no table locks)", () => {
+      const my = buildBackupScript(spec("MYSQL"), "t", s3Dest);
+      expect(my).toContain("mysqldump --single-transaction --quick --no-tablespaces");
+      const maria = buildBackupScript(spec("MARIADB"), "t", s3Dest);
+      expect(maria).toContain("mariadb-dump --single-transaction --quick");
+    });
   });
 
   describe("buildRestoreScript", () => {
@@ -132,7 +139,7 @@ describe("backup-script", () => {
 
   describe("extra engines (Dilim 17)", () => {
     it("MariaDB dumps via mariadb-dump and restores via mariadb client", () => {
-      expect(buildBackupScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb-dump -u'tugra'");
+      expect(buildBackupScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb-dump --single-transaction --quick -u'tugra'");
       expect(buildRestoreScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb -u'tugra' 'appdb'");
     });
 
