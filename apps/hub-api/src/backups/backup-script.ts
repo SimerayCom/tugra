@@ -65,9 +65,12 @@ function dumpToStdout(db: DbSpec): string {
     case "POSTGRES":
       return `docker exec -e PGPASSWORD=${shq(password)} ${name} pg_dump -U ${shq(username)} ${shq(database)}`;
     case "MYSQL":
-      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump -u${shq(username)} ${shq(database)}`;
+      // --single-transaction: consistent InnoDB snapshot without locking tables;
+      // --quick: stream rows (don't buffer whole tables in RAM); --no-tablespaces:
+      // avoid needing PROCESS privilege.
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump --single-transaction --quick --no-tablespaces -u${shq(username)} ${shq(database)}`;
     case "MARIADB":
-      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mariadb-dump -u${shq(username)} ${shq(database)}`;
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mariadb-dump --single-transaction --quick -u${shq(username)} ${shq(database)}`;
     case "MONGO":
       return `docker exec ${name} mongodump --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive`;
     case "REDIS":
