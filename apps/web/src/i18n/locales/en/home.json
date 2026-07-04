@@ -15,5 +15,15 @@
   "noServer": "You need a server to install apps.",
   "connectServer": "Connect a server →",
   "addDomain": "Add domain",
-  "setDomainTitle": "Add a domain"
+  "setDomainTitle": "Add a domain",
+  "manage": "Manage",
+  "uninstall": "Uninstall",
+  "uninstallConfirm": "Uninstall {name}? This removes the app and its data.",
+  "actionDone": "Done",
+  "action_open": "Open",
+  "action_start": "Start",
+  "action_restart": "Restart",
+  "action_stop": "Stop",
+  "action_addDomain": "Add domain",
+  "action_uninstall": "Uninstall"
 }

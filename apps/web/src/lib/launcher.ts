@@ -29,6 +29,20 @@ function rank(t: LauncherTile): number {
   return t.status === "RUNNING" ? 0 : 1;
 }
 
+// Per-app management actions offered on a launcher tile, given its state.
+export type TileAction = "open" | "start" | "restart" | "stop" | "addDomain" | "uninstall";
+
+export function tileActions(status: AppStatus, hasUrl: boolean): TileAction[] {
+  const running = status === "RUNNING";
+  const actions: TileAction[] = [];
+  if (hasUrl) actions.push("open");
+  if (!running) actions.push("start"); // deploy = build+run, works from NEW/STOPPED/FAILED
+  if (running) actions.push("restart", "stop");
+  if (!hasUrl) actions.push("addDomain");
+  actions.push("uninstall");
+  return actions;
+}
+
 export function launcherTiles(apps: Application[]): LauncherTile[] {
   return apps
     .map((a) => ({

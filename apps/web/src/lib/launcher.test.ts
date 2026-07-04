@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Box, GitBranch, Layers } from "lucide-react";
-import { launcherTiles, launcherIcon } from "./launcher";
+import { launcherTiles, launcherIcon, tileActions } from "./launcher";
 import type { Application } from "./types";
 
 const app = (over: Partial<Application>): Application =>
@@ -23,6 +23,20 @@ describe("launcherTiles", () => {
     ]);
     expect(t).toMatchObject({ id: "z", url: "https://z.io", status: "FAILED", templateSlug: "n8n", templateLogo: "n8n" });
     expect(launcherTiles([])).toEqual([]);
+  });
+});
+
+describe("tileActions", () => {
+  it("offers open/restart/stop/uninstall for a running app with a url", () => {
+    expect(tileActions("RUNNING", true)).toEqual(["open", "restart", "stop", "uninstall"]);
+  });
+
+  it("offers start/addDomain/uninstall for a fresh domainless app", () => {
+    expect(tileActions("NEW", false)).toEqual(["start", "addDomain", "uninstall"]);
+  });
+
+  it("offers open/start/uninstall for a stopped app that has a domain", () => {
+    expect(tileActions("STOPPED", true)).toEqual(["open", "start", "uninstall"]);
   });
 });
 
