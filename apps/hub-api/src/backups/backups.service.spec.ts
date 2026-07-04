@@ -137,6 +137,37 @@ describe("BackupsService.setScheduleBulk (fleet)", () => {
   });
 });
 
+describe("BackupsService.restore / removeBackup — use the backup's own destination", () => {
+  // The DB's CURRENT destination differs from the one this backup was taken to.
+  const backup = { id: "bk", databaseId: "db1", status: "SUCCESS", filename: "old.sql", destinationId: "oldDest" };
+  const dbNow = { ...db, backupDestinationId: "newDest" };
+
+  function setup() {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbNow) },
+      backup: { findFirst: jest.fn().mockResolvedValue(backup), delete: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const destinationSpecById = jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } });
+    const runner = { toSpec: jest.fn().mockReturnValue({ engine: "POSTGRES", credentials: { username: "u", password: "p", database: "d" } }), destinationSpecById } as unknown as BackupRunnerService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: "", exitCode: 0 }) } as unknown as AgentWsServer;
+    return { svc: make(prisma, access, runner, {}, agentWs), destinationSpecById };
+  }
+
+  it("restore() reads the backup row's destinationId, not the DB's current one", async () => {
+    const { svc, destinationSpecById } = setup();
+    await svc.restore("u1", "db1", "bk");
+    expect(destinationSpecById).toHaveBeenCalledWith("oldDest");
+    expect(destinationSpecById).not.toHaveBeenCalledWith("newDest");
+  });
+
+  it("removeBackup() deletes from the backup row's own destination", async () => {
+    const { svc, destinationSpecById } = setup();
+    await svc.removeBackup("u1", "db1", "bk");
+    expect(destinationSpecById).toHaveBeenCalledWith("oldDest");
+  });
+});
+
 describe("BackupsService.restoreTo (cross-resource)", () => {
   const dbA = { id: "A", teamId: "t1", serverId: "s1", engine: "POSTGRES", credentials: "c" };
   const dbB = { id: "B", teamId: "t1", serverId: "s1", engine: "POSTGRES", credentials: "c" };

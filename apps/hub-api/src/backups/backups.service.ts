@@ -62,7 +62,9 @@ export class BackupsService {
     const db = await this.requireWrite(userId, dbId);
     const backup = await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: dbId } });
     if (!backup) throw new NotFoundException("backup not found");
-    const dest = await this.runner.destinationSpec(db);
+    // Read from the backup's OWN destination — the DB's current destination may
+    // have changed since this backup was taken.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
     await this.agentWs.sendCommand(
       db.serverId,
       buildRestoreScript(this.runner.toSpec(db), backup.filename, dest),
@@ -123,7 +125,8 @@ export class BackupsService {
     const db = await this.requireWrite(userId, dbId);
     const backup = await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: dbId } });
     if (!backup) throw new NotFoundException("backup not found");
-    const dest = await this.runner.destinationSpec(db);
+    // Delete from the backup's OWN destination, not the DB's current one.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
     await this.agentWs
       .sendCommand(db.serverId, buildDeleteBackupScript(dbId, backup.filename, dest), "backup")
       .catch(() => undefined);
