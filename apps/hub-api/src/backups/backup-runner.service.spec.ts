@@ -48,3 +48,33 @@ describe("BackupRunnerService backup-failure notification", () => {
     expect(fireForEvent).not.toHaveBeenCalled();
   });
 });
+
+describe("BackupRunnerService.prune — per-backup destination", () => {
+  it("deletes each stale backup from its OWN destination", async () => {
+    const rows = [
+      { id: "keep", filename: "k", destinationId: "d0" },
+      { id: "s1", filename: "f1", destinationId: "dA" },
+      { id: "s2", filename: "f2", destinationId: "dB" },
+    ];
+    const del = jest.fn().mockResolvedValue({});
+    const prisma = {
+      backup: { findMany: jest.fn().mockResolvedValue(rows), delete: del },
+      backupDestination: { findUnique: jest.fn().mockResolvedValue(null) }, // → LOCAL
+    } as unknown as PrismaService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const svc = new BackupRunnerService(
+      prisma,
+      { log: jest.fn() } as unknown as AuditService,
+      {} as unknown as CryptoService,
+      { sendCommand } as unknown as AgentWsServer,
+      {} as unknown as NotificationsService,
+    );
+    const spy = jest.spyOn(svc, "destinationSpecById");
+    // retention 1 → keep the newest, delete the two older ones from their own dests
+    await svc.prune({ id: "db1", serverId: "s1", backupRetention: 1 } as never);
+    expect(spy).toHaveBeenCalledWith("dA");
+    expect(spy).toHaveBeenCalledWith("dB");
+    expect(spy).not.toHaveBeenCalledWith("d0");
+    expect(del).toHaveBeenCalledTimes(2);
+  });
+});

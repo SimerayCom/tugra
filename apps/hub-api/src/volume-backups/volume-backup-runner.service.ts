@@ -29,8 +29,12 @@ export class VolumeBackupRunnerService {
   }
 
   async destinationSpec(app: Application): Promise<DestinationSpec> {
-    if (!app.volumeBackupDestinationId) return LOCAL_DEST;
-    const d = await this.prisma.backupDestination.findUnique({ where: { id: app.volumeBackupDestinationId } });
+    return this.destinationSpecById(app.volumeBackupDestinationId);
+  }
+
+  async destinationSpecById(destinationId: string | null): Promise<DestinationSpec> {
+    if (!destinationId) return LOCAL_DEST;
+    const d = await this.prisma.backupDestination.findUnique({ where: { id: destinationId } });
     if (!d || d.type !== "S3") return LOCAL_DEST;
     return {
       type: "S3",
@@ -89,20 +93,21 @@ export class VolumeBackupRunnerService {
       out.push((await this.prisma.volumeBackup.findUnique({ where: { id: row.id } }))!);
     }
 
-    await this.prune(app, dest);
+    await this.prune(app);
     await this.audit.log({ actor, action: "app.volume_backup", target: app.id });
     return out;
   }
 
   /** Keep the newest `volumeBackupRetention` SUCCESS backups per volume. */
-  async prune(app: Application, dest?: DestinationSpec): Promise<void> {
-    const spec = dest ?? (await this.destinationSpec(app));
+  async prune(app: Application): Promise<void> {
     for (const v of this.volumesOf(app)) {
       const all = await this.prisma.volumeBackup.findMany({
         where: { appId: app.id, volumeName: v.name, status: "SUCCESS" },
         orderBy: { createdAt: "desc" },
       });
       for (const b of all.slice(app.volumeBackupRetention)) {
+        // Each stale backup may live in its own destination — delete from it.
+        const spec = await this.destinationSpecById(b.destinationId);
         await this.agentWs
           .sendCommand(app.serverId, buildVolumeDeleteScript(app.id, v.name, b.filename, spec), "backup")
           .catch(() => undefined);

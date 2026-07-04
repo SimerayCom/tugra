@@ -129,19 +129,20 @@ export class BackupRunnerService {
         .fireForEvent(db.teamId, "backup_failed", `Backup failed for "${db.name}"`)
         .catch(() => undefined);
     }
-    await this.prune(db, dest);
+    await this.prune(db);
     return this.prisma.backup.findUnique({ where: { id: backup.id } }) as Promise<Backup>;
   }
 
   /** Keep the newest `backupRetention` successful backups; delete older files + rows. */
-  async prune(db: Database, dest?: DestinationSpec): Promise<void> {
-    const spec = dest ?? (await this.destinationSpec(db));
+  async prune(db: Database): Promise<void> {
     const all = await this.prisma.backup.findMany({
       where: { databaseId: db.id, status: "SUCCESS" },
       orderBy: { createdAt: "desc" },
     });
     const stale = all.slice(db.backupRetention);
     for (const b of stale) {
+      // Each stale backup may live in a different destination — delete from its own.
+      const spec = await this.destinationSpecById(b.destinationId);
       await this.agentWs
         .sendCommand(db.serverId, buildDeleteBackupScript(db.id, b.filename, spec), "backup")
         .catch(() => undefined);

@@ -54,7 +54,8 @@ export class VolumeBackupsService {
     const app = await this.requireWrite(userId, appId);
     const backup = await this.prisma.volumeBackup.findFirst({ where: { id: backupId, appId } });
     if (!backup) throw new NotFoundException("backup not found");
-    const dest = await this.runner.destinationSpec(app);
+    // Read from the backup's OWN destination, not the app's current one.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
     await this.agentWs.sendCommand(
       app.serverId,
       buildVolumeRestoreScript(app.id, backup.volumeName, appVolumeName(app, backup.volumeName), backup.filename, dest),
@@ -68,7 +69,8 @@ export class VolumeBackupsService {
     const app = await this.requireWrite(userId, appId);
     const backup = await this.prisma.volumeBackup.findFirst({ where: { id: backupId, appId } });
     if (!backup) throw new NotFoundException("backup not found");
-    const dest = await this.runner.destinationSpec(app);
+    // Delete from the backup's OWN destination, not the app's current one.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
     await this.agentWs
       .sendCommand(app.serverId, buildVolumeDeleteScript(app.id, backup.volumeName, backup.filename, dest), "backup")
       .catch(() => undefined);
