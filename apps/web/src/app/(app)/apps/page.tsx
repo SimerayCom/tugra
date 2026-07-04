@@ -3,16 +3,15 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Box, GitBranch, Layers } from "lucide-react";
+import { Box } from "lucide-react";
 import { api } from "../../../lib/api";
 import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner, StatusPill } from "../../../components/ui";
+import { AppLogo } from "../../../components/app-logo";
 import { TagChips, TagFilter } from "../../../components/tags";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
-
-const SOURCE_ICON = { IMAGE: Box, GIT: GitBranch, COMPOSE: Layers } as const;
 
 export default function AppsPage() {
   const t = useT();
@@ -47,11 +46,10 @@ export default function AppsPage() {
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
           <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
             {visibleApps.map((a) => {
-              const Icon = SOURCE_ICON[a.source] ?? Box;
               return (
                 <Link key={a.id} href={`/apps/${a.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
                   <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon size={18} color="var(--c-a)" />
+                    <AppLogo templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>

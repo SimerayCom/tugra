@@ -9,6 +9,7 @@ import { StatusPill } from "./ui";
 export function PageHeader({
   breadcrumb,
   title,
+  icon,
   status,
   badge,
   actions,
@@ -16,6 +17,7 @@ export function PageHeader({
 }: {
   breadcrumb?: { label: string; href?: string }[];
   title: ReactNode;
+  icon?: ReactNode;
   status?: { label: string; color: string };
   badge?: ReactNode;
   actions?: ReactNode;
@@ -43,6 +45,11 @@ export function PageHeader({
         </nav>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        {icon && (
+          <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,0.06)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            {icon}
+          </span>
+        )}
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{title}</h1>
         {status && <StatusPill label={status.label} color={status.color} />}
         {badge}

@@ -7,12 +7,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Boxes, ExternalLink, Plus } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
-import { launcherTiles, launcherIcon, type LauncherTile } from "../../../lib/launcher";
+import { launcherTiles, type LauncherTile } from "../../../lib/launcher";
 import { appColor } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
 import { SetDomainModal } from "../../../components/set-domain-modal";
-import { TemplateLogo } from "../../../lib/template-icons";
+import { AppLogo } from "../../../components/app-logo";
 
 const grid: React.CSSProperties = {
   display: "grid",
@@ -62,16 +62,11 @@ export default function HomePage() {
 }
 
 function Tile({ tile, openLabel, addDomain, onAddDomain }: { tile: LauncherTile; openLabel: string; addDomain: string; onAddDomain: () => void }) {
-  const Icon = launcherIcon(tile.source);
   const inner = (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {tile.templateSlug ? (
-            <TemplateLogo logo={tile.templateLogo ?? undefined} slug={tile.templateSlug} name={tile.name} size={26} />
-          ) : (
-            <Icon size={24} color="var(--c-a)" />
-          )}
+          <AppLogo templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={26} />
         </span>
         <span title={tile.status} style={{ width: 9, height: 9, borderRadius: "50%", background: appColor(tile.status), flexShrink: 0 }} />
       </div>
