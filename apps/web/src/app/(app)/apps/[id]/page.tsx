@@ -24,6 +24,7 @@ import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
+import { AppLogo } from "../../../../components/app-logo";
 import { Tabs } from "../../../../components/tabs-nav";
 
 export default function AppDetailPage() {
@@ -103,6 +104,7 @@ export default function AppDetailPage() {
       <PageHeader
         breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
+        icon={<AppLogo templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
         status={{ label: appData.status, color: appColor(appData.status) }}
         badge={appData.isPreview ? <Badge tone="lapis">{t("apps.previewBadge", { n: appData.prNumber ?? "?" })}</Badge> : undefined}
         actions={
