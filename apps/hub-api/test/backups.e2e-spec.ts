@@ -116,6 +116,15 @@ describe("Database backups (e2e)", () => {
     expect(commands.join("\n")).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
   });
 
+  it("records the restore attempt in restore history (SUCCESS)", async () => {
+    const hist = await request(app.getHttpServer())
+      .get(`/databases/${dbId}/restores`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(hist.body.length).toBeGreaterThanOrEqual(1);
+    expect(hist.body[0]).toMatchObject({ kind: "RESTORE", status: "SUCCESS", exitCode: 0 });
+  });
+
   it("imports an external dump from a URL (curl → restore)", async () => {
     commands.length = 0;
     await request(app.getHttpServer())

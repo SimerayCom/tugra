@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
-import { backupColor, formatSize } from "../../../../lib/backups";
+import { backupColor, formatSize, restoreColor } from "../../../../lib/backups";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
@@ -46,9 +46,15 @@ export default function DatabaseDetailPage() {
     queryKey: ["destinations"],
     queryFn: () => api.listDestinations(),
   });
+  const { data: restores = [] } = useQuery({
+    queryKey: ["restores", id],
+    queryFn: () => api.listRestores(id),
+    enabled: !!db?.canWrite, // writer-only endpoint (errorTail may hold output)
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["database", id] });
   const invalidateBackups = () => qc.invalidateQueries({ queryKey: ["backups", id] });
+  const invalidateRestores = () => qc.invalidateQueries({ queryKey: ["restores", id] });
   const provision = useMutation({ mutationFn: () => api.provisionDatabase(id), onSuccess: invalidate });
   const stop = useMutation({ mutationFn: () => api.stopDatabase(id), onSuccess: invalidate });
   const [renameOpen, setRenameOpen] = useState(false);
@@ -62,14 +68,21 @@ export default function DatabaseDetailPage() {
     onSuccess: () => router.replace("/databases"),
   });
   const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups });
-  const restore = useMutation({ mutationFn: (bid: string) => api.restoreBackup(id, bid), onSuccess: () => toast(t("databases.restoreStarted"), "success") });
+  const restore = useMutation({
+    mutationFn: (bid: string) => api.restoreBackup(id, bid),
+    onSuccess: () => toast(t("databases.restoreSucceeded"), "success"),
+    onError: () => toast(t("databases.restoreFailed"), "error"),
+    onSettled: invalidateRestores,
+  });
   const delBackup = useMutation({ mutationFn: (bid: string) => api.deleteBackup(id, bid), onSuccess: invalidateBackups });
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
   const [restoreToBackup, setRestoreToBackup] = useState<string | null>(null);
   const [restoreTarget, setRestoreTarget] = useState("");
   const restoreToMut = useMutation({
     mutationFn: ({ backupId, targetId }: { backupId: string; targetId: string }) => api.restoreBackupTo(id, backupId, targetId),
-    onSuccess: () => { setRestoreToBackup(null); setRestoreTarget(""); toast(t("databases.restoreStarted"), "success"); },
+    onSuccess: () => { setRestoreToBackup(null); setRestoreTarget(""); toast(t("databases.restoreSucceeded"), "success"); },
+    onError: () => toast(t("databases.restoreFailed"), "error"),
+    onSettled: invalidateRestores,
   });
   const tags = useMutation({ mutationFn: (next: string[]) => api.setDatabaseTags(id, next), onSuccess: invalidate });
 
@@ -81,7 +94,9 @@ export default function DatabaseDetailPage() {
   const [importKey, setImportKey] = useState("");
   const importMut = useMutation({
     mutationFn: () => api.importDatabaseFromUrl(id, { url: importUrl.trim(), gzip: importGzip, encrypted: !!importKey.trim(), encryptionKey: importKey.trim() || undefined }),
-    onSuccess: () => { setImportUrl(""); setImportKey(""); invalidate(); },
+    onSuccess: () => { setImportUrl(""); setImportKey(""); toast(t("databases.restoreSucceeded"), "success"); invalidate(); },
+    onError: () => toast(t("databases.restoreFailed"), "error"),
+    onSettled: invalidateRestores,
   });
   const [destinationId, setDestinationId] = useState("");
   useEffect(() => {
@@ -284,6 +299,26 @@ export default function DatabaseDetailPage() {
               </Btn>
             </div>
           </div>
+
+          {restores.length > 0 && (
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--c-bd)" }}>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("databases.restoreHistory")}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {restores.map((r) => (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: restoreColor(r.status) }}>{r.status}</span>
+                    <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t(`databases.restoreKind_${r.kind}`)}</span>
+                    <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{new Date(r.createdAt).toLocaleString()}</span>
+                    {r.status === "FAILED" && r.errorTail && (
+                      <span className="mono" title={r.errorTail} style={{ fontSize: 11, color: "var(--c-r)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.errorTail.trim().split("\n").pop()}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       )}
     </div>

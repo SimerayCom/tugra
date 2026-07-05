@@ -532,6 +532,7 @@ model Database {
   backupDestinationId String?
   tags        String[] @default([])
   backups     Backup[]
+  restores    Restore[]
   createdAt   DateTime @default(now())
 
   @@index([teamId])
@@ -555,6 +556,37 @@ model BackupDestination {
   createdAt         DateTime @default(now())
 
   @@index([teamId])
+}
+
+enum RestoreKind {
+  RESTORE
+  RESTORE_TO
+  IMPORT_URL
+}
+
+enum RestoreStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+// A restore attempt + its outcome (so a failed restore is recorded, surfaced,
+// and alerted on — not silently reported as success).
+model Restore {
+  id               String        @id @default(cuid())
+  database         Database      @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  databaseId       String        // the database restored INTO
+  backupId         String?       // source backup (may be deleted later → no FK)
+  sourceDatabaseId String?       // source DB for a cross-resource restore-to
+  kind             RestoreKind
+  status           RestoreStatus @default(RUNNING)
+  exitCode         Int?
+  errorTail        String?       // last ~2KB of output; writer-only exposure
+  createdBy        String
+  createdAt        DateTime      @default(now())
+  completedAt      DateTime?
+
+  @@index([databaseId, createdAt])
 }
 
 model Backup {

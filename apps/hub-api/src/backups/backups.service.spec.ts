@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { NotificationsService } from "../notifications/notifications.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 
@@ -17,6 +18,7 @@ function make(
   runner: Partial<BackupRunnerService> = {},
   scheduler: Partial<BackupSchedulerService> = {},
   agentWs: Partial<AgentWsServer> = {},
+  notifications: Partial<NotificationsService> = { fireForEvent: jest.fn().mockResolvedValue(undefined) },
 ) {
   return new BackupsService(
     prisma as PrismaService,
@@ -25,6 +27,7 @@ function make(
     agentWs as AgentWsServer,
     runner as BackupRunnerService,
     scheduler as BackupSchedulerService,
+    notifications as NotificationsService,
   );
 }
 
@@ -71,7 +74,10 @@ describe("BackupsService", () => {
   });
 
   it("imports from a URL by sending a curl restore command to the agent", async () => {
-    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db) },
+      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const runner = {
       toSpec: jest.fn().mockReturnValue({ id: "db1", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "tugra", password: "pw", database: "appdb" } }),
@@ -146,6 +152,7 @@ describe("BackupsService.restore / removeBackup — use the backup's own destina
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(dbNow) },
       backup: { findFirst: jest.fn().mockResolvedValue(backup), delete: jest.fn().mockResolvedValue({}) },
+      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const destinationSpecById = jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } });
@@ -168,6 +175,66 @@ describe("BackupsService.restore / removeBackup — use the backup's own destina
   });
 });
 
+describe("BackupsService.restore — result verification + history", () => {
+  const backup = { id: "bk", databaseId: "db1", status: "SUCCESS", filename: "t.dump.gz", destinationId: null };
+  const dbRow = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", backupDestinationId: null };
+
+  function setup(sendResult: { output: string; exitCode: number } | Error) {
+    const create = jest.fn().mockResolvedValue({ id: "r1" });
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbRow) },
+      backup: { findFirst: jest.fn().mockResolvedValue(backup) },
+      restore: { create, update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const runner = {
+      toSpec: jest.fn().mockReturnValue({ engine: "POSTGRES", credentials: { username: "u", password: "p", database: "d" } }),
+      destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }),
+    } as unknown as BackupRunnerService;
+    const sendCommand = jest.fn(sendResult instanceof Error ? () => Promise.reject(sendResult) : () => Promise.resolve(sendResult));
+    const agentWs = { sendCommand } as unknown as AgentWsServer;
+    const fireForEvent = jest.fn().mockResolvedValue(undefined);
+    const svc = make(prisma, access, runner, {}, agentWs, { fireForEvent });
+    return { svc, create, update, fireForEvent };
+  }
+
+  it("records a RUNNING attempt then SUCCESS when the command exits 0", async () => {
+    const { svc, create, update, fireForEvent } = setup({ output: "ok", exitCode: 0 });
+    await svc.restore("u1", "db1", "bk");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ kind: "RESTORE", status: "RUNNING", backupId: "bk", createdBy: "u1" }) }));
+    expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "SUCCESS", exitCode: 0 }) });
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("records FAILED, fires backup_restore_failed and throws on a non-zero exit", async () => {
+    const { svc, update, fireForEvent } = setup({ output: "ERROR: boom", exitCode: 1 });
+    await expect(svc.restore("u1", "db1", "bk")).rejects.toThrow();
+    expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "FAILED", exitCode: 1, errorTail: expect.stringContaining("boom") }) });
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.stringContaining("shop"));
+  });
+
+  it("records FAILED and throws when the agent is offline (sendCommand rejects)", async () => {
+    const { svc, update, fireForEvent } = setup(new Error("agent offline"));
+    await expect(svc.restore("u1", "db1", "bk")).rejects.toThrow();
+    expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "FAILED", exitCode: null }) });
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.any(String));
+  });
+
+  it("listRestores requires write and returns the history view", async () => {
+    const rows = [{ id: "r1", kind: "RESTORE", status: "FAILED", exitCode: 1, errorTail: "boom", backupId: "bk", createdAt: new Date(), completedAt: new Date() }];
+    const requireRole = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbRow) },
+      restore: { findMany: jest.fn().mockResolvedValue(rows) },
+    } as unknown as PrismaService;
+    const svc = make(prisma, { requireRole } as unknown as TeamAccessService);
+    const out = await svc.listRestores("u1", "db1");
+    expect(requireRole).toHaveBeenCalled();
+    expect(out[0]).toMatchObject({ id: "r1", status: "FAILED", exitCode: 1 });
+  });
+});
+
 describe("BackupsService.restoreTo (cross-resource)", () => {
   const dbA = { id: "A", teamId: "t1", serverId: "s1", engine: "POSTGRES", credentials: "c" };
   const dbB = { id: "B", teamId: "t1", serverId: "s1", engine: "POSTGRES", credentials: "c" };
@@ -185,6 +252,7 @@ describe("BackupsService.restoreTo (cross-resource)", () => {
     const prisma = {
       database: { findUnique: jest.fn(({ where }: { where: { id: string } }) => Promise.resolve(where.id === "A" ? source : target)) },
       backup: { findFirst: jest.fn().mockResolvedValue("backup" in overrides ? overrides.backup : okBackup) },
+      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const sendCommand = jest.fn().mockResolvedValue({ output: "", exitCode: 0 });

@@ -5,6 +5,7 @@ import {
   buildDeleteBackupScript,
   buildImportScript,
   buildRestoreScript,
+  scrubRestoreOutput,
 } from "./backup-script";
 import { LOCAL_DEST, type DestinationSpec } from "./destination";
 import { resolveImage, enginePort, type DbEngine, type DbSpec } from "../databases/database-script";
@@ -145,6 +146,32 @@ describe("backup-script", () => {
   describe("backupPath", () => {
     it("builds a per-db path", () => {
       expect(backupPath("db1", "t.sql.gz")).toBe("/etc/tugra/backups/db1/t.sql.gz");
+    });
+  });
+
+  describe("scrubRestoreOutput", () => {
+    it("redacts customer row data from restore errors but keeps the diagnostic scaffolding", () => {
+      const out = [
+        'pg_restore: error: could not execute query',
+        'ERROR:  duplicate key value violates unique constraint "users_email_key"',
+        'DETAIL:  Key (email)=(alice@example.com) already exists.',
+        'CONTEXT:  COPY users, line 42: "1,alice@example.com,$2b$10$secrethash"',
+        "STATEMENT:  INSERT INTO users VALUES ('alice@example.com','secret')",
+      ].join("\n");
+      const s = scrubRestoreOutput(out);
+      // sensitive values gone
+      expect(s).not.toContain("alice@example.com");
+      expect(s).not.toContain("secrethash");
+      expect(s).not.toContain("secret')");
+      expect(s).toContain("<redacted>");
+      // diagnostic scaffolding kept
+      expect(s).toContain('unique constraint "users_email_key"');
+      expect(s).toContain("duplicate key value");
+    });
+
+    it("masks a MySQL Duplicate entry value and caps to the last 2KB", () => {
+      expect(scrubRestoreOutput("Duplicate entry 'bob@x.io' for key 'PRIMARY'")).toContain("Duplicate entry '<redacted>' for key 'PRIMARY'");
+      expect(scrubRestoreOutput("x".repeat(5000)).length).toBe(2000);
     });
   });
 

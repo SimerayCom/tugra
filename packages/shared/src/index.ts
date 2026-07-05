@@ -18,6 +18,7 @@ export const EVENT_TYPES = [
   "ssl_expiring",
   "token_expiring",
   "backup_failed",
+  "backup_restore_failed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
