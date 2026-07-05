@@ -86,7 +86,7 @@ describe("Database backups (e2e)", () => {
       .expect(201);
     expect(res.body.status).toBe("SUCCESS");
     expect(res.body.sizeBytes).toBe("20480");
-    expect(res.body.filename).toMatch(/\.sql\.gz$/);
+    expect(res.body.filename).toMatch(/\.dump\.gz$/);
     await sleep(50);
 
     const sent = commands.join("\n");
@@ -100,7 +100,7 @@ describe("Database backups (e2e)", () => {
     expect(list.body.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("restores from a backup by sending a psql restore command to the agent", async () => {
+  it("restores a custom-format backup via pg_restore --clean (idempotent)", async () => {
     const list = await request(app.getHttpServer())
       .get(`/databases/${dbId}/backups`)
       .set("Authorization", `Bearer ${token}`)
@@ -113,7 +113,7 @@ describe("Database backups (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     await sleep(50);
-    expect(commands.join("\n")).toContain("psql");
+    expect(commands.join("\n")).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
   });
 
   it("imports an external dump from a URL (curl → restore)", async () => {

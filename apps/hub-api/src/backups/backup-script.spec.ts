@@ -30,8 +30,8 @@ const s3Encrypted: DestinationSpec = { ...s3Dest, encryption: { enabled: true, k
 describe("backup-script", () => {
   describe("backupFilename", () => {
     it("adds .gz, and .gpg when the destination encrypts", () => {
-      expect(backupFilename("POSTGRES", "2026-06-16T10-00-00", LOCAL_DEST)).toBe("2026-06-16T10-00-00.sql.gz");
-      expect(backupFilename("POSTGRES", "t", s3Encrypted)).toBe("t.sql.gz.gpg");
+      expect(backupFilename("POSTGRES", "2026-06-16T10-00-00", LOCAL_DEST)).toBe("2026-06-16T10-00-00.dump.gz");
+      expect(backupFilename("POSTGRES", "t", s3Encrypted)).toBe("t.dump.gz.gpg");
       expect(backupFilename("MONGO", "t", LOCAL_DEST)).toBe("t.archive.gz");
       expect(backupFilename("REDIS", "t", LOCAL_DEST)).toBe("t.rdb.gz");
     });
@@ -39,12 +39,12 @@ describe("backup-script", () => {
 
   describe("buildBackupScript — LOCAL (regression)", () => {
     it("dumps to a file on disk and prints the byte size", () => {
-      const s = buildBackupScript(spec("POSTGRES"), "t.sql.gz", LOCAL_DEST);
+      const s = buildBackupScript(spec("POSTGRES"), "t.dump.gz", LOCAL_DEST);
       expect(s).toContain("mkdir -p /etc/tugra/backups/db1");
-      expect(s).toContain("pg_dump -U 'tugra' 'appdb'");
+      expect(s).toContain("pg_dump -Fc -Z0 --no-owner --no-acl -U 'tugra' 'appdb'");
       expect(s).toContain("| gzip");
-      expect(s).toContain("> /etc/tugra/backups/db1/t.sql.gz");
-      expect(s).toContain("stat -c %s /etc/tugra/backups/db1/t.sql.gz");
+      expect(s).toContain("> /etc/tugra/backups/db1/t.dump.gz");
+      expect(s).toContain("stat -c %s /etc/tugra/backups/db1/t.dump.gz");
       expect(s).not.toContain("mc pipe");
       expect(s).not.toContain("gpg");
     });
@@ -52,16 +52,16 @@ describe("backup-script", () => {
 
   describe("buildBackupScript — S3", () => {
     it("streams the dump to S3 via mc pipe with creds in MC_HOST", () => {
-      const s = buildBackupScript(spec("POSTGRES"), "t.sql.gz", s3Dest);
+      const s = buildBackupScript(spec("POSTGRES"), "t.dump.gz", s3Dest);
       expect(s).toContain("command -v mc"); // install-on-demand
       expect(s).toContain("MC_HOST_tdest=");
-      expect(s).toContain("mc pipe tdest/my-bucket/tugra/db1/t.sql.gz");
-      expect(s).toContain("mc stat --json tdest/my-bucket/tugra/db1/t.sql.gz");
+      expect(s).toContain("mc pipe tdest/my-bucket/tugra/db1/t.dump.gz");
+      expect(s).toContain("mc stat --json tdest/my-bucket/tugra/db1/t.dump.gz");
       expect(s).not.toContain("gpg"); // encryption off
     });
 
     it("inserts a gpg AES-256 step when the destination encrypts", () => {
-      const s = buildBackupScript(spec("POSTGRES"), "t.sql.gz.gpg", s3Encrypted);
+      const s = buildBackupScript(spec("POSTGRES"), "t.dump.gz.gpg", s3Encrypted);
       // pipeline is wrapped in `sh -c '...'`, so inner quotes are escaped — just
       // assert the gpg symmetric AES-256 step and the passphrase are present.
       expect(s).toContain("gpg --batch --yes --passphrase");
@@ -84,19 +84,27 @@ describe("backup-script", () => {
   });
 
   describe("buildRestoreScript", () => {
-    it("LOCAL: cat file | gunzip | psql", () => {
-      const s = buildRestoreScript(spec("POSTGRES"), "t.sql.gz", LOCAL_DEST);
-      expect(s).toContain("cat /etc/tugra/backups/db1/t.sql.gz");
+    it("new custom-format .dump: cat | gunzip | pg_restore --clean --if-exists (idempotent)", () => {
+      const s = buildRestoreScript(spec("POSTGRES"), "t.dump.gz", LOCAL_DEST);
+      expect(s).toContain("cat /etc/tugra/backups/db1/t.dump.gz");
       expect(s).toContain("gunzip");
-      expect(s).toContain("docker exec -i -e PGPASSWORD='pw' tugra_db_db1 psql -U 'tugra' -d 'appdb'");
+      expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction -U 'tugra' -d 'appdb'");
+      expect(s).not.toContain(" psql "); // custom format never uses psql
     });
 
-    it("S3 + encrypted: mc cat | gpg -d | gunzip | psql", () => {
-      const s = buildRestoreScript(spec("POSTGRES"), "t.sql.gz.gpg", s3Encrypted);
-      expect(s).toContain("mc cat tdest/my-bucket/tugra/db1/t.sql.gz.gpg");
+    it("legacy plain .sql backups still restore via psql, now atomic + fail-loud (back-compat)", () => {
+      const s = buildRestoreScript(spec("POSTGRES"), "t.sql.gz", LOCAL_DEST);
+      expect(s).toContain("cat /etc/tugra/backups/db1/t.sql.gz");
+      expect(s).toContain("psql -v ON_ERROR_STOP=1 --single-transaction -U 'tugra' -d 'appdb'");
+      expect(s).not.toContain("pg_restore");
+    });
+
+    it("S3 + encrypted custom restore: mc cat | gpg -d | gunzip | pg_restore", () => {
+      const s = buildRestoreScript(spec("POSTGRES"), "t.dump.gz.gpg", s3Encrypted);
+      expect(s).toContain("mc cat tdest/my-bucket/tugra/db1/t.dump.gz.gpg");
       expect(s).toContain("--decrypt");
       expect(s).toContain("gunzip");
-      expect(s).toContain("psql -U 'tugra'");
+      expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
     });
 
     it("Redis restore replaces the rdb file and restarts", () => {
@@ -111,7 +119,10 @@ describe("backup-script", () => {
       const s = buildImportScript(spec("POSTGRES"), "https://x/d.sql.gz", { encrypted: false, key: "", gzip: true });
       expect(s).toContain("curl -fsSL 'https://x/d.sql.gz'");
       expect(s).toContain("gunzip");
-      expect(s).toContain("docker exec -i -e PGPASSWORD='pw' tugra_db_db1 psql -U 'tugra' -d 'appdb'");
+      // external dump → fail-loud psql (ON_ERROR_STOP) but NOT --single-transaction:
+      // the dump may carry its own BEGIN/COMMIT or a CREATE DATABASE.
+      expect(s).toContain("psql -v ON_ERROR_STOP=1 -U 'tugra' -d 'appdb'");
+      expect(s).not.toContain("--single-transaction");
       expect(s).not.toContain("--decrypt");
     });
 

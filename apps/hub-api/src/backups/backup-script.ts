@@ -24,7 +24,7 @@ import {
 export const BACKUP_DIR = "/etc/tugra/backups";
 
 const EXT: Record<DbEngine, string> = {
-  POSTGRES: "sql",
+  POSTGRES: "dump", // pg_dump custom format (-Fc) → restore via pg_restore --clean
   MYSQL: "sql",
   MARIADB: "sql",
   REDIS: "rdb",
@@ -63,7 +63,10 @@ function dumpToStdout(db: DbSpec): string {
   const { username, password, database } = db.credentials;
   switch (db.engine) {
     case "POSTGRES":
-      return `docker exec -e PGPASSWORD=${shq(password)} ${name} pg_dump -U ${shq(username)} ${shq(database)}`;
+      // -Fc custom format (enables pg_restore --clean/--if-exists on restore);
+      // -Z0 leave compression to the shared `| gzip` stage; --no-owner/--no-acl
+      // for portable restore into a differently-owned database.
+      return `docker exec -e PGPASSWORD=${shq(password)} ${name} pg_dump -Fc -Z0 --no-owner --no-acl -U ${shq(username)} ${shq(database)}`;
     case "MYSQL":
       // --single-transaction: consistent InnoDB snapshot without locking tables;
       // --quick: stream rows (don't buffer whole tables in RAM); --no-tablespaces:
@@ -124,7 +127,11 @@ export function buildRestoreScript(db: DbSpec, filename: string, dest: Destinati
     dest.type === "S3" && dest.s3
       ? `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, db.id, filename)}`
       : `cat ${backupPath(db.id, filename)}`;
-  return restorePipeline(db, source, dest, true);
+  // Postgres backups written before the custom-format switch are plain SQL
+  // (`.sql.gz`); newer ones are `.dump.gz`. Both are OUR dumps of a single DB,
+  // so the plain path can safely run atomically (--single-transaction).
+  const pgMode: PgMode = filename.includes(".dump") ? "custom" : "sql-atomic";
+  return restorePipeline(db, source, dest, true, pgMode);
 }
 
 /**
@@ -137,11 +144,19 @@ export function buildImportScript(
   opts: { encrypted: boolean; key: string; gzip: boolean },
 ): string {
   const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
-  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip);
+  // An external dump's format AND transaction structure are unknown — it may
+  // carry its own BEGIN/COMMIT or a CREATE DATABASE that can't run inside one
+  // transaction. Fail loud (ON_ERROR_STOP) but don't force whole-file atomicity.
+  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip, "sql-loose");
 }
 
+// custom = pg_restore of a custom-format archive; sql-atomic = our own plain
+// dump (safe to wrap in one transaction); sql-loose = external SQL of unknown
+// transaction structure (fail-loud, but not forced-atomic).
+type PgMode = "custom" | "sql-atomic" | "sql-loose";
+
 /** Shared: pipe an arbitrary source command through optional gpg/gunzip into the engine's restore client. */
-function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, gzip: boolean): string {
+function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, gzip: boolean, pgMode: PgMode = "sql-atomic"): string {
   const name = dbContainerName(db);
   const { username, password, database } = db.credentials;
 
@@ -151,9 +166,23 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
 
   const lines = ["set -e", "set -o pipefail"];
   switch (db.engine) {
-    case "POSTGRES":
-      lines.push(`${decode.join(" | ")} | docker exec -i -e PGPASSWORD=${shq(password)} ${name} psql -U ${shq(username)} -d ${shq(database)}`);
+    case "POSTGRES": {
+      const pg =
+        pgMode === "custom"
+          ? // custom-format archive → pg_restore. --clean --if-exists makes it
+            // idempotent on a populated DB; --single-transaction wraps the whole
+            // restore in ONE transaction (implies --exit-on-error) so a mid-way
+            // failure rolls back — no half-dropped, data-losing database.
+            `pg_restore --no-owner --clean --if-exists --single-transaction -U ${shq(username)} -d ${shq(database)}`
+          : pgMode === "sql-atomic"
+            ? // our own plain-SQL dump → psql, fail-loud + all-or-nothing.
+              `psql -v ON_ERROR_STOP=1 --single-transaction -U ${shq(username)} -d ${shq(database)}`
+            : // external SQL (import) → fail-loud only; its own transaction
+              // structure may forbid a single wrapping transaction.
+              `psql -v ON_ERROR_STOP=1 -U ${shq(username)} -d ${shq(database)}`;
+      lines.push(`${decode.join(" | ")} | docker exec -i -e PGPASSWORD=${shq(password)} ${name} ${pg}`);
       break;
+    }
     case "MYSQL":
       lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} ${shq(database)}`);
       break;
