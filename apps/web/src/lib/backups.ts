@@ -1,9 +1,15 @@
-import type { BackupStatus } from "./types";
+import type { BackupStatus, RestoreStatus } from "./types";
 
 export function backupColor(s: BackupStatus): string {
   if (s === "SUCCESS") return "var(--c-g)";
   if (s === "FAILED") return "var(--c-r)";
   return "var(--c-am)";
+}
+
+export function restoreColor(s: RestoreStatus): string {
+  if (s === "SUCCESS") return "var(--c-g)";
+  if (s === "FAILED") return "var(--c-r)";
+  return "var(--c-am)"; // RUNNING
 }
 
 /** Human-readable size from a byte count (string from the API's serialized BigInt). */

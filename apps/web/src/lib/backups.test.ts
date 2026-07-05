@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { backupColor, formatSize } from "./backups";
+import { backupColor, formatSize, restoreColor } from "./backups";
 
 describe("backup helpers", () => {
   it("maps backup status to a color", () => {
@@ -7,6 +7,9 @@ describe("backup helpers", () => {
     expect(backupColor("FAILED")).toContain("--c-r");
     expect(backupColor("RUNNING")).toContain("--c-am");
     expect(backupColor("PENDING")).toContain("--c-am");
+    expect(restoreColor("SUCCESS")).toContain("--c-g");
+    expect(restoreColor("FAILED")).toContain("--c-r");
+    expect(restoreColor("RUNNING")).toContain("--c-am");
   });
 
   it("formats byte sizes", () => {

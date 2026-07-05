@@ -221,3 +221,26 @@ export function buildDeleteBackupScript(
 export function buildDestinationTestScript(s3: S3Config): string {
   return [MC_INSTALL, `${mcHostEnv(s3)} mc ls ${MC_ALIAS}/${s3.bucket}`].join("\n");
 }
+
+/**
+ * Redact customer row data from a restore command's error output before we
+ * persist it. pg_restore/psql/mysql echo the offending VALUES in their errors
+ * (Postgres `DETAIL: Failing row contains (...)`, `Key (col)=(value)`,
+ * `STATEMENT: INSERT ...`; MySQL `Duplicate entry '...'`). We keep the last 2KB
+ * and the diagnostic scaffolding (error class, constraint/relation names) but
+ * strip the value-bearing fragments so tenant data never lands in the hub DB.
+ */
+export function scrubRestoreOutput(output: string): string {
+  const redactLine = /^(\s*)(DETAIL|CONTEXT|HINT|STATEMENT|QUERY|LINE \d+)\s*:.*/i;
+  return output
+    .slice(-2000)
+    .split("\n")
+    .map((line) => {
+      if (redactLine.test(line)) return line.replace(redactLine, "$1$2: <redacted>");
+      return line
+        .replace(/Key \(([^)]*)\)=\([^)]*\)/g, "Key ($1)=(<redacted>)")
+        .replace(/Failing row contains \([^)]*\)/g, "Failing row contains (<redacted>)")
+        .replace(/Duplicate entry '[^']*'/g, "Duplicate entry '<redacted>'");
+    })
+    .join("\n");
+}

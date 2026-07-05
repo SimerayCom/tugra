@@ -462,3 +462,16 @@ export interface Backup {
   createdAt: string;
   completedAt: string | null;
 }
+
+export type RestoreKind = "RESTORE" | "RESTORE_TO" | "IMPORT_URL";
+export type RestoreStatus = "RUNNING" | "SUCCESS" | "FAILED";
+export interface Restore {
+  id: string;
+  kind: RestoreKind;
+  status: RestoreStatus;
+  exitCode: number | null;
+  errorTail: string | null;
+  backupId: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}

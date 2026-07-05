@@ -31,6 +31,11 @@ export class BackupsController {
     return this.backups.list(user.userId, id);
   }
 
+  @Get("restores")
+  listRestores(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.backups.listRestores(user.userId, id);
+  }
+
   @Post("backups")
   backupNow(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.backups.backupNow(user.userId, id);

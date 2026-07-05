@@ -5,6 +5,7 @@ import type {
   AppVolume,
   BulkOperation,
   Backup,
+  Restore,
   BackupDestination,
   AuditPage,
   Channel,
@@ -730,6 +731,9 @@ export const api = {
   // ── database backups ──
   listBackups(dbId: string) {
     return apiFetch<Backup[]>(`/databases/${dbId}/backups`);
+  },
+  listRestores(dbId: string) {
+    return apiFetch<Restore[]>(`/databases/${dbId}/restores`);
   },
   backupNow(dbId: string) {
     return apiFetch<Backup>(`/databases/${dbId}/backups`, { method: "POST" });
