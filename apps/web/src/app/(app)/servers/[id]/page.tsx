@@ -12,6 +12,7 @@ import { CopyBtn } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
+import { humanizeRateSeries } from "../../../../lib/metrics";
 import type { ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
@@ -67,6 +68,8 @@ export default function ServerDetailPage() {
 
   const cpu = metrics.map((m) => m.cpu);
   const ram = metrics.map((m) => pct(m.memUsed, m.memTotal));
+  const netIn = humanizeRateSeries(metrics.map((m) => m.netRx));
+  const netOut = humanizeRateSeries(metrics.map((m) => m.netTx));
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -129,6 +132,8 @@ export default function ServerDetailPage() {
           <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
             <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
             <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
+            <MetricChart data={netIn.data} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
+            <MetricChart data={netOut.data} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
           </div>
         )
       )}
