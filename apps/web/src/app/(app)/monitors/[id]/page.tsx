@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import { ErrorState } from "../../../../components/error-state";
 import { scopeByTeam } from "../../../../lib/team-scope";
 import { monitorColor, uptimeText, heartbeatSummary } from "../../../../lib/monitors";
 import type { Monitor } from "../../../../lib/types";
@@ -19,7 +20,7 @@ export default function MonitorDetailPage() {
   const id = String(useParams().id);
   const qc = useQueryClient();
 
-  const { data: m, isLoading } = useQuery({
+  const { data: m, isLoading, isError, refetch } = useQuery({
     queryKey: ["monitor", id],
     queryFn: () => api.getMonitor(id),
     refetchInterval: 5000,
@@ -43,6 +44,7 @@ export default function MonitorDetailPage() {
     },
   });
 
+  if (isError && !m) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !m) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   return (

@@ -9,6 +9,7 @@ import { ServerTable } from "../../../components/server-table";
 import { SavedViewsBar } from "../../../components/saved-views-bar";
 import { TagFilter } from "../../../components/tags";
 import { Btn, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
@@ -16,7 +17,7 @@ import type { ServerStatus } from "../../../lib/types";
 export default function ServersPage() {
   const t = useT();
   const { teamId } = useTeamScope();
-  const { data: servers, isLoading, error } = useQuery({
+  const { data: servers, isLoading, isError, refetch } = useQuery({
     queryKey: ["servers"],
     queryFn: () => api.listServers(),
   });
@@ -36,7 +37,7 @@ export default function ServersPage() {
         </Link>
       </div>
       {isLoading && <Spinner />}
-      {error && <div style={{ color: "var(--c-r)" }}>{t("servers.loadFailed", { msg: (error as Error).message })}</div>}
+      {isError && !servers && <ErrorState onRetry={() => refetch()} />}
       {servers && (
         <>
           <SavedViewsBar status={status} tags={selectedTags} onApply={(v) => { setStatus(v.status); setSelectedTags(v.tags); }} />

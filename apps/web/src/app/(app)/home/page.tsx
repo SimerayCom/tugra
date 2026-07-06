@@ -11,6 +11,7 @@ import { launcherTiles, type LauncherTile } from "../../../lib/launcher";
 import { appColor } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { SetDomainModal } from "../../../components/set-domain-modal";
 import { TileActionsSheet } from "../../../components/tile-actions-sheet";
 import { AppLogo } from "../../../components/app-logo";
@@ -30,7 +31,7 @@ export default function HomePage() {
     if (user?.uiMode === "fleet") router.replace("/dashboard");
   }, [user?.uiMode, router]);
 
-  const { data: apps = [], isLoading } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const { data: apps = [], isLoading, isError, refetch } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const tiles = launcherTiles(apps);
   const [addDomainFor, setAddDomainFor] = useState<string | null>(null);
   const [actionsFor, setActionsFor] = useState<LauncherTile | null>(null);
@@ -40,7 +41,9 @@ export default function HomePage() {
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("home.title")}</h1>
       <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 20px" }}>{t("home.subtitle")}</p>
 
-      {isLoading ? (
+      {isError && tiles.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : tiles.length === 0 ? (
         <EmptyState

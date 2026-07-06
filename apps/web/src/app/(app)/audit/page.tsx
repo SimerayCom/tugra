@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import { filterAudit, auditToCsv } from "../../../lib/audit";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { TextInput } from "../../../components/form";
 import { useTeamScope } from "../../../components/team-scope";
 
@@ -22,7 +23,7 @@ export default function AuditPage() {
   const { teamId } = useTeamScope();
   const [q, setQ] = useState("");
 
-  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
+  const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ["audit", teamId],
     queryFn: ({ pageParam }) => api.listAudit(teamId ?? undefined, pageParam),
     initialPageParam: undefined as string | undefined,
@@ -50,7 +51,9 @@ export default function AuditPage() {
       </h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("audit.subtitle")}</p>
 
-      {isLoading ? (
+      {isError && entries.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : entries.length === 0 ? (
         <EmptyState icon={ScrollText} title={t("audit.emptyTitle")}>{t("audit.empty")}</EmptyState>

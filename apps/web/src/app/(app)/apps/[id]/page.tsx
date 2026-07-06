@@ -25,6 +25,7 @@ import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { AppLogo } from "../../../../components/app-logo";
+import { ErrorState } from "../../../../components/error-state";
 import { Tabs } from "../../../../components/tabs-nav";
 
 export default function AppDetailPage() {
@@ -34,7 +35,7 @@ export default function AppDetailPage() {
   const router = useRouter();
   const confirm = useConfirm();
 
-  const { data: appData, isLoading } = useQuery({
+  const { data: appData, isLoading, isError, refetch } = useQuery({
     queryKey: ["app", id],
     queryFn: () => api.getApp(id),
     refetchInterval: 5000,
@@ -95,6 +96,7 @@ export default function AppDetailPage() {
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
+  if (isError && !appData) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   const onDeploy = (opts?: { noCache?: boolean }) => { deploy.mutate(opts); setTab("logs"); };

@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { dbColor, engineLabel } from "../../../../lib/databases";
 import { backupColor, formatSize, restoreColor } from "../../../../lib/backups";
+import { ErrorState } from "../../../../components/error-state";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
@@ -31,7 +32,7 @@ export default function DatabaseDetailPage() {
   const confirm = useConfirm();
   const toast = useToast();
 
-  const { data: db, isLoading } = useQuery({
+  const { data: db, isLoading, isError, refetch } = useQuery({
     queryKey: ["database", id],
     queryFn: () => api.getDatabase(id),
     refetchInterval: 5000,
@@ -126,6 +127,7 @@ export default function DatabaseDetailPage() {
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
+  if (isError && !db) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !db) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   return (

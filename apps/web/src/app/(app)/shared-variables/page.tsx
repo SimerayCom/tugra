@@ -6,6 +6,7 @@ import { Variable } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { useConfirm } from "../../../components/confirm";
 
 const field: React.CSSProperties = {
@@ -27,7 +28,7 @@ export default function SharedVariablesPage() {
   const activeTeam = teamId || teams[0]?.id || "";
   const canWrite = teams.some((tm) => tm.id === activeTeam && tm.role !== "VIEWER");
 
-  const { data: vars = [], isLoading } = useQuery({
+  const { data: vars = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["sharedVars", activeTeam],
     queryFn: () => api.listSharedVars(activeTeam),
     enabled: !!activeTeam,
@@ -70,7 +71,9 @@ export default function SharedVariablesPage() {
         {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
       </Card>
 
-      {isLoading ? (
+      {isError && vars.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>

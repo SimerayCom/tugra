@@ -7,6 +7,7 @@ import { FolderTree, Plus, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 
@@ -38,7 +39,7 @@ export default function ProjectsPage() {
   const t = useT();
   const qc = useQueryClient();
   const { teamId: scope } = useTeamScope();
-  const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
+  const { data: projects = [], isLoading, isError, refetch } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
 
   const [name, setName] = useState("");
@@ -79,7 +80,9 @@ export default function ProjectsPage() {
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 
-      {isLoading ? (
+      {isError && projects.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>

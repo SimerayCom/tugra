@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Database, Layers, Plus, type LucideIcon } from "lucide-react";
 import { api } from "../../../../lib/api";
+import { ErrorState } from "../../../../components/error-state";
 import type { AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
 import { appColor } from "../../../../lib/apps";
 import { dbColor } from "../../../../lib/databases";
@@ -32,7 +33,7 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const confirm = useConfirm();
 
-  const { data: project, isLoading } = useQuery({ queryKey: ["project", id], queryFn: () => api.getProject(id) });
+  const { data: project, isLoading, isError, refetch } = useQuery({ queryKey: ["project", id], queryFn: () => api.getProject(id) });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", id] });
 
   const [envName, setEnvName] = useState("");
@@ -45,6 +46,7 @@ export default function ProjectDetailPage() {
     onSuccess: () => router.replace("/projects"),
   });
 
+  if (isError && !project) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !project) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
   const empty = project.environments.every((e) => e.appCount + e.dbCount === 0);
 

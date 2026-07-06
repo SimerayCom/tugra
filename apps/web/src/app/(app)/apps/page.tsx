@@ -9,6 +9,7 @@ import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner, StatusPill } from "../../../components/ui";
 import { AppLogo } from "../../../components/app-logo";
+import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
@@ -16,7 +17,7 @@ import { useTeamScope } from "../../../components/team-scope";
 export default function AppsPage() {
   const t = useT();
   const { teamId } = useTeamScope();
-  const { data: apps = [], isLoading } = useQuery({
+  const { data: apps = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["apps"],
     queryFn: () => api.listApps(),
     refetchInterval: 8000,
@@ -39,7 +40,9 @@ export default function AppsPage() {
         </Link>
       </div>
 
-      {isLoading ? (
+      {isError && apps.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <>

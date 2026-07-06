@@ -7,6 +7,7 @@ import { Users } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -21,7 +22,7 @@ const field: React.CSSProperties = {
 export default function TeamsPage() {
   const t = useT();
   const qc = useQueryClient();
-  const { data: teams = [], isLoading } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const { data: teams = [], isLoading, isError, refetch } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: invites = [] } = useQuery({ queryKey: ["myInvitations"], queryFn: () => api.myInvitations() });
 
   const [name, setName] = useState("");
@@ -69,7 +70,9 @@ export default function TeamsPage() {
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 
-      {isLoading ? (
+      {isError && teams.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>

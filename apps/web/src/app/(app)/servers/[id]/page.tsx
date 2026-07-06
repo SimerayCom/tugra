@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import { ErrorState } from "../../../../components/error-state";
 import { installPhase } from "../../../../lib/server-install";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyBtn } from "../../../../components/copy-row";
@@ -30,7 +31,7 @@ export default function ServerDetailPage() {
   const id = String(useParams().id);
   const qc = useQueryClient();
 
-  const { data: server, isLoading } = useQuery({
+  const { data: server, isLoading, isError, refetch } = useQuery({
     queryKey: ["server", id],
     queryFn: () => api.getServer(id),
     refetchInterval: 5000,
@@ -61,6 +62,7 @@ export default function ServerDetailPage() {
     if (server) prevStatus.current = server.status;
   }, [server?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (isError && !server) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !server) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   const cpu = metrics.map((m) => m.cpu);
