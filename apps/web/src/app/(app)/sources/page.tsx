@@ -19,7 +19,9 @@ export default function SourcesPage() {
   const { data: sources = [], isLoading } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
 
   const [teamId, setTeamId] = useState("");
-  const activeTeam = teamId || teams[0]?.id || "";
+  // Prefer a writable team as the default so a multi-team user sees the create form.
+  const activeTeam = teamId || teams.find((tm) => tm.role !== "VIEWER")?.id || teams[0]?.id || "";
+  const canCreate = teams.some((tm) => tm.id === activeTeam && tm.role !== "VIEWER");
   const [name, setName] = useState("");
   const [appId, setAppId] = useState("");
   const [installationId, setInstallationId] = useState("");
@@ -46,10 +48,11 @@ export default function SourcesPage() {
         <Card style={{ marginBottom: 20 }}><EmptyState icon={GitBranch} title={t("sources.emptyTitle")}>{t("sources.noSources")}</EmptyState></Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-          {sources.map((s) => <SourceRow key={s.id} id={s.id} name={s.name} appId={s.appId} installationId={s.installationId} onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(s.id); }} />)}
+          {sources.map((s) => <SourceRow key={s.id} id={s.id} name={s.name} appId={s.appId} installationId={s.installationId} canWrite={s.canWrite} onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(s.id); }} />)}
         </div>
       )}
 
+      {canCreate && (
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{t("sources.create")}</div>
         <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("sources.howto")}</p>
@@ -76,11 +79,12 @@ export default function SourcesPage() {
           {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
         </form>
       </Card>
+      )}
     </div>
   );
 }
 
-function SourceRow({ id, name, appId, installationId, onDelete }: { id: string; name: string; appId: string; installationId: string | null; onDelete: () => void }) {
+function SourceRow({ id, name, appId, installationId, canWrite, onDelete }: { id: string; name: string; appId: string; installationId: string | null; canWrite: boolean; onDelete: () => void }) {
   const t = useT();
   const [repos, setRepos] = useState<SourceRepo[] | null>(null);
   const load = useMutation({ mutationFn: () => api.listSourceRepos(id), onSuccess: (r) => setRepos(r) });
@@ -96,8 +100,12 @@ function SourceRow({ id, name, appId, installationId, onDelete }: { id: string; 
             app {appId}{installationId ? ` · inst ${installationId}` : ""}
           </div>
         </div>
-        <Btn variant="ghost" onClick={() => load.mutate()} disabled={load.isPending}>{load.isPending ? "…" : t("sources.loadRepos")}</Btn>
-        <IconBtn label={t("sources.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>
+        {canWrite && (
+          <>
+            <Btn variant="ghost" onClick={() => load.mutate()} disabled={load.isPending}>{load.isPending ? "…" : t("sources.loadRepos")}</Btn>
+            <IconBtn label={t("sources.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>
+          </>
+        )}
       </div>
       {repos && (
         <div style={{ marginTop: 10, fontSize: 12, color: "var(--c-tx2)" }}>

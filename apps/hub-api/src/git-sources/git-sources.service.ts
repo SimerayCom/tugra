@@ -21,6 +21,7 @@ export interface GitSourceView {
   installationId: string | null;
   htmlUrl: string | null;
   createdAt: Date;
+  canWrite: boolean;
 }
 
 export interface RepoView {
@@ -48,21 +49,22 @@ export class GitSourcesService {
   private view(s: {
     id: string; name: string; teamId: string; provider: string; appId: string;
     appSlug: string | null; installationId: string | null; htmlUrl: string | null; createdAt: Date;
-  }): GitSourceView {
+  }, canWrite: boolean): GitSourceView {
     return {
       id: s.id, name: s.name, teamId: s.teamId, provider: s.provider, appId: s.appId,
-      appSlug: s.appSlug, installationId: s.installationId, htmlUrl: s.htmlUrl, createdAt: s.createdAt,
+      appSlug: s.appSlug, installationId: s.installationId, htmlUrl: s.htmlUrl, createdAt: s.createdAt, canWrite,
     };
   }
 
   async list(userId: string): Promise<GitSourceView[]> {
-    const teamIds = await this.access.teamIds(userId);
+    const roleByTeam = await this.access.roleByTeam(userId);
+    const teamIds = [...roleByTeam.keys()];
     if (!teamIds.length) return [];
     const rows = await this.prisma.gitSource.findMany({
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((s) => this.view(s));
+    return rows.map((s) => this.view(s, WRITE_ROLES.includes(roleByTeam.get(s.teamId)!)));
   }
 
   async create(userId: string, dto: CreateGitSourceInput): Promise<GitSourceView> {
@@ -83,7 +85,7 @@ export class GitSourcesService {
       },
     });
     await this.audit.log({ actor: userId, action: "git_source.create", target: s.id });
-    return this.view(s);
+    return this.view(s, true); // only writers reach here (requireRole above)
   }
 
   async remove(userId: string, id: string): Promise<void> {

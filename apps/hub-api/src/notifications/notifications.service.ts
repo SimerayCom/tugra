@@ -20,6 +20,7 @@ export interface ChannelView {
   teamId: string;
   enabled: boolean;
   eventTypes: string[];
+  canWrite: boolean;
 }
 
 @Injectable()
@@ -31,15 +32,18 @@ export class NotificationsService {
     private readonly crypto: CryptoService,
   ) {}
 
-  private view(c: {
-    id: string;
-    name: string;
-    type: string;
-    teamId: string;
-    enabled: boolean;
-    eventTypes: string[];
-  }): ChannelView {
-    return { id: c.id, name: c.name, type: c.type, teamId: c.teamId, enabled: c.enabled, eventTypes: c.eventTypes };
+  private view(
+    c: {
+      id: string;
+      name: string;
+      type: string;
+      teamId: string;
+      enabled: boolean;
+      eventTypes: string[];
+    },
+    canWrite: boolean,
+  ): ChannelView {
+    return { id: c.id, name: c.name, type: c.type, teamId: c.teamId, enabled: c.enabled, eventTypes: c.eventTypes, canWrite };
   }
 
   private decodeConfig(configEnc: string): Record<string, unknown> {
@@ -51,13 +55,14 @@ export class NotificationsService {
   }
 
   async list(userId: string): Promise<ChannelView[]> {
-    const teamIds = await this.access.teamIds(userId);
+    const roleByTeam = await this.access.roleByTeam(userId);
+    const teamIds = [...roleByTeam.keys()];
     if (!teamIds.length) return [];
     const rows = await this.prisma.notificationChannel.findMany({
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((c) => this.view(c));
+    return rows.map((c) => this.view(c, WRITE_ROLES.includes(roleByTeam.get(c.teamId)!)));
   }
 
   async create(
@@ -78,7 +83,7 @@ export class NotificationsService {
       },
     });
     await this.audit.log({ actor: userId, action: "channel.create", target: c.id });
-    return this.view(c);
+    return this.view(c, true); // only writers reach here (requireRole above)
   }
 
   async update(
@@ -99,7 +104,7 @@ export class NotificationsService {
       },
     });
     await this.audit.log({ actor: userId, action: "channel.update", target: id });
-    return this.view(updated);
+    return this.view(updated, true); // only writers reach here (requireRole above)
   }
 
   async remove(userId: string, id: string): Promise<void> {

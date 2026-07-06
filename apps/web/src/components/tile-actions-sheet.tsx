@@ -77,7 +77,7 @@ export function TileActionsSheet({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {tileActions(tile.status, !!tile.url).map((action) => {
+        {tileActions(tile.status, !!tile.url, tile.canWrite).map((action) => {
           const Icon = ICON[action];
           const danger = action === "uninstall";
           return (

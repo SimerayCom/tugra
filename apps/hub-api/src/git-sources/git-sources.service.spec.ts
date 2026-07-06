@@ -71,4 +71,17 @@ describe("GitSourcesService", () => {
     const repos = await svc.listRepos("u1", "s2");
     expect(repos).toEqual([{ fullName: "acme/web", cloneUrl: "https://github.com/acme/web.git", private: true }]);
   });
+
+  it("list() sets canWrite per the caller's role in each source's team", async () => {
+    const row = (id: string, teamId: string) => ({ id, name: id, teamId, provider: "github", appId: "1", appSlug: null, installationId: null, htmlUrl: null, createdAt: new Date() });
+    const prisma = {
+      gitSource: { findMany: jest.fn().mockResolvedValue([row("s1", "tOwner"), row("s2", "tViewer")]) },
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", Role.ADMIN], ["tViewer", Role.VIEWER]])),
+    } as unknown as TeamAccessService;
+    const list = await make(prisma as unknown as PrismaService, access).list("u1");
+    expect(list.find((s) => s.id === "s1")!.canWrite).toBe(true);
+    expect(list.find((s) => s.id === "s2")!.canWrite).toBe(false);
+  });
 });
