@@ -11,6 +11,7 @@ import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, StatusPill } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -26,7 +27,7 @@ const sectionTitle: React.CSSProperties = {
 export default function DashboardPage() {
   const t = useT();
   const { teamId } = useTeamScope();
-  const { data: allServers = [], isLoading } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const { data: allServers = [], isLoading, isError: serversError, refetch: refetchServers } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: allApps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
@@ -42,6 +43,11 @@ export default function DashboardPage() {
   const counts = statusCounts(servers);
   const attention = fleetAttention(servers, monitors, domains);
   const recent = audit?.entries.slice(0, 8) ?? [];
+  // Servers is the dashboard's spine (fleet stats, attention, server list all derive
+  // from it). When its fetch fails with nothing cached we can't claim "all normal" or
+  // invite "Add server" — surface the error in the Servers section and neutralize the
+  // counts instead of contradicting ourselves with a green banner next to a red error.
+  const serversDown = serversError && allServers.length === 0;
 
   const stat = (label: string, value: number | string, color = "var(--c-tx)") => (
     <Card style={{ padding: 18, flex: 1, minWidth: 130 }}>
@@ -72,21 +78,23 @@ export default function DashboardPage() {
         {resource("/projects", FolderTree, t("dashboard.projects"), projects.length)}
         {resource("/apps", Box, t("dashboard.apps"), apps.length)}
         {resource("/databases", Database, t("dashboard.databases"), databases.length)}
-        {resource("/servers", Server, t("dashboard.totalServers"), isLoading ? "…" : servers.length)}
+        {resource("/servers", Server, t("dashboard.totalServers"), isLoading ? "…" : serversDown ? "—" : servers.length)}
       </div>
 
       <div style={sectionTitle}>{t("dashboard.fleet")}</div>
       <div style={{ display: "flex", gap: 14, marginBottom: 28, flexWrap: "wrap" }}>
-        {stat(t("dashboard.online"), counts.ONLINE, "var(--c-g)")}
-        {stat(t("dashboard.pending"), counts.PENDING, "var(--c-am)")}
-        {stat(t("dashboard.offline"), counts.OFFLINE, "var(--c-r)")}
+        {stat(t("dashboard.online"), serversDown ? "—" : counts.ONLINE, "var(--c-g)")}
+        {stat(t("dashboard.pending"), serversDown ? "—" : counts.PENDING, "var(--c-am)")}
+        {stat(t("dashboard.offline"), serversDown ? "—" : counts.OFFLINE, "var(--c-r)")}
       </div>
 
       <div style={sectionTitle}>{t("dashboard.attention")}</div>
       {attention.length === 0 ? (
+        serversDown ? null : (
         <Card style={{ padding: 14, marginBottom: 28, fontSize: 13, color: "var(--c-tx2)", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c-g)" }} /> {t("dashboard.allGood")}
         </Card>
+        )
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden", marginBottom: 28 }}>
           {attention.map((it) => {
@@ -162,7 +170,9 @@ export default function DashboardPage() {
             <StatusPill label={s.status} color={serverColor(s.status)} />
           </Link>
         ))}
-        {servers.length === 0 && (
+        {serversDown ? (
+          <ErrorState onRetry={() => refetchServers()} />
+        ) : servers.length === 0 && (
           <EmptyState
             icon={Server}
             title={t("dashboard.noServersTitle")}

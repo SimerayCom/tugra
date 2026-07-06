@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import type { SourceRepo } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
 import { Field, Select, TextInput } from "../../../components/form";
@@ -16,7 +17,7 @@ export default function SourcesPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
-  const { data: sources = [], isLoading } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
+  const { data: sources = [], isLoading, isError, refetch } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
 
   const [teamId, setTeamId] = useState("");
   // Prefer a writable team as the default so a multi-team user sees the create form.
@@ -42,7 +43,9 @@ export default function SourcesPage() {
       </h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("sources.subtitle")}</p>
 
-      {isLoading ? (
+      {isError && sources.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : sources.length === 0 ? (
         <Card style={{ marginBottom: 20 }}><EmptyState icon={GitBranch} title={t("sources.emptyTitle")}>{t("sources.noSources")}</EmptyState></Card>

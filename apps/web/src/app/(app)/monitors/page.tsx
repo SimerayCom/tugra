@@ -10,6 +10,7 @@ import { writableIds } from "../../../lib/fleet";
 import { monitorColor } from "../../../lib/monitors";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
 import { MonitorFavicon } from "../../../components/monitor-favicon";
 import { MonitorChannelsBulkModal } from "../../../components/monitor-channels-bulk-modal";
@@ -24,7 +25,7 @@ const formGrid: React.CSSProperties = {
 export default function MonitorsPage() {
   const t = useT();
   const qc = useQueryClient();
-  const { data: monitors = [], isLoading } = useQuery({
+  const { data: monitors = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["monitors"],
     queryFn: () => api.listMonitors(),
     refetchInterval: 10000,
@@ -188,7 +189,9 @@ export default function MonitorsPage() {
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 
-      {isLoading ? (
+      {isError && monitors.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>

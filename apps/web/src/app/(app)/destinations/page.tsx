@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import { destSummary, destTypeLabel } from "../../../lib/destinations";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { useConfirm } from "../../../components/confirm";
 import { useToast } from "../../../components/toast";
 import { Select } from "../../../components/form";
@@ -26,7 +27,7 @@ export default function DestinationsPage() {
   const confirm = useConfirm();
   const toast = useToast();
   const qc = useQueryClient();
-  const { data: destinations = [], isLoading } = useQuery({
+  const { data: destinations = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["destinations"],
     queryFn: () => api.listDestinations(),
     refetchInterval: 10000,
@@ -102,7 +103,9 @@ export default function DestinationsPage() {
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 
-      {isLoading ? (
+      {isError && destinations.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>

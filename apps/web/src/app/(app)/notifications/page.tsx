@@ -10,6 +10,7 @@ import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
 
 const TYPES = ["smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify"];
@@ -42,7 +43,7 @@ export default function NotificationsPage() {
   const confirm = useConfirm();
   const { teamId: scope } = useTeamScope();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
-  const { data: channels = [], isLoading } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
+  const { data: channels = [], isLoading, isError, refetch } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
 
   // List follows the global scope (filter); create needs a concrete target team.
   const visible = scopeByTeam(channels, scope);
@@ -85,7 +86,9 @@ export default function NotificationsPage() {
       </h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("notifications.subtitle")}</p>
 
-      {isLoading ? (
+      {isError && channels.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : visible.length === 0 ? (
         <Card style={{ marginBottom: 20 }}><EmptyState icon={Bell} title={t("notifications.emptyTitle")}>{t("notifications.noChannels")}</EmptyState></Card>

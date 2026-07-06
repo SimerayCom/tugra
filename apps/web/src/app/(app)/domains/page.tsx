@@ -8,6 +8,7 @@ import { appColor } from "../../../lib/apps";
 import type { DomainView } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Card, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 
 function sslColor(state: DomainView["ssl"]["state"]): string {
   if (state === "ok") return "var(--c-g)";
@@ -17,7 +18,7 @@ function sslColor(state: DomainView["ssl"]["state"]): string {
 
 export default function DomainsPage() {
   const t = useT();
-  const { data: domains = [], isLoading } = useQuery({
+  const { data: domains = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["domains"],
     queryFn: () => api.listDomains(),
     refetchInterval: 30000,
@@ -28,7 +29,9 @@ export default function DomainsPage() {
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("domains.title")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("domains.subtitle")}</p>
 
-      {isLoading ? (
+      {isError && domains.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : domains.length === 0 ? (
         <Card><EmptyState icon={Globe} title={t("domains.emptyTitle")}>{t("domains.empty")}</EmptyState></Card>

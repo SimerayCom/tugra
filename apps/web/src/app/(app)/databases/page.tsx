@@ -8,6 +8,7 @@ import { api } from "../../../lib/api";
 import { dbColor, engineLabel } from "../../../lib/databases";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
@@ -17,7 +18,7 @@ import { BackupBulkModal } from "../../../components/backup-bulk-modal";
 export default function DatabasesPage() {
   const t = useT();
   const { teamId } = useTeamScope();
-  const { data: databases = [], isLoading } = useQuery({
+  const { data: databases = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["databases"],
     queryFn: () => api.listDatabases(),
     refetchInterval: 8000,
@@ -52,7 +53,9 @@ export default function DatabasesPage() {
         </Link>
       </div>
 
-      {isLoading ? (
+      {isError && databases.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : (
         <>

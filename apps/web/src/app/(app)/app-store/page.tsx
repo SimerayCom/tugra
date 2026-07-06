@@ -8,6 +8,7 @@ import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { EmptyState, Spinner } from "../../../components/ui";
+import { ErrorState } from "../../../components/error-state";
 import { TemplateGrid } from "../../../components/template-grid";
 import { InstallModal } from "../../../components/install-modal";
 import type { Template } from "../../../lib/types";
@@ -17,7 +18,7 @@ export default function AppStorePage() {
   const router = useRouter();
   const { user } = useAuth();
   const [installing, setInstalling] = useState<Template | null>(null);
-  const { data: templates = [], isLoading } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
+  const { data: templates = [], isLoading, isError, refetch } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040 }}>
@@ -27,7 +28,9 @@ export default function AppStorePage() {
       </h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("resources.storeSubtitle")}</p>
 
-      {isLoading ? (
+      {isError && templates.length === 0 ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading ? (
         <Spinner />
       ) : templates.length === 0 ? (
         <EmptyState icon={Store} title={t("resources.storeTitle")}>{t("resources.noMatches")}</EmptyState>
