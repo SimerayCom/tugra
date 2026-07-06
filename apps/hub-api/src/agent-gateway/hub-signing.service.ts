@@ -14,8 +14,9 @@ const PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "he
  * The hub's ed25519 signing identity. Every command/term_start sent to an agent
  * is signed with this key; agents pin the public key (delivered at enroll/auth)
  * and reject anything not signed by it. Key comes from HUB_SIGNING_KEY (base64
- * 32-byte seed, deterministic) or is generated fresh per boot (agents re-pin on
- * reconnect, so ephemeral works — but set the env for stability across restarts).
+ * 32-byte seed, deterministic). In production HUB_SIGNING_KEY is REQUIRED (env
+ * validation fails closed without it), so the ephemeral fallback below is only
+ * ever reached in development/test.
  */
 @Injectable()
 export class HubSigningService {
