@@ -1,0 +1,35 @@
+import { validateEnv } from "./env";
+
+const base = {
+  DATABASE_URL: "postgres://x",
+  REDIS_URL: "redis://x",
+  JWT_ACCESS_SECRET: "0123456789abcdef",
+  JWT_REFRESH_SECRET: "0123456789abcdef",
+  SECRETS_ENCRYPTION_KEY: "0123456789abcdef",
+};
+const signingKey = Buffer.alloc(32, 7).toString("base64"); // valid 32-byte seed
+
+describe("validateEnv — HUB_SIGNING_KEY fail-closed", () => {
+  it("rejects production without HUB_SIGNING_KEY (fail-closed)", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "production" })).toThrow(/HUB_SIGNING_KEY/);
+  });
+
+  it("rejects an UNSET NODE_ENV without HUB_SIGNING_KEY (fail-closed, treats unset as prod)", () => {
+    expect(() => validateEnv({ ...base })).toThrow(/HUB_SIGNING_KEY/);
+  });
+
+  it("accepts production with a valid HUB_SIGNING_KEY", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "production", HUB_SIGNING_KEY: signingKey });
+    expect(env.HUB_SIGNING_KEY).toBe(signingKey);
+  });
+
+  it("allows EXPLICIT development/test without HUB_SIGNING_KEY (ephemeral fallback)", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development" })).not.toThrow();
+    expect(() => validateEnv({ ...base, NODE_ENV: "test" })).not.toThrow();
+  });
+
+  it("rejects an HUB_SIGNING_KEY that is not a base64 32-byte seed", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", HUB_SIGNING_KEY: "too-short" })).toThrow(/HUB_SIGNING_KEY/);
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", HUB_SIGNING_KEY: Buffer.alloc(16).toString("base64") })).toThrow(/HUB_SIGNING_KEY/);
+  });
+});
