@@ -144,6 +144,7 @@ export interface Channel {
   teamId: string;
   enabled: boolean;
   eventTypes: string[];
+  canWrite: boolean;
 }
 
 export interface AuditEntry {
@@ -170,6 +171,7 @@ export interface GitSource {
   installationId: string | null;
   htmlUrl: string | null;
   createdAt: string;
+  canWrite: boolean;
 }
 
 export interface SourceRepo {
@@ -430,6 +432,7 @@ export interface SharedVariable {
   teamId: string;
   key: string;
   value: string | null;
+  canWrite: boolean;
   createdAt: string;
 }
 

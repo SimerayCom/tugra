@@ -68,4 +68,21 @@ describe("NotificationsService", () => {
     expect(v.eventTypes).toEqual(["server_offline"]);
     expect(update.mock.calls[0][0].data).not.toHaveProperty("configEnc");
   });
+
+  it("list() sets canWrite per the caller's role in each channel's team", async () => {
+    const prisma = {
+      notificationChannel: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "c1", name: "a", type: "slack", teamId: "tOwner", enabled: true, eventTypes: [] },
+          { id: "c2", name: "b", type: "slack", teamId: "tViewer", enabled: true, eventTypes: [] },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", "OWNER"], ["tViewer", "VIEWER"]])),
+    } as unknown as TeamAccessService;
+    const list = await make(prisma, access).list("u1");
+    expect(list.find((c) => c.id === "c1")!.canWrite).toBe(true);
+    expect(list.find((c) => c.id === "c2")!.canWrite).toBe(false);
+  });
 });

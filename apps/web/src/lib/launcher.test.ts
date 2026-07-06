@@ -28,15 +28,20 @@ describe("launcherTiles", () => {
 
 describe("tileActions", () => {
   it("offers open/restart/stop/uninstall for a running app with a url", () => {
-    expect(tileActions("RUNNING", true)).toEqual(["open", "restart", "stop", "uninstall"]);
+    expect(tileActions("RUNNING", true, true)).toEqual(["open", "restart", "stop", "uninstall"]);
   });
 
   it("offers start/addDomain/uninstall for a fresh domainless app", () => {
-    expect(tileActions("NEW", false)).toEqual(["start", "addDomain", "uninstall"]);
+    expect(tileActions("NEW", false, true)).toEqual(["start", "addDomain", "uninstall"]);
   });
 
   it("offers open/start/uninstall for a stopped app that has a domain", () => {
-    expect(tileActions("STOPPED", true)).toEqual(["open", "start", "uninstall"]);
+    expect(tileActions("STOPPED", true, true)).toEqual(["open", "start", "uninstall"]);
+  });
+
+  it("offers only 'open' to a viewer (no write actions)", () => {
+    expect(tileActions("RUNNING", true, false)).toEqual(["open"]);
+    expect(tileActions("NEW", false, false)).toEqual([]); // no url, no write → nothing
   });
 });
 

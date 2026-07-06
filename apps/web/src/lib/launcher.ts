@@ -10,6 +10,7 @@ export interface LauncherTile {
   source: AppSource;
   templateSlug: string | null; // catalog slug → brand logo, when installed from a template
   templateLogo: string | null;
+  canWrite: boolean;
 }
 
 const SOURCE_ICON: Record<AppSource, LucideIcon> = {
@@ -32,10 +33,12 @@ function rank(t: LauncherTile): number {
 // Per-app management actions offered on a launcher tile, given its state.
 export type TileAction = "open" | "start" | "restart" | "stop" | "addDomain" | "uninstall";
 
-export function tileActions(status: AppStatus, hasUrl: boolean): TileAction[] {
+export function tileActions(status: AppStatus, hasUrl: boolean, canWrite: boolean): TileAction[] {
   const running = status === "RUNNING";
   const actions: TileAction[] = [];
   if (hasUrl) actions.push("open");
+  // Everything below mutates the app → only offered to writers (viewers 403).
+  if (!canWrite) return actions;
   if (!running) actions.push("start"); // deploy = build+run, works from NEW/STOPPED/FAILED
   if (running) actions.push("restart", "stop");
   if (!hasUrl) actions.push("addDomain");
@@ -53,6 +56,7 @@ export function launcherTiles(apps: Application[]): LauncherTile[] {
       source: a.source,
       templateSlug: a.templateSlug,
       templateLogo: a.templateLogo,
+      canWrite: a.canWrite,
     }))
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }

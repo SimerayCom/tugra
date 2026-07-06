@@ -47,7 +47,12 @@ export default function NotificationsPage() {
   // List follows the global scope (filter); create needs a concrete target team.
   const visible = scopeByTeam(channels, scope);
   const [createTeam, setCreateTeam] = useState("");
-  const target = createTeam || defaultTeamId(scope, teams);
+  // Prefer a team the user can write to as the create target, so a viewer-in-the
+  // scoped-team but writer-elsewhere user still sees the create form.
+  const preferred = defaultTeamId(scope, teams);
+  const preferredWritable = teams.some((tm) => tm.id === preferred && tm.role !== "VIEWER");
+  const target = createTeam || (preferredWritable ? preferred : teams.find((tm) => tm.role !== "VIEWER")?.id ?? preferred);
+  const canCreate = teams.some((tm) => tm.id === target && tm.role !== "VIEWER");
   useEffect(() => setCreateTeam(""), [scope]);
   const [name, setName] = useState("");
   const [type, setType] = useState("smtp");
@@ -98,10 +103,14 @@ export default function NotificationsPage() {
                   {c.eventTypes.length ? c.eventTypes.map((e) => t(`notifications.${EVENT_LABEL[e] ?? e}`)).join(" · ") : "—"}
                 </div>
               </div>
-              <Btn variant="ghost" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
-                {test.isPending ? "…" : t("notifications.test")}
-              </Btn>
-              <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
+              {c.canWrite && (
+                <>
+                  <Btn variant="ghost" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
+                    {test.isPending ? "…" : t("notifications.test")}
+                  </Btn>
+                  <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
+                </>
+              )}
             </Card>
           ))}
         </div>
@@ -109,6 +118,7 @@ export default function NotificationsPage() {
       {test.isSuccess && <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 12 }}>{t("notifications.testSent")}</div>}
       {test.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 12 }}>{t("notifications.testFailed")}: {(test.error as Error).message}</div>}
 
+      {canCreate && (
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>{t("notifications.create")}</div>
         <form onSubmit={(e) => { e.preventDefault(); if (name && target) create.mutate(); }}>
@@ -158,6 +168,7 @@ export default function NotificationsPage() {
           {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
         </form>
       </Card>
+      )}
     </div>
   );
 }

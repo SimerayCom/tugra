@@ -90,7 +90,7 @@ function Tile({ tile, openLabel, manageLabel, onManage }: { tile: LauncherTile; 
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           <span title={tile.status} style={{ width: 9, height: 9, borderRadius: "50%", background: appColor(tile.status) }} />
-          {menuBtn}
+          {(tile.url || tile.canWrite) && menuBtn}
         </div>
       </div>
       <div style={{ fontWeight: 600, fontSize: 15, marginTop: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tile.name}</div>

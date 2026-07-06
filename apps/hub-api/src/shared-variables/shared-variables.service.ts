@@ -16,6 +16,7 @@ export interface SharedVarView {
   teamId: string;
   key: string;
   value: string | null; // decrypted only for writers
+  canWrite: boolean;
   createdAt: Date;
 }
 
@@ -41,6 +42,7 @@ export class SharedVariablesService {
       teamId: v.teamId,
       key: v.key,
       value: canWrite ? this.crypto.decrypt(v.valueEnc) : null,
+      canWrite,
       createdAt: v.createdAt,
     }));
   }
@@ -53,7 +55,7 @@ export class SharedVariablesService {
       update: { valueEnc: this.crypto.encrypt(value) },
     });
     await this.audit.log({ actor: userId, action: "shared_var.set", target: teamId, meta: { key } });
-    return { id: v.id, teamId: v.teamId, key: v.key, value, createdAt: v.createdAt };
+    return { id: v.id, teamId: v.teamId, key: v.key, value, canWrite: true, createdAt: v.createdAt };
   }
 
   async remove(userId: string, id: string): Promise<void> {

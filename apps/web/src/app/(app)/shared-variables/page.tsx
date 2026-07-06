@@ -25,6 +25,7 @@ export default function SharedVariablesPage() {
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [teamId, setTeamId] = useState("");
   const activeTeam = teamId || teams[0]?.id || "";
+  const canWrite = teams.some((tm) => tm.id === activeTeam && tm.role !== "VIEWER");
 
   const { data: vars = [], isLoading } = useQuery({
     queryKey: ["sharedVars", activeTeam],
@@ -59,11 +60,13 @@ export default function SharedVariablesPage() {
             {reveal ? t("shared.hide") : t("shared.reveal")}
           </button>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} style={{ display: "flex", gap: 8 }}>
-          <input style={{ ...field, width: 220 }} placeholder={t("shared.key")} value={key} onChange={(e) => setKey(e.target.value)} required />
-          <input style={{ ...field, flex: 1 }} type={reveal ? "text" : "password"} placeholder={t("shared.value")} value={value} onChange={(e) => setValue(e.target.value)} />
-          <Btn onClick={() => save.mutate()} disabled={save.isPending || !key || !activeTeam}>{t("shared.add")}</Btn>
-        </form>
+        {canWrite && (
+          <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} style={{ display: "flex", gap: 8 }}>
+            <input style={{ ...field, width: 220 }} placeholder={t("shared.key")} value={key} onChange={(e) => setKey(e.target.value)} required />
+            <input style={{ ...field, flex: 1 }} type={reveal ? "text" : "password"} placeholder={t("shared.value")} value={value} onChange={(e) => setValue(e.target.value)} />
+            <Btn onClick={() => save.mutate()} disabled={save.isPending || !key || !activeTeam}>{t("shared.add")}</Btn>
+          </form>
+        )}
         {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
       </Card>
 
@@ -77,7 +80,9 @@ export default function SharedVariablesPage() {
               <code className="mono" style={{ flex: 1, fontSize: 12, color: "var(--c-tx2)" }}>
                 {reveal ? (v.value ?? "—") : "••••••••"}
               </code>
-              <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(v.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>{t("shared.delete")}</button>
+              {v.canWrite && (
+                <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(v.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>{t("shared.delete")}</button>
+              )}
             </div>
           ))}
           {vars.length === 0 && <EmptyState icon={Variable} title={t("shared.emptyTitle")}>{t("shared.empty")}</EmptyState>}

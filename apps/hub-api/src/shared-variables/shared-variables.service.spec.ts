@@ -37,13 +37,24 @@ describe("SharedVariablesService", () => {
     expect(v.value).toBe("bar");
   });
 
-  it("hides values from non-write members", async () => {
+  it("hides values AND reports canWrite=false for non-write members", async () => {
     const prisma = {
       sharedVariable: { findMany: jest.fn().mockResolvedValue([{ id: "v1", teamId: "t1", key: "FOO", valueEnc: "enc:bar", createdAt: new Date() }]) },
     } as unknown as PrismaService;
     const access = { teamRole: jest.fn().mockResolvedValue("VIEWER") } as unknown as TeamAccessService;
     const list = await make(prisma, access).list("u1", "t1");
     expect(list[0].value).toBeNull();
+    expect(list[0].canWrite).toBe(false);
+  });
+
+  it("reveals values AND reports canWrite=true for writers", async () => {
+    const prisma = {
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([{ id: "v1", teamId: "t1", key: "FOO", valueEnc: "enc:bar", createdAt: new Date() }]) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+    const list = await make(prisma, access).list("u1", "t1");
+    expect(list[0].value).toBe("bar");
+    expect(list[0].canWrite).toBe(true);
   });
 
   it("resolvedMap decrypts all team variables", async () => {
