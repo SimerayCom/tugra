@@ -57,6 +57,8 @@
   "noMetrics": "No metrics yet — live stream starts when the agent connects.",
   "cpu": "CPU",
   "ram": "RAM",
+  "netIn": "Network In",
+  "netOut": "Network Out",
   "os": "OS",
   "arch": "Architecture",
   "kernel": "Kernel",

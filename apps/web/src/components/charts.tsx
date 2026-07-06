@@ -42,12 +42,14 @@ export function MetricChart({
   unit = "%",
   color = "var(--c-a)",
   height = 140,
+  decimals = 0,
 }: {
   data: number[];
   label: string;
   unit?: string;
   color?: string;
   height?: number;
+  decimals?: number;
 }) {
   const width = 600;
   const last = data.length ? data[data.length - 1] : 0;
@@ -79,7 +81,7 @@ export function MetricChart({
       >
         <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{label}</span>
         <span style={{ fontSize: 18, fontWeight: 700, color }} className="mono">
-          {last.toFixed(0)}
+          {last.toFixed(decimals)}
           {unit}
         </span>
       </div>

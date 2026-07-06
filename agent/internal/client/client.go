@@ -229,6 +229,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 
 	ticker := time.NewTicker(metricsInterval)
 	defer ticker.Stop()
+	coll := metrics.NewCollector()
 	for {
 		select {
 		case <-ctx.Done():
@@ -236,7 +237,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		case <-hostTicker.C:
 			sendHostInfo()
 		case <-ticker.C:
-			if sample, err := metrics.Collect(); err == nil {
+			if sample, err := coll.Sample(); err == nil {
 				if err := send(protocol.Metrics{Type: "metrics", Sample: sample}); err != nil {
 					return err
 				}
