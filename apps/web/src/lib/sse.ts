@@ -27,13 +27,13 @@ export function parseSseFrames(buffer: string): { events: string[]; rest: string
 }
 
 /**
- * Read an SSE response body to completion, decoding frames and invoking
- * onEvent for each parsed DeployLogEvent. Resolves when the stream ends (deploy
- * finished, server completed, or aborted).
+ * Read an SSE response body to completion, decoding frames and invoking onData
+ * with each raw `data:` payload. Resolves when the stream ends (completed or
+ * aborted). Generic over the payload — callers JSON.parse and interpret.
  */
-export async function consumeDeployLogStream(
+export async function consumeSseStream(
   body: ReadableStream<Uint8Array>,
-  onEvent: (event: DeployLogEvent) => void,
+  onData: (raw: string) => void,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -45,17 +45,29 @@ export async function consumeDeployLogStream(
       buffer += decoder.decode(value, { stream: true });
       const { events, rest } = parseSseFrames(buffer);
       buffer = rest;
-      for (const raw of events) {
-        let event: DeployLogEvent;
-        try {
-          event = JSON.parse(raw) as DeployLogEvent;
-        } catch {
-          continue;
-        }
-        onEvent(event);
-      }
+      for (const raw of events) onData(raw);
     }
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * Read an SSE response body to completion, invoking onEvent for each parsed
+ * DeployLogEvent. Resolves when the stream ends (deploy finished, server
+ * completed, or aborted).
+ */
+export async function consumeDeployLogStream(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: DeployLogEvent) => void,
+): Promise<void> {
+  await consumeSseStream(body, (raw) => {
+    let event: DeployLogEvent;
+    try {
+      event = JSON.parse(raw) as DeployLogEvent;
+    } catch {
+      return;
+    }
+    onEvent(event);
+  });
 }

@@ -23,6 +23,7 @@ import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
+import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -44,7 +45,7 @@ export default function ServerDetailPage() {
   const { data: metrics = [] } = useQuery({
     queryKey: ["metrics", id],
     queryFn: () => api.getMetrics(id, 60),
-    refetchInterval: 5000,
+    refetchInterval: 30000, // slow heal/fallback; live updates arrive via SSE below
   });
   const [shellOpen, setShellOpen] = useState(false);
   const tabDefs = [
@@ -54,6 +55,8 @@ export default function ServerDetailPage() {
     { key: "maintenance", label: t("servers.tabMaintenance") },
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
+  // Push live samples into the metrics cache while the monitoring tab is open.
+  useMetricsStream(id, tab === "monitoring");
 
   // Celebrate the PENDING → ONLINE moment with a forward CTA (no dead-end).
   const prevStatus = useRef<ServerStatus | null>(null);
