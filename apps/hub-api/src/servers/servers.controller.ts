@@ -9,8 +9,11 @@ import {
   Put,
   Query,
   Req,
+  Sse,
   UseGuards,
+  type MessageEvent,
 } from "@nestjs/common";
+import { from, interval, map, merge, mergeMap, type Observable } from "rxjs";
 
 interface ReqLike {
   headers: Record<string, string | string[] | undefined>;
@@ -22,6 +25,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
+import { MetricsLiveService } from "../metrics/metrics-live.service";
 import { ServersService } from "./servers.service";
 import { CreateServerInput, CreateServerSchema } from "./dto/servers.schemas";
 
@@ -41,6 +45,7 @@ export class ServersController {
   constructor(
     private readonly servers: ServersService,
     private readonly metrics: MetricsService,
+    private readonly metricsLive: MetricsLiveService,
   ) {}
 
   @Get()
@@ -65,6 +70,25 @@ export class ServersController {
   ) {
     await this.servers.getForUser(user.userId, id); // authz: membership check
     return this.metrics.recent(id, limit ? Number(limit) : 60);
+  }
+
+  /**
+   * Live metrics stream (SSE). Pushes each sample the agent publishes instead of
+   * polling; a periodic ping keeps the connection warm behind idle proxies. The
+   * client still seeds history from GET :id/metrics and heals via a slow refetch.
+   */
+  @Sse(":id/metrics/stream")
+  streamMetrics(@CurrentUser() user: AuthUser, @Param("id") id: string): Observable<MessageEvent> {
+    return from(this.servers.getForUser(user.userId, id)).pipe(
+      mergeMap(() =>
+        merge(
+          this.metricsLive
+            .subscribe(id)
+            .pipe(map((sample) => ({ data: JSON.stringify(sample) }) as MessageEvent)),
+          interval(25_000).pipe(map(() => ({ data: JSON.stringify({ type: "ping" }) }) as MessageEvent)),
+        ),
+      ),
+    );
   }
 
   @Post()
