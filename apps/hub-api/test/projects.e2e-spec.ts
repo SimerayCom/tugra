@@ -42,6 +42,21 @@ describe("Projects / Environments (e2e)", () => {
     await app.close();
   });
 
+  it("bootstraps a registered team with exactly one default project + production env", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/projects")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const mine = res.body.filter((p: { teamId: string }) => p.teamId === teamId);
+    const defaults = mine.filter((p: { isDefault: boolean }) => p.isDefault);
+    expect(defaults).toHaveLength(1);
+    const def = defaults[0];
+    expect(def.name).toBe("Default");
+    const defEnvs = def.environments.filter((e: { isDefault: boolean }) => e.isDefault);
+    expect(defEnvs).toHaveLength(1);
+    expect(defEnvs[0].name).toBe("production");
+  });
+
   it("creates a project with a default production environment and groups a resource", async () => {
     const proj = await request(app.getHttpServer())
       .post("/projects")

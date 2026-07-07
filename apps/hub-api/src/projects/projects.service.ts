@@ -26,6 +26,7 @@ export interface ProjectResource {
 export interface EnvironmentView {
   id: string;
   name: string;
+  isDefault: boolean;
   appCount: number;
   dbCount: number;
   resources?: ProjectResource[];
@@ -36,6 +37,7 @@ export interface ProjectView {
   id: string;
   teamId: string;
   name: string;
+  isDefault: boolean;
   environments: EnvironmentView[];
   role: Role;
   canWrite: boolean;
@@ -75,11 +77,13 @@ export class ProjectsService {
       id: p.id,
       teamId: p.teamId,
       name: p.name,
+      isDefault: p.isDefault,
       role: roles.get(p.teamId)!,
       canWrite: WRITE.includes(roles.get(p.teamId)!),
       environments: p.environments.map((e) => ({
         id: e.id,
         name: e.name,
+        isDefault: e.isDefault,
         appCount: appByEnv.get(e.id) ?? 0,
         dbCount: dbByEnv.get(e.id) ?? 0,
         createdAt: e.createdAt,
@@ -115,6 +119,7 @@ export class ProjectsService {
       id: project.id,
       teamId: project.teamId,
       name: project.name,
+      isDefault: project.isDefault,
       role,
       canWrite: WRITE.includes(role),
       environments: project.environments.map((e) => {
@@ -137,6 +142,7 @@ export class ProjectsService {
         return {
           id: e.id,
           name: e.name,
+          isDefault: e.isDefault,
           appCount: resources.filter((r) => r.kind === "app").length,
           dbCount: resources.filter((r) => r.kind === "database").length,
           resources,
@@ -150,7 +156,9 @@ export class ProjectsService {
   async create(userId: string, teamId: string, name: string): Promise<ProjectView> {
     await this.access.requireRole(userId, teamId, WRITE);
     const project = await this.prisma.project.create({
-      data: { teamId, name, environments: { create: { name: "production" } } },
+      // A user-created project is not the team default, but its sole environment
+      // is that project's default (every project has exactly one default env).
+      data: { teamId, name, environments: { create: { name: "production", isDefault: true } } },
     });
     await this.audit.log({ actor: userId, action: "project.create", target: project.id });
     return this.get(userId, project.id);
@@ -194,6 +202,18 @@ export class ProjectsService {
       throw new ConflictException("environment has resources; move or remove them first");
     }
     await this.prisma.environment.delete({ where: { id: env.id } });
+    // Keep the "exactly one default env per project" invariant: if we removed the
+    // default and siblings remain, promote the oldest survivor.
+    if (env.isDefault) {
+      const next = await this.prisma.environment.findFirst({
+        where: { projectId: env.projectId },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      if (next) {
+        await this.prisma.environment.update({ where: { id: next.id }, data: { isDefault: true } });
+      }
+    }
     await this.audit.log({ actor: userId, action: "environment.remove", target: env.projectId });
   }
 

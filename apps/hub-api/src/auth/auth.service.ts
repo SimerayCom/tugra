@@ -12,6 +12,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
+import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { TotpService } from "./totp.service";
 
 const ACCESS_TTL = "15m";
@@ -47,6 +48,7 @@ export class AuthService {
     private readonly totp: TotpService,
     private readonly audit: AuditService,
     private readonly redis: RedisService,
+    private readonly teamDefaults: TeamDefaultsService,
   ) {}
 
   // ---- registration / login ------------------------------------------------
@@ -73,6 +75,7 @@ export class AuthService {
       await tx.membership.create({
         data: { userId: created.id, teamId: team.id, role: Role.OWNER },
       });
+      await this.teamDefaults.ensureDefaults(team.id, tx);
       return created;
     });
 
@@ -100,6 +103,7 @@ export class AuthService {
         await tx.membership.create({
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
         });
+        await this.teamDefaults.ensureDefaults(team.id, tx);
         return created;
       });
       await this.audit.log({ actor: user.id, action: "auth.register", meta: { provider: "github" } });

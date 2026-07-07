@@ -29,9 +29,51 @@ describe("ProjectsService", () => {
     } as unknown as TeamAccessService;
     const view = await make(prisma, access).create("u1", "t1", "web");
     expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ teamId: "t1", name: "web", environments: { create: { name: "production" } } }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          teamId: "t1",
+          name: "web",
+          environments: { create: { name: "production", isDefault: true } },
+        }),
+      }),
     );
     expect(view.environments[0].name).toBe("production");
+  });
+
+  it("promotes the oldest surviving env to default when the default env is removed", async () => {
+    const del = jest.fn().mockResolvedValue({});
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      environment: {
+        findUnique: jest.fn().mockResolvedValue({ id: "e1", projectId: "p1", isDefault: true, project: { teamId: "t1" } }),
+        delete: del,
+        findFirst: jest.fn().mockResolvedValue({ id: "e2" }),
+        update,
+      },
+      application: { count: jest.fn().mockResolvedValue(0) },
+      database: { count: jest.fn().mockResolvedValue(0) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access).removeEnvironment("u1", "e1");
+    expect(del).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({ where: { id: "e2" }, data: { isDefault: true } });
+  });
+
+  it("does not promote a sibling when a non-default env is removed", async () => {
+    const findFirst = jest.fn();
+    const prisma = {
+      environment: {
+        findUnique: jest.fn().mockResolvedValue({ id: "e2", projectId: "p1", isDefault: false, project: { teamId: "t1" } }),
+        delete: jest.fn().mockResolvedValue({}),
+        findFirst,
+        update: jest.fn(),
+      },
+      application: { count: jest.fn().mockResolvedValue(0) },
+      database: { count: jest.fn().mockResolvedValue(0) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access).removeEnvironment("u1", "e2");
+    expect(findFirst).not.toHaveBeenCalled();
   });
 
   it("forbids creating a project for a team the user can't write to", async () => {
