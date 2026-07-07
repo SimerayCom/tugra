@@ -235,6 +235,7 @@ export interface ProjectResource {
 export interface Environment {
   id: string;
   name: string;
+  isDefault: boolean;
   appCount: number;
   dbCount: number;
   resources?: ProjectResource[];
@@ -245,6 +246,7 @@ export interface Project {
   id: string;
   teamId: string;
   name: string;
+  isDefault: boolean;
   environments: Environment[];
   role: Role;
   canWrite: boolean;

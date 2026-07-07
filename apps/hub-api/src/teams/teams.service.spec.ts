@@ -4,21 +4,30 @@ import { TeamsService } from "./teams.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
+import { TeamDefaultsService } from "./team-defaults.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
+const ensureDefaults = jest.fn().mockResolvedValue(undefined);
+const teamDefaults = { ensureDefaults } as unknown as TeamDefaultsService;
 
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new TeamsService(prisma as PrismaService, access as TeamAccessService, audit);
+  return new TeamsService(prisma as PrismaService, access as TeamAccessService, audit, teamDefaults);
 }
 
 describe("TeamsService", () => {
-  it("creates a team with the creator as OWNER", async () => {
+  it("creates a team with the creator as OWNER and bootstraps its defaults atomically", async () => {
+    ensureDefaults.mockClear();
     const create = jest.fn().mockResolvedValue({ id: "t1", name: "Acme" });
-    const svc = make({ team: { create } } as unknown as PrismaService, {} as TeamAccessService);
+    const prisma = {
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb({ team: { create } })),
+    } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService);
     const view = await svc.create("u1", "Acme");
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ memberships: { create: { userId: "u1", role: Role.OWNER } } }) }),
     );
+    // Defaults bootstrapped inside the same transaction as the team.
+    expect(ensureDefaults).toHaveBeenCalledWith("t1", expect.anything());
     expect(view.role).toBe(Role.OWNER);
   });
 

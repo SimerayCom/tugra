@@ -7,6 +7,7 @@ import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TotpService } from "./totp.service";
 import { AuditService } from "../audit/audit.service";
+import { TeamDefaultsService } from "../teams/team-defaults.service";
 
 class FakeRedis {
   private kv = new Map<string, string>();
@@ -45,7 +46,10 @@ const config = {
         : undefined,
 } as unknown as ConfigService;
 
-function makeService(prisma: Partial<PrismaService> = {}): AuthService {
+function makeService(
+  prisma: Partial<PrismaService> = {},
+  teamDefaults: { ensureDefaults: jest.Mock } = { ensureDefaults: jest.fn().mockResolvedValue(undefined) },
+): AuthService {
   return new AuthService(
     prisma as PrismaService,
     new JwtService({}),
@@ -54,6 +58,7 @@ function makeService(prisma: Partial<PrismaService> = {}): AuthService {
     {} as TotpService,
     { log: jest.fn() } as unknown as AuditService,
     new FakeRedis() as unknown as RedisService,
+    teamDefaults as unknown as TeamDefaultsService,
   );
 }
 
@@ -173,13 +178,16 @@ describe("AuthService.loginWithGithub", () => {
         cb({ user: { create: userCreate }, team: { create: teamCreate }, membership: { create: memberCreate } }),
       ),
     } as unknown as PrismaService;
-    const svc = makeService(prisma);
+    const teamDefaults = { ensureDefaults: jest.fn().mockResolvedValue(undefined) };
+    const svc = makeService(prisma, teamDefaults);
     const issue = jest.spyOn(svc, "issueTokens");
 
     const pair = await svc.loginWithGithub("gh@x.io", "GH");
 
     expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ email: "gh@x.io", name: "GH" }) });
     expect(memberCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: "OWNER" }) });
+    // The new team is bootstrapped with its default project + env inside the tx.
+    expect(teamDefaults.ensureDefaults).toHaveBeenCalledWith("t1", expect.anything());
     expect(issue).toHaveBeenCalledWith("u1");
     expect(pair.accessToken).toBeTruthy();
   });

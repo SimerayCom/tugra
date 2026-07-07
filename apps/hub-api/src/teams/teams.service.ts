@@ -10,6 +10,7 @@ import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { TeamDefaultsService } from "./team-defaults.service";
 
 const MANAGE: Role[] = [Role.OWNER, Role.ADMIN];
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -46,6 +47,7 @@ export class TeamsService {
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
+    private readonly teamDefaults: TeamDefaultsService,
   ) {}
 
   async list(userId: string): Promise<TeamView[]> {
@@ -77,8 +79,15 @@ export class TeamsService {
   }
 
   async create(userId: string, name: string): Promise<TeamView> {
-    const team = await this.prisma.team.create({
-      data: { name, memberships: { create: { userId, role: Role.OWNER } } },
+    // Atomic: team + OWNER membership + default project/env commit or roll back as
+    // one unit, so a failure never leaves a persisted team without its defaults
+    // (mirrors the auth register / OAuth bootstrap paths).
+    const team = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.team.create({
+        data: { name, memberships: { create: { userId, role: Role.OWNER } } },
+      });
+      await this.teamDefaults.ensureDefaults(created.id, tx);
+      return created;
     });
     await this.audit.log({ actor: userId, action: "team.create", target: team.id });
     return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1 };
