@@ -15,7 +15,7 @@ import {
   verifyEd25519,
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
-import { isIpv6 } from "../common/observed-ip";
+import { isIpv6, isLoopbackIp, reconcileReportedIp } from "../common/observed-ip";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
@@ -55,6 +55,7 @@ export interface HostInfoInput {
   cpuCores: number;
   memTotalBytes: number;
   bootTime: number; // unix seconds
+  reportedIps?: string[];
 }
 
 @Injectable()
@@ -236,6 +237,7 @@ export class ServersService {
    */
   private ipFields(observed: string | null | undefined, currentIpSource: string): Prisma.ServerUpdateInput {
     if (!observed || currentIpSource === "manual") return {};
+    if (isLoopbackIp(observed)) return {}; // a loopback egress is not a reachable address
     return isIpv6(observed)
       ? { publicIpv6: observed }
       : { publicIp: observed, ipSource: "observed" };
@@ -327,6 +329,15 @@ export class ServersService {
 
   /** Store/refresh the host hardware+OS inventory (sent on every (re)connect). */
   async saveHostInfo(serverId: string, info: HostInfoInput): Promise<void> {
+    const reportedIps = info.reportedIps ?? [];
+    // Reconcile the reported interface IPs against the observed egress: adopt one
+    // when the observed IP is missing/loopback (never overriding a manual pin).
+    // Best-effort like the update below: a read blip must never throw and tear
+    // down the agent connection (host_info arrives on every reconnect).
+    const server = await this.prisma.server
+      .findUnique({ where: { id: serverId }, select: { publicIp: true, ipSource: true } })
+      .catch(() => null);
+    const reconcile = server ? reconcileReportedIp(server, reportedIps) : null;
     await this.prisma.server
       .update({
         where: { id: serverId },
@@ -338,6 +349,8 @@ export class ServersService {
           cpuCores: info.cpuCores || null,
           memTotalBytes: info.memTotalBytes ? BigInt(Math.round(info.memTotalBytes)) : null,
           bootTime: info.bootTime ? new Date(info.bootTime * 1000) : null,
+          reportedIps,
+          ...(reconcile ?? {}),
         },
       })
       .catch(() => undefined);

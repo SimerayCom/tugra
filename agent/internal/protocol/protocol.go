@@ -51,13 +51,14 @@ type Heartbeat struct {
 
 // HostInfo is the host hardware/OS inventory (mirrors packages/shared HostInfo).
 type HostInfo struct {
-	OS            string `json:"os"`
-	OSVersion     string `json:"osVersion"`
-	Arch          string `json:"arch"`
-	Kernel        string `json:"kernel"`
-	CPUCores      int    `json:"cpuCores"`
-	MemTotalBytes uint64 `json:"memTotalBytes"`
-	BootTime      int64  `json:"bootTime"`
+	OS            string   `json:"os"`
+	OSVersion     string   `json:"osVersion"`
+	Arch          string   `json:"arch"`
+	Kernel        string   `json:"kernel"`
+	CPUCores      int      `json:"cpuCores"`
+	MemTotalBytes uint64   `json:"memTotalBytes"`
+	BootTime      int64    `json:"bootTime"`
+	ReportedIps   []string `json:"reportedIps"` // non-virtual, non-loopback interface IPs (reconcile)
 }
 
 type HostInfoMsg struct {
