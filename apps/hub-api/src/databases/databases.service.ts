@@ -12,6 +12,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
+import { TeamDefaultsService } from "../teams/team-defaults.service";
 import {
   buildDatabaseRunScript,
   buildDbRemoveScript,
@@ -78,6 +79,7 @@ export class DatabasesService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly crypto: CryptoService,
+    private readonly teamDefaults: TeamDefaultsService,
   ) {}
 
   async create(userId: string, dto: CreateDatabaseInput): Promise<DatabaseView> {
@@ -85,6 +87,9 @@ export class DatabasesService {
     if (!server) throw new NotFoundException("server not found");
     await this.access.requireRole(userId, server.teamId, WRITE);
     if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
+    // Never orphan: fall back to the team's default environment when none is chosen.
+    const environmentId =
+      dto.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
 
     const engine = dto.engine as DbEngine;
     const version = dto.version ?? defaultVersion(engine);
@@ -101,7 +106,7 @@ export class DatabasesService {
         image: resolveImage(engine, version),
         port: enginePort(engine),
         hostPort: dto.hostPort ?? null,
-        environmentId: dto.environmentId ?? null,
+        environmentId,
         serverId: dto.serverId,
         teamId: server.teamId,
         credentials: this.crypto.encrypt(JSON.stringify(creds)),

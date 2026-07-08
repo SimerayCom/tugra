@@ -35,4 +35,33 @@ export class TeamDefaultsService {
       },
     });
   }
+
+  /**
+   * The team's canonical default environment (its default project's default env),
+   * for resolving a resource that was created without a chosen environment. Never
+   * returns null: if the invariant is somehow missing for a team, it bootstraps
+   * the defaults and retries rather than letting an orphan (null-env) row through.
+   */
+  async resolveDefaultEnvironmentId(
+    teamId: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<string> {
+    const found = await this.findDefaultEnvironmentId(teamId, client);
+    if (found) return found;
+    await this.ensureDefaults(teamId, client);
+    const healed = await this.findDefaultEnvironmentId(teamId, client);
+    if (!healed) throw new Error(`no default environment for team ${teamId}`);
+    return healed;
+  }
+
+  private async findDefaultEnvironmentId(
+    teamId: string,
+    client: Prisma.TransactionClient,
+  ): Promise<string | null> {
+    const env = await client.environment.findFirst({
+      where: { isDefault: true, project: { teamId, isDefault: true } },
+      select: { id: true },
+    });
+    return env?.id ?? null;
+  }
 }

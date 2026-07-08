@@ -16,6 +16,9 @@ function make(
   prisma: Partial<PrismaService>,
   access: Partial<TeamAccessService>,
   agentWs: Partial<AgentWsServer> = {},
+  teamDefaults: { resolveDefaultEnvironmentId: jest.Mock } = {
+    resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
+  },
 ) {
   return new DatabasesService(
     prisma as PrismaService,
@@ -23,6 +26,7 @@ function make(
     audit,
     agentWs as AgentWsServer,
     crypto,
+    teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
   );
 }
 
@@ -53,6 +57,44 @@ describe("DatabasesService", () => {
     await expect(
       svc.create("u1", { name: "main", serverId: "s1", engine: "POSTGRES" }),
     ).rejects.toThrow(/nope/);
+  });
+
+  it("resolves to the team default environment when none is given (never orphan)", async () => {
+    const create = jest.fn().mockResolvedValue({ ...db });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      database: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue("OWNER"),
+    } as unknown as TeamAccessService;
+    const teamDefaults = { resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default") };
+    await make(prisma, access, {}, teamDefaults).create("u1", { name: "main", serverId: "s1", engine: "POSTGRES" });
+    expect(teamDefaults.resolveDefaultEnvironmentId).toHaveBeenCalledWith("t1");
+    expect(create.mock.calls[0][0].data.environmentId).toBe("env-default");
+  });
+
+  it("uses the chosen environment and validates it, without resolving a default", async () => {
+    const create = jest.fn().mockResolvedValue({ ...db });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { teamId: "t1" } }) },
+      database: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue("OWNER"),
+    } as unknown as TeamAccessService;
+    const teamDefaults = { resolveDefaultEnvironmentId: jest.fn() };
+    await make(prisma, access, {}, teamDefaults).create("u1", {
+      name: "main",
+      serverId: "s1",
+      engine: "POSTGRES",
+      environmentId: "e1",
+    });
+    expect(teamDefaults.resolveDefaultEnvironmentId).not.toHaveBeenCalled();
+    expect(create.mock.calls[0][0].data.environmentId).toBe("e1");
   });
 
   it("provisions via the agent and records RUNNING on exit 0", async () => {
