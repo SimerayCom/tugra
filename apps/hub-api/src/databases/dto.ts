@@ -11,7 +11,7 @@ export const CreateDatabaseSchema = z.object({
 export type CreateDatabaseInput = z.infer<typeof CreateDatabaseSchema>;
 
 export const SetEnvironmentSchema = z.object({
-  environmentId: z.string().min(1).nullable(),
+  environmentId: z.string().min(1), // required: every database belongs to an environment
 });
 export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
 

@@ -782,9 +782,9 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.credentials.update", target: id });
   }
 
-  async setEnvironment(userId: string, id: string, environmentId: string | null): Promise<void> {
+  async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
-    if (environmentId) await this.assertEnvInTeam(environmentId, app.teamId);
+    await this.assertEnvInTeam(environmentId, app.teamId);
     await this.prisma.application.update({ where: { id }, data: { environmentId } });
     await this.audit.log({ actor: userId, action: "app.environment.update", target: id });
   }

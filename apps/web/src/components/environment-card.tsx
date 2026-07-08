@@ -15,7 +15,7 @@ const field: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
-/** Assign an app or database to a project environment (or unassign). */
+/** Move an app or database to another project environment. */
 export function EnvironmentCard({
   kind,
   id,
@@ -23,13 +23,13 @@ export function EnvironmentCard({
 }: {
   kind: "app" | "database";
   id: string;
-  environmentId: string | null;
+  environmentId: string;
 }) {
   const t = useT();
   const qc = useQueryClient();
   const { data: projects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const move = useMutation({
-    mutationFn: (envId: string | null) =>
+    mutationFn: (envId: string) =>
       kind === "app" ? api.setAppEnvironment(id, envId) : api.setDatabaseEnvironment(id, envId),
     onSuccess: () => qc.invalidateQueries({ queryKey: [kind === "app" ? "app" : "database", id] }),
   });
@@ -40,11 +40,10 @@ export function EnvironmentCard({
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("projects.moveDesc")}</p>
       <select
         style={{ ...field, minWidth: 240 }}
-        value={environmentId ?? ""}
-        onChange={(e) => move.mutate(e.target.value || null)}
+        value={environmentId}
+        onChange={(e) => move.mutate(e.target.value)}
         disabled={move.isPending}
       >
-        <option value="">{t("projects.unassigned")}</option>
         {projects.map((p) =>
           p.environments.map((env) => (
             <option key={env.id} value={env.id}>

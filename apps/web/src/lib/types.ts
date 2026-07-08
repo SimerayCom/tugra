@@ -304,7 +304,7 @@ export interface Application {
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
-  environmentId: string | null;
+  environmentId: string;
   projectId: string | null;
   projectName: string | null;
   environmentName: string | null;
@@ -382,7 +382,7 @@ export interface Database {
   name: string;
   engine: DbEngine;
   version: string;
-  environmentId: string | null;
+  environmentId: string;
   projectId: string | null;
   projectName: string | null;
   environmentName: string | null;

@@ -63,11 +63,11 @@ export class ProjectsService {
     });
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
-        where: { teamId: { in: teamIds }, environmentId: { not: null } },
+        where: { teamId: { in: teamIds } },
         select: { id: true, environmentId: true },
       }),
       this.prisma.database.findMany({
-        where: { teamId: { in: teamIds }, environmentId: { not: null } },
+        where: { teamId: { in: teamIds } },
         select: { id: true, environmentId: true },
       }),
     ]);

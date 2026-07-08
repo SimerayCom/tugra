@@ -69,11 +69,14 @@ describe("Projects / Environments (e2e)", () => {
     const projectId = proj.body.id;
 
     // add a second environment
-    await request(app.getHttpServer())
+    const withStaging = await request(app.getHttpServer())
       .post(`/projects/${projectId}/environments`)
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "staging" })
       .expect(201);
+    const stagingEnv = withStaging.body.environments.find(
+      (e: { id: string; name: string }) => e.name === "staging",
+    ).id;
 
     // create an app directly in the production environment
     const appRes = await request(app.getHttpServer())
@@ -97,11 +100,18 @@ describe("Projects / Environments (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(409);
 
-    // move the app out, then deletion succeeds
+    // an app always belongs to an environment: un-assigning (null) is rejected
     await request(app.getHttpServer())
       .put(`/apps/${appRes.body.id}/environment`)
       .set("Authorization", `Bearer ${token}`)
       .send({ environmentId: null })
+      .expect(400);
+
+    // move the app to another env, then deleting the now-empty production env succeeds
+    await request(app.getHttpServer())
+      .put(`/apps/${appRes.body.id}/environment`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ environmentId: stagingEnv })
       .expect(200);
     await request(app.getHttpServer())
       .delete(`/projects/environments/${prodEnv}`)

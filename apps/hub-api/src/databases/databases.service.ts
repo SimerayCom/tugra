@@ -170,9 +170,9 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "database.remove", target: id });
   }
 
-  async setEnvironment(userId: string, id: string, environmentId: string | null): Promise<void> {
+  async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {
     const db = await this.requireWrite(userId, id);
-    if (environmentId) await this.assertEnvInTeam(environmentId, db.teamId);
+    await this.assertEnvInTeam(environmentId, db.teamId);
     await this.prisma.database.update({ where: { id }, data: { environmentId } });
     await this.audit.log({ actor: userId, action: "database.environment.update", target: id });
   }
