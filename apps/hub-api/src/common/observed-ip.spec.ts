@@ -1,4 +1,4 @@
-import { observedIp, isIpv6 } from "./observed-ip";
+import { observedIp, isIpv6, isLoopbackIp, bestReportedIp, reconcileReportedIp } from "./observed-ip";
 
 describe("observedIp", () => {
   it("uses the raw TCP peer address by default", () => {
@@ -41,5 +41,69 @@ describe("isIpv6", () => {
     expect(isIpv6("2001:db8::1")).toBe(true);
     expect(isIpv6("::1")).toBe(true);
     expect(isIpv6("203.0.113.7")).toBe(false);
+  });
+});
+
+describe("isLoopbackIp", () => {
+  it("recognizes IPv4 and IPv6 loopback", () => {
+    expect(isLoopbackIp("127.0.0.1")).toBe(true);
+    expect(isLoopbackIp("127.5.5.5")).toBe(true);
+    expect(isLoopbackIp("::1")).toBe(true);
+    expect(isLoopbackIp("203.0.113.7")).toBe(false);
+    expect(isLoopbackIp("192.168.1.5")).toBe(false);
+  });
+});
+
+describe("bestReportedIp", () => {
+  it("prefers a public IPv4 over a private one", () => {
+    expect(bestReportedIp(["10.0.0.5", "203.0.113.7"])).toBe("203.0.113.7");
+  });
+  it("falls back to a private IPv4 when no public one exists", () => {
+    expect(bestReportedIp(["192.168.1.5", "2001:db8::1"])).toBe("192.168.1.5");
+  });
+  it("takes an IPv6 only when no IPv4 candidate exists", () => {
+    expect(bestReportedIp(["2001:db8::1"])).toBe("2001:db8::1");
+  });
+  it("skips loopback and returns null for an empty/loopback-only set", () => {
+    expect(bestReportedIp(["127.0.0.1", "::1"])).toBeNull();
+    expect(bestReportedIp([])).toBeNull();
+  });
+});
+
+describe("reconcileReportedIp", () => {
+  it("keeps a good observed egress IP (no change)", () => {
+    expect(reconcileReportedIp({ publicIp: "203.0.113.7", ipSource: "observed" }, ["10.0.0.5"])).toBeNull();
+  });
+  it("adopts a reported IP when the observed one is loopback", () => {
+    expect(reconcileReportedIp({ publicIp: "127.0.0.1", ipSource: "observed" }, ["192.168.1.5"])).toEqual({
+      publicIp: "192.168.1.5",
+      ipSource: "reported",
+    });
+  });
+  it("adopts a reported IP when there is no observed IP yet", () => {
+    expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["203.0.113.7"])).toEqual({
+      publicIp: "203.0.113.7",
+      ipSource: "reported",
+    });
+  });
+  it("routes an IPv6-only reported candidate to publicIpv6, not the IPv4 column", () => {
+    expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["2001:db8::1"])).toEqual({
+      publicIpv6: "2001:db8::1",
+    });
+  });
+  it("never overrides a manual pin", () => {
+    expect(reconcileReportedIp({ publicIp: "127.0.0.1", ipSource: "manual" }, ["203.0.113.7"])).toBeNull();
+  });
+  it("refreshes a previously-reported IP when the interface IP changes", () => {
+    expect(reconcileReportedIp({ publicIp: "192.168.1.5", ipSource: "reported" }, ["192.168.1.9"])).toEqual({
+      publicIp: "192.168.1.9",
+      ipSource: "reported",
+    });
+  });
+  it("is a no-op when the reported IP is unchanged", () => {
+    expect(reconcileReportedIp({ publicIp: "192.168.1.5", ipSource: "reported" }, ["192.168.1.5"])).toBeNull();
+  });
+  it("returns null when there is no usable reported candidate", () => {
+    expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["127.0.0.1"])).toBeNull();
   });
 });

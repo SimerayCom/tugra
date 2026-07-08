@@ -189,27 +189,70 @@ describe("ServersService.enroll (token validation)", () => {
     expect(data.publicIp).toBeUndefined();
     expect(data.ipSource).toBeUndefined();
   });
+
+  it("does not store a loopback observed IP (not a reachable address)", async () => {
+    const { prisma, update } = pendingServer();
+    await enrollWith(prisma, "127.0.0.1");
+    const data = update.mock.calls[0][0].data;
+    expect(data.publicIp).toBeUndefined();
+    expect(data.ipSource).toBeUndefined();
+  });
 });
 
 describe("ServersService.saveHostInfo + uptime view", () => {
+  const hostInfo = (over: Record<string, unknown> = {}) => ({
+    os: "ubuntu",
+    osVersion: "24.04",
+    arch: "x86_64",
+    kernel: "6.8.0",
+    cpuCores: 4,
+    memTotalBytes: 8589934592,
+    bootTime: 1_700_000_000,
+    ...over,
+  });
+
   it("persists host inventory fields", async () => {
     const update = jest.fn().mockResolvedValue({});
-    const prisma = { server: { update } } as unknown as PrismaService;
-    await svcWith(prisma).saveHostInfo("s1", {
-      os: "ubuntu",
-      osVersion: "24.04",
-      arch: "x86_64",
-      kernel: "6.8.0",
-      cpuCores: 4,
-      memTotalBytes: 8589934592,
-      bootTime: 1_700_000_000,
-    });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(null), update },
+    } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo());
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "s1" },
         data: expect.objectContaining({ os: "ubuntu", arch: "x86_64", cpuCores: 4, memTotalBytes: 8589934592n }),
       }),
     );
+  });
+
+  it("stores reportedIps and reconciles them when the observed IP is loopback", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({ publicIp: "127.0.0.1", ipSource: "observed" }),
+        update,
+      },
+    } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ reportedIps: ["192.168.1.5", "127.0.0.1"] }));
+    const data = update.mock.calls[0][0].data;
+    expect(data.reportedIps).toEqual(["192.168.1.5", "127.0.0.1"]);
+    expect(data.publicIp).toBe("192.168.1.5");
+    expect(data.ipSource).toBe("reported");
+  });
+
+  it("keeps a good observed IP and does not reconcile from reported", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", ipSource: "observed" }),
+        update,
+      },
+    } as unknown as PrismaService;
+    await svcWith(prisma).saveHostInfo("s1", hostInfo({ reportedIps: ["10.0.0.5"] }));
+    const data = update.mock.calls[0][0].data;
+    expect(data.reportedIps).toEqual(["10.0.0.5"]);
+    expect(data.publicIp).toBeUndefined(); // observed egress kept
+    expect(data.ipSource).toBeUndefined();
   });
 
   it("derives uptimeSeconds from bootTime in the view", async () => {
