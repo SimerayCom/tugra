@@ -12,7 +12,8 @@ import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
 import { TemplateGrid } from "../../../../components/template-grid";
 import { wizardStep } from "../../../../lib/wizard-step";
-import { parseKind, visibleGroups, backTarget, type ResourceKind } from "../../../../lib/resource-new";
+import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId, type ResourceKind } from "../../../../lib/resource-new";
+import { scopeByTeam } from "../../../../lib/team-scope";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
@@ -48,19 +49,36 @@ function Wizard() {
   const sp = useSearchParams();
 
   const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
-  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  const { data: servers = [], isSuccess: serversLoaded } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
   const { data: gitSources = [] } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources() });
 
+  const [serverId, setServerId] = useState(sp.get("server") ?? "");
+  // Drop an invalid ?server= (deleted, or not one of yours) once servers load.
+  // Gate on isSuccess, not servers.length, so it also clears when the user has
+  // zero servers — and never clears a valid pin before the query resolves.
+  useEffect(() => {
+    if (serverId && serversLoaded && !servers.some((s) => s.id === serverId)) setServerId("");
+  }, [servers, serversLoaded, serverId]);
+  const pinnedServer = servers.find((s) => s.id === serverId);
+
   const [projectId, setProjectId] = useState(sp.get("project") ?? "");
   const [envId, setEnvId] = useState(sp.get("env") ?? "");
+  // Target project and deployment server always share a team: scope the project
+  // options to the pinned server's team (and the server grid to the project's team).
+  const projectPool = scopeByTeam(projects, pinnedServer?.teamId ?? null);
   useEffect(() => {
-    if (!projectId && projects.length) setProjectId(projects[0].id);
-  }, [projects, projectId]);
-  const project = projects.find((p) => p.id === projectId);
+    if (!projectId || !projectPool.some((p) => p.id === projectId)) {
+      const next = defaultProjectId(projectPool);
+      if (next && next !== projectId) setProjectId(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedServer?.teamId, projects, projectId]);
+  const project = projectPool.find((p) => p.id === projectId);
   useEffect(() => {
-    if (project && !project.environments.some((e) => e.id === envId)) setEnvId(project.environments[0]?.id ?? "");
+    if (project && !project.environments.some((e) => e.id === envId)) setEnvId(defaultEnvId(project));
   }, [project, envId]);
+  const serverPool = scopeByTeam(servers, project?.teamId ?? null);
 
   const [sel, setSel] = useState<Sel>(null);
   const [kindFilter, setKindFilter] = useState<ResourceKind | null>(parseKind(sp.get("kind")));
@@ -68,7 +86,6 @@ function Wizard() {
 
   // config fields
   const [name, setName] = useState("");
-  const [serverId, setServerId] = useState("");
   const [image, setImage] = useState("");
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("");
@@ -222,7 +239,7 @@ function Wizard() {
               </>
             ) : (
               <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Select value={projectId} onChange={setProjectId} options={projects.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
+                <Select value={projectId} onChange={setProjectId} options={projectPool.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
                 <span style={{ color: "var(--c-tx3)" }}>/</span>
                 <Select value={envId} onChange={setEnvId} options={(project?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))} style={{ width: "auto", minWidth: 130 }} />
               </span>
@@ -316,13 +333,13 @@ function Wizard() {
             <Card style={{ padding: 16 }}>
               <button type="button" onClick={() => setSel(null)} style={{ ...backLinkBtn, marginBottom: 14 }}>← {t("resources.changeType")}</button>
               <div style={groupTitle}>{t("resources.selectServer")}</div>
-              {noServer ? (
+              {serverPool.length === 0 ? (
                 <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>
                   {t("resources.needServer")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("resources.addServer")}</Link>
                 </div>
               ) : (
                 <div style={grid3}>
-                  {servers.map((s) => (
+                  {serverPool.map((s) => (
                     <button
                       key={s.id}
                       type="button"

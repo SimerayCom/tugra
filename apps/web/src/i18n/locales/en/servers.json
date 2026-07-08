@@ -51,6 +51,7 @@
   "getFreshCommand": "Get a fresh command",
   "enrolledTitle": "Server connected ✓",
   "addFirstApp": "Add your first app →",
+  "addResource": "Add resource",
   "status": "Status",
   "sealLabel": "Seal (Tuğra)",
   "sealed": "✓ sealed",

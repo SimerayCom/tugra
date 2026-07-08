@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseKind, visibleGroups, backTarget } from "./resource-new";
+import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId } from "./resource-new";
 
 describe("parseKind", () => {
   it("accepts the three known kinds", () => {
@@ -40,5 +40,47 @@ describe("backTarget", () => {
   it("falls back to projects for the generic +New entry (no params)", () => {
     expect(backTarget({ projectParam: null, kind: null })).toEqual({ href: "/projects", key: "projects" });
     expect(backTarget({ projectParam: undefined, kind: null })).toEqual({ href: "/projects", key: "projects" });
+  });
+});
+
+describe("defaultProjectId", () => {
+  it("prefers the default (isDefault) project over the first", () => {
+    expect(
+      defaultProjectId([
+        { id: "p1", isDefault: false },
+        { id: "p2", isDefault: true },
+      ]),
+    ).toBe("p2");
+  });
+  it("falls back to the first when none is marked default", () => {
+    expect(
+      defaultProjectId([
+        { id: "p1", isDefault: false },
+        { id: "p2", isDefault: false },
+      ]),
+    ).toBe("p1");
+  });
+  it("returns '' for an empty list", () => {
+    expect(defaultProjectId([])).toBe("");
+  });
+});
+
+describe("defaultEnvId", () => {
+  it("prefers the default (isDefault) environment over the first", () => {
+    expect(
+      defaultEnvId({
+        environments: [
+          { id: "e1", isDefault: false },
+          { id: "e2", isDefault: true },
+        ],
+      }),
+    ).toBe("e2");
+  });
+  it("falls back to the first when none is marked default", () => {
+    expect(defaultEnvId({ environments: [{ id: "e1", isDefault: false }] })).toBe("e1");
+  });
+  it("returns '' for an env-less or undefined project", () => {
+    expect(defaultEnvId({ environments: [] })).toBe("");
+    expect(defaultEnvId(undefined)).toBe("");
   });
 });

@@ -31,3 +31,20 @@ export function backTarget(opts: { projectParam: string | null | undefined; kind
   if (opts.kind === "app" || opts.kind === "service") return { href: "/apps", key: "apps" };
   return { href: "/projects", key: "projects" };
 }
+
+/**
+ * The project to preselect in the wizard: the team's default project (isDefault)
+ * over an arbitrary first entry. Pass a team-scoped list (via scopeByTeam) so the
+ * pick stays within the chosen server's team. "" when there is nothing to pick.
+ */
+export function defaultProjectId(projects: { id: string; isDefault: boolean }[]): string {
+  return (projects.find((p) => p.isDefault) ?? projects[0])?.id ?? "";
+}
+
+/** The environment to preselect: the project's default env (isDefault) over the first. */
+export function defaultEnvId(
+  project: { environments: { id: string; isDefault: boolean }[] } | undefined,
+): string {
+  const envs = project?.environments ?? [];
+  return (envs.find((e) => e.isDefault) ?? envs[0])?.id ?? "";
+}
