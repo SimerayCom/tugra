@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
-import { Role, ServerStatus } from "@prisma/client";
+import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -15,6 +15,7 @@ import {
   verifyEd25519,
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
+import { isIpv6 } from "../common/observed-ip";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
@@ -25,6 +26,8 @@ export interface ServerView {
   status: ServerStatus;
   teamId: string;
   hostname: string | null;
+  publicIp: string | null;
+  publicIpv6: string | null;
   os: string | null;
   osVersion: string | null;
   arch: string | null;
@@ -226,11 +229,24 @@ export class ServersService {
 
   // ---- agent transport (called by the WS server) --------------------------
 
+  /**
+   * Update fields for a freshly observed source IP. No-op when there's no IP or
+   * the operator has manually pinned the server's address (so an observation
+   * never clobbers a manual override).
+   */
+  private ipFields(observed: string | null | undefined, currentIpSource: string): Prisma.ServerUpdateInput {
+    if (!observed || currentIpSource === "manual") return {};
+    return isIpv6(observed)
+      ? { publicIpv6: observed }
+      : { publicIp: observed, ipSource: "observed" };
+  }
+
   async enroll(input: {
     token: string;
     publicKey: string;
     agentVersion: string;
     hostname: string;
+    observedIp?: string | null;
   }): Promise<{ serverId: string; seal: string }> {
     const server = await this.prisma.server.findUnique({
       where: { enrollToken: input.token },
@@ -254,6 +270,7 @@ export class ServersService {
         hostname: input.hostname,
         status: ServerStatus.ONLINE,
         lastSeenAt: new Date(),
+        ...this.ipFields(input.observedIp, server.ipSource),
       },
     });
     await this.audit.log({
@@ -268,20 +285,23 @@ export class ServersService {
     serverId: string,
     nonce: string,
     signature: string,
+    observedIp?: string | null,
   ): Promise<boolean> {
     const server = await this.prisma.server.findUnique({
       where: { id: serverId },
     });
     if (!server?.agentPublicKey) return false;
     if (!verifyEd25519(server.agentPublicKey, nonce, signature)) return false;
-    await this.markOnline(serverId);
+    // Refresh online status + the observed IP in one write (reconnect may bring a
+    // new address — a dynamic IP is tracked on every auth).
+    await this.markOnline(serverId, this.ipFields(observedIp, server.ipSource));
     return true;
   }
 
-  async markOnline(serverId: string): Promise<void> {
+  async markOnline(serverId: string, extra: Prisma.ServerUpdateInput = {}): Promise<void> {
     await this.prisma.server.update({
       where: { id: serverId },
-      data: { status: ServerStatus.ONLINE, lastSeenAt: new Date() },
+      data: { status: ServerStatus.ONLINE, lastSeenAt: new Date(), ...extra },
     });
   }
 
@@ -362,6 +382,8 @@ export class ServersService {
       status: ServerStatus;
       teamId: string;
       hostname: string | null;
+      publicIp?: string | null;
+      publicIpv6?: string | null;
       os?: string | null;
       osVersion?: string | null;
       arch?: string | null;
@@ -386,6 +408,8 @@ export class ServersService {
       status: s.status,
       teamId: s.teamId,
       hostname: s.hostname,
+      publicIp: s.publicIp ?? null,
+      publicIpv6: s.publicIpv6 ?? null,
       os: s.os ?? null,
       osVersion: s.osVersion ?? null,
       arch: s.arch ?? null,

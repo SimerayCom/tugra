@@ -52,6 +52,7 @@
   "enrolledTitle": "Server connected ✓",
   "addFirstApp": "Add your first app →",
   "addResource": "Add resource",
+  "ipAddress": "IP address",
   "status": "Status",
   "sealLabel": "Seal (Tuğra)",
   "sealed": "✓ sealed",

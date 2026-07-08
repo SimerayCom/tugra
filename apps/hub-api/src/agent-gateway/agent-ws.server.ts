@@ -26,11 +26,17 @@ export interface TerminalDelegate {
 }
 import { MetricsService } from "../metrics/metrics.service";
 import { ServersService } from "../servers/servers.service";
+import { observedIp } from "../common/observed-ip";
+
+// Trust X-Forwarded-For only when the hub is explicitly behind a reverse proxy;
+// otherwise the raw TCP peer address (which an agent cannot spoof) is used.
+const TRUST_PROXY = process.env.HUB_TRUSTED_PROXY === "true";
 
 interface ConnState {
   nonce: string;
   serverId?: string;
   authed: boolean;
+  remoteIp?: string | null;
 }
 
 interface Pending {
@@ -74,7 +80,9 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     // gateway) can share this HTTP server without ws aborting each other's
     // handshakes (two {server,path} servers destroy non-matching upgrades).
     this.wss = new WebSocketServer({ noServer: true });
-    this.wss.on("connection", (socket: WebSocket) => this.onConnection(socket));
+    this.wss.on("connection", (socket: WebSocket, req: import("node:http").IncomingMessage) =>
+      this.onConnection(socket, req),
+    );
     httpServer.on("upgrade", (req: import("node:http").IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
       const pathname = new URL(req.url ?? "", "ws://localhost").pathname;
       if (pathname !== "/agent") return;
@@ -83,9 +91,15 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     this.logger.log("agent WS listening on /agent");
   }
 
-  private onConnection(socket: WebSocket): void {
+  private onConnection(socket: WebSocket, req?: import("node:http").IncomingMessage): void {
     const nonce = randomUUID();
-    this.state.set(socket, { nonce, authed: false });
+    const fwd = req?.headers["x-forwarded-for"];
+    const remoteIp = observedIp(
+      req?.socket?.remoteAddress,
+      Array.isArray(fwd) ? fwd[0] : fwd,
+      TRUST_PROXY,
+    );
+    this.state.set(socket, { nonce, authed: false, remoteIp });
     this.send(socket, { type: "challenge", nonce });
 
     socket.on("message", (raw) => void this.onMessage(socket, raw.toString()));
@@ -122,6 +136,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             publicKey: msg.publicKey,
             agentVersion: msg.agentVersion,
             hostname: msg.hostname,
+            observedIp: st.remoteIp,
           });
           st.serverId = serverId;
           st.authed = true;
@@ -140,6 +155,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             msg.serverId,
             st.nonce,
             msg.signature,
+            st.remoteIp,
           );
           if (!ok) return this.fail(socket, "auth failed");
           st.serverId = msg.serverId;
