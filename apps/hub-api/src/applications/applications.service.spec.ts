@@ -46,8 +46,20 @@ function make(
     resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
   },
 ) {
+  // view() now resolves a server's public IP to synthesize a domainless app's
+  // http://<ip>:<hostPort> URL; every test path through get()/list()/listPreviews()
+  // hits server.findUnique/findMany. Default to "no IP" so unrelated tests stay
+  // green; tests that assert the fallback URL override server on their own prisma.
+  const withServerDefaults = {
+    ...prisma,
+    server: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      ...(prisma as { server?: object }).server,
+    },
+  } as unknown as Partial<PrismaService>;
   return new ApplicationsService(
-    prisma as PrismaService,
+    withServerDefaults as PrismaService,
     access as TeamAccessService,
     audit,
     agentWs as AgentWsServer,
@@ -559,6 +571,39 @@ describe("ApplicationsService", () => {
     expect(view.registryUser).toBe("u");
     expect(JSON.stringify(view)).not.toContain("ghp_abc");
     expect(JSON.stringify(view)).not.toContain('"token":"p"');
+  });
+
+  it("synthesizes a host:port URL for a domainless app when its server has a public IP", async () => {
+    const exposed = { ...app, domain: null, hostPort: 8080 };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(exposed) },
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null }) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+    expect(view.url).toBe("http://203.0.113.7:8080");
+  });
+
+  it("leaves the URL null for a domainless app whose server has no known IP", async () => {
+    const exposed = { ...app, domain: null, hostPort: 8080 };
+    const prisma = {
+      // server.findUnique defaults to null (no public IP yet) via make()
+      application: { findUnique: jest.fn().mockResolvedValue(exposed) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+    expect(view.url).toBeNull();
+  });
+
+  it("uses the domain for a domained app regardless of the server IP", async () => {
+    const domained = { ...app, domain: "app.example.com", https: true, hostPort: 8080 };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(domained) },
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null }) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+    expect(view.url).toBe("https://app.example.com");
   });
 
   it("persists domain options for a writer", async () => {

@@ -94,7 +94,7 @@ describe("ProjectsService", () => {
       application: {
         findMany: jest.fn().mockResolvedValue([
           { id: "a1", name: "api", status: "RUNNING", environmentId: "e1", source: "GIT", domain: "x.com", https: true, tags: ["prod"], serverId: "s1" },
-          { id: "a2", name: "stack", status: "RUNNING", environmentId: "e1", source: "COMPOSE", domain: null, https: true, tags: [], serverId: "s1" },
+          { id: "a2", name: "stack", status: "RUNNING", environmentId: "e1", source: "COMPOSE", domain: null, https: true, hostPort: 9000, tags: [], serverId: "s1" },
         ]),
       },
       database: {
@@ -102,7 +102,7 @@ describe("ProjectsService", () => {
           { id: "d1", name: "pg", status: "RUNNING", environmentId: "e1", engine: "POSTGRES", tags: [], serverId: "s1" },
         ]),
       },
-      server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", name: "web-1" }]) },
+      server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", name: "web-1", publicIp: "203.0.113.7", publicIpv6: null }]) },
     } as unknown as PrismaService;
     const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
     const out = await make(prisma, access).get("u1", "p1");
@@ -114,6 +114,8 @@ describe("ProjectsService", () => {
     expect(app.source).toBe("GIT");
     const service = res.find((r) => r.id === "a2")!;
     expect(service.source).toBe("COMPOSE"); // grouped as a Service in the UI
+    // Domainless but publishes a host port → reachable http://<serverIp>:<hostPort>.
+    expect(service.url).toBe("http://203.0.113.7:9000");
     const db = res.find((r) => r.kind === "database")!;
     expect(db.engine).toBe("POSTGRES");
     expect(db.source).toBeNull();

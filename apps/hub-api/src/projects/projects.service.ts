@@ -8,6 +8,7 @@ import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { appUrl } from "../common/app-url";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
@@ -104,17 +105,22 @@ export class ProjectsService {
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, tags: true, serverId: true },
+        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, hostPort: true, tags: true, serverId: true },
       }),
       this.prisma.database.findMany({
         where: { environmentId: { in: envIds } },
         select: { id: true, name: true, status: true, environmentId: true, engine: true, tags: true, serverId: true },
       }),
     ]);
-    // Resolve server names for the "Server: <name>" labels.
+    // Resolve server names for the "Server: <name>" labels, and public IPs so a
+    // domainless app can still surface a reachable http://<ip>:<hostPort> URL.
     const serverIds = [...new Set([...apps.map((a) => a.serverId), ...dbs.map((d) => d.serverId)])];
-    const servers = await this.prisma.server.findMany({ where: { id: { in: serverIds } }, select: { id: true, name: true } });
+    const servers = await this.prisma.server.findMany({
+      where: { id: { in: serverIds } },
+      select: { id: true, name: true, publicIp: true, publicIpv6: true },
+    });
     const serverName = new Map(servers.map((s) => [s.id, s.name]));
+    const serverIp = new Map(servers.map((s) => [s.id, s.publicIp ?? s.publicIpv6]));
     return {
       id: project.id,
       teamId: project.teamId,
@@ -126,7 +132,7 @@ export class ProjectsService {
         const resources: ProjectResource[] = [
           ...apps.filter((a) => a.environmentId === e.id).map((a) => ({
             id: a.id, name: a.name, kind: "app" as const, source: a.source, status: a.status,
-            url: a.domain ? `${a.https ? "https" : "http"}://${a.domain}` : null,
+            url: appUrl({ domain: a.domain, https: a.https, hostPort: a.hostPort }, serverIp.get(a.serverId) ?? null),
             serverName: serverName.get(a.serverId) ?? null,
             tags: a.tags,
             engine: null,
