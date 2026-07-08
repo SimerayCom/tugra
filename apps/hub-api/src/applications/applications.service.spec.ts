@@ -1,6 +1,7 @@
 import { ForbiddenException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
+import { SetEnvironmentSchema } from "./dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
@@ -612,7 +613,7 @@ describe("ApplicationsService", () => {
     ).rejects.toThrow(/not found in this team/);
   });
 
-  it("assigns an app to a same-team environment and can unassign", async () => {
+  it("moves an app to a same-team environment (no un-assign; env is required)", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
@@ -622,8 +623,12 @@ describe("ApplicationsService", () => {
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setEnvironment("u1", "app1", "e1");
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { environmentId: "e1" } }));
-    await svc.setEnvironment("u1", "app1", null);
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { environmentId: null } }));
+  });
+
+  it("rejects a null environment at the schema (an app always belongs to an env)", () => {
+    expect(SetEnvironmentSchema.safeParse({ environmentId: null }).success).toBe(false);
+    expect(SetEnvironmentSchema.safeParse({ environmentId: "" }).success).toBe(false);
+    expect(SetEnvironmentSchema.safeParse({ environmentId: "e1" }).success).toBe(true);
   });
 
   it("forbids a non-writer from setting volumes", async () => {

@@ -85,7 +85,7 @@ export const SetCredentialsSchema = z
 export type SetCredentialsInput = z.infer<typeof SetCredentialsSchema>;
 
 export const SetEnvironmentSchema = z.object({
-  environmentId: z.string().min(1).nullable(),
+  environmentId: z.string().min(1), // required: every app belongs to an environment
 });
 export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
 

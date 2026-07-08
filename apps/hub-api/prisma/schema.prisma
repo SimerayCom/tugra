@@ -117,6 +117,8 @@ model Environment {
   projectId String
   name      String
   isDefault Boolean  @default(false) // the project's default environment (exactly one per project)
+  applications Application[]
+  databases    Database[]
   createdAt DateTime @default(now())
 
   @@index([projectId])
@@ -423,7 +425,8 @@ model Application {
   id            String       @id @default(cuid())
   team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId        String
-  environmentId  String?
+  environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: NoAction)
+  environmentId  String
   serverId       String
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
@@ -515,7 +518,8 @@ model Database {
   id          String   @id @default(cuid())
   team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId      String
-  environmentId String?
+  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: NoAction)
+  environmentId String
   serverId    String
   name        String
   engine      DbEngine

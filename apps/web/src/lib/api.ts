@@ -639,7 +639,7 @@ export const api = {
       body: JSON.stringify(creds),
     });
   },
-  setAppEnvironment(id: string, environmentId: string | null) {
+  setAppEnvironment(id: string, environmentId: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/environment`, {
       method: "PUT",
       body: JSON.stringify({ environmentId }),
@@ -669,7 +669,7 @@ export const api = {
       body: JSON.stringify({ tags }),
     });
   },
-  setDatabaseEnvironment(id: string, environmentId: string | null) {
+  setDatabaseEnvironment(id: string, environmentId: string) {
     return apiFetch<{ ok: true }>(`/databases/${id}/environment`, {
       method: "PUT",
       body: JSON.stringify({ environmentId }),
