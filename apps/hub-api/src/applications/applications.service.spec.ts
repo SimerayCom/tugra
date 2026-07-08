@@ -869,6 +869,23 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("list() labels each app with its project/environment (batched, no N+1)", async () => {
+    const envFindMany = jest.fn().mockResolvedValue([
+      { id: "e1", name: "production", project: { id: "p1", name: "Default" } },
+    ]);
+    const prisma = {
+      application: { findMany: jest.fn().mockResolvedValue([{ ...app, environmentId: "e1" }]) },
+      environment: { findMany: envFindMany },
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", Role.OWNER]])),
+    } as unknown as TeamAccessService;
+    const out = await make(prisma, access, {} as AgentWsServer).list("u1");
+    expect(envFindMany).toHaveBeenCalledTimes(1); // one query for the whole list
+    expect(out[0].projectName).toBe("Default");
+    expect(out[0].environmentName).toBe("production");
+  });
+
   it("rolls back by re-running the target image tag without rebuilding", async () => {
     const depUpdate = jest.fn().mockResolvedValue({});
     const prisma = {

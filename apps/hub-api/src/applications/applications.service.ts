@@ -9,7 +9,7 @@ import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
-import { loadProjectCtx, type ResourceProjectCtx } from "../common/resource-project";
+import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
@@ -240,7 +240,8 @@ export class ApplicationsService {
       where: { teamId: { in: ids }, isPreview: false },
       orderBy: { createdAt: "desc" },
     });
-    return apps.map((a) => this.view(a, roleByTeam.get(a.teamId)!));
+    const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
+    return apps.map((a) => this.view(a, roleByTeam.get(a.teamId)!, ctxByEnv.get(a.environmentId)));
   }
 
   async get(userId: string, id: string): Promise<AppView> {

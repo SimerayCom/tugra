@@ -82,6 +82,11 @@ export default function DatabasesPage() {
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{engineLabel(d.engine)} · {d.version}</div>
                   </div>
+                  {d.projectName && (
+                    <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {d.projectName} / {d.environmentName}
+                    </span>
+                  )}
                   <span style={{ fontSize: 12, color: dbColor(d.status), fontWeight: 600 }}>{d.status}</span>
                 </Link>
               </div>

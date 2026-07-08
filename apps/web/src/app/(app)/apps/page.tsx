@@ -61,6 +61,11 @@ export default function AppsPage() {
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{appSourceSummary(a)}</div>
                   </div>
+                  {a.projectName && (
+                    <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {a.projectName} / {a.environmentName}
+                    </span>
+                  )}
                   <StatusPill label={a.status} color={appColor(a.status)} />
                 </Link>
               );
