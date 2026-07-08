@@ -13,6 +13,8 @@ const s = (
   status,
   teamId,
   hostname: null,
+  publicIp: null,
+  publicIpv6: null,
   os: null,
   osVersion: null,
   arch: null,

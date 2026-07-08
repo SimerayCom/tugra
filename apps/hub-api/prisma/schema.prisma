@@ -159,6 +159,10 @@ model Server {
   agentPublicKey       String?
   agentVersion         String?
   hostname             String?
+  publicIp             String?      // observed reachable IPv4 (or manual override)
+  publicIpv6           String?      // observed reachable IPv6
+  ipSource             String       @default("observed") // observed | reported | manual
+  reportedIps          String[]     @default([]) // agent-reported candidate interface IPs (reconcile)
   os                   String?
   osVersion            String?
   arch                 String?

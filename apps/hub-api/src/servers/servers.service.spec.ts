@@ -146,6 +146,49 @@ describe("ServersService.enroll (token validation)", () => {
     expect(res.serverId).toBe("s1");
     expect(res.seal).toMatch(/^seal_/);
   });
+
+  function pendingServer(over: Record<string, unknown> = {}) {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1",
+          status: ServerStatus.PENDING,
+          enrollTokenExpiresAt: new Date(Date.now() + 60_000),
+          ipSource: "observed",
+          ...over,
+        }),
+        update,
+      },
+    } as unknown as PrismaService;
+    return { prisma, update };
+  }
+  const enrollWith = (prisma: PrismaService, observedIp?: string) =>
+    svcWith(prisma).enroll({ token: "t", publicKey: "k", agentVersion: "v", hostname: "h", observedIp });
+
+  it("stores an observed IPv4 as the server's public IP on enroll", async () => {
+    const { prisma, update } = pendingServer();
+    await enrollWith(prisma, "203.0.113.7");
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ publicIp: "203.0.113.7", ipSource: "observed" }) }),
+    );
+  });
+
+  it("stores an observed IPv6 in publicIpv6 on enroll", async () => {
+    const { prisma, update } = pendingServer();
+    await enrollWith(prisma, "2001:db8::1");
+    const data = update.mock.calls[0][0].data;
+    expect(data.publicIpv6).toBe("2001:db8::1");
+    expect(data.publicIp).toBeUndefined();
+  });
+
+  it("never overrides a manually-pinned IP with the observed one", async () => {
+    const { prisma, update } = pendingServer({ ipSource: "manual" });
+    await enrollWith(prisma, "203.0.113.7");
+    const data = update.mock.calls[0][0].data;
+    expect(data.publicIp).toBeUndefined();
+    expect(data.ipSource).toBeUndefined();
+  });
 });
 
 describe("ServersService.saveHostInfo + uptime view", () => {

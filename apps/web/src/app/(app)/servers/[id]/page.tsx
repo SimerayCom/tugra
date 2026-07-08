@@ -116,6 +116,7 @@ export default function ServerDetailPage() {
         <>
           <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
             <Info label={t("servers.status")} value={server.status} />
+            <Info label={t("servers.ipAddress")} value={server.publicIp ?? server.publicIpv6 ?? "—"} />
             <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
             <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
             <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />

@@ -45,6 +45,8 @@ export interface ServerView {
   status: ServerStatus;
   teamId: string;
   hostname: string | null;
+  publicIp: string | null;
+  publicIpv6: string | null;
   os: string | null;
   osVersion: string | null;
   arch: string | null;

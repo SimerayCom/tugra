@@ -43,6 +43,10 @@ export const envSchema = z
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
   // Web origin the OAuth callback hands tokens back to (the SPA).
   WEB_PUBLIC_URL: z.string().url().default("http://localhost:3001"),
+  // Set to "true" only when the hub sits behind a trusted reverse proxy, so the
+  // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
+  // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
+  HUB_TRUSTED_PROXY: z.enum(["true", "false"]).optional(),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live

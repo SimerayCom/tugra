@@ -8,6 +8,8 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   status: "ONLINE",
   teamId: "t",
   hostname: null,
+  publicIp: null,
+  publicIpv6: null,
   os: null,
   osVersion: null,
   arch: null,
