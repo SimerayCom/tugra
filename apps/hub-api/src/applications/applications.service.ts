@@ -58,6 +58,7 @@ import { probeSsl, type SslStatus } from "./ssl-probe";
 import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
+import { appUrl } from "../common/app-url";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -203,7 +204,7 @@ export class ApplicationsService {
       void this.runDeploy(app, userId).catch(() => undefined);
     }
     const role = (await this.access.teamRole(userId, server.teamId))!;
-    return this.view(app, role);
+    return this.view(app, role, undefined, server.publicIp ?? server.publicIpv6);
   }
 
   /** One-click template catalog (gallery metadata only). */
@@ -241,14 +242,17 @@ export class ApplicationsService {
       orderBy: { createdAt: "desc" },
     });
     const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
-    return apps.map((a) => this.view(a, roleByTeam.get(a.teamId)!, ctxByEnv.get(a.environmentId)));
+    const ipByServer = await this.serverIpMap(apps.map((a) => a.serverId));
+    return apps.map((a) =>
+      this.view(a, roleByTeam.get(a.teamId)!, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
+    );
   }
 
   async get(userId: string, id: string): Promise<AppView> {
     const app = await this.require(userId, id);
     const role = (await this.access.teamRole(userId, app.teamId))!;
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
-    return this.view(app, role, ctx);
+    return this.view(app, role, ctx, await this.serverIp(app.serverId));
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }) {
@@ -357,7 +361,8 @@ export class ApplicationsService {
       where: { parentAppId: parentId, isPreview: true },
       orderBy: { createdAt: "desc" },
     });
-    return previews.map((p) => this.view(p, role));
+    const ipByServer = await this.serverIpMap(previews.map((p) => p.serverId));
+    return previews.map((p) => this.view(p, role, undefined, ipByServer.get(p.serverId) ?? null));
   }
 
   /** Toggle per-PR previews on a parent app — requires a domain to build URLs. */
@@ -569,7 +574,9 @@ export class ApplicationsService {
       target: id,
     });
     const role = (await this.access.teamRole(userId, app.teamId))!;
-    return this.view(updated, role);
+    // Resolve the server IP like the other single-app paths so a domainless,
+    // port-publishing app keeps its synthesized url in this response (consistency).
+    return this.view(updated, role, undefined, await this.serverIp(updated.serverId));
   }
 
   async stop(userId: string, id: string): Promise<void> {
@@ -946,7 +953,32 @@ export class ApplicationsService {
     return app;
   }
 
-  private view(app: Application, role: Role, ctx?: ResourceProjectCtx): AppView {
+  /** Best reachable IP for one server (IPv4 preferred), or null. Best-effort:
+   *  a DB blip just yields null (a domainless app's url falls back to null), never
+   *  breaking the view. */
+  private async serverIp(serverId: string): Promise<string | null> {
+    const s = await this.prisma.server
+      .findUnique({ where: { id: serverId }, select: { publicIp: true, publicIpv6: true } })
+      .catch(() => null);
+    return s?.publicIp ?? s?.publicIpv6 ?? null;
+  }
+
+  /** Batched server-IP lookup for list views (no N+1), same best-effort contract. */
+  private async serverIpMap(serverIds: string[]): Promise<Map<string, string | null>> {
+    const ids = [...new Set(serverIds)];
+    if (!ids.length) return new Map();
+    const servers = await this.prisma.server
+      .findMany({ where: { id: { in: ids } }, select: { id: true, publicIp: true, publicIpv6: true } })
+      .catch(() => [] as { id: string; publicIp: string | null; publicIpv6: string | null }[]);
+    return new Map(servers.map((s) => [s.id, s.publicIp ?? s.publicIpv6]));
+  }
+
+  private view(
+    app: Application,
+    role: Role,
+    ctx?: ResourceProjectCtx,
+    serverIp?: string | null,
+  ): AppView {
     const canWrite = WRITE.includes(role);
     return {
       id: app.id,
@@ -984,7 +1016,7 @@ export class ApplicationsService {
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
       https: app.https,
-      url: app.domain ? `${app.https ? "https" : "http"}://${app.domain}` : null,
+      url: appUrl(app, serverIp ?? null),
       // Webhook credentials are only exposed to members who can deploy.
       webhookToken: canWrite ? app.webhookToken : null,
       webhookSecret:
