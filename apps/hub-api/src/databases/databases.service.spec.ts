@@ -46,6 +46,23 @@ const db = {
 };
 
 describe("DatabasesService", () => {
+  it("list() labels each database with its project/environment (batched, no N+1)", async () => {
+    const envFindMany = jest.fn().mockResolvedValue([
+      { id: "e1", name: "production", project: { id: "p1", name: "Default" } },
+    ]);
+    const prisma = {
+      database: { findMany: jest.fn().mockResolvedValue([{ ...db, environmentId: "e1" }]) },
+      environment: { findMany: envFindMany },
+    } as unknown as PrismaService;
+    const access = {
+      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"]])),
+    } as unknown as TeamAccessService;
+    const out = await make(prisma, access).list("u1");
+    expect(envFindMany).toHaveBeenCalledTimes(1);
+    expect(out[0].projectName).toBe("Default");
+    expect(out[0].environmentName).toBe("production");
+  });
+
   it("forbids creating a database for a team the user can't write to", async () => {
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },

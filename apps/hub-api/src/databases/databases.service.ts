@@ -9,7 +9,7 @@ import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
-import { loadProjectCtx, type ResourceProjectCtx } from "../common/resource-project";
+import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
@@ -126,7 +126,8 @@ export class DatabasesService {
       where: { teamId: { in: ids } },
       orderBy: { createdAt: "desc" },
     });
-    return dbs.map((d) => this.view(d, roleByTeam.get(d.teamId)!));
+    const ctxByEnv = await loadProjectCtxMany(this.prisma, dbs.map((d) => d.environmentId));
+    return dbs.map((d) => this.view(d, roleByTeam.get(d.teamId)!, ctxByEnv.get(d.environmentId)));
   }
 
   async get(userId: string, id: string): Promise<DatabaseView> {
