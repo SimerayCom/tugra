@@ -122,7 +122,7 @@ function Wizard() {
   const pick = (s: Sel) => {
     setSel(s);
     if (s?.group === "app" && s.source === "GIT") setBuildType(s.build);
-    if (s?.group === "template") setName(s.slug);
+    if (s?.group === "template") setName(s.name); // friendly default, matching Home's InstallModal
     if (s?.group === "db") setVersion(engineVersions(s.engine)[0] ?? "");
   };
 
@@ -143,7 +143,8 @@ function Wizard() {
     mutationFn: async (): Promise<string> => {
       const environmentId = envId || undefined;
       if (sel?.group === "template") {
-        const a = await api.createFromTemplate(sel.slug, { name, serverId, environmentId });
+        // Templates are one-click like Home: create + best-effort auto-deploy.
+        const a = await api.createFromTemplate(sel.slug, { name, serverId, environmentId, deploy: true });
         return `/apps/${a.id}`;
       }
       if (sel?.group === "db") {
