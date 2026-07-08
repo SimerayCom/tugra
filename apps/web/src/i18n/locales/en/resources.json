@@ -4,6 +4,8 @@
   "destination": "Destination",
   "creatingIn": "Creating in",
   "change": "change",
+  "chooseProject": "Choose a project…",
+  "pickProjectFirst": "Select a project above to create.",
   "allTypes": "All resource types",
   "project": "Project",
   "environment": "Environment",

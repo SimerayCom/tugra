@@ -12,7 +12,7 @@ import { engineLabel, engineVersions } from "../../../../lib/databases";
 import { TemplateLogo } from "../../../../lib/template-icons";
 import { TemplateGrid } from "../../../../components/template-grid";
 import { wizardStep } from "../../../../lib/wizard-step";
-import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId, type ResourceKind } from "../../../../lib/resource-new";
+import { parseKind, visibleGroups, backTarget, defaultEnvId, resolveProjectId, type ResourceKind } from "../../../../lib/resource-new";
 import { scopeByTeam } from "../../../../lib/team-scope";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
@@ -67,13 +67,14 @@ function Wizard() {
   // Target project and deployment server always share a team: scope the project
   // options to the pinned server's team (and the server grid to the project's team).
   const projectPool = scopeByTeam(projects, pinnedServer?.teamId ?? null);
+  // URL context (?project= / ?server=) auto-defaults the target; an unscoped +New
+  // with several candidate projects must be chosen explicitly (no silent commit).
+  const scoped = !!sp.get("project") || !!sp.get("server");
   useEffect(() => {
-    if (!projectId || !projectPool.some((p) => p.id === projectId)) {
-      const next = defaultProjectId(projectPool);
-      if (next && next !== projectId) setProjectId(next);
-    }
+    const next = resolveProjectId(projectPool, projectId, scoped);
+    if (next !== projectId) setProjectId(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinnedServer?.teamId, projects, projectId]);
+  }, [pinnedServer?.teamId, projects, projectId, scoped]);
   const project = projectPool.find((p) => p.id === projectId);
   useEffect(() => {
     if (project && !project.environments.some((e) => e.id === envId)) setEnvId(defaultEnvId(project));
@@ -239,7 +240,7 @@ function Wizard() {
               </>
             ) : (
               <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Select value={projectId} onChange={setProjectId} options={projectPool.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
+                <Select value={projectId} onChange={setProjectId} placeholder={t("resources.chooseProject")} options={projectPool.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
                 <span style={{ color: "var(--c-tx3)" }}>/</span>
                 <Select value={envId} onChange={setEnvId} options={(project?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))} style={{ width: "auto", minWidth: 130 }} />
               </span>
@@ -366,7 +367,7 @@ function Wizard() {
                   <Server size={13} /> {servers.find((s) => s.id === serverId)?.name}
                 </span>
               </div>
-              <form onSubmit={(e) => { e.preventDefault(); if (name && serverId) create.mutate(); }}>
+              <form onSubmit={(e) => { e.preventDefault(); if (name && serverId && projectId) create.mutate(); }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                   <Field label={t("apps.name")} htmlFor="r-name">
                     <TextInput id="r-name" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -479,7 +480,10 @@ function Wizard() {
                       {t("resources.needServer")} <Link href="/servers/new" style={{ color: "var(--c-a)" }}>{t("resources.addServer")}</Link>
                     </div>
                   ) : (
-                    <Btn type="submit" disabled={create.isPending || !name || !serverId}>{create.isPending ? "…" : t("resources.create")}</Btn>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <Btn type="submit" disabled={create.isPending || !name || !serverId || !projectId}>{create.isPending ? "…" : t("resources.create")}</Btn>
+                      {!projectId && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("resources.pickProjectFirst")}</span>}
+                    </div>
                   )}
                 </div>
                 {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}

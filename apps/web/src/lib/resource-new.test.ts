@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId } from "./resource-new";
+import { parseKind, visibleGroups, backTarget, defaultProjectId, defaultEnvId, resolveProjectId } from "./resource-new";
 
 describe("parseKind", () => {
   it("accepts the three known kinds", () => {
@@ -82,5 +82,34 @@ describe("defaultEnvId", () => {
   it("returns '' for an env-less or undefined project", () => {
     expect(defaultEnvId({ environments: [] })).toBe("");
     expect(defaultEnvId(undefined)).toBe("");
+  });
+});
+
+describe("resolveProjectId", () => {
+  const one = [{ id: "p1", isDefault: true }];
+  const many = [
+    { id: "p1", isDefault: false },
+    { id: "p2", isDefault: true },
+    { id: "p3", isDefault: false },
+  ];
+
+  it("keeps a still-valid current selection", () => {
+    expect(resolveProjectId(many, "p3", false)).toBe("p3");
+    expect(resolveProjectId(many, "p3", true)).toBe("p3");
+  });
+  it("auto-picks the sole candidate even over a stale current", () => {
+    expect(resolveProjectId(one, "", false)).toBe("p1");
+    expect(resolveProjectId(one, "stale", false)).toBe("p1");
+  });
+  it("defaults to the team default when URL-scoped and ambiguous", () => {
+    expect(resolveProjectId(many, "", true)).toBe("p2"); // isDefault
+  });
+  it("requires an explicit pick when unscoped and ambiguous", () => {
+    expect(resolveProjectId(many, "", false)).toBe("");
+    expect(resolveProjectId(many, "stale", false)).toBe(""); // stale not in pool
+  });
+  it("returns '' for an empty pool", () => {
+    expect(resolveProjectId([], "", true)).toBe("");
+    expect(resolveProjectId([], "x", false)).toBe("");
   });
 });
