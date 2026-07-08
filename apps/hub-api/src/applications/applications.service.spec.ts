@@ -41,6 +41,9 @@ function make(
   deployLogs: DeployLogHub = makeDeployLogs(),
   monitors: MonitorsMock = makeMonitors(),
   ai: { analyze: jest.Mock } = { analyze: jest.fn().mockResolvedValue("analysis") },
+  teamDefaults: { resolveDefaultEnvironmentId: jest.Mock } = {
+    resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
+  },
 ) {
   return new ApplicationsService(
     prisma as PrismaService,
@@ -54,6 +57,7 @@ function make(
     { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService,
     { installationToken: jest.fn().mockResolvedValue("ghs_inst") } as unknown as import("../git-sources/git-sources.service").GitSourcesService,
     ai as unknown as import("./ai.service").AiService,
+    teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
   );
 }
 
@@ -391,6 +395,8 @@ describe("ApplicationsService", () => {
     expect(data.composeFile).toContain("services:");
     // env (encrypted in the test crypto stub: enc(<json>)) carries the generated secret
     expect(data.envEnc).toContain("DB_PASSWORD");
+    // No environment chosen -> resolved to the team default, never null.
+    expect(data.environmentId).toBe("env-default");
   });
 
   it("places a template app into the chosen environment", async () => {

@@ -81,6 +81,19 @@ describe("Applications / deploy (e2e)", () => {
     const appId = appRes.body.id;
     expect(appRes.body.status).toBe("NEW");
 
+    // RESFLOW: an app created without an environment lands in the team's default
+    // environment, never orphaned with a null environmentId.
+    const persisted = await prisma.application.findUnique({
+      where: { id: appId },
+      select: { environmentId: true },
+    });
+    const defEnv = await prisma.environment.findFirst({
+      where: { isDefault: true, project: { teamId, isDefault: true } },
+      select: { id: true },
+    });
+    expect(persisted?.environmentId).toBeTruthy();
+    expect(persisted?.environmentId).toBe(defEnv?.id);
+
     await request(app.getHttpServer())
       .post(`/apps/${appId}/deploy`)
       .set("Authorization", `Bearer ${token}`)

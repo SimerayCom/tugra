@@ -56,6 +56,7 @@ import {
 } from "../templates/catalog";
 import { probeSsl, type SslStatus } from "./ssl-probe";
 import { AiService } from "./ai.service";
+import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
 import type { CreateAppInput } from "./dto";
 
@@ -145,6 +146,7 @@ export class ApplicationsService {
     private readonly notifications: NotificationsService,
     private readonly gitSources: GitSourcesService,
     private readonly ai: AiService,
+    private readonly teamDefaults: TeamDefaultsService,
   ) {}
 
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
@@ -154,6 +156,9 @@ export class ApplicationsService {
     if (!server) throw new NotFoundException("server not found");
     await this.access.requireRole(userId, server.teamId, WRITE);
     if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
+    // Never orphan: fall back to the team's default environment when none is chosen.
+    const environmentId =
+      dto.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
     if (dto.gitSourceId) {
       const gs = await this.prisma.gitSource.findUnique({ where: { id: dto.gitSourceId } });
       if (!gs || gs.teamId !== server.teamId) throw new BadRequestException("git source not found in this team");
@@ -163,7 +168,7 @@ export class ApplicationsService {
       data: {
         name: dto.name,
         templateSlug: dto.templateSlug ?? null,
-        environmentId: dto.environmentId ?? null,
+        environmentId,
         source: dto.source ?? "IMAGE",
         image: dto.image ?? null,
         gitUrl: dto.gitUrl ?? null,
