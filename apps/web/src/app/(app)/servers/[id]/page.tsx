@@ -81,7 +81,12 @@ export default function ServerDetailPage() {
         title={server.name}
         status={{ label: server.status, color: serverColor(server.status) }}
         badge={<Badge tone={server.canWrite ? "gold" : "muted"}>{server.role}</Badge>}
-        actions={server.canWrite ? <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn> : undefined}
+        actions={server.canWrite ? (
+          <>
+            <Link href={`/resources/new?server=${id}`}><Btn>{t("servers.addResource")}</Btn></Link>
+            <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
+          </>
+        ) : undefined}
       >
         <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>{server.hostname ?? "—"}</p>
       </PageHeader>
@@ -90,7 +95,7 @@ export default function ServerDetailPage() {
         <Card style={{ padding: 14, marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", borderColor: "var(--c-g)" }}>
           <span style={{ fontWeight: 600 }}>{t("servers.enrolledTitle")}</span>
           <div style={{ flex: 1 }} />
-          <Link href="/resources/new"><Btn>{t("servers.addFirstApp")}</Btn></Link>
+          <Link href={`/resources/new?server=${id}&kind=app`}><Btn>{t("servers.addFirstApp")}</Btn></Link>
           <Btn variant="ghost" onClick={() => setEnrolled(false)}>{t("common.cancel")}</Btn>
         </Card>
       )}
