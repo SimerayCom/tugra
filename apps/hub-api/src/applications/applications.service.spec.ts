@@ -88,6 +88,49 @@ describe("ApplicationsService", () => {
     ).rejects.toThrow(/nope/);
   });
 
+  function createDeps() {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create: jest.fn().mockResolvedValue({ ...app, source: "IMAGE" }) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    return { prisma, access };
+  }
+  type WithRunDeploy = { runDeploy: (...a: unknown[]) => Promise<unknown> };
+
+  it("fires a best-effort deploy when deploy:true", async () => {
+    const { prisma, access } = createDeps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    const runDeploy = jest
+      .spyOn(svc as unknown as WithRunDeploy, "runDeploy")
+      .mockResolvedValue(undefined);
+    await svc.create("u1", { name: "web", serverId: "s1", image: "nginx", deploy: true });
+    expect(runDeploy).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), "u1");
+  });
+
+  it("does not deploy when the deploy flag is absent", async () => {
+    const { prisma, access } = createDeps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    const runDeploy = jest
+      .spyOn(svc as unknown as WithRunDeploy, "runDeploy")
+      .mockResolvedValue(undefined);
+    await svc.create("u1", { name: "web", serverId: "s1", image: "nginx" });
+    expect(runDeploy).not.toHaveBeenCalled();
+  });
+
+  it("still creates successfully when the best-effort deploy fails (agent offline)", async () => {
+    const { prisma, access } = createDeps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    jest
+      .spyOn(svc as unknown as WithRunDeploy, "runDeploy")
+      .mockRejectedValue(new Error("agent offline"));
+    const view = await svc.create("u1", { name: "web", serverId: "s1", image: "nginx", deploy: true });
+    expect(view.id).toBe("app1");
+  });
+
   it("deploys via the agent and records SUCCESS on exit 0", async () => {
     const depUpdate = jest.fn().mockResolvedValue({});
     const appUpdate = jest.fn().mockResolvedValue({});

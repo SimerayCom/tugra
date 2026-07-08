@@ -475,6 +475,7 @@ export const api = {
     env?: Record<string, string>;
     tags?: string[];
     environmentId?: string;
+    deploy?: boolean;
   }) {
     return apiFetch<Application>("/apps", {
       method: "POST",
@@ -484,7 +485,7 @@ export const api = {
   listTemplates() {
     return apiFetch<Template[]>("/apps/templates");
   },
-  createFromTemplate(slug: string, input: { name: string; serverId: string; environmentId?: string }) {
+  createFromTemplate(slug: string, input: { name: string; serverId: string; environmentId?: string; deploy?: boolean }) {
     return apiFetch<Application>(`/apps/templates/${slug}`, {
       method: "POST",
       body: JSON.stringify(input),

@@ -195,6 +195,13 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
     // Auto-track uptime for a domained app (best-effort; never blocks creation).
     await this.monitors.createForApp(app).catch(() => undefined);
+    if (dto.deploy) {
+      // Best-effort: kick off the first deploy so a one-click install actually
+      // runs. Fire-and-forget — the build can take minutes, and a missing/offline
+      // agent must not fail creation (mirrors deployFromWebhook). RBAC is already
+      // enforced by requireRole(WRITE) above.
+      void this.runDeploy(app, userId).catch(() => undefined);
+    }
     const role = (await this.access.teamRole(userId, server.teamId))!;
     return this.view(app, role);
   }
@@ -208,7 +215,7 @@ export class ApplicationsService {
   async createFromTemplate(
     userId: string,
     slug: string,
-    input: { name: string; serverId: string; environmentId?: string },
+    input: { name: string; serverId: string; environmentId?: string; deploy?: boolean },
   ): Promise<AppView> {
     const tpl = TEMPLATES[slug];
     if (!tpl) throw new NotFoundException("template not found");
@@ -220,6 +227,7 @@ export class ApplicationsService {
       composeFile: tpl.composeFile,
       env: buildTemplateEnv(tpl),
       environmentId: input.environmentId,
+      deploy: input.deploy,
     });
   }
 
