@@ -34,16 +34,9 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
   }, [servers, serverId]);
 
   const install = useMutation({
-    mutationFn: async () => {
-      const app = await api.createFromTemplate(template.slug, { name: name.trim(), serverId });
-      // Best-effort: kick off the deploy so the app actually runs (needs a live agent).
-      try {
-        await api.deployApp(app.id);
-      } catch {
-        /* agent may be offline in local demo — app still appears on the launcher */
-      }
-      return app;
-    },
+    // One call: the server creates the app and kicks off a best-effort deploy, so
+    // the modal returns immediately instead of waiting on the build.
+    mutationFn: async () => api.createFromTemplate(template.slug, { name: name.trim(), serverId, deploy: true }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["apps"] });
       toast(t("home.installed", { name: name.trim() }), "success");

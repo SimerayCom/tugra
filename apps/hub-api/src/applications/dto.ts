@@ -17,6 +17,7 @@ export const CreateAppSchema = z
     composeFile: z.string().min(1).optional(),
     env: z.record(z.string()).optional(),
     environmentId: z.string().min(1).optional(),
+    deploy: z.boolean().optional(), // kick off a best-effort first deploy after create
     hostPort: z.number().int().min(1).max(65535).optional(),
     containerPort: z.number().int().min(1).max(65535).optional(),
     domain: z.string().min(1).optional(),
@@ -124,6 +125,7 @@ export const FromTemplateSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),
   environmentId: z.string().min(1).optional(),
+  deploy: z.boolean().optional(), // one-call install: create + best-effort deploy
 });
 export type FromTemplateInput = z.infer<typeof FromTemplateSchema>;
 
