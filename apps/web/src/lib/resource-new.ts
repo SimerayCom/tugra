@@ -48,3 +48,22 @@ export function defaultEnvId(
   const envs = project?.environments ?? [];
   return (envs.find((e) => e.isDefault) ?? envs[0])?.id ?? "";
 }
+
+/**
+ * The project the wizard should hold given the team-scoped candidate pool, the
+ * current selection, and whether the user arrived with URL context
+ * (?project= / ?server=). Keeps a still-valid selection; auto-picks the sole
+ * candidate; defaults to the team default only when URL-scoped; otherwise ""
+ * so an unscoped user with several projects must choose explicitly — no silent
+ * commit to a project they never picked.
+ */
+export function resolveProjectId(
+  pool: { id: string; isDefault: boolean }[],
+  current: string,
+  scoped: boolean,
+): string {
+  if (current && pool.some((p) => p.id === current)) return current;
+  if (pool.length === 1) return pool[0].id;
+  if (scoped) return defaultProjectId(pool);
+  return "";
+}
