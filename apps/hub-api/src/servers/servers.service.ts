@@ -1,21 +1,30 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
+// Type-only import (erased at build) + a string DI token resolved lazily via
+// ModuleRef, so there is no static edge servers.service → applications.service.
+// A value import WOULD create a require cycle: applications.service imports
+// AgentWsServer, which imports ServersService.
+import type { ApplicationsService } from "../applications/applications.service";
+import { APPLICATIONS_SERVICE } from "../applications/applications.tokens";
 import {
   generateEnrollToken,
   generateSeal,
   verifyEd25519,
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
-import { isIpv6, isLoopbackIp, reconcileReportedIp } from "../common/observed-ip";
+import { isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
+import type { NetworkSettingsInput } from "./dto/servers.schemas";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
@@ -28,6 +37,9 @@ export interface ServerView {
   hostname: string | null;
   publicIp: string | null;
   publicIpv6: string | null;
+  ipSource: string;
+  wildcardDomain: string | null;
+  magicSuffix: string | null;
   os: string | null;
   osVersion: string | null;
   arch: string | null;
@@ -64,6 +76,7 @@ export class ServersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   // ---- REST (operator-facing) ---------------------------------------------
@@ -226,6 +239,54 @@ export class ServersService {
       data: { tags: normalizeTags(tags) },
     });
     await this.audit.log({ actor: userId, action: "server.tags.update", target: id });
+  }
+
+  /**
+   * Per-server network settings: pin a manual public IP (or clear it to resume
+   * observing), and set the magic-domain wildcard root / suffix. A manual IP sets
+   * ipSource="manual" so agent observations never clobber it; clearing it (null)
+   * hands control back to observation. Any change regenerates the server's magic
+   * domains so existing apps follow the new IP/wildcard.
+   */
+  async setNetwork(userId: string, id: string, cfg: NetworkSettingsInput): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+
+    const data: Prisma.ServerUpdateInput = {};
+    if (cfg.wildcardDomain !== undefined) data.wildcardDomain = cfg.wildcardDomain;
+    if (cfg.magicSuffix !== undefined) data.magicSuffix = cfg.magicSuffix;
+
+    // Normalize "" → null so an empty string never persists (it would shadow a
+    // valid publicIpv6 via ?? in serverIp() and break the app URL).
+    const v4 = cfg.publicIp === undefined ? undefined : cfg.publicIp || null;
+    const v6 = cfg.publicIpv6 === undefined ? undefined : cfg.publicIpv6 || null;
+    if (v4 !== undefined) {
+      if (v4 && !isPublicIp(v4)) throw new BadRequestException("public IP must be a globally routable address");
+      data.publicIp = v4;
+    }
+    if (v6 !== undefined) {
+      if (v6 && !isPublicIp(v6)) throw new BadRequestException("public IPv6 must be a globally routable address");
+      data.publicIpv6 = v6;
+    }
+    // ipSource is a single manual/observed flag guarding BOTH families (ipFields /
+    // reconcileReportedIp bail out only when it is "manual"). Any non-null pin in
+    // this call flips it to "manual" — including a v6-only pin — so observations
+    // never clobber a curated address; clearing all touched IP fields resumes
+    // observation. (Clearing only v4 while a v6 pin exists is a narrow API-only
+    // edge that resumes observation for both — the web UI only pins v4.)
+    if (v4 !== undefined || v6 !== undefined) {
+      data.ipSource = v4 || v6 ? "manual" : "observed";
+    }
+
+    await this.prisma.server.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "server.network.update", target: id });
+    // The IP/wildcard drives magic domains — refresh them so live apps follow.
+    // Lazy lookup by string token avoids a module/require cycle (see import note).
+    await this.moduleRef
+      .get<ApplicationsService>(APPLICATIONS_SERVICE, { strict: false })
+      .regenerateMagicForServer(id)
+      .catch(() => undefined);
   }
 
   // ---- agent transport (called by the WS server) --------------------------
@@ -397,6 +458,9 @@ export class ServersService {
       hostname: string | null;
       publicIp?: string | null;
       publicIpv6?: string | null;
+      ipSource?: string;
+      wildcardDomain?: string | null;
+      magicSuffix?: string | null;
       os?: string | null;
       osVersion?: string | null;
       arch?: string | null;
@@ -423,6 +487,9 @@ export class ServersService {
       hostname: s.hostname,
       publicIp: s.publicIp ?? null,
       publicIpv6: s.publicIpv6 ?? null,
+      ipSource: s.ipSource ?? "observed",
+      wildcardDomain: s.wildcardDomain ?? null,
+      magicSuffix: s.magicSuffix ?? null,
       os: s.os ?? null,
       osVersion: s.osVersion ?? null,
       arch: s.arch ?? null,

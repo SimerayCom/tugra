@@ -193,6 +193,54 @@ export class ApplicationsService {
     return { domain: null, https: dto.https ?? true, exposeMode, domainKind: "none", certType: "http" };
   }
 
+  /**
+   * Recompute magic domains for every magic app on a server after its IP / wildcard
+   * changed, preserving each app's existing subdomain label so its URL stays stable
+   * (only the IP/suffix part moves). Best-effort; skips apps whose domain is
+   * unchanged or whose server can no longer produce a magic domain. Preview apps are
+   * excluded — they derive their domain from the parent on the next PR sync. The new
+   * domain applies to Traefik on the next deploy (DB + AppView.url update immediately).
+   */
+  async regenerateMagicForServer(serverId: string): Promise<void> {
+    const server = await this.prisma.server
+      .findUnique({
+        where: { id: serverId },
+        select: { publicIp: true, publicIpv6: true, wildcardDomain: true, magicSuffix: true },
+      })
+      .catch(() => null);
+    if (!server) return;
+    const apps = await this.prisma.application
+      .findMany({ where: { serverId, domainKind: "magic", isPreview: false } })
+      .catch(() => [] as Application[]);
+    const suffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
+    for (const app of apps) {
+      const label = (app.domain ?? "").split(".")[0]; // {slug}-{hash} — keep the URL stable
+      const next = magicDomain({
+        name: app.name,
+        label,
+        publicIp: server.publicIp,
+        publicIpv6: server.publicIpv6,
+        wildcardDomain: server.wildcardDomain,
+        suffix,
+      });
+      if (next && next !== app.domain) {
+        await this.prisma.application.update({ where: { id: app.id }, data: { domain: next } }).catch(() => undefined);
+        await this.syncMonitor(app.id).catch(() => undefined);
+      }
+    }
+  }
+
+  /**
+   * Re-sync the auto uptime monitor after an app's domain changes. There is no
+   * updateForApp, so remove then recreate — createForApp no-ops for domainless or
+   * preview apps, making this self-correcting.
+   */
+  private async syncMonitor(appId: string): Promise<void> {
+    await this.monitors.removeForApp(appId);
+    const app = await this.prisma.application.findUnique({ where: { id: appId } });
+    if (app) await this.monitors.createForApp(app);
+  }
+
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
     const server = await this.prisma.server.findUnique({
       where: { id: dto.serverId },

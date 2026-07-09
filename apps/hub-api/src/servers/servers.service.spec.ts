@@ -5,9 +5,12 @@ import { AuditService } from "../audit/audit.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 const notifications = { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService;
+const regenerateMagicForServer = jest.fn().mockResolvedValue(undefined);
+// ModuleRef stub: setNetwork resolves ApplicationsService lazily to regenerate magic domains.
+const moduleRef = { get: jest.fn().mockReturnValue({ regenerateMagicForServer }) } as unknown as import("@nestjs/core").ModuleRef;
 
 function svcWith(prisma: Partial<PrismaService>): ServersService {
-  return new ServersService(prisma as PrismaService, audit, notifications);
+  return new ServersService(prisma as PrismaService, audit, notifications, moduleRef);
 }
 
 describe("ServersService.listForUser (cross-team, role-aware)", () => {
@@ -286,6 +289,95 @@ describe("ServersService.setTags", () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "s1" }, data: { tags: ["edge", "eu"] } }),
     );
+  });
+});
+
+describe("ServersService.setNetwork", () => {
+  beforeEach(() => regenerateMagicForServer.mockClear());
+
+  it("forbids a VIEWER from changing network settings", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+      ...owner(Role.VIEWER),
+    } as unknown as PrismaService;
+    await expect(svcWith(prisma).setNetwork("u1", "s1", { wildcardDomain: "apps.example.com" })).rejects.toThrow(
+      /insufficient role/,
+    );
+  });
+
+  it("stores a wildcard domain + magic suffix for a writer and regenerates magic domains", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { wildcardDomain: "apps.example.com", magicSuffix: "nip.io" });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: { wildcardDomain: "apps.example.com", magicSuffix: "nip.io" },
+    });
+    expect(regenerateMagicForServer).toHaveBeenCalledWith("s1");
+  });
+
+  it("pins a manual public IP (ipSource=manual) so observations no longer clobber it", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { publicIp: "203.0.113.7" });
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { publicIp: "203.0.113.7", ipSource: "manual" } });
+  });
+
+  it("clearing the public IP (null) resumes observation (ipSource=observed)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { publicIp: null });
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { publicIp: null, ipSource: "observed" } });
+  });
+
+  it("rejects a non-public manual IP (SSRF/unreachable guard)", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update: jest.fn() },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await expect(svcWith(prisma).setNetwork("u1", "s1", { publicIp: "10.0.0.5" })).rejects.toThrow(/globally routable/);
+  });
+
+  it("pins a manual IPv6 (ipSource=manual) so an observed v6 can't clobber it", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { publicIpv6: "2606:4700:4700::1111" });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "s1" },
+      data: { publicIpv6: "2606:4700:4700::1111", ipSource: "manual" },
+    });
+  });
+
+  it("normalizes an empty-string IP to null (never persists \"\")", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { publicIp: "" });
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { publicIp: null, ipSource: "observed" } });
+  });
+
+  it("does not touch ipSource when only the wildcard domain changes", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { wildcardDomain: "apps.example.com" });
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { wildcardDomain: "apps.example.com" } });
   });
 });
 

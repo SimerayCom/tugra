@@ -27,7 +27,12 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { MetricsLiveService } from "../metrics/metrics-live.service";
 import { ServersService } from "./servers.service";
-import { CreateServerInput, CreateServerSchema } from "./dto/servers.schemas";
+import {
+  CreateServerInput,
+  CreateServerSchema,
+  NetworkSettingsInput,
+  NetworkSettingsSchema,
+} from "./dto/servers.schemas";
 
 /** Best-effort public base URL of this hub from the request (proxy-aware). */
 function publicUrlFrom(req: ReqLike): string | undefined {
@@ -119,6 +124,17 @@ export class ServersController {
     @Body(new ZodValidationPipe(SetTagsSchema)) body: SetTagsInput,
   ) {
     await this.servers.setTags(user.userId, id, body.tags);
+    return { ok: true };
+  }
+
+  @Put(":id/network")
+  @HttpCode(200)
+  async setNetwork(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(NetworkSettingsSchema)) body: NetworkSettingsInput,
+  ) {
+    await this.servers.setNetwork(user.userId, id, body);
     return { ok: true };
   }
 

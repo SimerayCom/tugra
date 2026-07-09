@@ -42,10 +42,13 @@ export function magicDomain(opts: {
   wildcardDomain?: string | null;
   suffix?: string | null;
   hash?: string | null;
+  /** Reuse an existing subdomain label instead of deriving a fresh slug+hash — lets
+   *  regeneration swap only the IP/suffix part so an app's URL stays stable. */
+  label?: string;
 }): string | null {
   const slug = slugify(opts.name) || "app";
   const hash = opts.hash || randomBytes(3).toString("hex");
-  const label = `${slug}-${hash}`.slice(0, 63);
+  const label = (opts.label || `${slug}-${hash}`).slice(0, 63);
   if (opts.wildcardDomain) return `${label}.${opts.wildcardDomain}`;
   const ip =
     opts.publicIp && isPublicIp(opts.publicIp)
