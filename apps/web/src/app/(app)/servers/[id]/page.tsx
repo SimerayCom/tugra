@@ -420,18 +420,26 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
   const [wildcard, setWildcard] = useState("");
   const [suffix, setSuffix] = useState("");
   const [publicIp, setPublicIp] = useState("");
+  const [certMode, setCertMode] = useState("http");
+  const [dnsProvider, setDnsProvider] = useState("");
+  const [dnsCreds, setDnsCreds] = useState(""); // write-only: never seeded from the server
   useEffect(() => {
     setWildcard(server.wildcardDomain ?? "");
     setSuffix(server.magicSuffix ?? "");
     setPublicIp(server.ipSource === "manual" ? (server.publicIp ?? "") : "");
+    setCertMode(server.certMode || "http");
+    setDnsProvider(server.dnsProvider ?? "");
+    setDnsCreds("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
 
   const save = useMutation({
     mutationFn: () => {
-      const cfg: { wildcardDomain: string | null; magicSuffix: string | null; publicIp?: string | null } = {
+      const cfg: Parameters<typeof api.setServerNetwork>[1] = {
         wildcardDomain: wildcard.trim() || null,
         magicSuffix: suffix.trim() || null,
+        certMode: certMode as "http" | "le-dns" | "custom",
+        dnsProvider: dnsProvider.trim() || null,
       };
       const ip = publicIp.trim();
       // Only touch the IP pin on a deliberate change: a typed IP pins it (manual),
@@ -440,9 +448,16 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
       // wipe the observed address.
       if (ip) cfg.publicIp = ip;
       else if (server.ipSource === "manual") cfg.publicIp = null;
+      // Creds are write-only: only send when the operator typed some (an empty box
+      // leaves the stored creds untouched). One KEY=VALUE per line.
+      const creds = parseCreds(dnsCreds);
+      if (creds) cfg.dnsCreds = creds;
       return api.setServerNetwork(id, cfg);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
+    onSuccess: () => {
+      setDnsCreds("");
+      qc.invalidateQueries({ queryKey: ["server", id] });
+    },
   });
 
   return (
@@ -467,12 +482,54 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
           </span>
           <input style={netField} value={publicIp} placeholder={server.publicIp ?? "203.0.113.7"} onChange={(e) => setPublicIp(e.target.value)} />
         </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
+          {t("servers.certMode")}
+          <select style={netField} value={certMode} onChange={(e) => setCertMode(e.target.value)}>
+            <option value="http">{t("servers.certModeHttp")}</option>
+            <option value="le-dns">{t("servers.certModeLeDns")}</option>
+          </select>
+        </label>
+        {certMode === "le-dns" && (
+          <>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
+              {t("servers.dnsProvider")}
+              <input style={netField} value={dnsProvider} placeholder="cloudflare" onChange={(e) => setDnsProvider(e.target.value)} />
+              <span style={{ fontSize: 11 }}>{t("servers.dnsProviderHint")}</span>
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
+              <span>
+                {t("servers.dnsCreds")}{" "}
+                {server.hasDnsCreds && <span style={{ color: "var(--c-g)" }}>({t("servers.dnsCredsSet")})</span>}
+              </span>
+              <textarea
+                style={{ ...netField, minHeight: 64, resize: "vertical", fontFamily: "var(--font-mono, monospace)" }}
+                value={dnsCreds}
+                placeholder={"CF_DNS_API_TOKEN=your-token"}
+                onChange={(e) => setDnsCreds(e.target.value)}
+              />
+              <span style={{ fontSize: 11 }}>{t("servers.dnsCredsHint")}</span>
+            </label>
+          </>
+        )}
         <div>
           <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
         </div>
       </div>
     </Card>
   );
+}
+
+/** Parse a KEY=VALUE-per-line creds box into a record, or null when empty. */
+function parseCreds(text: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const i = line.indexOf("=");
+    if (i <= 0) continue;
+    const k = line.slice(0, i).trim();
+    const v = line.slice(i + 1).trim();
+    if (k) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 const netField: React.CSSProperties = {

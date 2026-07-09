@@ -7,6 +7,7 @@ import { Role } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import {
@@ -38,6 +39,7 @@ export class ProxyOpsService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly config: ConfigService,
+    private readonly crypto: CryptoService,
   ) {}
 
   async status(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {
@@ -49,9 +51,25 @@ export class ProxyOpsService {
   async start(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {
     await this.requireWrite(userId, serverId);
     const email = this.config.get<string>("ACME_EMAIL");
-    await this.agentWs.sendCommand(serverId, buildProxySetupScript(email), "deploy", PROXY_TIMEOUT_MS);
+    const dns = await this.dnsConfig(serverId);
+    await this.agentWs.sendCommand(serverId, buildProxySetupScript({ acmeEmail: email, ...dns }), "deploy", PROXY_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.proxy.start", target: serverId });
     return this.statusAfter(serverId);
+  }
+
+  /** The server's DNS-01 provider + decrypted creds, when certMode is "le-dns". */
+  private async dnsConfig(
+    serverId: string,
+  ): Promise<{ dnsProvider?: string | null; dnsCreds?: Record<string, string> | null }> {
+    const s = await this.prisma.server
+      .findUnique({ where: { id: serverId }, select: { certMode: true, dnsProvider: true, dnsCredsEnc: true } })
+      .catch(() => null);
+    if (!s || s.certMode !== "le-dns" || !s.dnsProvider || !s.dnsCredsEnc) return {};
+    try {
+      return { dnsProvider: s.dnsProvider, dnsCreds: JSON.parse(this.crypto.decrypt(s.dnsCredsEnc)) };
+    } catch {
+      return {};
+    }
   }
 
   async stop(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {

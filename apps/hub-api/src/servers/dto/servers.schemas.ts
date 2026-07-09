@@ -16,6 +16,12 @@ export const NetworkSettingsSchema = z
     publicIpv6: z.string().trim().max(45).nullable().optional(),
     wildcardDomain: z.string().trim().max(253).regex(DOMAIN_RE, "invalid domain").nullable().optional(),
     magicSuffix: z.string().trim().max(253).regex(DOMAIN_RE, "invalid domain").nullable().optional(),
+    // Wildcard cert policy + DNS-01 provider. dnsCreds is the plaintext provider env
+    // map (encrypted server-side, never returned); a null clears the stored creds.
+    certMode: z.enum(["http", "le-dns", "custom"]).optional(),
+    dnsProvider: z.string().trim().max(64).nullable().optional(),
+    dnsCreds: z.record(z.string()).nullable().optional(),
+    customCertResolver: z.string().trim().max(64).nullable().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field" });
 export type NetworkSettingsInput = z.infer<typeof NetworkSettingsSchema>;

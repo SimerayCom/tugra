@@ -11,6 +11,7 @@ import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { CryptoService } from "../crypto/crypto.service";
 // Type-only import (erased at build) + a string DI token resolved lazily via
 // ModuleRef, so there is no static edge servers.service → applications.service.
 // A value import WOULD create a require cycle: applications.service imports
@@ -40,6 +41,10 @@ export interface ServerView {
   ipSource: string;
   wildcardDomain: string | null;
   magicSuffix: string | null;
+  certMode: string;
+  dnsProvider: string | null;
+  customCertResolver: string | null;
+  hasDnsCreds: boolean; // whether DNS-01 creds are configured — the creds are NEVER returned
   os: string | null;
   osVersion: string | null;
   arch: string | null;
@@ -77,6 +82,7 @@ export class ServersService {
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     private readonly moduleRef: ModuleRef,
+    private readonly crypto: CryptoService,
   ) {}
 
   // ---- REST (operator-facing) ---------------------------------------------
@@ -279,6 +285,18 @@ export class ServersService {
       data.ipSource = v4 || v6 ? "manual" : "observed";
     }
 
+    // Wildcard-cert policy + DNS-01 provider. dnsCreds are encrypted at rest and
+    // never round-tripped (the plaintext never reaches the DB or a response).
+    if (cfg.certMode !== undefined) data.certMode = cfg.certMode;
+    if (cfg.dnsProvider !== undefined) data.dnsProvider = cfg.dnsProvider;
+    if (cfg.customCertResolver !== undefined) data.customCertResolver = cfg.customCertResolver;
+    if (cfg.dnsCreds !== undefined) {
+      data.dnsCredsEnc =
+        cfg.dnsCreds && Object.keys(cfg.dnsCreds).length > 0
+          ? this.crypto.encrypt(JSON.stringify(cfg.dnsCreds))
+          : null;
+    }
+
     await this.prisma.server.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "server.network.update", target: id });
     // The IP/wildcard drives magic domains — refresh them so live apps follow.
@@ -461,6 +479,10 @@ export class ServersService {
       ipSource?: string;
       wildcardDomain?: string | null;
       magicSuffix?: string | null;
+      certMode?: string;
+      dnsProvider?: string | null;
+      customCertResolver?: string | null;
+      dnsCredsEnc?: string | null;
       os?: string | null;
       osVersion?: string | null;
       arch?: string | null;
@@ -490,6 +512,10 @@ export class ServersService {
       ipSource: s.ipSource ?? "observed",
       wildcardDomain: s.wildcardDomain ?? null,
       magicSuffix: s.magicSuffix ?? null,
+      certMode: s.certMode ?? "http",
+      dnsProvider: s.dnsProvider ?? null,
+      customCertResolver: s.customCertResolver ?? null,
+      hasDnsCreds: !!s.dnsCredsEnc,
       os: s.os ?? null,
       osVersion: s.osVersion ?? null,
       arch: s.arch ?? null,

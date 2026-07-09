@@ -125,4 +125,31 @@ describe("Server ops / docker cleanup (e2e)", () => {
     expect(joined).toContain("docker restart tugra-proxy");
     expect(joined).toContain("docker logs --tail 50 tugra-proxy");
   });
+
+  it("configures DNS-01 and sets up the proxy with the le-dns resolver — creds never leak in plaintext", async () => {
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/network`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ certMode: "le-dns", dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "s3cr3t-token" }, wildcardDomain: "apps.example.com" })
+      .expect(200);
+    // GET never returns the creds — only whether they're configured
+    const got = await request(app.getHttpServer())
+      .get(`/servers/${serverId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(got.body.certMode).toBe("le-dns");
+    expect(got.body.hasDnsCreds).toBe(true);
+    expect(JSON.stringify(got.body)).not.toContain("s3cr3t-token");
+    expect(got.body.dnsCredsEnc).toBeUndefined();
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/servers/${serverId}/proxy/start`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(60);
+    const joined = commands.join("\n");
+    expect(joined).toContain("--certificatesresolvers.le-dns.acme.dnschallenge.provider='cloudflare'");
+    expect(joined).toContain("--env-file /etc/tugra/proxy/dns.env");
+    // SECURITY: the token appears ONLY base64'd in the env-file write, never as -e / plaintext argv
+    expect(joined).not.toContain("-e CF_DNS_API_TOKEN");
+    expect(joined).not.toContain("s3cr3t-token");
+  });
 });

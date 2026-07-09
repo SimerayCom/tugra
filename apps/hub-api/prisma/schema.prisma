@@ -165,6 +165,10 @@ model Server {
   reportedIps          String[]     @default([]) // agent-reported candidate interface IPs (reconcile)
   wildcardDomain       String?      // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
   magicSuffix          String?      // override the global magic suffix ("sslip.io" | "nip.io")
+  certMode             String       @default("http") // "http" | "le-dns" | "custom" — wildcard cert policy
+  dnsProvider          String?      // lego/Traefik DNS provider for DNS-01 (cloudflare, route53, ...)
+  dnsCredsEnc          String?      // encrypted JSON of provider env vars ({ CF_DNS_API_TOKEN: "..." })
+  customCertResolver   String?      // Traefik resolver name when certMode = "custom"
   os                   String?
   osVersion            String?
   arch                 String?

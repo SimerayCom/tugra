@@ -251,6 +251,25 @@ describe("deploy-script", () => {
     expect(s).toContain("entrypoints=websecure");
   });
 
+  it("certType le-dns uses the le-dns resolver + a wildcard cert for the server domain", () => {
+    const s = traefikLabels({
+      ...base,
+      domain: "app-x.apps.example.com",
+      certType: "le-dns",
+      wildcardDomain: "apps.example.com",
+    }).join("\n");
+    expect(s).toContain("tls.certresolver=le-dns");
+    expect(s).toContain("tls.domains[0].main=*.apps.example.com");
+    expect(s).toContain("tls.domains[0].sans=apps.example.com");
+    expect(s).toContain("entrypoints=websecure");
+  });
+
+  it("certType custom uses the operator's resolver name", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", certType: "custom", customCertResolver: "myresolver" }).join("\n");
+    expect(s).toContain("tls.certresolver=myresolver");
+    expect(s).not.toContain("tls.domains"); // wildcard only for le-dns
+  });
+
   it("a magic (http) domain still joins the proxy network with no published port", () => {
     const s = buildRunScript({ ...base, domain: "app-x.1-2-3-4.sslip.io", certType: "http", hostPort: 8080 }, "v1");
     expect(s).toContain("--network tugra-proxy");
@@ -309,12 +328,38 @@ describe("deploy-script", () => {
     expect(s).not.toContain("forwardauth");
   });
 
-  it("proxy setup script runs Traefik with ACME", () => {
-    const s = buildProxySetupScript("me@x.com");
+  it("proxy setup script runs Traefik with the HTTP-01 resolver by default (no DNS resolver)", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com" });
     expect(s).toContain("docker network create tugra-proxy");
     expect(s).toContain("traefik:v3.1");
     expect(s).toContain("acme.email='me@x.com'");
-    expect(s).toContain("acme.json");
+    expect(s).toContain("certificatesresolvers.le.acme.httpchallenge=true");
+    // no DNS-01 resolver / creds when the server has none
+    expect(s).not.toContain("le-dns");
+    expect(s).not.toContain("--env-file");
+    expect(s).not.toContain("acme-dns.json");
+  });
+
+  it("adds a DNS-01 wildcard resolver and passes creds via a 0600 --env-file (never -e)", () => {
+    const s = buildProxySetupScript({
+      acmeEmail: "me@x.com",
+      dnsProvider: "cloudflare",
+      dnsCreds: { CF_DNS_API_TOKEN: "s3cr3t-token" },
+    });
+    expect(s).toContain("--certificatesresolvers.le-dns.acme.dnschallenge=true");
+    expect(s).toContain("--certificatesresolvers.le-dns.acme.dnschallenge.provider='cloudflare'");
+    expect(s).toContain("--certificatesresolvers.le-dns.acme.storage=/letsencrypt/acme-dns.json");
+    expect(s).toContain("touch /etc/tugra/letsencrypt/acme-dns.json && chmod 600");
+    expect(s).toContain("--env-file /etc/tugra/proxy/dns.env");
+    expect(s).toContain("chmod 600 /etc/tugra/proxy/dns.env");
+    // the HTTP-01 resolver is still there for custom-domain (le-http) apps
+    expect(s).toContain("certificatesresolvers.le.acme.httpchallenge=true");
+    // SECURITY: the token appears ONLY inside the base64 env-file blob, never as -e / plaintext argv
+    expect(s).not.toContain("-e CF_DNS_API_TOKEN");
+    expect(s).not.toContain("s3cr3t-token");
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/proxy\/dns\.env/);
+    expect(m).toBeTruthy();
+    expect(Buffer.from(m![1], "base64").toString()).toBe("CF_DNS_API_TOKEN=s3cr3t-token");
   });
 
   it("start/restart scripts target the app container (no rebuild)", () => {

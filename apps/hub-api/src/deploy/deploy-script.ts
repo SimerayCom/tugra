@@ -41,6 +41,10 @@ export interface AppSpec {
   forwardAuth?: string | null;
   /** Cert strategy driving the Traefik router: "http"/"none" → plain HTTP; otherwise HTTPS+LE. */
   certType?: string;
+  /** Server's wildcard root (e.g. apps.example.com) — for a le-dns wildcard cert. */
+  wildcardDomain?: string | null;
+  /** Server's custom Traefik resolver name — for certType "custom". */
+  customCertResolver?: string | null;
   /** For a COMPOSE app: the service to attach the Traefik router to (magic domain).
    *  When set, buildComposeUpScript writes a label-only override joining it to the proxy. */
   composeWebService?: string | null;
@@ -125,6 +129,11 @@ export function traefikLabels(app: AppSpec): string[] {
   const httpOnly = app.certType === "http" || app.certType === "none";
   const scheme = httpOnly ? "http" : "https";
 
+  // HTTPS cert resolver: DNS-01 wildcard (le-dns), a custom operator resolver, or
+  // the default HTTP-01 (le) for le-http / any other HTTPS mode.
+  const resolver =
+    app.certType === "le-dns" ? "le-dns" : app.certType === "custom" ? app.customCertResolver || "le" : "le";
+
   const labels = ["traefik.enable=true", `traefik.http.routers.${r}.rule=${rule}`];
   if (httpOnly) {
     labels.push(
@@ -134,13 +143,21 @@ export function traefikLabels(app: AppSpec): string[] {
   } else {
     labels.push(
       `traefik.http.routers.${r}.entrypoints=websecure`,
-      `traefik.http.routers.${r}.tls.certresolver=le`,
+      `traefik.http.routers.${r}.tls.certresolver=${resolver}`,
       `traefik.http.services.${r}.loadbalancer.server.port=${port}`,
       `traefik.http.routers.${r}-web.rule=${rule}`,
       `traefik.http.routers.${r}-web.entrypoints=web`,
       `traefik.http.routers.${r}-web.middlewares=${r}-redirect`,
       `traefik.http.middlewares.${r}-redirect.redirectscheme.scheme=https`,
     );
+    // A DNS-01 wildcard cert covers *.wildcardDomain (+ the apex as a SAN), so every
+    // magic app on the server shares one cert instead of one per host.
+    if (app.certType === "le-dns" && app.wildcardDomain) {
+      labels.push(
+        `traefik.http.routers.${r}.tls.domains[0].main=*.${app.wildcardDomain}`,
+        `traefik.http.routers.${r}.tls.domains[0].sans=${app.wildcardDomain}`,
+      );
+    }
   }
 
   const mw: string[] = [];
@@ -402,15 +419,32 @@ export function buildImageRemoveScript(app: { id: string }, version: string): st
   return `docker rmi ${runTag(app, version)} 2>/dev/null || true`;
 }
 
-/** Idempotent setup of the Traefik proxy on a server (Let's Encrypt HTTP-01). */
-export function buildProxySetupScript(acmeEmail?: string | null): string {
-  const email = acmeEmail || "admin@example.com";
+export const PROXY_DNS_ENV_DIR = "/etc/tugra/proxy";
+export const PROXY_DNS_ENV_PATH = `${PROXY_DNS_ENV_DIR}/dns.env`;
+
+/**
+ * Idempotent setup of the Traefik proxy on a server: always a Let's Encrypt HTTP-01
+ * resolver `le`, and — when the server has DNS-01 creds — a second `le-dns` resolver
+ * for wildcard certificates. The DNS provider credentials are written to a 0600
+ * --env-file (never `-e`/argv), so they never appear on the process list.
+ */
+export function buildProxySetupScript(
+  opts: { acmeEmail?: string | null; dnsProvider?: string | null; dnsCreds?: Record<string, string> | null } = {},
+): string {
+  const email = opts.acmeEmail || "admin@example.com";
+  const dns =
+    opts.dnsProvider && opts.dnsCreds && Object.keys(opts.dnsCreds).length > 0
+      ? { provider: opts.dnsProvider, creds: opts.dnsCreds }
+      : null;
+
   const runArgs = [
     `docker run -d --name ${PROXY_NAME} --restart unless-stopped`,
     `--network ${PROXY_NETWORK}`,
     "-p 80:80 -p 443:443",
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
     "-v /etc/tugra/letsencrypt:/letsencrypt",
+    // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
+    ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
     "traefik:v3.1",
     "--providers.docker=true",
     "--providers.docker.exposedbydefault=false",
@@ -420,6 +454,15 @@ export function buildProxySetupScript(acmeEmail?: string | null): string {
     "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json",
     "--certificatesresolvers.le.acme.httpchallenge=true",
     "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web",
+    // Wildcard cert via DNS-01 — separate ACME storage from the HTTP-01 resolver.
+    ...(dns
+      ? [
+          `--certificatesresolvers.le-dns.acme.email=${shq(email)}`,
+          "--certificatesresolvers.le-dns.acme.storage=/letsencrypt/acme-dns.json",
+          "--certificatesresolvers.le-dns.acme.dnschallenge=true",
+          `--certificatesresolvers.le-dns.acme.dnschallenge.provider=${shq(dns.provider)}`,
+        ]
+      : []),
   ].join(" ");
 
   return [
@@ -427,6 +470,14 @@ export function buildProxySetupScript(acmeEmail?: string | null): string {
     `docker network create ${PROXY_NETWORK} 2>/dev/null || true`,
     `docker rm -f ${PROXY_NAME} 2>/dev/null || true`,
     "mkdir -p /etc/tugra/letsencrypt && touch /etc/tugra/letsencrypt/acme.json && chmod 600 /etc/tugra/letsencrypt/acme.json",
+    ...(dns
+      ? [
+          "touch /etc/tugra/letsencrypt/acme-dns.json && chmod 600 /etc/tugra/letsencrypt/acme-dns.json",
+          `mkdir -p ${PROXY_DNS_ENV_DIR}`,
+          `printf %s ${shq(envFileB64(dns.creds))} | base64 -d > ${PROXY_DNS_ENV_PATH}`,
+          `chmod 600 ${PROXY_DNS_ENV_PATH}`,
+        ]
+      : []),
     runArgs,
   ].join("\n");
 }

@@ -180,6 +180,7 @@ export class ApplicationsService {
       publicIpv6: string | null;
       wildcardDomain: string | null;
       magicSuffix: string | null;
+      certMode: string;
     },
     source: string,
     // For a COMPOSE app, the resolved web service (or null) — magic is only offered
@@ -202,7 +203,13 @@ export class ApplicationsService {
         wildcardDomain: server.wildcardDomain,
         suffix,
       });
-      if (magic) return { domain: magic, https: false, exposeMode, domainKind: "magic", certType: "http" };
+      if (magic) {
+        // A wildcard DNS-01 cert (le-dns) gives every magic app on the server HTTPS
+        // under one cert; otherwise magic stays plain HTTP.
+        return server.certMode === "le-dns" && server.wildcardDomain
+          ? { domain: magic, https: true, exposeMode, domainKind: "magic", certType: "le-dns" }
+          : { domain: magic, https: false, exposeMode, domainKind: "magic", certType: "http" };
+      }
     }
     return { domain: null, https: input.https ?? true, exposeMode, domainKind: "none", certType: "http" };
   }
@@ -534,6 +541,7 @@ export class ApplicationsService {
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
+      await this.hydrateCertSpec(app, spec);
       // Private repo via a GitHub App: mint a fresh installation token for the clone.
       if (app.gitSourceId && app.source === "GIT") {
         spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
@@ -617,6 +625,7 @@ export class ApplicationsService {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app);
+      await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
       const r = await this.agentWs.sendCommand(
         app.serverId,
         buildRunScript(spec, target.id, false),
@@ -1067,6 +1076,21 @@ export class ApplicationsService {
       }
     }
     return { ...merged, ...this.appEnv(app) }; // app-specific wins
+  }
+
+  /**
+   * Fill an AppSpec's server-derived cert fields (wildcard root + custom resolver)
+   * for a le-dns/custom app — these live on the Server, not the Application row, so
+   * both runDeploy AND rollback must set them or the rolled-back container loses its
+   * wildcard cert labels. No-op for http/le-http apps.
+   */
+  private async hydrateCertSpec(app: Application, spec: AppSpec): Promise<void> {
+    if (app.certType !== "le-dns" && app.certType !== "custom") return;
+    const srv = await this.prisma.server
+      .findUnique({ where: { id: app.serverId }, select: { wildcardDomain: true, customCertResolver: true } })
+      .catch(() => null);
+    spec.wildcardDomain = srv?.wildcardDomain ?? null;
+    spec.customCertResolver = srv?.customCertResolver ?? null;
   }
 
   private toSpec(app: Application): AppSpec {
