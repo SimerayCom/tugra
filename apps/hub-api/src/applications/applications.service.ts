@@ -163,7 +163,7 @@ export class ApplicationsService {
    * exposeMode isn't magic), leave it domainless and fall back to the host:port URL.
    */
   private resolveExpose(
-    dto: CreateAppInput,
+    input: { name: string; domain?: string | null; exposeMode?: string; https?: boolean },
     server: {
       publicIp: string | null;
       publicIpv6: string | null;
@@ -172,17 +172,17 @@ export class ApplicationsService {
     },
     source: string,
   ): { domain: string | null; https: boolean; exposeMode: string; domainKind: string; certType: string } {
-    const exposeMode = dto.exposeMode ?? "magic";
-    if (dto.domain) {
+    const exposeMode = input.exposeMode ?? "magic";
+    if (input.domain) {
       // A user domain is custom + HTTPS (Let's Encrypt). Force https:true so the
       // stored scheme matches certType le-http (mirrors setDomain) — otherwise a
       // caller passing https:false would show http:// while Traefik serves HTTPS.
-      return { domain: dto.domain, https: true, exposeMode: "custom", domainKind: "custom", certType: "le-http" };
+      return { domain: input.domain, https: true, exposeMode: "custom", domainKind: "custom", certType: "le-http" };
     }
     if (exposeMode === "magic" && source !== "COMPOSE") {
       const suffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
       const magic = magicDomain({
-        name: dto.name,
+        name: input.name,
         publicIp: server.publicIp,
         publicIpv6: server.publicIpv6,
         wildcardDomain: server.wildcardDomain,
@@ -190,7 +190,7 @@ export class ApplicationsService {
       });
       if (magic) return { domain: magic, https: false, exposeMode, domainKind: "magic", certType: "http" };
     }
-    return { domain: null, https: dto.https ?? true, exposeMode, domainKind: "none", certType: "http" };
+    return { domain: null, https: input.https ?? true, exposeMode, domainKind: "none", certType: "http" };
   }
 
   /**
@@ -911,7 +911,38 @@ export class ApplicationsService {
       ? { domain, domainKind: "custom", certType: "le-http", https: true }
       : { domain: null, domainKind: "none" };
     await this.prisma.application.update({ where: { id }, data });
+    await this.syncMonitor(id).catch(() => undefined); // keep the auto uptime monitor's target in step
     await this.audit.log({ actor: userId, action: "app.domain.update", target: id });
+  }
+
+  /**
+   * (Re)expose an existing app: switch it to a magic domain, a raw host:port, a
+   * custom domain, or nothing — recomputing the same domain/https/certType fields
+   * create() derives, from the app's own server. Applied to Traefik on the next
+   * deploy (the returned AppView.url reflects it immediately).
+   */
+  async expose(
+    userId: string,
+    id: string,
+    input: { mode: "magic" | "port" | "none" | "custom"; domain?: string },
+  ): Promise<AppView> {
+    const app = await this.requireWrite(userId, id);
+    const server = await this.prisma.server.findUnique({ where: { id: app.serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    const e = this.resolveExpose(
+      { name: app.name, domain: input.mode === "custom" ? input.domain : null, exposeMode: input.mode },
+      server,
+      app.source,
+    );
+    await this.prisma.application.update({
+      where: { id },
+      data: { domain: e.domain, https: e.https, exposeMode: e.exposeMode, domainKind: e.domainKind, certType: e.certType },
+    });
+    await this.syncMonitor(id).catch(() => undefined);
+    await this.audit.log({ actor: userId, action: "app.expose.update", target: id, meta: { mode: input.mode } });
+    const role = (await this.access.teamRole(userId, app.teamId))!;
+    const ctx = await loadProjectCtx(this.prisma, app.environmentId);
+    return this.view({ ...app, ...e }, role, ctx, server.publicIp ?? server.publicIpv6 ?? null);
   }
 
   async setDomainOptions(

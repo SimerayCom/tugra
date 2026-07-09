@@ -10,6 +10,8 @@ export interface LauncherTile {
   source: AppSource;
   templateSlug: string | null; // catalog slug → brand logo, when installed from a template
   templateLogo: string | null;
+  exposeMode: string; // current exposure — seeds the Expose modal so it reflects reality
+  domain: string | null;
   canWrite: boolean;
 }
 
@@ -31,7 +33,7 @@ function rank(t: LauncherTile): number {
 }
 
 // Per-app management actions offered on a launcher tile, given its state.
-export type TileAction = "open" | "start" | "restart" | "stop" | "addDomain" | "uninstall";
+export type TileAction = "open" | "start" | "restart" | "stop" | "expose" | "uninstall";
 
 export function tileActions(status: AppStatus, hasUrl: boolean, canWrite: boolean): TileAction[] {
   const running = status === "RUNNING";
@@ -41,7 +43,9 @@ export function tileActions(status: AppStatus, hasUrl: boolean, canWrite: boolea
   if (!canWrite) return actions;
   if (!running) actions.push("start"); // deploy = build+run, works from NEW/STOPPED/FAILED
   if (running) actions.push("restart", "stop");
-  if (!hasUrl) actions.push("addDomain");
+  // "Expose" always available to writers: give a urlless app an instant URL, or
+  // change how a reachable one is exposed (magic / port / custom domain).
+  actions.push("expose");
   actions.push("uninstall");
   return actions;
 }
@@ -56,6 +60,8 @@ export function launcherTiles(apps: Application[]): LauncherTile[] {
       source: a.source,
       templateSlug: a.templateSlug,
       templateLogo: a.templateLogo,
+      exposeMode: a.exposeMode,
+      domain: a.domain,
       canWrite: a.canWrite,
     }))
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));

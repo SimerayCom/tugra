@@ -27,16 +27,16 @@ describe("launcherTiles", () => {
 });
 
 describe("tileActions", () => {
-  it("offers open/restart/stop/uninstall for a running app with a url", () => {
-    expect(tileActions("RUNNING", true, true)).toEqual(["open", "restart", "stop", "uninstall"]);
+  it("offers open/restart/stop/expose/uninstall for a running app with a url", () => {
+    expect(tileActions("RUNNING", true, true)).toEqual(["open", "restart", "stop", "expose", "uninstall"]);
   });
 
-  it("offers start/addDomain/uninstall for a fresh domainless app", () => {
-    expect(tileActions("NEW", false, true)).toEqual(["start", "addDomain", "uninstall"]);
+  it("offers start/expose/uninstall for a fresh domainless app", () => {
+    expect(tileActions("NEW", false, true)).toEqual(["start", "expose", "uninstall"]);
   });
 
-  it("offers open/start/uninstall for a stopped app that has a domain", () => {
-    expect(tileActions("STOPPED", true, true)).toEqual(["open", "start", "uninstall"]);
+  it("offers open/start/expose/uninstall for a stopped app that has a domain", () => {
+    expect(tileActions("STOPPED", true, true)).toEqual(["open", "start", "expose", "uninstall"]);
   });
 
   it("offers only 'open' to a viewer (no write actions)", () => {

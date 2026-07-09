@@ -663,6 +663,12 @@ export const api = {
       body: JSON.stringify({ domain }),
     });
   },
+  exposeApp(id: string, cfg: { mode: "magic" | "port" | "none" | "custom"; domain?: string }) {
+    return apiFetch<Application>(`/apps/${id}/expose`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
   setAppDomainOptions(
     id: string,
     opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null },

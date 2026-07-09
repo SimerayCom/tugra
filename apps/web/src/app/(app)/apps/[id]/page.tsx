@@ -10,6 +10,7 @@ import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
+import { ExposeModal } from "../../../../components/expose-modal";
 import { Modal } from "../../../../components/modal";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
@@ -83,6 +84,7 @@ export default function AppDetailPage() {
   const live = useDeployLogStream(id, deployActive);
   const [shell, setShell] = useState<TerminalTarget | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [exposeOpen, setExposeOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameApp(id, name),
@@ -226,6 +228,21 @@ export default function AppDetailPage() {
             registryUser={appData.registryUser}
           />
           {appData.canWrite && !appData.isPreview && (
+            <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.exposeTitle")}</div>
+                <div style={{ fontSize: 13, color: "var(--c-tx)", marginTop: 2 }}>
+                  {t(`apps.exposeMode_${appData.exposeMode === "magic" || appData.exposeMode === "port" || appData.exposeMode === "custom" || appData.exposeMode === "none" ? appData.exposeMode : "none"}`)}
+                  {appData.url ? ` · ${appData.url}` : ""}
+                </div>
+              </div>
+              <Btn variant="ghost" onClick={() => setExposeOpen(true)}>{t("apps.exposeChange")}</Btn>
+            </Card>
+          )}
+          {exposeOpen && (
+            <ExposeModal appId={id} current={appData.exposeMode} currentDomain={appData.domain} onClose={() => setExposeOpen(false)} />
+          )}
+          {appData.canWrite && !appData.isPreview && appData.domainKind === "custom" && (
             <DomainCard id={id} domain={appData.domain} https={appData.https} />
           )}
           {appData.domain && (

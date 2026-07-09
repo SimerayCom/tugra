@@ -40,6 +40,8 @@ import {
   SetEnvSchema,
   SetDomainInput,
   SetDomainSchema,
+  ExposeInput,
+  ExposeSchema,
   SetDomainOptionsInput,
   SetDomainOptionsSchema,
   SetEnvironmentInput,
@@ -264,6 +266,16 @@ export class ApplicationsController {
   ) {
     await this.apps.setDomainOptions(user.userId, id, body);
     return { ok: true };
+  }
+
+  @Put(":id/expose")
+  @HttpCode(200)
+  expose(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(ExposeSchema)) body: ExposeInput,
+  ) {
+    return this.apps.expose(user.userId, id, body);
   }
 
   @Put(":id/tags")
