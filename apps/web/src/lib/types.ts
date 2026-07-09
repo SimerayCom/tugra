@@ -331,6 +331,9 @@ export interface Application {
   registryId: string | null;
   pushToRegistry: boolean;
   buildServerId: string | null;
+  deployStrategy: string;
+  rollbackOnFailure: boolean;
+  zeroDowntime: boolean;
   environmentId: string;
   projectId: string | null;
   projectName: string | null;

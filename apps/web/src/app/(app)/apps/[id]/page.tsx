@@ -130,9 +130,28 @@ export default function AppDetailPage() {
           ) : undefined
         }
       >
-        <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0 }}>
-          {appSourceSummary(appData)}
-          {appData.hostPort ? ` · :${appData.hostPort}→${appData.containerPort}` : ""}
+        <p className="mono" style={{ color: "var(--c-tx3)", fontSize: 13, margin: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>
+            {appSourceSummary(appData)}
+            {appData.hostPort ? ` · :${appData.hostPort}→${appData.containerPort}` : ""}
+          </span>
+          {appData.source !== "COMPOSE" && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                padding: "1px 6px",
+                borderRadius: "var(--r1)",
+                background: "var(--c-el)",
+                color: appData.zeroDowntime ? "var(--c-g)" : "var(--c-tx3)",
+                border: "1px solid var(--c-bd)",
+              }}
+            >
+              {appData.zeroDowntime ? t("apps.zeroDowntime") : t("apps.recreateStrategy")}
+            </span>
+          )}
         </p>
         {appData.url && (
           <p style={{ margin: "6px 0 0" }}>
@@ -217,6 +236,9 @@ export default function AppDetailPage() {
               healthCheckPort={appData.healthCheckPort}
               healthCmd={appData.healthCmd}
             />
+          )}
+          {appData.source !== "COMPOSE" && (
+            <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} />
           )}
           {appData.source !== "COMPOSE" && (
             <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
@@ -675,6 +697,38 @@ function HealthCheckCard({
         )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure }: { id: string; deployStrategy: string; rollbackOnFailure: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [strategy, setStrategy] = useState<"ROLLING" | "RECREATE">(deployStrategy === "RECREATE" ? "RECREATE" : "ROLLING");
+  const [rollback, setRollback] = useState(rollbackOnFailure);
+  const save = useMutation({
+    mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.deploySettings")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.deploySettingsDesc")}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select style={{ ...envField, width: 220 }} value={strategy} onChange={(e) => setStrategy(e.target.value as "ROLLING" | "RECREATE")} aria-label={t("apps.deployStrategy")}>
+          {(["ROLLING", "RECREATE"] as const).map((v) => (
+            <option key={v} value={v}>{t(`apps.deployStrategy_${v}`)}</option>
+          ))}
+        </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx)" }}>
+          <input type="checkbox" checked={rollback} onChange={(e) => setRollback(e.target.checked)} />
+          {t("apps.rollbackOnFailure")}
+        </label>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );

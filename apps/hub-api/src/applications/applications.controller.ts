@@ -52,6 +52,8 @@ import {
   SetHealthCheckSchema,
   SetBuildConfigInput,
   SetBuildConfigSchema,
+  SetDeploySettingsInput,
+  SetDeploySettingsSchema,
   SetVolumesInput,
   SetVolumesSchema,
 } from "./dto";
@@ -236,6 +238,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetBuildConfigSchema)) body: SetBuildConfigInput,
   ) {
     await this.apps.setBuildConfig(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/deploy-settings")
+  @HttpCode(200)
+  async setDeploySettings(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDeploySettingsSchema)) body: SetDeploySettingsInput,
+  ) {
+    await this.apps.setDeploySettings(user.userId, id, body);
     return { ok: true };
   }
 
