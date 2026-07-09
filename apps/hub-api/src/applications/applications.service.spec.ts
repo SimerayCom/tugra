@@ -564,6 +564,46 @@ describe("ApplicationsService", () => {
     expect(data.domainKind).toBe("magic");
   });
 
+  it("regenerateMagicForServer moves magic apps to the new wildcard, preserving the label", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { ...app, id: "a1", name: "web", domain: "web-a1b2c3.203-0-113-7.sslip.io", domainKind: "magic" },
+    ]);
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: "apps.example.com", magicSuffix: null }) },
+      application: { findMany, update, findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, {} as AgentWsServer).regenerateMagicForServer("s1");
+    expect(findMany).toHaveBeenCalledWith({ where: { serverId: "s1", domainKind: "magic", isPreview: false } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { domain: "web-a1b2c3.apps.example.com" } });
+  });
+
+  it("regenerateMagicForServer is a no-op when the recomputed domain is unchanged", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
+      application: {
+        findMany: jest.fn().mockResolvedValue([{ ...app, id: "a1", name: "web", domain: "web-a1b2c3.203-0-113-7.sslip.io", domainKind: "magic" }]),
+        update,
+      },
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, {} as AgentWsServer).regenerateMagicForServer("s1");
+    expect(update).not.toHaveBeenCalled(); // same IP → same domain → no write
+  });
+
+  it("regenerateMagicForServer leaves domains untouched when the server has no public IP", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
+      application: {
+        findMany: jest.fn().mockResolvedValue([{ ...app, id: "a1", name: "web", domain: "web-a1b2c3.203-0-113-7.sslip.io", domainKind: "magic" }]),
+        update,
+      },
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, {} as AgentWsServer).regenerateMagicForServer("s1");
+    expect(update).not.toHaveBeenCalled(); // magicDomain → null → skip, don't clobber
+  });
+
   it("places a template app into the chosen environment", async () => {
     const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
     const prisma = {

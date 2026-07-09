@@ -81,6 +81,17 @@ describe("magicDomain", () => {
     );
   });
 
+  it("reuses an explicit label instead of deriving slug+hash (regeneration keeps the URL stable)", () => {
+    // Same label, IP changes → only the IP part moves.
+    expect(magicDomain({ name: "ignored", label: "web-a1b2c3", publicIp: "198.51.100.9" })).toBe(
+      "web-a1b2c3.198-51-100-9.sslip.io",
+    );
+    // Same label, moved under a wildcard domain.
+    expect(magicDomain({ name: "ignored", label: "web-a1b2c3", publicIp: "198.51.100.9", wildcardDomain: "apps.example.com" })).toBe(
+      "web-a1b2c3.apps.example.com",
+    );
+  });
+
   it("produces a random 6-hex-char hash when none is injected", () => {
     const out = magicDomain({ name: "api", publicIp: "203.0.113.7" })!;
     expect(out).toMatch(/^api-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);

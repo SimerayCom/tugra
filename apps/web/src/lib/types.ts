@@ -47,6 +47,9 @@ export interface ServerView {
   hostname: string | null;
   publicIp: string | null;
   publicIpv6: string | null;
+  ipSource: string;
+  wildcardDomain: string | null;
+  magicSuffix: string | null;
   os: string | null;
   osVersion: string | null;
   arch: string | null;

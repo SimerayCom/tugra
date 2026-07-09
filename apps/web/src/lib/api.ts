@@ -296,6 +296,15 @@ export const api = {
       body: JSON.stringify(cfg),
     });
   },
+  setServerNetwork(
+    id: string,
+    cfg: { publicIp?: string | null; publicIpv6?: string | null; wildcardDomain?: string | null; magicSuffix?: string | null },
+  ) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/network`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
   bulkSetCleanupConfig(serverIds: string[], cfg: { enabled: boolean; intervalHours?: number; volumes?: boolean }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/cleanup-config`, {
       method: "POST",

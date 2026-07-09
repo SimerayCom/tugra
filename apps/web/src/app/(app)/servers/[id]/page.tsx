@@ -155,6 +155,7 @@ export default function ServerDetailPage() {
         <>
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
           <ProxyCard id={id} canWrite={server.canWrite} />
+          {server.canWrite && <NetworkCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
         </>
       )}
@@ -412,6 +413,79 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
     </Card>
   );
 }
+
+function NetworkCard({ id, server }: { id: string; server: ServerView }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [wildcard, setWildcard] = useState("");
+  const [suffix, setSuffix] = useState("");
+  const [publicIp, setPublicIp] = useState("");
+  useEffect(() => {
+    setWildcard(server.wildcardDomain ?? "");
+    setSuffix(server.magicSuffix ?? "");
+    setPublicIp(server.ipSource === "manual" ? (server.publicIp ?? "") : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server.id]);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const cfg: { wildcardDomain: string | null; magicSuffix: string | null; publicIp?: string | null } = {
+        wildcardDomain: wildcard.trim() || null,
+        magicSuffix: suffix.trim() || null,
+      };
+      const ip = publicIp.trim();
+      // Only touch the IP pin on a deliberate change: a typed IP pins it (manual),
+      // and emptying the field clears an EXISTING manual pin. For an auto-detected
+      // IP the field is left empty as a placeholder — don't send it, or Save would
+      // wipe the observed address.
+      if (ip) cfg.publicIp = ip;
+      else if (server.ipSource === "manual") cfg.publicIp = null;
+      return api.setServerNetwork(id, cfg);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("servers.networkTitle")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.networkDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
+          {t("servers.wildcardDomain")}
+          <input style={netField} value={wildcard} placeholder="apps.example.com" onChange={(e) => setWildcard(e.target.value)} />
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
+          {t("servers.magicSuffix")}
+          <input style={netField} value={suffix} placeholder="sslip.io" onChange={(e) => setSuffix(e.target.value)} />
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
+          <span>
+            {t("servers.manualIp")}{" "}
+            <span style={{ color: server.ipSource === "manual" ? "var(--c-am)" : "var(--c-tx3)" }}>
+              ({t(server.ipSource === "manual" ? "servers.ipSourceManual" : "servers.ipSourceObserved")})
+            </span>
+          </span>
+          <input style={netField} value={publicIp} placeholder={server.publicIp ?? "203.0.113.7"} onChange={(e) => setPublicIp(e.target.value)} />
+        </label>
+        <div>
+          <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+const netField: React.CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "6px 8px",
+  background: "var(--c-el)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 13,
+  fontFamily: "inherit",
+};
 
 const PROXY_COLOR: Record<ProxyStatus, string> = {
   running: "var(--c-g)",

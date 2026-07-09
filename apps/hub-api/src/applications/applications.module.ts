@@ -9,11 +9,19 @@ import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { ProxyService } from "./proxy.service";
 import { AiService } from "./ai.service";
+import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule],
   controllers: [ApplicationsController],
-  providers: [ApplicationsService, ProxyService, AiService],
-  exports: [ApplicationsService],
+  providers: [
+    ApplicationsService,
+    ProxyService,
+    AiService,
+    // String-token alias so ServersService can resolve this lazily via ModuleRef
+    // without a static module import (which would form a dependency cycle).
+    { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },
+  ],
+  exports: [ApplicationsService, APPLICATIONS_SERVICE],
 })
 export class ApplicationsModule {}

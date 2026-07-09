@@ -85,6 +85,29 @@ describe("Servers + Agent (e2e)", () => {
     expect(res.body.tags).toEqual(["edge", "eu"]);
   });
 
+  it("sets per-server network settings (wildcard domain + manual public IP)", async () => {
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/network`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ wildcardDomain: "apps.example.com", publicIp: "203.0.113.7" })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .get(`/servers/${serverId}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    expect(res.body.wildcardDomain).toBe("apps.example.com");
+    expect(res.body.publicIp).toBe("203.0.113.7");
+    expect(res.body.ipSource).toBe("manual");
+  });
+
+  it("rejects a private manual IP", async () => {
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/network`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ publicIp: "10.0.0.5" })
+      .expect(400);
+  });
+
   it("manages log drains for a server (create + list)", async () => {
     const created = await request(app.getHttpServer())
       .post(`/servers/${serverId}/log-drains`)

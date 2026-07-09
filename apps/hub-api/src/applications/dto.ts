@@ -106,7 +106,7 @@ export const SetDomainOptionsSchema = z
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
-const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({
   domain: z.string().trim().min(1).max(253).regex(DOMAIN_RE, "invalid domain").nullable(),
 });
