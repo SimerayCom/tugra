@@ -69,6 +69,14 @@ export const SetBuildConfigSchema = z
   .strict();
 export type SetBuildConfigInput = z.infer<typeof SetBuildConfigSchema>;
 
+export const SetDeploySettingsSchema = z
+  .object({
+    deployStrategy: z.enum(["ROLLING", "RECREATE"]).optional(),
+    rollbackOnFailure: z.boolean().optional(),
+  })
+  .strict();
+export type SetDeploySettingsInput = z.infer<typeof SetDeploySettingsSchema>;
+
 export const SetLimitsSchema = z
   .object({
     memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),

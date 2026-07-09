@@ -495,6 +495,31 @@ describe("Applications / deploy (e2e)", () => {
       .expect(400);
   });
 
+  it("exposes + updates deploy strategy and reflects real zero-downtime eligibility", async () => {
+    // a domain-routed app with no host port → rolling-eligible → really zero-downtime
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "zdapp", serverId, image: "nginx:alpine", domain: "zd.example.com" })
+      .expect(201);
+    const rid = created.body.id;
+    let detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.deployStrategy).toBe("ROLLING");
+    expect(detail.body.rollbackOnFailure).toBe(true);
+    expect(detail.body.zeroDowntime).toBe(true);
+
+    // switch to RECREATE + disable rollback → no longer zero-downtime
+    await request(app.getHttpServer())
+      .put(`/apps/${rid}/deploy-settings`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ deployStrategy: "RECREATE", rollbackOnFailure: false })
+      .expect(200);
+    detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.deployStrategy).toBe("RECREATE");
+    expect(detail.body.rollbackOnFailure).toBe(false);
+    expect(detail.body.zeroDowntime).toBe(false);
+  });
+
   it("configures a build server (registry required, push forced on) and rejects it without a registry", async () => {
     const regRes = await request(app.getHttpServer())
       .post("/registries")

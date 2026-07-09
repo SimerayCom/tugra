@@ -614,6 +614,18 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("setDeploySettings persists the strategy + rollback toggle for a writer", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setDeploySettings("u1", "app1", { deployStrategy: "RECREATE", rollbackOnFailure: false });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { deployStrategy: "RECREATE", rollbackOnFailure: false } }),
+    );
+  });
+
   it("setBuildConfig rejects a build server with no registry configured", async () => {
     const noRegApp = { ...app, registryId: null };
     const prisma = {

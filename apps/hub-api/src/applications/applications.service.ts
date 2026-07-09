@@ -104,6 +104,9 @@ export interface AppView {
   registryId: string | null;
   pushToRegistry: boolean;
   buildServerId: string | null;
+  deployStrategy: string;
+  rollbackOnFailure: boolean;
+  zeroDowntime: boolean;
   templateSlug: string | null;
   templateLogo: string | null;
   environmentId: string | null;
@@ -1134,6 +1137,24 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
   }
 
+  /** Choose the deploy strategy (ROLLING zero-downtime vs RECREATE) and whether a failed
+   *  health gate auto-rolls-back to the previous version. */
+  async setDeploySettings(
+    userId: string,
+    id: string,
+    cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean },
+  ): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        ...(cfg.deployStrategy !== undefined ? { deployStrategy: cfg.deployStrategy } : {}),
+        ...(cfg.rollbackOnFailure !== undefined ? { rollbackOnFailure: cfg.rollbackOnFailure } : {}),
+      },
+    });
+    await this.audit.log({ actor: userId, action: "app.deploysettings.update", target: id });
+  }
+
   async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
     await this.assertEnvInTeam(environmentId, app.teamId);
@@ -1414,6 +1435,13 @@ export class ApplicationsService {
       registryId: app.registryId,
       pushToRegistry: app.pushToRegistry,
       buildServerId: app.buildServerId,
+      deployStrategy: app.deployStrategy,
+      rollbackOnFailure: app.rollbackOnFailure,
+      // Whether this app will ACTUALLY deploy zero-downtime (rolling) — surfaces the fact
+      // that a ROLLING preference silently falls back to recreate for non-eligible apps.
+      // Mirrors runDeploy's real decision (`!isCompose && rollingEligible`): a compose app
+      // deploys via its own up/down, never rolling.
+      zeroDowntime: app.source !== "COMPOSE" && this.rollingEligible(app),
       templateSlug: app.templateSlug,
       templateLogo: app.templateSlug ? (TEMPLATES[app.templateSlug]?.logo ?? app.templateSlug) : null,
       environmentId: app.environmentId,
