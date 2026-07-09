@@ -588,6 +588,29 @@ describe("ApplicationsService", () => {
     expect(data.domainKind).toBe("magic");
   });
 
+  it("gives a magic app wildcard HTTPS (certType le-dns) when the server runs certMode le-dns", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "IMAGE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null,
+          wildcardDomain: "apps.example.com", magicSuffix: null, certMode: "le-dns",
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", { name: "api", serverId: "s1", image: "nginx" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toMatch(/^api-[0-9a-f]{6}\.apps\.example\.com$/);
+    expect(data.domainKind).toBe("magic");
+    expect(data.certType).toBe("le-dns");
+    expect(data.https).toBe(true);
+  });
+
   it("regenerateMagicForServer moves magic apps to the new wildcard, preserving the label", async () => {
     const findMany = jest.fn().mockResolvedValue([
       { ...app, id: "a1", name: "web", domain: "web-a1b2c3.203-0-113-7.sslip.io", domainKind: "magic" },

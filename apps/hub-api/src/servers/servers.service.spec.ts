@@ -8,9 +8,15 @@ const notifications = { fireForEvent: jest.fn().mockResolvedValue(undefined) } a
 const regenerateMagicForServer = jest.fn().mockResolvedValue(undefined);
 // ModuleRef stub: setNetwork resolves ApplicationsService lazily to regenerate magic domains.
 const moduleRef = { get: jest.fn().mockReturnValue({ regenerateMagicForServer }) } as unknown as import("@nestjs/core").ModuleRef;
+// Crypto stub: base64 so the plaintext isn't a literal substring — tests can assert
+// the creds were encrypted (not persisted raw).
+const crypto = {
+  encrypt: (s: string) => "enc:" + Buffer.from(s).toString("base64"),
+  decrypt: (s: string) => Buffer.from(s.replace(/^enc:/, ""), "base64").toString(),
+} as unknown as import("../crypto/crypto.service").CryptoService;
 
 function svcWith(prisma: Partial<PrismaService>): ServersService {
-  return new ServersService(prisma as PrismaService, audit, notifications, moduleRef);
+  return new ServersService(prisma as PrismaService, audit, notifications, moduleRef, crypto);
 }
 
 describe("ServersService.listForUser (cross-team, role-aware)", () => {
@@ -378,6 +384,35 @@ describe("ServersService.setNetwork", () => {
     } as unknown as PrismaService;
     await svcWith(prisma).setNetwork("u1", "s1", { wildcardDomain: "apps.example.com" });
     expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { wildcardDomain: "apps.example.com" } });
+  });
+
+  it("encrypts DNS creds and stores the cert policy — plaintext creds never persisted", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", {
+      certMode: "le-dns",
+      dnsProvider: "cloudflare",
+      dnsCreds: { CF_DNS_API_TOKEN: "s3cr3t" },
+    });
+    const data = update.mock.calls[0][0].data;
+    expect(data.certMode).toBe("le-dns");
+    expect(data.dnsProvider).toBe("cloudflare");
+    expect(data.dnsCredsEnc).toBe("enc:" + Buffer.from('{"CF_DNS_API_TOKEN":"s3cr3t"}').toString("base64"));
+    expect("dnsCreds" in data).toBe(false); // the plaintext record is never written
+    expect(JSON.stringify(data)).not.toContain("s3cr3t");
+  });
+
+  it("clears stored DNS creds when dnsCreds is null", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { dnsCreds: null });
+    expect(update.mock.calls[0][0].data.dnsCredsEnc).toBeNull();
   });
 });
 

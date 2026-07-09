@@ -50,6 +50,10 @@ export interface ServerView {
   ipSource: string;
   wildcardDomain: string | null;
   magicSuffix: string | null;
+  certMode: string;
+  dnsProvider: string | null;
+  customCertResolver: string | null;
+  hasDnsCreds: boolean;
   os: string | null;
   osVersion: string | null;
   arch: string | null;

@@ -9,13 +9,14 @@ import { ConfigService } from "@nestjs/config";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 const config = { get: jest.fn().mockReturnValue("me@x.com") } as unknown as ConfigService;
+const crypto = { encrypt: (s: string) => s, decrypt: (s: string) => s } as unknown as import("../crypto/crypto.service").CryptoService;
 const server = { id: "s1", teamId: "t1" };
 
 function make(role: Role | null, send: jest.Mock) {
   const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
   const access = { teamRole: jest.fn().mockResolvedValue(role) } as unknown as TeamAccessService;
   const agentWs = { sendCommand: send } as unknown as AgentWsServer;
-  return new ProxyOpsService(prisma, access, audit, agentWs, config);
+  return new ProxyOpsService(prisma, access, audit, agentWs, config, crypto);
 }
 
 describe("ProxyOpsService", () => {

@@ -298,7 +298,16 @@ export const api = {
   },
   setServerNetwork(
     id: string,
-    cfg: { publicIp?: string | null; publicIpv6?: string | null; wildcardDomain?: string | null; magicSuffix?: string | null },
+    cfg: {
+      publicIp?: string | null;
+      publicIpv6?: string | null;
+      wildcardDomain?: string | null;
+      magicSuffix?: string | null;
+      certMode?: "http" | "le-dns" | "custom";
+      dnsProvider?: string | null;
+      dnsCreds?: Record<string, string> | null;
+      customCertResolver?: string | null;
+    },
   ) {
     return apiFetch<{ ok: true }>(`/servers/${id}/network`, {
       method: "PUT",
