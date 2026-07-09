@@ -39,6 +39,8 @@ export interface AppSpec {
   securityHeaders?: boolean;
   /** External auth service URL — protects the app via a Traefik forwardauth middleware. */
   forwardAuth?: string | null;
+  /** Cert strategy driving the Traefik router: "http"/"none" → plain HTTP; otherwise HTTPS+LE. */
+  certType?: string;
 }
 
 /** Credentials for pulling from a private container registry. */
@@ -113,18 +115,30 @@ export function traefikLabels(app: AppSpec): string[] {
   const www = `www.${base}`;
   // When a canonical redirect is set, answer for both bare + www hosts.
   const rule = redirect ? `Host(\`${base}\`) || Host(\`${www}\`)` : `Host(\`${app.domain}\`)`;
+  // Magic domains (and anything pinned to certType "http"/"none") are served over
+  // plain HTTP on the `web` entrypoint — no TLS, no Let's Encrypt, no HTTP→HTTPS
+  // redirect. Everything else (custom domains, certType "le-http") keeps the HTTPS
+  // router with a cert and the :80→:443 redirect.
+  const httpOnly = app.certType === "http" || app.certType === "none";
+  const scheme = httpOnly ? "http" : "https";
 
-  const labels = [
-    "traefik.enable=true",
-    `traefik.http.routers.${r}.rule=${rule}`,
-    `traefik.http.routers.${r}.entrypoints=websecure`,
-    `traefik.http.routers.${r}.tls.certresolver=le`,
-    `traefik.http.services.${r}.loadbalancer.server.port=${port}`,
-    `traefik.http.routers.${r}-web.rule=${rule}`,
-    `traefik.http.routers.${r}-web.entrypoints=web`,
-    `traefik.http.routers.${r}-web.middlewares=${r}-redirect`,
-    `traefik.http.middlewares.${r}-redirect.redirectscheme.scheme=https`,
-  ];
+  const labels = ["traefik.enable=true", `traefik.http.routers.${r}.rule=${rule}`];
+  if (httpOnly) {
+    labels.push(
+      `traefik.http.routers.${r}.entrypoints=web`,
+      `traefik.http.services.${r}.loadbalancer.server.port=${port}`,
+    );
+  } else {
+    labels.push(
+      `traefik.http.routers.${r}.entrypoints=websecure`,
+      `traefik.http.routers.${r}.tls.certresolver=le`,
+      `traefik.http.services.${r}.loadbalancer.server.port=${port}`,
+      `traefik.http.routers.${r}-web.rule=${rule}`,
+      `traefik.http.routers.${r}-web.entrypoints=web`,
+      `traefik.http.routers.${r}-web.middlewares=${r}-redirect`,
+      `traefik.http.middlewares.${r}-redirect.redirectscheme.scheme=https`,
+    );
+  }
 
   const mw: string[] = [];
   if (redirect) {
@@ -132,8 +146,8 @@ export function traefikLabels(app: AppSpec): string[] {
     const from = redirect === "root" ? www : base; // non-canonical host
     const to = redirect === "root" ? base : www; // canonical host
     labels.push(
-      `traefik.http.middlewares.${r}-canon.redirectregex.regex=^https://${esc(from)}/(.*)`,
-      `traefik.http.middlewares.${r}-canon.redirectregex.replacement=${"https://" + to + "/${1}"}`,
+      `traefik.http.middlewares.${r}-canon.redirectregex.regex=^${scheme}://${esc(from)}/(.*)`,
+      `traefik.http.middlewares.${r}-canon.redirectregex.replacement=${scheme + "://" + to + "/${1}"}`,
       `traefik.http.middlewares.${r}-canon.redirectregex.permanent=true`,
     );
     mw.push(`${r}-canon`);

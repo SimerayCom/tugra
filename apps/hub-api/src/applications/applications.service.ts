@@ -996,6 +996,7 @@ export class ApplicationsService {
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
+      certType: app.certType,
     };
   }
 
