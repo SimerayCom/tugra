@@ -750,6 +750,37 @@ describe("Applications / deploy (e2e)", () => {
     expect(deps.body[0].status).toBe("FAILED");
   });
 
+  it("deploys a host-port app via recreate and auto-rolls-back on a failed health gate (exit 3)", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Recreate", serverId, image: "nginx:alpine", hostPort: 8134 })
+      .expect(201);
+    const rid = created.body.id;
+
+    // healthy first deploy → recreate on the canonical name (NO temp rollout) + records a
+    // SUCCESS deployment whose image becomes the rollback target for the next attempt.
+    commands.length = 0;
+    nextExit = 0;
+    await request(app.getHttpServer()).post(`/apps/${rid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const sent = commands.join("\n");
+    expect(sent).toContain(`docker run -d --name tugra_${rid}`);
+    expect(sent).not.toContain("__rollout"); // host-port → recreate, not rolling
+    expect(sent).toContain("TUGRA_ROLLOUT"); // health gate present
+
+    // failed health gate (exit 3) with a previous version → auto-rollback, app stays RUNNING
+    nextExit = 3;
+    await request(app.getHttpServer()).post(`/apps/${rid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    nextExit = 0; // reset for any later tests
+    const appAfter = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(appAfter.body.status).toBe("RUNNING");
+    const deps = await request(app.getHttpServer()).get(`/apps/${rid}/deployments`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(deps.body[0].kind).toBe("AUTO_ROLLBACK");
+    expect(deps.body[0].status).toBe("FAILED");
+  });
+
   it("gives a one-click Compose/template app an instant magic domain routed via a label override", async () => {
     // server already has publicIp 203.0.113.7 from the earlier magic test
     const inst = await request(app.getHttpServer())

@@ -407,10 +407,14 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   if (app.healthCmd) {
     limitArgs.push(
       `--health-cmd ${shq(app.healthCmd)}`,
-      "--health-interval=30s",
+      // A 10s interval + 30s start period keeps Docker's health status fresh enough for
+      // the deploy gate to observe a healthy transition promptly (a 30s interval only
+      // yielded ~2 samples inside the gate window) while tolerating a moderately slow boot
+      // without a premature "unhealthy". Longer boots are handled by per-app gate config.
+      "--health-interval=10s",
       "--health-timeout=5s",
       "--health-retries=3",
-      "--health-start-period=10s",
+      "--health-start-period=30s",
     );
   }
 
@@ -490,9 +494,14 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
       "done",
     );
   } else if (probe.kind === "httpExternal") {
+    // "Reachable and serving" = any HTTP response below 500. A booted app commonly answers
+    // the probe path with 404 (root of an API), 401/403 (auth-gated), or 400 (a strict
+    // Host allow-list rejecting the container-name Host header) — those must NOT fail the
+    // gate. Only a refused/timed-out connection (curl → "000") or a 5xx counts as unhealthy.
     lines.push(
       `for i in $(seq 1 ${t.retries}); do`,
-      `  if docker run --rm --network ${PROXY_NETWORK} ${HEALTH_PROBE_IMAGE} -sf --max-time 5 http://${target}:${probe.port}${probe.path} >/dev/null 2>&1; then healthy=1; break; fi`,
+      `  code=$(docker run --rm --network ${PROXY_NETWORK} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 http://${target}:${probe.port}${probe.path} 2>/dev/null || echo 000)`,
+      `  if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`,
       `  sleep ${t.intervalSec}`,
       "done",
     );
@@ -538,6 +547,55 @@ export function buildRollingDeployScript(
     "else",
     `  docker rm -f ${rollout} 2>/dev/null || true`, // old container stays; zero downtime
     `  echo "TUGRA_ROLLOUT: rolled_back"; exit 3`,
+    "fi",
+  ].join("\n");
+}
+
+/**
+ * Recreate deploy with a health gate + auto-rollback for apps that CANNOT run two
+ * containers at once (host-port, custom `--network`/`--name`/`-p`, named volumes, or an
+ * explicit RECREATE strategy). Builds the new image, stops the old container, starts the
+ * new one under the SAME canonical name, then health-gates it. On success exit 0. On
+ * failure it removes the unhealthy new container and — if a previous good image exists —
+ * re-runs that image under the canonical name (exit 3, app back on the previous version);
+ * with no previous version, or if the rollback re-run itself fails, it exits non-zero so
+ * the app is honestly reported FAILED (never a false "kept the previous version").
+ *
+ * Unlike rolling this has a brief downtime window (old removed before new is gated), which
+ * is unavoidable when a temporary overlapping container is impossible.
+ */
+export function buildRecreateDeployScript(
+  app: AppSpec,
+  version: string,
+  opts: { build?: boolean; noCache?: boolean; prevVersion?: string | null; probe: HealthProbe } & HealthGate,
+): string {
+  const canonical = containerName(app);
+  const build = opts.build ?? true;
+  // prevVersion is the previous successful deployment id → its retained image is
+  // runTag(app, prevVersion). Re-run it (no rebuild) to restore service.
+  const rollback = opts.prevVersion
+    ? `  if ${runContainerArgs(app, opts.prevVersion, canonical)}; then echo "TUGRA_ROLLOUT: rolled_back"; exit 3; else echo "TUGRA_ROLLOUT: rollback_failed"; exit 1; fi`
+    : `  echo "TUGRA_ROLLOUT: failed"; exit 1`;
+  return [
+    "set -e",
+    ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
+    ...envPreludeFor(app),
+    `docker rm -f ${canonical} 2>/dev/null || true`, // stop old (brief downtime begins)
+    "set +e", // from here a start/health failure must reach the rollback branch, not abort
+    // Guard the start itself: a `docker run` rejected by the daemon (port clash, bad mount,
+    // invalid flag, memory below Docker's minimum) must fall through to rollback — under a
+    // bare `set -e` it would abort the script and leave the app down with the old container
+    // already removed and the previous image never restored.
+    `if ${runContainerArgs(app, version, canonical)}; then`,
+    ...buildHealthGateFragment(canonical, opts.probe, opts).map((l) => "  " + l),
+    "else",
+    "  healthy=0", // new container failed to even start → treat as unhealthy
+    "fi",
+    `if [ "$healthy" = 1 ]; then`,
+    `  echo "TUGRA_ROLLOUT: healthy"; exit 0`,
+    "else",
+    `  docker rm -f ${canonical} 2>/dev/null || true`, // drop the unhealthy/failed new container
+    rollback,
     "fi",
   ].join("\n");
 }

@@ -23,6 +23,7 @@ import {
   buildRestartScript,
   buildRunScript,
   buildRollingDeployScript,
+  buildRecreateDeployScript,
   resolveHealthProbe,
   buildStartScript,
   buildStopScript,
@@ -574,11 +575,33 @@ export class ApplicationsService {
         where: { id: dep.id },
         data: { configSnapshot: buildConfigSnapshot(spec) as object },
       });
+      // Strategy: rolling (zero-downtime overlap) for eligible routed apps; recreate
+      // (stop→start→health-gate→restore-previous-on-failure) for every other app that
+      // wants auto-rollback (host-port, named volume, risky docker opts, RECREATE); plain
+      // hard cutover only when the user opted out of rollback (rollbackOnFailure=false).
+      const rolling = !isCompose && this.rollingEligible(app);
+      const recreate = !isCompose && !rolling && app.rollbackOnFailure;
+      // The previous good image to fall back to on a failed recreate (its retained tag is
+      // runTag(app, prev.id)). Excludes the current deployment; requires a kept image.
+      const prev = recreate
+        ? await this.prisma.deployment.findFirst({
+            where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } },
+            orderBy: { createdAt: "desc" },
+          })
+        : null;
       const command = isCompose
         ? buildComposeUpScript(spec, noCache)
-        : this.rollingEligible(app)
+        : rolling
           ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec, {}), ...ROLLING_GATE })
-          : buildRunScript(spec, dep.id, true, noCache);
+          : recreate
+            ? buildRecreateDeployScript(spec, dep.id, {
+                build: true,
+                noCache,
+                prevVersion: prev?.id ?? null,
+                probe: resolveHealthProbe(spec, {}),
+                ...ROLLING_GATE,
+              })
+            : buildRunScript(spec, dep.id, true, noCache);
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,
@@ -586,20 +609,24 @@ export class ApplicationsService {
         this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
-      // Exit-code contract from the rolling script: 0 = healthy & live, 3 = new
-      // version failed its health gate and the PREVIOUS one is still serving
-      // (auto-rollback, zero downtime), anything else = hard failure. Only the rolling
-      // path emits exit 3, and only when a previous live version actually exists — so a
-      // non-rolling build or a first deploy that merely happens to exit 3 is a hard fail
-      // (not a false "kept the previous version" that leaves the app marked RUNNING).
+      // Exit-code contract from the rolling/recreate scripts: 0 = healthy & live, 3 = new
+      // version failed its health gate and the PREVIOUS one is serving (auto-rollback),
+      // anything else = hard failure. Only rolling/recreate emit exit 3, and only when a
+      // previous live version actually existed — so a plain hard-cutover build or a first
+      // deploy that merely happens to exit 3 is a hard fail (not a false "kept the previous
+      // version" that would leave the app wrongly marked RUNNING).
       const code = r.exitCode;
       const ok = code === 0;
       let rolledBack = false;
-      if (code === 3 && !isCompose && this.rollingEligible(app)) {
-        const prev = await this.prisma.deployment.findFirst({
-          where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } },
-        });
-        rolledBack = !!prev;
+      if (code === 3 && !isCompose) {
+        if (recreate) {
+          rolledBack = !!prev; // recreate only exits 3 when it had a previous image to restore
+        } else if (rolling) {
+          const p = await this.prisma.deployment.findFirst({
+            where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } },
+          });
+          rolledBack = !!p;
+        }
       }
       await this.prisma.deployment.update({
         where: { id: dep.id },
