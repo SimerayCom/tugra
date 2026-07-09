@@ -287,11 +287,14 @@ export default function AppDetailPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {deployments.map((d) => {
               const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
-              const canRollback = appData.canWrite && !!d.imageTag && d.id !== latestSuccessId;
+              // Rollbackable if the local tag is retained OR a portable registry image exists.
+              const canRollback = appData.canWrite && (!!d.imageTag || !!d.registryImage) && d.id !== latestSuccessId;
               return (
                 <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
+                    {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
+                    {d.registryImage && <span title={d.registryImage} style={{ fontSize: 10, color: "var(--c-tx3)" }}>☁</span>}
                     {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
                     <span style={{ flex: 1 }} />
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>

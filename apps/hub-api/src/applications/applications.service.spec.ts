@@ -1464,6 +1464,92 @@ describe("ApplicationsService", () => {
       expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", imageTag: "tugra_app1:dep1" }) }),
     );
   });
+
+  it("rolls back by PULLING the registry image when the local tag was pruned", async () => {
+    const regApp = { ...app, registryId: "reg1", pushToRegistry: true };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(regApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        // local imageTag was pruned (null) but the registry ref survives
+        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        create: jest.fn().mockResolvedValue({ id: "dep2" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
+      },
+      registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
+        sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "Up" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).rollback("u1", "app1", "dep1");
+    // pulls the portable registry image and tags it as the local versioned tag, then runs
+    expect(sentCmd).toContain("docker pull 'ghcr.io/org/tugra_app1:dep1'");
+    expect(sentCmd).toContain("docker tag 'ghcr.io/org/tugra_app1:dep1' tugra_app1:dep1");
+    expect(sentCmd).toContain("docker run -d --name tugra_app1");
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", imageTag: "tugra_app1:dep1", registryImage: "ghcr.io/org/tugra_app1:dep1" }) }),
+    );
+  });
+
+  it("prefers the retained LOCAL tag over the registry (no pull) when both exist", async () => {
+    const regApp = { ...app, registryId: "reg1", pushToRegistry: true };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(regApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:dep1", registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        create: jest.fn().mockResolvedValue({ id: "dep2" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
+      },
+      registry: { findFirst: jest.fn() },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sentCmd = cmd; return Promise.resolve({ exitCode: 0, output: "Up" }); }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).rollback("u1", "app1", "dep1");
+    // local image present → re-run it, never pull from the registry (fast + outage-proof)
+    expect(sentCmd).not.toContain("docker pull");
+    expect((prisma.registry.findFirst as jest.Mock)).not.toHaveBeenCalled();
+  });
+
+  it("registry-only target whose registry was deleted → clean 404, no dangling deployment, app untouched", async () => {
+    const noRegApp = { ...app, registryId: null }; // registry removed → registryId auto-nulled
+    const create = jest.fn();
+    const appUpdate = jest.fn();
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(noRegApp), update: appUpdate },
+      deployment: {
+        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        create,
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).rollback("u1", "app1", "dep1")).rejects.toThrow(/no longer available/);
+    // no RUNNING rollback row created, and the still-running app was never flipped to FAILED
+    expect(create).not.toHaveBeenCalled();
+    expect(appUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects rollback when neither a local tag nor a registry image exists", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: {
+        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: null }),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).rollback("u1", "app1", "dep1")).rejects.toThrow(/rollbackable/);
+  });
 });
 
 describe("ApplicationsService.listDomains", () => {
