@@ -472,6 +472,8 @@ model Application {
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"
   certType       String       @default("http")  // "http" | "none" | "le-http" | "le-dns" | "custom"
+  deployStrategy String       @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
+  rollbackOnFailure Boolean   @default(true)      // auto-rollback to the previous version on a failed health gate
   status         AppStatus    @default(NEW)
   webhookToken   String?      @unique
   webhookSecret  String?
@@ -517,6 +519,7 @@ model Deployment {
   application Application      @relation(fields: [appId], references: [id], onDelete: Cascade)
   appId       String
   status      DeploymentStatus @default(RUNNING)
+  kind        String           @default("DEPLOY") // "DEPLOY" | "ROLLBACK" | "AUTO_ROLLBACK"
   logs        String?
   exitCode    Int?
   imageTag    String?

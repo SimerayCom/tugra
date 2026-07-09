@@ -14,6 +14,7 @@
   "testFailed": "Test failed",
   "eventDeploySuccess": "Deploy succeeded",
   "eventDeployFailed": "Deploy failed",
+  "eventDeployRolledBack": "Deploy rolled back (kept previous version)",
   "eventServerOffline": "Server offline",
   "eventSslExpiring": "SSL certificate expiring",
   "eventTokenExpiring": "API token expiring",

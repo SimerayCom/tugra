@@ -532,8 +532,9 @@ export function buildRollingDeployScript(
     ...buildHealthGateFragment(rollout, opts.probe, opts),
     `if [ "$healthy" = 1 ]; then`,
     `  docker rm -f ${canonical} 2>/dev/null || true`,
-    `  docker rename ${rollout} ${canonical}`,
-    `  echo "TUGRA_ROLLOUT: healthy"; exit 0`,
+    // Gate success on the rename actually landing — otherwise the live container keeps
+    // the temp name and every lifecycle command (stop/start/logs) would miss it.
+    `  if docker rename ${rollout} ${canonical}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`,
     "else",
     `  docker rm -f ${rollout} 2>/dev/null || true`, // old container stays; zero downtime
     `  echo "TUGRA_ROLLOUT: rolled_back"; exit 3`,
