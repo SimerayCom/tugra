@@ -455,6 +455,115 @@ describe("ApplicationsService", () => {
     expect(data.environmentId).toBe("env-default");
   });
 
+  it("generates a magic sslip.io domain when the server has a public IP", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "IMAGE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null,
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", { name: "My App", serverId: "s1", image: "nginx" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toMatch(/^my-app-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
+    expect(data.domainKind).toBe("magic");
+    expect(data.exposeMode).toBe("magic");
+    expect(data.certType).toBe("http"); // magic is served over plain HTTP
+    expect(data.https).toBe(false);
+  });
+
+  it("leaves an app domainless when the server has no public IP (magic impossible)", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "IMAGE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: "10.0.0.5", publicIpv6: null, wildcardDomain: null, magicSuffix: null,
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", { name: "web", serverId: "s1", image: "nginx" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toBeNull();
+    expect(data.domainKind).toBe("none");
+  });
+
+  it("does not generate a magic domain for a COMPOSE app (deferred to compose wiring)", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null,
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", { name: "blog", serverId: "s1" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toBeNull();
+    expect(data.domainKind).toBe("none");
+  });
+
+  it("treats a user-provided domain as custom and keeps it on HTTPS", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "IMAGE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null,
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", {
+      name: "web", serverId: "s1", image: "nginx", domain: "app.example.com", https: false,
+    });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toBe("app.example.com");
+    expect(data.domainKind).toBe("custom");
+    expect(data.certType).toBe("le-http");
+    // A custom domain is forced onto HTTPS even if the caller passed https:false,
+    // so the stored scheme matches certType le-http (no http:// vs served-HTTPS drift).
+    expect(data.https).toBe(true);
+  });
+
+  it("uses a per-server wildcard domain for the magic domain when set", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "IMAGE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: "apps.example.com", magicSuffix: null,
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", { name: "api", serverId: "s1", image: "nginx" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toMatch(/^api-[0-9a-f]{6}\.apps\.example\.com$/);
+    expect(data.domainKind).toBe("magic");
+  });
+
   it("places a template app into the chosen environment", async () => {
     const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
     const prisma = {
@@ -642,9 +751,13 @@ describe("ApplicationsService", () => {
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setDomain("u1", "app1", "app.example.com");
-    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: "app.example.com" } });
+    // A user-set domain becomes "custom" and pins certType to le-http (stays on HTTPS).
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "app1" },
+      data: { domain: "app.example.com", domainKind: "custom", certType: "le-http", https: true },
+    });
     await svc.setDomain("u1", "app1", null);
-    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null, domainKind: "none" } });
   });
 
   it("rejects moving an app to an environment in another team", async () => {
@@ -757,6 +870,9 @@ describe("ApplicationsService", () => {
     buildType: "NIXPACKS",
     image: null,
     domain: "x.com",
+    domainKind: "custom",
+    exposeMode: "custom",
+    certType: "le-http",
     previewEnabled: true,
     isPreview: false,
   };
@@ -805,6 +921,10 @@ describe("ApplicationsService", () => {
     expect(data.prNumber).toBe(5);
     expect(data.gitBranch).toBe("feature-x");
     expect(data.domain).toBe("pr5.x.com");
+    // A preview mirrors the parent's exposure so an HTTPS custom-domain app's
+    // preview keeps certType le-http (stays on HTTPS) instead of the "http" default.
+    expect(data.certType).toBe("le-http");
+    expect(data.domainKind).toBe("custom");
     expect(sentCmd).toContain("tugra_prev1"); // deployed under its own container
   });
 

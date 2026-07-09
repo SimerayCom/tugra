@@ -33,3 +33,14 @@ describe("validateEnv — HUB_SIGNING_KEY fail-closed", () => {
     expect(() => validateEnv({ ...base, NODE_ENV: "development", HUB_SIGNING_KEY: Buffer.alloc(16).toString("base64") })).toThrow(/HUB_SIGNING_KEY/);
   });
 });
+
+describe("validateEnv — MAGIC_DOMAIN_SUFFIX", () => {
+  it("defaults to sslip.io when unset", () => {
+    expect(validateEnv({ ...base, NODE_ENV: "development" }).MAGIC_DOMAIN_SUFFIX).toBe("sslip.io");
+  });
+  it("accepts an override (nip.io)", () => {
+    expect(
+      validateEnv({ ...base, NODE_ENV: "development", MAGIC_DOMAIN_SUFFIX: "nip.io" }).MAGIC_DOMAIN_SUFFIX,
+    ).toBe("nip.io");
+  });
+});

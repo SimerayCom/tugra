@@ -47,6 +47,9 @@ export const envSchema = z
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
   HUB_TRUSTED_PROXY: z.enum(["true", "false"]).optional(),
+  // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
+  // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
+  MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live
