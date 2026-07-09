@@ -222,6 +222,49 @@ describe("deploy-script", () => {
     expect(traefikLabels({ ...base, domain: "x.com" }).length).toBeGreaterThan(0);
   });
 
+  it("certType http (magic) serves plain HTTP on :80 — no TLS, no LE, no redirect", () => {
+    const s = traefikLabels({ ...base, domain: "app-x.1-2-3-4.sslip.io", certType: "http" }).join("\n");
+    expect(s).toContain("Host(`app-x.1-2-3-4.sslip.io`)");
+    expect(s).toContain(`routers.tugra_${base.id}.entrypoints=web`);
+    expect(s).not.toContain("websecure");
+    expect(s).not.toContain("certresolver");
+    expect(s).not.toContain("redirectscheme");
+    expect(s).not.toContain(`routers.tugra_${base.id}-web.`); // no separate redirect router
+  });
+
+  it("certType none is also plain HTTP", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", certType: "none" }).join("\n");
+    expect(s).toContain("entrypoints=web");
+    expect(s).not.toContain("certresolver");
+  });
+
+  it("certType le-http keeps HTTPS + LE + the :80→:443 redirect (custom-domain parity)", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", certType: "le-http" }).join("\n");
+    expect(s).toContain("entrypoints=websecure");
+    expect(s).toContain("certresolver=le");
+    expect(s).toContain("redirectscheme.scheme=https");
+  });
+
+  it("an unset certType defaults to HTTPS (no silent downgrade of existing apps)", () => {
+    const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(s).toContain("certresolver=le");
+    expect(s).toContain("entrypoints=websecure");
+  });
+
+  it("a magic (http) domain still joins the proxy network with no published port", () => {
+    const s = buildRunScript({ ...base, domain: "app-x.1-2-3-4.sslip.io", certType: "http", hostPort: 8080 }, "v1");
+    expect(s).toContain("--network tugra-proxy");
+    expect(s).toContain("Host(`app-x.1-2-3-4.sslip.io`)");
+    expect(s).not.toContain("-p 8080");
+    expect(s).not.toContain("certresolver");
+  });
+
+  it("http-only canonical redirect uses the http scheme", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", certType: "http", domainRedirect: "root" }).join("\n");
+    expect(s).toContain("redirectregex.regex=^http://www\\.x\\.com/(.*)");
+    expect(s).toContain("redirectregex.replacement=http://x.com/${1}");
+  });
+
   it("plain domain has no canon/sec middleware (regression)", () => {
     const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
     expect(s).toContain("Host(`x.com`)");
