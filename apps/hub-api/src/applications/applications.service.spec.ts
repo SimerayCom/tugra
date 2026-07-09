@@ -498,7 +498,7 @@ describe("ApplicationsService", () => {
     expect(data.domainKind).toBe("none");
   });
 
-  it("does not generate a magic domain for a COMPOSE app (deferred to compose wiring)", async () => {
+  it("generates a magic domain for a template (Compose) app whose web service is known", async () => {
     const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
     const prisma = {
       server: {
@@ -513,6 +513,30 @@ describe("ApplicationsService", () => {
       teamRole: jest.fn().mockResolvedValue(Role.OWNER),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", { name: "blog", serverId: "s1" });
+    const data = create.mock.calls[0][0].data;
+    // wordpress publishes a port → its web service is resolvable → magic applies.
+    expect(data.domain).toMatch(/^blog-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
+    expect(data.domainKind).toBe("magic");
+  });
+
+  it("leaves a Compose app domainless when no web service can be resolved", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
+    const prisma = {
+      server: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null,
+        }),
+      },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    // A raw Compose stack with no published port → no web service → no magic.
+    await make(prisma, access, {} as AgentWsServer).create("u1", {
+      name: "worker", serverId: "s1", source: "COMPOSE", composeFile: "services:\n  db:\n    image: postgres",
+    });
     const data = create.mock.calls[0][0].data;
     expect(data.domain).toBeNull();
     expect(data.domainKind).toBe("none");

@@ -41,6 +41,9 @@ export interface AppSpec {
   forwardAuth?: string | null;
   /** Cert strategy driving the Traefik router: "http"/"none" → plain HTTP; otherwise HTTPS+LE. */
   certType?: string;
+  /** For a COMPOSE app: the service to attach the Traefik router to (magic domain).
+   *  When set, buildComposeUpScript writes a label-only override joining it to the proxy. */
+  composeWebService?: string | null;
 }
 
 /** Credentials for pulling from a private container registry. */
