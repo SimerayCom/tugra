@@ -7,6 +7,11 @@
 export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
+// External health-probe image for the rolling health gate — lets us health-check a
+// container over HTTP without baking curl into the app image (works for distroless).
+// TODO(hardening): pin to an @sha256 digest (a wrong pin would break every deploy).
+export const HEALTH_PROBE_IMAGE = "curlimages/curl:8.11.1";
+
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
 
@@ -45,6 +50,9 @@ export interface AppSpec {
   wildcardDomain?: string | null;
   /** Server's custom Traefik resolver name — for certType "custom". */
   customCertResolver?: string | null;
+  /** Rolling deploy only: when set, emit a Traefik LB health check on this path so the
+   *  unready rollout backend stays out of rotation until it's live (zero-downtime). */
+  rollingHealthPath?: string | null;
   /** For a COMPOSE app: the service to attach the Traefik router to (magic domain).
    *  When set, buildComposeUpScript writes a label-only override joining it to the proxy. */
   composeWebService?: string | null;
@@ -65,6 +73,13 @@ export interface AppVolume {
 
 export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
+}
+
+/** Temporary name for the not-yet-live container during a rolling deploy. It carries
+ *  the SAME Traefik labels as the canonical container, so both register the identical
+ *  router/service (traffic overlaps cleanly) until the old one is removed + rename. */
+export function rolloutName(app: { id: string }): string {
+  return `${containerName(app)}__rollout`;
 }
 
 /** Docker volume name for an app's named volume (persists across redeploys). */
@@ -158,6 +173,20 @@ export function traefikLabels(app: AppSpec): string[] {
         `traefik.http.routers.${r}.tls.domains[0].sans=${app.wildcardDomain}`,
       );
     }
+  }
+
+  // Rolling deploy only: an active Traefik load-balancer health check so the not-yet-
+  // ready rollout backend is kept OUT of rotation until it answers 2xx/3xx on the
+  // health path — otherwise Traefik would round-robin live traffic onto a booting
+  // container (502s) during the overlap. Set only by buildRollingDeployScript; a
+  // hard-cutover deploy never carries it (no behaviour change for existing apps).
+  // Assumes the health path returns success; Slice 4 makes the path configurable.
+  if (app.rollingHealthPath) {
+    labels.push(
+      `traefik.http.services.${r}.loadbalancer.healthcheck.path=${app.rollingHealthPath}`,
+      `traefik.http.services.${r}.loadbalancer.healthcheck.interval=3s`,
+      `traefik.http.services.${r}.loadbalancer.healthcheck.timeout=5s`,
+    );
   }
 
   const mw: string[] = [];
@@ -339,23 +368,26 @@ export function envFileB64(env: Record<string, string>): string {
  * `build=true` (normal deploy) produces the versioned image first; `build=false`
  * (rollback) skips all prep and just runs the pre-existing versioned tag.
  */
-export function buildRunScript(app: AppSpec, version: string, build = true, noCache = false): string {
-  const name = containerName(app);
+/** Write the app's secrets to a 0600 --env-file (empty when there are no env vars).
+ *  Secrets go through a file, never -e, so they never hit the process list. */
+function envPreludeFor(app: AppSpec): string[] {
+  const env = app.env && typeof app.env === "object" ? app.env : {};
+  if (Object.keys(env).length === 0) return [];
+  const envPath = envFilePath(app);
+  return [
+    `mkdir -p ${ENV_DIR}`,
+    `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
+    `chmod 600 ${envPath}`,
+  ];
+}
+
+/** The `docker run -d --name <name> ...` line shared by every deploy strategy —
+ *  identical flags (net/labels/env/limits/volumes/image) regardless of the container
+ *  name, so a rolling container gets the exact same routing as the canonical one. */
+function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const ref = runTag(app, version);
   const env = app.env && typeof app.env === "object" ? app.env : {};
-  const hasEnv = Object.keys(env).length > 0;
-  const envPath = envFilePath(app);
-
-  // Secrets are injected via an --env-file written on the host (0600), not -e,
-  // so values never appear in the shell command / process list.
-  const envPrelude = hasEnv
-    ? [
-        `mkdir -p ${ENV_DIR}`,
-        `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
-        `chmod 600 ${envPath}`,
-      ]
-    : [];
-  const envArg = hasEnv ? `--env-file ${envPath}` : "";
+  const envArg = Object.keys(env).length > 0 ? `--env-file ${envFilePath(app)}` : "";
 
   let netExpose: string;
   if (app.domain) {
@@ -365,9 +397,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
         .map((l) => `--label ${shq(l)}`)
         .join(" ");
   } else {
-    netExpose = app.hostPort
-      ? `-p ${app.hostPort}:${app.containerPort ?? 80}`
-      : "";
+    netExpose = app.hostPort ? `-p ${app.hostPort}:${app.containerPort ?? 80}` : "";
   }
 
   // Optional resource limits + container health check.
@@ -389,7 +419,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     .map((v) => `-v ${appVolumeName(app, v.name)}:${v.path}`)
     .join(" ");
 
-  const runArgs = [
+  return [
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
@@ -403,14 +433,111 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
   ]
     .filter(Boolean)
     .join(" ");
+}
 
+/**
+ * Hard-cutover deploy: `docker rm -f` the old container, then run the new one under
+ * the same stable name. Brief downtime during the swap. Used for non-rolling apps
+ * (host-port, risky docker options, named volumes) and rollback (build=false).
+ */
+export function buildRunScript(app: AppSpec, version: string, build = true, noCache = false): string {
+  const name = containerName(app);
   return [
     "set -e",
     ...(build ? prepSteps(app, version, noCache) : []),
-    ...envPrelude,
+    ...envPreludeFor(app),
     `docker rm -f ${name} 2>/dev/null || true`,
-    runArgs,
+    runContainerArgs(app, version, name),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
+  ].join("\n");
+}
+
+/** How to health-check a rolling container before cutting traffic over to it. */
+export type HealthProbe =
+  | { kind: "native" } // the container has a --health-cmd; poll docker's health status
+  | { kind: "httpExternal"; port: number; path: string } // pinned probe container on tugra-proxy
+  | { kind: "stableWait" }; // no port/health-cmd → require it to stay Running
+
+/** Timing knobs for the health gate. */
+export interface HealthGate {
+  retries: number;
+  intervalSec: number;
+  startPeriodSec: number;
+}
+
+/** Pick the best available probe: a container health-cmd if set, else an external
+ *  HTTP probe for a routed app, else a "did it stay up" liveness wait. */
+export function resolveHealthProbe(app: AppSpec, cfg: { path?: string }): HealthProbe {
+  if (app.healthCmd) return { kind: "native" };
+  if (app.domain) return { kind: "httpExternal", port: app.containerPort ?? 80, path: cfg.path || "/" };
+  return { kind: "stableWait" };
+}
+
+/**
+ * Shell fragment (runs under `set +e`) that sets `healthy=1` iff the target container
+ * passes its probe within the bounded window, else leaves it 0. Guards every probe
+ * with `if` so a failed check never aborts the surrounding script.
+ */
+export function buildHealthGateFragment(target: string, probe: HealthProbe, t: HealthGate): string[] {
+  const lines = ["healthy=0", `sleep ${t.startPeriodSec}`];
+  if (probe.kind === "native") {
+    lines.push(
+      `for i in $(seq 1 ${t.retries}); do`,
+      `  st=$(docker inspect --format '{{json .State.Health.Status}}' ${target} 2>/dev/null || echo '""')`,
+      `  if [ "$st" = '"healthy"' ]; then healthy=1; break; fi`,
+      `  if [ "$st" = '"unhealthy"' ]; then break; fi`, // fail fast
+      `  sleep ${t.intervalSec}`,
+      "done",
+    );
+  } else if (probe.kind === "httpExternal") {
+    lines.push(
+      `for i in $(seq 1 ${t.retries}); do`,
+      `  if docker run --rm --network ${PROXY_NETWORK} ${HEALTH_PROBE_IMAGE} -sf --max-time 5 http://${target}:${probe.port}${probe.path} >/dev/null 2>&1; then healthy=1; break; fi`,
+      `  sleep ${t.intervalSec}`,
+      "done",
+    );
+  } else {
+    // stableWait: already slept the start period; require the container still Running.
+    lines.push(`if [ "$(docker inspect --format '{{.State.Running}}' ${target} 2>/dev/null)" = "true" ]; then healthy=1; fi`);
+  }
+  return lines;
+}
+
+/**
+ * Zero-downtime rolling deploy for a routed (domain) app. Builds the new image, starts
+ * it under a temporary name carrying the SAME Traefik labels (so both versions serve
+ * during the overlap), health-gates it, then on success removes the old container and
+ * renames the new one into place (exit 0); on failure removes the new container and
+ * leaves the old one serving untouched (exit 3 — auto-rollback, zero downtime).
+ */
+export function buildRollingDeployScript(
+  app: AppSpec,
+  version: string,
+  opts: { build?: boolean; noCache?: boolean; probe: HealthProbe } & HealthGate,
+): string {
+  const canonical = containerName(app);
+  const rollout = rolloutName(app);
+  const build = opts.build ?? true;
+  // Give the rollout a Traefik LB health check so it stays out of rotation until ready
+  // (only meaningful for a routed app; the external probe already gates the cutover).
+  const hcPath = opts.probe.kind === "httpExternal" ? opts.probe.path : "/";
+  const rApp: AppSpec = { ...app, rollingHealthPath: app.domain ? hcPath : null };
+  return [
+    "set -e",
+    ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
+    ...envPreludeFor(app),
+    `docker rm -f ${rollout} 2>/dev/null || true`, // clear any stale rollout
+    runContainerArgs(rApp, version, rollout),
+    "set +e", // the health gate must not abort the script on a failed probe
+    ...buildHealthGateFragment(rollout, opts.probe, opts),
+    `if [ "$healthy" = 1 ]; then`,
+    `  docker rm -f ${canonical} 2>/dev/null || true`,
+    `  docker rename ${rollout} ${canonical}`,
+    `  echo "TUGRA_ROLLOUT: healthy"; exit 0`,
+    "else",
+    `  docker rm -f ${rollout} 2>/dev/null || true`, // old container stays; zero downtime
+    `  echo "TUGRA_ROLLOUT: rolled_back"; exit 3`,
+    "fi",
   ].join("\n");
 }
 
