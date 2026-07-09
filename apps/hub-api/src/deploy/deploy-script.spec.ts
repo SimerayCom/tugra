@@ -9,6 +9,10 @@ import {
   buildProxyStopScript,
   buildRemoveScript,
   buildRunScript,
+  buildRollingDeployScript,
+  resolveHealthProbe,
+  rolloutName,
+  HEALTH_PROBE_IMAGE,
   containerName,
   envFileContent,
   envFileB64,
@@ -32,6 +36,85 @@ describe("deploy-script", () => {
   it("names the container + versioned image tag deterministically", () => {
     expect(containerName({ id: "abc" })).toBe("tugra_abc");
     expect(runTag({ id: "abc" }, "v1")).toBe("tugra_abc:v1");
+    expect(rolloutName({ id: "abc" })).toBe("tugra_abc__rollout");
+  });
+
+  describe("rolling deploy", () => {
+    const domained: AppSpec = { ...base, domain: "app.example.com" };
+    const gate = { retries: 10, intervalSec: 3, startPeriodSec: 5 };
+
+    it("starts the new version under a temp name with the SAME Traefik labels", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate });
+      // built + run under the rollout name, not the canonical one
+      expect(s).toContain("docker tag 'nginx:1.27' tugra_abc:v2");
+      expect(s).toContain("docker run -d --name tugra_abc__rollout");
+      // labels still register the canonical router/service (app-stable → overlap works)
+      expect(s).toContain("traefik.http.routers.tugra_abc.rule=Host(`app.example.com`)");
+      expect(s).toContain("--network tugra-proxy");
+      // the rollout carries a Traefik LB health check so it stays OUT of rotation until
+      // ready — otherwise Traefik would route live traffic to the booting container (502s)
+      expect(s).toContain("traefik.http.services.tugra_abc.loadbalancer.healthcheck.path=/");
+      expect(s).toContain("traefik.http.services.tugra_abc.loadbalancer.healthcheck.interval=3s");
+    });
+
+    it("a hard-cutover (non-rolling) deploy carries NO LB health check (no regression)", () => {
+      const s = buildRunScript(domained, "v1");
+      expect(s).not.toContain("loadbalancer.healthcheck");
+    });
+
+    it("on health-pass removes the OLD container and renames the new one in (exit 0)", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate });
+      expect(s).toContain('if [ "$healthy" = 1 ]; then');
+      expect(s).toContain("docker rm -f tugra_abc 2>/dev/null || true");
+      expect(s).toContain("docker rename tugra_abc__rollout tugra_abc");
+      expect(s).toContain('echo "TUGRA_ROLLOUT: healthy"; exit 0');
+    });
+
+    it("on health-fail removes the NEW container, keeps the old one, and exits 3", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate });
+      expect(s).toContain("docker rm -f tugra_abc__rollout 2>/dev/null || true");
+      expect(s).toContain('echo "TUGRA_ROLLOUT: rolled_back"; exit 3');
+      // the health gate runs under set +e so a failed probe doesn't abort the swap logic
+      expect(s).toContain("set +e");
+    });
+
+    it("build=false (rollback) skips the build/pull prep", () => {
+      const s = buildRollingDeployScript(domained, "old1", { build: false, probe: { kind: "stableWait" }, ...gate });
+      expect(s).not.toContain("docker pull");
+      expect(s).not.toContain("docker tag");
+      expect(s).toContain("docker run -d --name tugra_abc__rollout");
+    });
+
+    it("httpExternal probe hits the pinned probe image over the proxy network", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 3000, path: "/healthz" }, ...gate });
+      expect(s).toContain(`docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -sf --max-time 5 http://tugra_abc__rollout:3000/healthz`);
+      expect(s).toContain(`for i in $(seq 1 ${gate.retries}); do`);
+      expect(s).toContain(`sleep ${gate.startPeriodSec}`);
+    });
+
+    it("native probe polls docker's container health status", () => {
+      const s = buildRollingDeployScript({ ...domained, healthCmd: "curl -f http://localhost/ || exit 1" }, "v2", {
+        probe: { kind: "native" },
+        ...gate,
+      });
+      expect(s).toContain("docker inspect --format '{{json .State.Health.Status}}' tugra_abc__rollout");
+      expect(s).toContain("--health-cmd 'curl -f http://localhost/ || exit 1'"); // container carries the health-cmd
+    });
+
+    it("resolveHealthProbe: healthCmd→native, domain→httpExternal, else stableWait", () => {
+      expect(resolveHealthProbe({ ...base, healthCmd: "x" }, {})).toEqual({ kind: "native" });
+      expect(resolveHealthProbe({ ...base, domain: "x.com", containerPort: 3000 }, {})).toEqual({
+        kind: "httpExternal",
+        port: 3000,
+        path: "/",
+      });
+      expect(resolveHealthProbe(base, {})).toEqual({ kind: "stableWait" });
+      expect(resolveHealthProbe({ ...base, domain: "x.com" }, { path: "/up" })).toEqual({
+        kind: "httpExternal",
+        port: 80,
+        path: "/up",
+      });
+    });
   });
 
   it("IMAGE: pulls, snapshots to the versioned tag, removes old, runs the version", () => {
