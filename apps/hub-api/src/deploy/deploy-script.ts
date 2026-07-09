@@ -317,9 +317,24 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         `pack build ${tag} --path ${bd} --builder heroku/builder:24 --pull-policy if-not-present${buildEnvFlags}`,
       );
     } else {
+      // Nixpacks: materialise the build plan first so we can (a) inject curl/wget into the
+      // setup phase — a health-cmd like `curl …` must exist inside an otherwise slim image —
+      // and (b) pass a per-app --cache-key for fast layer-reuse across deploys. `--env` flags
+      // go to BOTH plan and build. jq is best-effort: if it's absent we skip injection (the
+      // external HTTP probe still works) rather than install arbitrary packages on the host.
+      // The plan lives OUTSIDE bd (a sibling path) so Nixpacks' `COPY . /app` never bakes it
+      // into the image; it's removed after the build.
+      const plan = `/etc/tugra/builds/${app.id}.plan.json`;
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
-        `nixpacks build ${bd} --name ${tag}${buildEnvFlags}`,
+        `nixpacks plan -f json${buildEnvFlags} ${bd} > ${plan}`,
+        "if command -v jq >/dev/null 2>&1; then",
+        `  jq '.phases.setup.aptPkgs = ((.phases.setup.aptPkgs // []) + ["curl","wget"] | unique)' ${plan} > ${plan}.tmp && mv ${plan}.tmp ${plan}`,
+        "else",
+        '  echo "TUGRA: jq not found — skipping curl/wget health-tool injection into the Nixpacks plan" >&2',
+        "fi",
+        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${buildEnvFlags} ${bd}`,
+        `rm -f ${plan} ${plan}.tmp`,
       );
     }
     return steps;

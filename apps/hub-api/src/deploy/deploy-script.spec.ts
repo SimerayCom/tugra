@@ -263,7 +263,9 @@ describe("deploy-script", () => {
     const dockerfile = buildRunScript({ ...git, buildType: "DOCKERFILE" }, "v1");
     expect(dockerfile).toContain("--build-arg 'API_URL=https://api.x'");
     const nixpacks = buildRunScript({ ...git, buildType: "NIXPACKS" }, "v1");
-    expect(nixpacks).toContain("nixpacks build /etc/tugra/builds/abc --name tugra_abc:v1 --env 'API_URL=https://api.x'");
+    // --env flags reach BOTH the plan and the build step
+    expect(nixpacks).toContain("nixpacks plan -f json --env 'API_URL=https://api.x' /etc/tugra/builds/abc > /etc/tugra/builds/abc.plan.json");
+    expect(nixpacks).toContain("nixpacks build -c /etc/tugra/builds/abc.plan.json --cache-key 'abc' --name tugra_abc:v1 --env 'API_URL=https://api.x' /etc/tugra/builds/abc");
     const railpack = buildRunScript({ ...git, buildType: "RAILPACK" }, "v1");
     expect(railpack).toContain("--env 'API_URL=https://api.x'");
   });
@@ -581,7 +583,15 @@ describe("deploy-script", () => {
       buildType: "NIXPACKS",
     }, "v2");
     expect(s).toContain("git clone --depth 1 --branch 'dev' 'https://github.com/u/r.git'");
-    expect(s).toContain("nixpacks build /etc/tugra/builds/abc --name tugra_abc:v2");
+    // plan → (jq-guarded curl/wget inject) → cached build
+    expect(s).toContain("nixpacks plan -f json /etc/tugra/builds/abc > /etc/tugra/builds/abc.plan.json");
+    expect(s).toContain("if command -v jq >/dev/null 2>&1; then");
+    expect(s).toContain(`jq '.phases.setup.aptPkgs = ((.phases.setup.aptPkgs // []) + ["curl","wget"] | unique)'`);
+    expect(s).toContain('echo "TUGRA: jq not found — skipping curl/wget health-tool injection into the Nixpacks plan" >&2');
+    expect(s).toContain("nixpacks build -c /etc/tugra/builds/abc.plan.json --cache-key 'abc' --name tugra_abc:v2 /etc/tugra/builds/abc");
+    // the plan file lives OUTSIDE the build context so it isn't baked into the image, and is cleaned up
+    expect(s).not.toContain("/etc/tugra/builds/abc/.tugra-plan.json");
+    expect(s).toContain("rm -f /etc/tugra/builds/abc.plan.json /etc/tugra/builds/abc.plan.json.tmp");
     expect(s).not.toContain("docker pull");
     expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:v2'");
   });
