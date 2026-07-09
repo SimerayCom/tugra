@@ -98,7 +98,7 @@ export class AuthController {
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(Enable2faSchema)) body: Enable2faInput,
   ) {
-    await this.auth.enable2FA(user.userId, body.token);
-    return { ok: true };
+    // Returns the plaintext recovery codes ONCE — the client must show + let the user save them.
+    return this.auth.enable2FA(user.userId, body.token);
   }
 }

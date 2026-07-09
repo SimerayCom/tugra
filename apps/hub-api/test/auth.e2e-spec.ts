@@ -154,11 +154,14 @@ describe("Auth (e2e)", () => {
     const secret = /secret=([A-Z0-9]+)/.exec(setup.body.otpauthUrl)?.[1];
     expect(secret).toBeTruthy();
 
-    await request(app.getHttpServer())
+    const enable = await request(app.getHttpServer())
       .post("/auth/2fa/enable")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ token: authenticator.generate(secret!) })
       .expect(200);
+    // enable returns the 10 one-time recovery codes (shown once)
+    const recoveryCodes = enable.body.recoveryCodes as string[];
+    expect(recoveryCodes).toHaveLength(10);
 
     // Login without the code now signals twoFaRequired.
     const noCode = await request(app.getHttpServer())
@@ -173,6 +176,18 @@ describe("Auth (e2e)", () => {
       .send({ email, password, totp: authenticator.generate(secret!) })
       .expect(200);
     expect(withCode.body.tokens.accessToken).toBeTruthy();
+
+    // A recovery code works as the 2FA code when TOTP is unavailable, and is single-use.
+    const viaRecovery = await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ email, password, totp: recoveryCodes[0] })
+      .expect(200);
+    expect(viaRecovery.body.tokens.accessToken).toBeTruthy();
+    // reusing the same recovery code is rejected (consumed)
+    await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({ email, password, totp: recoveryCodes[0] })
+      .expect(401);
   });
 
   it("rejects a bad password", async () => {
