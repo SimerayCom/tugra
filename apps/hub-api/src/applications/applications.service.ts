@@ -22,6 +22,8 @@ import {
   buildRemoveScript,
   buildRestartScript,
   buildRunScript,
+  buildRollingDeployScript,
+  resolveHealthProbe,
   buildStartScript,
   buildStopScript,
   runTag,
@@ -66,6 +68,11 @@ import type { CreateAppInput } from "./dto";
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
+// Default rolling health-gate timing (Slice 4 will make these per-app configurable).
+const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
+// Raw docker flags that make two overlapping containers impossible (port map, own
+// network/name/ip) → the app can't roll, so we fall back to hard cutover.
+const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name)(\s|=|$)/;
 
 export interface AppView {
   id: string;
@@ -527,6 +534,22 @@ export class ApplicationsService {
     return domain.replace(/^www\./i, "");
   }
 
+  /**
+   * Zero-downtime rolling is safe only for a routed app with no host port, no risky
+   * raw docker flags, and no named volumes (two overlapping containers would share the
+   * same volume and could corrupt data). Otherwise deploy is a hard cutover.
+   */
+  private rollingEligible(app: Application): boolean {
+    return (
+      !!app.domain &&
+      app.deployStrategy === "ROLLING" &&
+      app.rollbackOnFailure &&
+      !app.hostPort &&
+      !(app.dockerOptions && RISKY_DOCKER_OPTS.test(app.dockerOptions)) &&
+      this.appVolumes(app).length === 0
+    );
+  }
+
   /** Core deploy: build/run on the agent and record the Deployment. */
   private async runDeploy(app: Application, actor: string, noCache = false) {
     const dep = await this.prisma.deployment.create({
@@ -553,7 +576,9 @@ export class ApplicationsService {
       });
       const command = isCompose
         ? buildComposeUpScript(spec, noCache)
-        : buildRunScript(spec, dep.id, true, noCache);
+        : this.rollingEligible(app)
+          ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec, {}), ...ROLLING_GATE })
+          : buildRunScript(spec, dep.id, true, noCache);
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,
@@ -561,34 +586,63 @@ export class ApplicationsService {
         this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
-      const ok = r.exitCode === 0;
+      // Exit-code contract from the rolling script: 0 = healthy & live, 3 = new
+      // version failed its health gate and the PREVIOUS one is still serving
+      // (auto-rollback, zero downtime), anything else = hard failure. Only the rolling
+      // path emits exit 3, and only when a previous live version actually exists — so a
+      // non-rolling build or a first deploy that merely happens to exit 3 is a hard fail
+      // (not a false "kept the previous version" that leaves the app marked RUNNING).
+      const code = r.exitCode;
+      const ok = code === 0;
+      let rolledBack = false;
+      if (code === 3 && !isCompose && this.rollingEligible(app)) {
+        const prev = await this.prisma.deployment.findFirst({
+          where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } },
+        });
+        rolledBack = !!prev;
+      }
       await this.prisma.deployment.update({
         where: { id: dep.id },
         data: {
           status: ok ? "SUCCESS" : "FAILED",
+          kind: rolledBack ? "AUTO_ROLLBACK" : "DEPLOY",
           logs: r.output.slice(0, 65536),
-          exitCode: r.exitCode,
-          // Compose stacks are multi-image → no single rollback tag.
+          exitCode: code,
+          // Compose stacks are multi-image → no single rollback tag; a rolled-back
+          // deploy's image never went live → no rollback tag either.
           imageTag: ok && !isCompose ? runTag(app, dep.id) : null,
         },
       });
       await this.prisma.application.update({
         where: { id: app.id },
-        data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
+        // A rolled-back deploy keeps the previous container running → app is still RUNNING.
+        data: { status: ok || rolledBack ? AppStatus.RUNNING : AppStatus.FAILED },
       });
       this.deployLogs.finish(app.id, {
         status: ok ? "SUCCESS" : "FAILED",
-        exitCode: r.exitCode,
+        exitCode: code,
         deploymentId: dep.id,
       });
       this.notifications
         .fireForEvent(
           app.teamId,
-          ok ? "deploy_success" : "deploy_failed",
-          `${ok ? "✅" : "🔴"} ${app.name}: deploy ${ok ? "succeeded" : "failed"}`,
+          ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed",
+          ok
+            ? `✅ ${app.name}: deploy succeeded`
+            : rolledBack
+              ? `⚠️ ${app.name}: new version failed its health check — kept the previous version`
+              : `🔴 ${app.name}: deploy failed`,
         )
         .catch(() => {});
-      if (ok && !isCompose) await this.pruneImages(app);
+      if (ok && !isCompose) {
+        await this.pruneImages(app);
+      } else if (!isCompose) {
+        // A failed/rolled-back deploy built tugra_<id>:<depId> but it never went live →
+        // reap the orphan image so repeated failures don't leak disk.
+        await this.agentWs
+          .sendCommand(app.serverId, buildImageRemoveScript(app, dep.id), "cleanup")
+          .catch(() => undefined);
+      }
     } catch (e) {
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -618,7 +672,7 @@ export class ApplicationsService {
       throw new NotFoundException("no rollbackable deployment with that id");
     }
     const dep = await this.prisma.deployment.create({
-      data: { appId: app.id, status: "RUNNING" },
+      data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK" },
     });
     this.deployLogs.begin(app.id);
     try {

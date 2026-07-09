@@ -20,6 +20,7 @@ describe("Applications / deploy (e2e)", () => {
   let agent: WebSocket;
   let serverId = "";
   const commands: string[] = [];
+  let nextExit = 0; // mock-agent exit code for the next command (reset per use)
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -68,7 +69,7 @@ describe("Applications / deploy (e2e)", () => {
           // chunk before the final result (exercises command_log → SSE).
           commands.push(msg.command);
           agent.send(JSON.stringify({ type: "command_log", reqId: msg.reqId, chunk: "live-build-line\n" }));
-          agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: 0, output: "Up 2 seconds" }));
+          agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: nextExit, output: "Up 2 seconds" }));
         }
       });
     });
@@ -717,6 +718,36 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ mode: "custom" })
       .expect(400);
+  });
+
+  it("deploys a routed app zero-downtime (rolling) and auto-rolls-back on a failed health gate (exit 3)", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Rolling", serverId, image: "nginx:alpine", domain: "rolling.example.com" })
+      .expect(201);
+    const rid = created.body.id;
+
+    // healthy deploy → the rolling builder (temp __rollout container + health gate)
+    commands.length = 0;
+    nextExit = 0;
+    await request(app.getHttpServer()).post(`/apps/${rid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const sent = commands.join("\n");
+    expect(sent).toContain(`docker run -d --name tugra_${rid}__rollout`);
+    expect(sent).toContain("TUGRA_ROLLOUT"); // the health gate / cutover logic is present
+    expect(sent).toContain(`docker rename tugra_${rid}__rollout tugra_${rid}`);
+
+    // failed health gate (exit 3) → previous version kept: app stays RUNNING, deployment AUTO_ROLLBACK
+    nextExit = 3;
+    await request(app.getHttpServer()).post(`/apps/${rid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    nextExit = 0; // reset for any later tests
+    const appAfter = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(appAfter.body.status).toBe("RUNNING");
+    const deps = await request(app.getHttpServer()).get(`/apps/${rid}/deployments`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(deps.body[0].kind).toBe("AUTO_ROLLBACK");
+    expect(deps.body[0].status).toBe("FAILED");
   });
 
   it("gives a one-click Compose/template app an instant magic domain routed via a label override", async () => {

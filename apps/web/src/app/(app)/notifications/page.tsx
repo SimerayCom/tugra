@@ -26,10 +26,11 @@ const FIELDS: Record<string, string[]> = {
   gotify: ["server", "token"],
 };
 const SECRET_FIELDS = new Set(["pass", "token", "botToken"]);
-const EVENTS = ["deploy_success", "deploy_failed", "server_offline", "ssl_expiring", "token_expiring", "backup_failed", "backup_restore_failed"];
+const EVENTS = ["deploy_success", "deploy_failed", "deploy_rolled_back", "server_offline", "ssl_expiring", "token_expiring", "backup_failed", "backup_restore_failed"];
 const EVENT_LABEL: Record<string, string> = {
   deploy_success: "eventDeploySuccess",
   deploy_failed: "eventDeployFailed",
+  deploy_rolled_back: "eventDeployRolledBack",
   server_offline: "eventServerOffline",
   ssl_expiring: "eventSslExpiring",
   token_expiring: "eventTokenExpiring",

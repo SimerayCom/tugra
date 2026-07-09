@@ -12,6 +12,7 @@ export const PROTOCOL_VERSION = 1;
 export const EVENT_TYPES = [
   "deploy_success",
   "deploy_failed",
+  "deploy_rolled_back",
   "server_offline",
   "monitor_down",
   "monitor_up",

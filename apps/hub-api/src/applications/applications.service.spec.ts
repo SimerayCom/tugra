@@ -191,6 +191,93 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("a routed app rolls (temp container) and exit 3 auto-rolls-back: FAILED/AUTO_ROLLBACK but app stays RUNNING", async () => {
+    const rollingApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(rollingApp), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED", kind: "AUTO_ROLLBACK" }),
+        // active-deploy check (status RUNNING) → none; prev-success check (status SUCCESS) → a prior live version
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "SUCCESS" ? { id: "prev", imageTag: "tugra_app1:prev" } : null),
+        ),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        if (cap === "deploy") sentCmd = cmd; // ignore the post-fail cleanup (capability "cleanup")
+        return Promise.resolve({ exitCode: 3, output: "TUGRA_ROLLOUT: rolled_back" });
+      }),
+    } as unknown as AgentWsServer;
+    const svc = make(prisma, access, agentWs);
+    await svc.deploy("u1", "app1");
+    // a routed rolling app uses the rolling builder (temp __rollout container)
+    expect(sentCmd).toContain("tugra_app1__rollout");
+    // exit 3 → deployment FAILED + kind AUTO_ROLLBACK, but the app is still RUNNING (old kept)
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "AUTO_ROLLBACK", exitCode: 3, imageTag: null }) }),
+    );
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "RUNNING" } }));
+    expect((svc as unknown as { notifications: { fireForEvent: jest.Mock } }).notifications.fireForEvent).toHaveBeenCalledWith(
+      "t1",
+      "deploy_rolled_back",
+      expect.any(String),
+    );
+  });
+
+  it("exit 3 on a first deploy (no previous version to fall back to) is a hard failure, not a rollback", async () => {
+    const rollingApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(rollingApp), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null), // no active deploy AND no prior success
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 3, output: "" }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    // no previous live version → exit 3 is a real failure, app is FAILED (not falsely RUNNING)
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "DEPLOY" }) }));
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+  });
+
+  it("a host-port app deploys via hard cutover, not rolling", async () => {
+    const hp = { ...app, domain: "app.example.com", hostPort: 8080, deployStrategy: "ROLLING", rollbackOnFailure: true };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(hp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
+        sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(sentCmd).not.toContain("__rollout"); // port map → can't overlap → hard cutover
+  });
+
   it("deployments() diffs each deploy's config against the previous one", async () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
