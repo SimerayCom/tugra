@@ -10,6 +10,7 @@ import {
   buildRemoveScript,
   buildRunScript,
   buildRollingDeployScript,
+  buildRecreateDeployScript,
   resolveHealthProbe,
   rolloutName,
   HEALTH_PROBE_IMAGE,
@@ -87,7 +88,11 @@ describe("deploy-script", () => {
 
     it("httpExternal probe hits the pinned probe image over the proxy network", () => {
       const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 3000, path: "/healthz" }, ...gate });
-      expect(s).toContain(`docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -sf --max-time 5 http://tugra_abc__rollout:3000/healthz`);
+      expect(s).toContain(
+        `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 http://tugra_abc__rollout:3000/healthz`,
+      );
+      // any HTTP response < 500 = reachable/serving (booted apps 404/401 on the probe path)
+      expect(s).toContain(`if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`);
       expect(s).toContain(`for i in $(seq 1 ${gate.retries}); do`);
       expect(s).toContain(`sleep ${gate.startPeriodSec}`);
     });
@@ -114,6 +119,79 @@ describe("deploy-script", () => {
         port: 80,
         path: "/up",
       });
+    });
+  });
+
+  describe("recreate deploy", () => {
+    const hostPortApp: AppSpec = { ...base, hostPort: 8080, containerPort: 80 };
+    const gate = { retries: 10, intervalSec: 3, startPeriodSec: 5 };
+
+    it("recreates on the canonical name (NO rollout temp container)", () => {
+      const s = buildRecreateDeployScript(hostPortApp, "v2", { prevVersion: "v1", probe: { kind: "stableWait" }, ...gate });
+      // stop old, start new under the SAME canonical name — no __rollout overlap container
+      expect(s).toContain("docker rm -f tugra_abc 2>/dev/null || true");
+      expect(s).toContain("docker run -d --name tugra_abc");
+      expect(s).not.toContain("__rollout");
+      // host-port app publishes its port
+      expect(s).toContain("-p 8080:80");
+    });
+
+    it("guards the new container's START so a docker-run failure falls through to rollback (not a set -e abort)", () => {
+      const s = buildRecreateDeployScript(hostPortApp, "v2", { prevVersion: "prevdep", probe: { kind: "stableWait" }, ...gate });
+      // set +e is raised BEFORE the run, and the run itself is guarded by `if` so a daemon
+      // rejection (port clash, bad flag) doesn't abort the script before the rollback branch
+      const setPlusE = s.indexOf("set +e");
+      const run = s.indexOf("if docker run -d --name tugra_abc");
+      expect(setPlusE).toBeGreaterThan(-1);
+      expect(run).toBeGreaterThan(setPlusE); // guarded run comes after set +e
+      expect(s).toContain("  healthy=0"); // start-failed → treated as unhealthy → rollback
+    });
+
+    it("on health-pass just keeps the new container (exit 0)", () => {
+      const s = buildRecreateDeployScript(hostPortApp, "v2", { prevVersion: "v1", probe: { kind: "stableWait" }, ...gate });
+      expect(s).toContain('if [ "$healthy" = 1 ]; then');
+      expect(s).toContain('echo "TUGRA_ROLLOUT: healthy"; exit 0');
+      // the gate runs under set +e so a failed probe doesn't abort the rollback logic
+      expect(s).toContain("set +e");
+    });
+
+    it("on health-fail with a previous version: removes the new, re-runs the old image, exit 3", () => {
+      const s = buildRecreateDeployScript(hostPortApp, "v2", { prevVersion: "prevdep", probe: { kind: "stableWait" }, ...gate });
+      // drop the unhealthy new container, then re-run the retained previous image under canonical
+      expect(s).toContain("docker rm -f tugra_abc 2>/dev/null || true");
+      expect(s).toContain("docker run -d --name tugra_abc");
+      expect(s).toContain("tugra_abc:prevdep"); // the previous image ref is re-run
+      expect(s).toContain('echo "TUGRA_ROLLOUT: rolled_back"; exit 3');
+      // a rollback re-run that itself fails is an honest failure, not a fake "kept previous"
+      expect(s).toContain('echo "TUGRA_ROLLOUT: rollback_failed"; exit 1');
+    });
+
+    it("on health-fail with NO previous version: hard failure (exit 1, no rollback re-run)", () => {
+      const s = buildRecreateDeployScript(hostPortApp, "v2", { prevVersion: null, probe: { kind: "stableWait" }, ...gate });
+      expect(s).toContain('echo "TUGRA_ROLLOUT: failed"; exit 1');
+      expect(s).not.toContain("TUGRA_ROLLOUT: rolled_back");
+      // the new image (tugra_abc:v2) is built, but there is exactly ONE `docker run` (the new
+      // container) — no second run re-launching a previous image
+      expect(s.match(/docker run -d --name tugra_abc/g)?.length).toBe(1);
+    });
+
+    it("build=false skips the build/pull prep", () => {
+      const s = buildRecreateDeployScript(hostPortApp, "old1", { build: false, prevVersion: "v1", probe: { kind: "stableWait" }, ...gate });
+      expect(s).not.toContain("docker pull");
+      expect(s).not.toContain("docker tag");
+      expect(s).toContain("docker run -d --name tugra_abc");
+    });
+
+    it("a domain app forced to recreate (e.g. a named volume) still uses the httpExternal probe", () => {
+      const volApp: AppSpec = { ...base, domain: "app.example.com", containerPort: 3000 };
+      const s = buildRecreateDeployScript(volApp, "v2", {
+        prevVersion: "v1",
+        probe: { kind: "httpExternal", port: 3000, path: "/healthz" },
+        ...gate,
+      });
+      expect(s).toContain(
+        `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 http://tugra_abc:3000/healthz`,
+      );
     });
   });
 
@@ -203,7 +281,8 @@ describe("deploy-script", () => {
     expect(s).toContain("--memory 512m");
     expect(s).toContain("--cpus 0.5");
     expect(s).toContain("--health-cmd 'curl -fsS http://localhost:80/ || exit 1'");
-    expect(s).toContain("--health-interval=30s");
+    expect(s).toContain("--health-interval=10s");
+    expect(s).toContain("--health-start-period=30s");
   });
 
   it("mounts persistent volumes via -v before the image reference", () => {
