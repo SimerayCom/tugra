@@ -495,6 +495,37 @@ describe("Applications / deploy (e2e)", () => {
       .expect(400);
   });
 
+  it("configures a build server (registry required, push forced on) and rejects it without a registry", async () => {
+    const regRes = await request(app.getHttpServer())
+      .post("/registries")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "bsreg", teamId, type: "generic", url: "reg.example.com", username: "bot", password: "pw", imagePrefix: "org" })
+      .expect(201);
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "bsapp", serverId, image: "nginx:alpine", hostPort: 8141 })
+      .expect(201);
+    const rid = created.body.id;
+
+    // a build server without a registry is rejected
+    await request(app.getHttpServer())
+      .put(`/apps/${rid}/build-config`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ buildServerId: serverId })
+      .expect(400);
+
+    // with a registry it's accepted, and push is forced on (the deploy server pulls the image)
+    await request(app.getHttpServer())
+      .put(`/apps/${rid}/build-config`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ registryId: regRes.body.id, buildServerId: serverId })
+      .expect(200);
+    const detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.buildServerId).toBe(serverId);
+    expect(detail.body.pushToRegistry).toBe(true);
+  });
+
   it("rejects a health-check path with shell metacharacters (400) — no injection into the probe URL", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

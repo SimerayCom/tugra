@@ -474,7 +474,7 @@ export const api = {
   deleteRegistry(id: string) {
     return apiFetch<{ ok: true }>(`/registries/${id}`, { method: "DELETE" });
   },
-  setAppBuildConfig(id: string, cfg: { registryId?: string | null; pushToRegistry?: boolean }) {
+  setAppBuildConfig(id: string, cfg: { registryId?: string | null; pushToRegistry?: boolean; buildServerId?: string | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/build-config`, { method: "PUT", body: JSON.stringify(cfg) });
   },
 

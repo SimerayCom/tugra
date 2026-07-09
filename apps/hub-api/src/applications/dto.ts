@@ -64,6 +64,7 @@ export const SetBuildConfigSchema = z
   .object({
     registryId: z.string().min(1).nullable().optional(),
     pushToRegistry: z.boolean().optional(),
+    buildServerId: z.string().min(1).nullable().optional(),
   })
   .strict();
 export type SetBuildConfigInput = z.infer<typeof SetBuildConfigSchema>;

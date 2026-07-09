@@ -219,7 +219,7 @@ export default function AppDetailPage() {
             />
           )}
           {appData.source !== "COMPOSE" && (
-            <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} />
+            <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
           )}
           {appData.source !== "COMPOSE" && (
             <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />
@@ -680,15 +680,20 @@ function HealthCheckCard({
   );
 }
 
-function BuildConfigCard({ id, teamId, registryId, pushToRegistry }: { id: string; teamId: string; registryId: string | null; pushToRegistry: boolean }) {
+function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId }: { id: string; teamId: string; registryId: string | null; pushToRegistry: boolean; buildServerId: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const { data: registries = [] } = useQuery({ queryKey: ["registries"], queryFn: () => api.listRegistries() });
+  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const teamRegistries = registries.filter((r) => r.teamId === teamId);
+  const buildServers = servers.filter((s) => s.teamId === teamId && s.status === "ONLINE");
   const [reg, setReg] = useState(registryId ?? "");
   const [push, setPush] = useState(pushToRegistry);
+  const [buildServer, setBuildServer] = useState(buildServerId ?? "");
+  // A build server needs a registry (the deploy server pulls the image); push is then implied.
+  const effectivePush = (push && !!reg) || (!!buildServer && !!reg);
   const save = useMutation({
-    mutationFn: () => api.setAppBuildConfig(id, { registryId: reg || null, pushToRegistry: push && !!reg }),
+    mutationFn: () => api.setAppBuildConfig(id, { registryId: reg || null, pushToRegistry: effectivePush, buildServerId: (buildServer && reg) ? buildServer : null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
 
@@ -704,10 +709,19 @@ function BuildConfigCard({ id, teamId, registryId, pushToRegistry }: { id: strin
           ))}
         </select>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: reg ? "var(--c-tx)" : "var(--c-tx3)" }}>
-          <input type="checkbox" checked={push && !!reg} disabled={!reg} onChange={(e) => setPush(e.target.checked)} />
+          <input type="checkbox" checked={effectivePush} disabled={!reg || !!buildServer} onChange={(e) => setPush(e.target.checked)} />
           {t("apps.pushToRegistry")}
         </label>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+        <select style={{ ...envField, width: 240 }} value={reg ? buildServer : ""} onChange={(e) => setBuildServer(e.target.value)} disabled={!reg} aria-label={t("apps.buildServer")}>
+          <option value="">{t("apps.buildServerNone")}</option>
+          {buildServers.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.buildServerHint")}</span>
       </div>
       {teamRegistries.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.buildNoRegistries")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}

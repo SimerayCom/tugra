@@ -456,6 +456,7 @@ model Application {
   environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: NoAction)
   environmentId  String
   serverId       String
+  buildServerId  String?      // optional separate build server (build+push there, pull+run on serverId)
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
   source         AppSource    @default(IMAGE)

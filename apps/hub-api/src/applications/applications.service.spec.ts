@@ -614,6 +614,105 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("setBuildConfig rejects a build server with no registry configured", async () => {
+    const noRegApp = { ...app, registryId: null };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(noRegApp), update: jest.fn() },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { buildServerId: "s1" })).rejects.toThrow(
+      /build server requires a registry/,
+    );
+  });
+
+  it("setBuildConfig rejects a cross-team build server", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, registryId: "reg1" }), update: jest.fn() },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s9", teamId: "OTHER" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { buildServerId: "s9" })).rejects.toThrow(
+      /build server not found in this team/,
+    );
+  });
+
+  it("setBuildConfig with a valid build server forces pushToRegistry on (deploy server pulls the image)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, registryId: "reg1" }), update },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { buildServerId: "s1" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ buildServerId: "s1", pushToRegistry: true }) }));
+  });
+
+  it("a deploy with a build server builds+pushes on IT, then pulls+runs on the deploy server", async () => {
+    const bsApp = { ...app, image: "nginx:alpine", registryId: "reg1", pushToRegistry: true, buildServerId: "bs1" };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(bsApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const calls: { server: string; cmd: string }[] = [];
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((server: string, cmd: string, cap: string) => {
+        if (cap === "deploy") calls.push({ server, cmd });
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    // phase 1: build + push on the build server (no run)
+    expect(calls[0].server).toBe("bs1");
+    expect(calls[0].cmd).toContain("docker push 'ghcr.io/org/tugra_app1:d1'");
+    expect(calls[0].cmd).not.toContain("docker run -d");
+    // phase 2: pull + run on the deploy server (no build/push)
+    expect(calls[1].server).toBe("s1");
+    expect(calls[1].cmd).toContain("docker pull 'ghcr.io/org/tugra_app1:d1'");
+    expect(calls[1].cmd).toContain("docker run -d --name tugra_app1");
+    expect(calls[1].cmd).not.toContain("docker push");
+  });
+
+  it("a build-server build failure persists the real build output (not just a generic message)", async () => {
+    const bsApp = { ...app, image: "nginx:alpine", registryId: "reg1", pushToRegistry: true, buildServerId: "bs1" };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    let deployTarget = "";
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(bsApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      // the build server (bs1) fails the build; the deploy server (s1) is never reached
+      sendCommand: jest.fn().mockImplementation((server: string) => {
+        deployTarget = server;
+        return Promise.resolve({ exitCode: 1, output: "Step 5/9 : RUN npm ci\n npm ERR! missing script: build" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(deployTarget).toBe("bs1"); // only the build server was contacted
+    // the durable deployment record carries the actual build error, not a generic string
+    const failCall = depUpdate.mock.calls.find((c) => c[0].data.status === "FAILED");
+    expect(failCall![0].data.logs).toContain("npm ERR! missing script: build");
+  });
+
   it("a deploy pushes the built image to the app's registry when pushToRegistry is set", async () => {
     const pushApp = { ...app, image: "nginx:alpine", registryId: "reg1", pushToRegistry: true };
     const prisma = {
