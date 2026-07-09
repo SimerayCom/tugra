@@ -603,6 +603,48 @@ describe("ApplicationsService", () => {
     expect(data.healthCheckType).toBeNull();
   });
 
+  it("setBuildConfig rejects a registry from another team (no cross-team credential use)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },
+      registry: { findUnique: jest.fn().mockResolvedValue({ id: "reg1", teamId: "OTHER" }) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { registryId: "reg1", pushToRegistry: true })).rejects.toThrow(
+      /registry not found in this team/,
+    );
+  });
+
+  it("a deploy pushes the built image to the app's registry when pushToRegistry is set", async () => {
+    const pushApp = { ...app, image: "nginx:alpine", registryId: "reg1", pushToRegistry: true };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(pushApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      registry: {
+        findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        if (cap === "deploy") sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    // the built image is tagged + pushed to ghcr.io/org/tugra_app1:d1 (deployment id = version)
+    expect(sentCmd).toContain("docker push 'ghcr.io/org/tugra_app1:d1'");
+    // registry scoped to the app's own team
+    expect((prisma.registry.findFirst as jest.Mock).mock.calls[0][0]).toEqual({ where: { id: "reg1", teamId: "t1" } });
+  });
+
   it("applies the per-app deploy timeout (default 300s)", async () => {
     const mk = (timeoutSec: number | null) => {
       const prisma = {

@@ -80,6 +80,7 @@ model Team {
   projects     Project[]
   invitations  TeamInvitation[]
   gitSources   GitSource[]
+  registries   Registry[]
   savedViews   SavedView[]
   createdAt    DateTime     @default(now())
 }
@@ -326,6 +327,23 @@ model GitSource {
   @@index([teamId])
 }
 
+// A team-scoped container registry for pushing built images (portable rollback / multi-server).
+model Registry {
+  id           String        @id @default(cuid())
+  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       String
+  name         String
+  type         String        @default("generic") // dockerhub | ghcr | gitlab | generic
+  url          String?       // registry host (blank → Docker Hub); e.g. ghcr.io, registry.gitlab.com
+  username     String
+  passwordEnc  String        // encrypted registry password / access token
+  imagePrefix  String?       // namespace/org under which images are pushed (e.g. myorg)
+  applications Application[]
+  createdAt    DateTime      @default(now())
+
+  @@index([teamId])
+}
+
 enum BulkTaskStatus {
   PENDING
   RUNNING
@@ -461,6 +479,9 @@ model Application {
   gitSource       GitSource?   @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
   gitSourceId     String?
   registryAuthEnc String?
+  registry        Registry?    @relation(fields: [registryId], references: [id], onDelete: SetNull)
+  registryId      String?      // team registry to push the built image to (when pushToRegistry)
+  pushToRegistry  Boolean      @default(false)
   env            Json
   envEnc         String?
   buildArgsEnc   String?

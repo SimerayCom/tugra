@@ -219,6 +219,9 @@ export default function AppDetailPage() {
             />
           )}
           {appData.source !== "COMPOSE" && (
+            <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} />
+          )}
+          {appData.source !== "COMPOSE" && (
             <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />
           )}
           {appData.source !== "COMPOSE" && <VolumesCard id={id} volumes={appData.volumes} />}
@@ -669,6 +672,41 @@ function HealthCheckCard({
         )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function BuildConfigCard({ id, teamId, registryId, pushToRegistry }: { id: string; teamId: string; registryId: string | null; pushToRegistry: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: registries = [] } = useQuery({ queryKey: ["registries"], queryFn: () => api.listRegistries() });
+  const teamRegistries = registries.filter((r) => r.teamId === teamId);
+  const [reg, setReg] = useState(registryId ?? "");
+  const [push, setPush] = useState(pushToRegistry);
+  const save = useMutation({
+    mutationFn: () => api.setAppBuildConfig(id, { registryId: reg || null, pushToRegistry: push && !!reg }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.buildConfig")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.buildConfigDesc")}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select style={{ ...envField, width: 240 }} value={reg} onChange={(e) => setReg(e.target.value)} aria-label={t("apps.buildRegistry")}>
+          <option value="">{t("apps.buildRegistryNone")}</option>
+          {teamRegistries.map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
+          ))}
+        </select>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: reg ? "var(--c-tx)" : "var(--c-tx3)" }}>
+          <input type="checkbox" checked={push && !!reg} disabled={!reg} onChange={(e) => setPush(e.target.checked)} />
+          {t("apps.pushToRegistry")}
+        </label>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {teamRegistries.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.buildNoRegistries")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );

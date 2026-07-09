@@ -408,6 +408,56 @@ describe("Applications / deploy (e2e)", () => {
       .expect(400);
   });
 
+  it("creates a registry (password never returned) and pushes the built image on deploy", async () => {
+    const regRes = await request(app.getHttpServer())
+      .post("/registries")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "myreg", teamId, type: "generic", url: "reg.example.com", username: "bot", password: "s3cr3t", imagePrefix: "org" })
+      .expect(201);
+    expect(regRes.body).not.toHaveProperty("passwordEnc");
+    expect(regRes.body).not.toHaveProperty("password");
+    expect(regRes.body).toMatchObject({ username: "bot", url: "reg.example.com", canWrite: true });
+    const registryId = regRes.body.id;
+
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "pushapp", serverId, image: "nginx:alpine", hostPort: 8137 })
+      .expect(201);
+    const rid = created.body.id;
+
+    await request(app.getHttpServer())
+      .put(`/apps/${rid}/build-config`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ registryId, pushToRegistry: true })
+      .expect(200);
+    const detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.registryId).toBe(registryId);
+    expect(detail.body.pushToRegistry).toBe(true);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${rid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const sent = commands.join("\n");
+    expect(sent).toContain(`docker push 'reg.example.com/org/tugra_${rid}:`);
+    // stdin login (token never inlined into the script)
+    expect(sent).toContain("docker --config \"$sd\" login 'reg.example.com' -u 'bot' --password-stdin");
+    expect(sent).not.toContain("s3cr3t");
+  });
+
+  it("rejects build-config with an unknown/other-team registry (400)", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "nocfg", serverId, image: "nginx:alpine", hostPort: 8138 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/apps/${created.body.id}/build-config`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ registryId: "does-not-exist", pushToRegistry: true })
+      .expect(400);
+  });
+
   it("rejects a health-check path with shell metacharacters (400) — no injection into the probe URL", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

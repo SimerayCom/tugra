@@ -189,6 +189,18 @@ export interface SourceRepo {
   private: boolean;
 }
 
+export interface Registry {
+  id: string;
+  name: string;
+  teamId: string;
+  type: string;
+  url: string | null;
+  username: string;
+  imagePrefix: string | null;
+  createdAt: string;
+  canWrite: boolean;
+}
+
 export type BulkTaskStatus =
   | "PENDING"
   | "RUNNING"
@@ -316,6 +328,8 @@ export interface Application {
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
+  registryId: string | null;
+  pushToRegistry: boolean;
   environmentId: string;
   projectId: string | null;
   projectName: string | null;

@@ -60,6 +60,14 @@ export const SetDockerOptionsSchema = z.object({
 });
 export type SetDockerOptionsInput = z.infer<typeof SetDockerOptionsSchema>;
 
+export const SetBuildConfigSchema = z
+  .object({
+    registryId: z.string().min(1).nullable().optional(),
+    pushToRegistry: z.boolean().optional(),
+  })
+  .strict();
+export type SetBuildConfigInput = z.infer<typeof SetBuildConfigSchema>;
+
 export const SetLimitsSchema = z
   .object({
     memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),

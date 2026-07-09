@@ -24,6 +24,7 @@ import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
 import { GitSourcesModule } from "./git-sources/git-sources.module";
+import { RegistriesModule } from "./registries/registries.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { TeamsModule } from "./teams/teams.module";
 import { ScheduledTasksModule } from "./scheduled-tasks/scheduled-tasks.module";
@@ -54,6 +55,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
     SavedViewsModule,
     SharedVariablesModule,
     GitSourcesModule,
+    RegistriesModule,
     ProjectsModule,
     TeamsModule,
     ScheduledTasksModule,

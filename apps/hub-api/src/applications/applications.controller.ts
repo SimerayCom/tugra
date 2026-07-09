@@ -50,6 +50,8 @@ import {
   SetLimitsSchema,
   SetHealthCheckInput,
   SetHealthCheckSchema,
+  SetBuildConfigInput,
+  SetBuildConfigSchema,
   SetVolumesInput,
   SetVolumesSchema,
 } from "./dto";
@@ -223,6 +225,17 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetHealthCheckSchema)) body: SetHealthCheckInput,
   ) {
     await this.apps.setHealthCheck(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/build-config")
+  @HttpCode(200)
+  async setBuildConfig(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetBuildConfigSchema)) body: SetBuildConfigInput,
+  ) {
+    await this.apps.setBuildConfig(user.userId, id, body);
     return { ok: true };
   }
 

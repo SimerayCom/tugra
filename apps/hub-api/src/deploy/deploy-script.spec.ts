@@ -9,6 +9,8 @@ import {
   buildProxyStopScript,
   buildRemoveScript,
   buildRunScript,
+  buildRegistryPushSteps,
+  registryImageRef,
   buildRollingDeployScript,
   buildRecreateDeployScript,
   buildHealthGateFragment,
@@ -641,6 +643,80 @@ describe("deploy-script", () => {
     expect(df).not.toContain("FROM node");
     expect(df).toContain("FROM nginx:alpine");
     expect(df).toContain("COPY public /usr/share/nginx/html");
+  });
+
+  describe("registry push", () => {
+    it("registryImageRef builds [host/]namespace/tugra_<id>:<v>, trimming slashes", () => {
+      expect(registryImageRef({ url: "ghcr.io", imagePrefix: "myorg" }, { id: "abc" }, "v1")).toBe("ghcr.io/myorg/tugra_abc:v1");
+      // Docker Hub: no host component
+      expect(registryImageRef({ url: null, imagePrefix: "myuser" }, { id: "abc" }, "v1")).toBe("myuser/tugra_abc:v1");
+      // trailing slashes trimmed
+      expect(registryImageRef({ url: "reg.example.com/", imagePrefix: "team/" }, { id: "abc" }, "v2")).toBe("reg.example.com/team/tugra_abc:v2");
+    });
+
+    it("registryImageRef falls back to the username when no imagePrefix (a bare ref hits the unwritable library/ namespace)", () => {
+      // Docker Hub with no prefix → username namespace (not a bare, unpushable tugra_abc)
+      expect(registryImageRef({ url: null, imagePrefix: null, username: "me" }, { id: "abc" }, "v1")).toBe("me/tugra_abc:v1");
+      // ghcr/gitlab with a host but no prefix → host/username
+      expect(registryImageRef({ url: "ghcr.io", imagePrefix: null, username: "me" }, { id: "abc" }, "v1")).toBe("ghcr.io/me/tugra_abc:v1");
+      // an explicit imagePrefix still wins over the username
+      expect(registryImageRef({ url: "ghcr.io", imagePrefix: "myorg", username: "me" }, { id: "abc" }, "v1")).toBe("ghcr.io/myorg/tugra_abc:v1");
+    });
+
+    it("buildRegistryPushSteps tags + pushes via stdin login (token never in argv)", () => {
+      const steps = buildRegistryPushSteps("tugra_abc:v1", "ghcr.io/org/tugra_abc:v1", { url: "ghcr.io", user: "bot", token: "s3cr3t" }).join("\n");
+      expect(steps).toContain("docker tag tugra_abc:v1 'ghcr.io/org/tugra_abc:v1'");
+      expect(steps).toContain("docker push 'ghcr.io/org/tugra_abc:v1'");
+      expect(steps).toContain("docker --config \"$sd\" login 'ghcr.io' -u 'bot' --password-stdin");
+      expect(steps).not.toContain("s3cr3t"); // the token is base64+stdin, never inlined
+    });
+
+    it("prepSteps appends the push after building (GIT) when registryPush is set", () => {
+      const s = buildRunScript(
+        {
+          ...base,
+          source: "GIT",
+          image: null,
+          gitUrl: "https://x/r.git",
+          buildType: "NIXPACKS",
+          registryPush: { auth: { url: "ghcr.io", user: "bot", token: "tok" }, tag: "ghcr.io/org/tugra_abc:v1" },
+        },
+        "v1",
+      );
+      expect(s).toContain("nixpacks build -c"); // built first
+      expect(s).toContain("docker tag tugra_abc:v1 'ghcr.io/org/tugra_abc:v1'");
+      expect(s).toContain("docker push 'ghcr.io/org/tugra_abc:v1'");
+    });
+
+    it("a rollback (build=false) does NOT push (prepSteps skipped)", () => {
+      const s = buildRunScript(
+        { ...base, registryPush: { auth: { url: "ghcr.io", user: "bot", token: "tok" }, tag: "ghcr.io/org/tugra_abc:v1" } },
+        "v1",
+        false,
+      );
+      expect(s).not.toContain("docker push");
+    });
+
+    it("a private GIT clone + registry push cleans up BOTH secrets dirs (cumulative trap, no orphaned token)", () => {
+      const s = buildRunScript(
+        {
+          ...base,
+          source: "GIT",
+          image: null,
+          gitUrl: "https://github.com/u/r.git",
+          gitToken: "ghp_token",
+          buildType: "NIXPACKS",
+          registryPush: { auth: { url: "ghcr.io", user: "bot", token: "tok" }, tag: "ghcr.io/org/tugra_abc:v1" },
+        },
+        "v1",
+      );
+      // two secrets dirs are created (git askpass + registry login) and both are accumulated
+      expect((s.match(/TUGRA_SEC_DIRS="\$\{TUGRA_SEC_DIRS:\+\$TUGRA_SEC_DIRS \}\$sd"/g) || []).length).toBe(2);
+      // a single cumulative trap wipes all of them — never the old single-dir form that a
+      // second prelude would clobber, orphaning the plaintext git token on disk
+      expect(s).toContain("trap 'rm -rf $TUGRA_SEC_DIRS' EXIT");
+      expect(s).not.toContain(`trap 'rm -rf "$sd"' EXIT`);
+    });
   });
 });
 

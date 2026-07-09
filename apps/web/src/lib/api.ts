@@ -12,6 +12,7 @@ import type {
   Database,
   GitSource,
   SourceRepo,
+  Registry,
   VolumeBackup,
   DbEngine,
   Deployment,
@@ -455,6 +456,26 @@ export const api = {
   },
   deleteGitSource(id: string) {
     return apiFetch<{ ok: true }>(`/git-sources/${id}`, { method: "DELETE" });
+  },
+
+  // ── Container registries ──────────────────────────────────────────
+  listRegistries() {
+    return apiFetch<Registry[]>("/registries");
+  },
+  createRegistry(input: { name: string; teamId: string; type: string; url?: string | null; username: string; password: string; imagePrefix?: string | null }) {
+    return apiFetch<Registry>("/registries", { method: "POST", body: JSON.stringify(input) });
+  },
+  updateRegistry(id: string, input: { name?: string; type?: string; url?: string | null; username?: string; password?: string; imagePrefix?: string | null }) {
+    return apiFetch<Registry>(`/registries/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  testRegistry(id: string) {
+    return apiFetch<{ ok: true }>(`/registries/${id}/test`, { method: "POST" });
+  },
+  deleteRegistry(id: string) {
+    return apiFetch<{ ok: true }>(`/registries/${id}`, { method: "DELETE" });
+  },
+  setAppBuildConfig(id: string, cfg: { registryId?: string | null; pushToRegistry?: boolean }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/build-config`, { method: "PUT", body: JSON.stringify(cfg) });
   },
 
   // ── bulk ops ──

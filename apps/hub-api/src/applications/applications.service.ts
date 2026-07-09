@@ -28,6 +28,7 @@ import {
   buildStartScript,
   buildStopScript,
   runTag,
+  registryImageRef,
   type AppSpec,
   type AppVolume,
   type RegistryAuth,
@@ -98,6 +99,8 @@ export interface AppView {
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
+  registryId: string | null;
+  pushToRegistry: boolean;
   templateSlug: string | null;
   templateLogo: string | null;
   environmentId: string | null;
@@ -576,6 +579,14 @@ export class ApplicationsService {
       if (app.gitSourceId && app.source === "GIT") {
         spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
       }
+      // Push the built image to the app's team registry (build-time), if configured.
+      if (app.pushToRegistry && app.registryId && !isCompose) {
+        const reg = await this.prisma.registry.findFirst({ where: { id: app.registryId, teamId: app.teamId } });
+        if (reg) {
+          const auth: RegistryAuth = { url: reg.url ?? undefined, user: reg.username, token: this.crypto.decrypt(reg.passwordEnc) };
+          spec.registryPush = { auth, tag: registryImageRef(reg, app, dep.id) };
+        }
+      }
       // Record a redacted config snapshot so the Deployments view can diff it.
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -1029,6 +1040,30 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.credentials.update", target: id });
   }
 
+  /** Configure where a build is pushed: a team registry + whether to push at all. */
+  async setBuildConfig(
+    userId: string,
+    id: string,
+    cfg: { registryId?: string | null; pushToRegistry?: boolean },
+  ): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    // A registry must belong to the app's own team (no cross-team credential use).
+    if (cfg.registryId) {
+      const reg = await this.prisma.registry.findUnique({ where: { id: cfg.registryId } });
+      if (!reg || reg.teamId !== app.teamId) {
+        throw new BadRequestException("registry not found in this team");
+      }
+    }
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        ...(cfg.registryId !== undefined ? { registryId: cfg.registryId } : {}),
+        ...(cfg.pushToRegistry !== undefined ? { pushToRegistry: cfg.pushToRegistry } : {}),
+      },
+    });
+    await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
+  }
+
   async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
     await this.assertEnvInTeam(environmentId, app.teamId);
@@ -1306,6 +1341,8 @@ export class ApplicationsService {
       hasGitToken: !!app.gitTokenEnc,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
       registryUser: this.appRegistryAuth(app)?.user ?? null,
+      registryId: app.registryId,
+      pushToRegistry: app.pushToRegistry,
       templateSlug: app.templateSlug,
       templateLogo: app.templateSlug ? (TEMPLATES[app.templateSlug]?.logo ?? app.templateSlug) : null,
       environmentId: app.environmentId,
