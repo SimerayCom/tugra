@@ -606,10 +606,19 @@ export const api = {
       body: JSON.stringify({ dockerOptions }),
     });
   },
-  setAppLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null }) {
+  setAppLimits(id: string, limits: { memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {
       method: "PUT",
       body: JSON.stringify(limits),
+    });
+  },
+  setAppHealthCheck(
+    id: string,
+    hc: { type?: string | null; path?: string | null; port?: number | null; command?: string | null },
+  ) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/health-check`, {
+      method: "PUT",
+      body: JSON.stringify(hc),
     });
   },
   setDatabaseLimits(id: string, limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null }) {

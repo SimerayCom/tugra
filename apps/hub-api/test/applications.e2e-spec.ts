@@ -367,7 +367,14 @@ describe("Applications / deploy (e2e)", () => {
     await request(app.getHttpServer())
       .put(`/apps/${appId}/limits`)
       .set("Authorization", `Bearer ${token}`)
-      .send({ healthCmd: "curl -fsS http://localhost:80/ || exit 1", memoryMb: 256, cpus: 0.5 })
+      .send({ memoryMb: 256, cpus: 0.5 })
+      .expect(200);
+
+    // health-check config lives on its own endpoint (type CMD → container --health-cmd)
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/health-check`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ type: "CMD", command: "curl -fsS http://localhost:80/ || exit 1" })
       .expect(200);
 
     const detail = await request(app.getHttpServer())
@@ -376,6 +383,8 @@ describe("Applications / deploy (e2e)", () => {
       .expect(200);
     expect(detail.body.memoryMb).toBe(256);
     expect(detail.body.cpus).toBe(0.5);
+    expect(detail.body.healthCheckType).toBe("CMD");
+    expect(detail.body.healthCmd).toBe("curl -fsS http://localhost:80/ || exit 1");
 
     commands.length = 0;
     await request(app.getHttpServer()).post(`/apps/${appId}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
@@ -384,6 +393,32 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--memory 256m");
     expect(sent).toContain("--cpus 0.5");
     expect(sent).toContain("--health-cmd");
+  });
+
+  it("rejects a CMD health check with no command (400)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "hcapp", serverId, image: "nginx:alpine", hostPort: 8136 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/apps/${appRes.body.id}/health-check`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ type: "CMD", command: null })
+      .expect(400);
+  });
+
+  it("rejects a health-check path with shell metacharacters (400) — no injection into the probe URL", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "hcinj", serverId, image: "nginx:alpine", domain: "hcinj.example.com" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/apps/${appRes.body.id}/health-check`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ type: "HTTP", path: "/h&reboot" })
+      .expect(400);
   });
 
   it("sets and normalizes tags on an app", async () => {

@@ -450,6 +450,9 @@ model Application {
   outputDir      String?
   composeFile    String?
   healthCmd      String?
+  healthCheckType String?                          // null = auto | "NONE" | "HTTP" | "CMD" — deploy-gate health policy
+  healthCheckPath String?                          // HTTP check path (default "/")
+  healthCheckPort Int?                             // HTTP check port (default container/host port)
   memoryMb       Int?
   cpus           Float?
   deployTimeoutSec Int?
