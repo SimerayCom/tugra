@@ -558,10 +558,49 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { healthCmd: "ping", memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 });
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 });
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { healthCmd: "ping", memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 } }),
+      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 } }),
     );
+  });
+
+  it("persists an HTTP health-check config WITHOUT touching healthCmd (no silent wipe)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: "HTTP", path: "/healthz", port: 9000, command: null });
+    // a non-CMD save leaves an existing healthCmd intact — the update omits it entirely
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { healthCheckType: "HTTP", healthCheckPath: "/healthz", healthCheckPort: 9000 } }),
+    );
+    const data = update.mock.calls[0][0].data;
+    expect("healthCmd" in data).toBe(false);
+  });
+
+  it("a CMD health-check writes healthCmd from the command", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: "CMD", command: "pg_isready" });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ healthCheckType: "CMD", healthCmd: "pg_isready" }) }),
+    );
+  });
+
+  it("an Automatic (type null) save preserves a legacy healthCmd", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: null, command: null });
+    const data = update.mock.calls[0][0].data;
+    expect("healthCmd" in data).toBe(false); // untouched → a pre-existing native check survives
+    expect(data.healthCheckType).toBeNull();
   });
 
   it("applies the per-app deploy timeout (default 300s)", async () => {

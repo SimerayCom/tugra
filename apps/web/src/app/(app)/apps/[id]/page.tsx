@@ -207,7 +207,16 @@ export default function AppDetailPage() {
           )}
 
           {appData.source !== "COMPOSE" && (
-            <LimitsCard id={id} healthCmd={appData.healthCmd} memoryMb={appData.memoryMb} cpus={appData.cpus} deployTimeoutSec={appData.deployTimeoutSec} />
+            <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} deployTimeoutSec={appData.deployTimeoutSec} />
+          )}
+          {appData.source !== "COMPOSE" && (
+            <HealthCheckCard
+              id={id}
+              healthCheckType={appData.healthCheckType}
+              healthCheckPath={appData.healthCheckPath}
+              healthCheckPort={appData.healthCheckPort}
+              healthCmd={appData.healthCmd}
+            />
           )}
           {appData.source !== "COMPOSE" && (
             <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />
@@ -574,17 +583,15 @@ function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-function LimitsCard({ id, healthCmd, memoryMb, cpus, deployTimeoutSec }: { id: string; healthCmd: string | null; memoryMb: number | null; cpus: number | null; deployTimeoutSec: number | null }) {
+function LimitsCard({ id, memoryMb, cpus, deployTimeoutSec }: { id: string; memoryMb: number | null; cpus: number | null; deployTimeoutSec: number | null }) {
   const t = useT();
   const qc = useQueryClient();
-  const [hc, setHc] = useState(healthCmd ?? "");
   const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
   const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
   const [timeout, setTimeoutS] = useState(deployTimeoutSec != null ? String(deployTimeoutSec) : "");
   const save = useMutation({
     mutationFn: () =>
       api.setAppLimits(id, {
-        healthCmd: hc.trim() || null,
         memoryMb: mem ? Number(mem) : null,
         cpus: cpu ? Number(cpu) : null,
         deployTimeoutSec: timeout ? Number(timeout) : null,
@@ -597,10 +604,69 @@ function LimitsCard({ id, healthCmd, memoryMb, cpus, deployTimeoutSec }: { id: s
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.limits")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.limitsDesc")}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input style={{ ...envField, flex: "1 1 100%" }} placeholder={t("apps.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
         <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
         <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
         <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.deployTimeout")} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function HealthCheckCard({
+  id,
+  healthCheckType,
+  healthCheckPath,
+  healthCheckPort,
+  healthCmd,
+}: {
+  id: string;
+  healthCheckType: string | null;
+  healthCheckPath: string | null;
+  healthCheckPort: number | null;
+  healthCmd: string | null;
+}) {
+  const t = useT();
+  const qc = useQueryClient();
+  // "" = auto (send null); otherwise the explicit type. A legacy app with a command but no
+  // saved type shows as CMD so its command stays visible/editable instead of being hidden.
+  const [type, setType] = useState(healthCheckType ?? (healthCmd ? "CMD" : ""));
+  const [path, setPath] = useState(healthCheckPath ?? "");
+  const [port, setPort] = useState(healthCheckPort != null ? String(healthCheckPort) : "");
+  const [cmd, setCmd] = useState(healthCmd ?? "");
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppHealthCheck(id, {
+        type: type || null,
+        path: type === "HTTP" ? path.trim() || null : null,
+        port: type === "HTTP" && port ? Number(port) : null,
+        command: type === "CMD" ? cmd.trim() || null : null,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.healthCheck")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.healthCheckDesc")}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select style={{ ...envField, width: 200 }} value={type} onChange={(e) => setType(e.target.value)} aria-label={t("apps.healthCheckType")}>
+          {["", "NONE", "HTTP", "CMD"].map((v) => (
+            <option key={v || "auto"} value={v}>
+              {t(`apps.healthCheckType_${v || "auto"}`)}
+            </option>
+          ))}
+        </select>
+        {type === "HTTP" && (
+          <>
+            <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.healthCheckPath")} value={path} onChange={(e) => setPath(e.target.value)} />
+            <input style={{ ...envField, width: 130 }} type="number" placeholder={t("apps.healthCheckPort")} value={port} onChange={(e) => setPort(e.target.value)} />
+          </>
+        )}
+        {type === "CMD" && (
+          <input style={{ ...envField, flex: "1 1 100%" }} placeholder={t("apps.healthCmd")} value={cmd} onChange={(e) => setCmd(e.target.value)} />
+        )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}

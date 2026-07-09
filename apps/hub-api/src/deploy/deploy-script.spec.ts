@@ -11,6 +11,7 @@ import {
   buildRunScript,
   buildRollingDeployScript,
   buildRecreateDeployScript,
+  buildHealthGateFragment,
   resolveHealthProbe,
   rolloutName,
   HEALTH_PROBE_IMAGE,
@@ -89,7 +90,7 @@ describe("deploy-script", () => {
     it("httpExternal probe hits the pinned probe image over the proxy network", () => {
       const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 3000, path: "/healthz" }, ...gate });
       expect(s).toContain(
-        `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 http://tugra_abc__rollout:3000/healthz`,
+        `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc__rollout:3000/healthz'`,
       );
       // any HTTP response < 500 = reachable/serving (booted apps 404/401 on the probe path)
       expect(s).toContain(`if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`);
@@ -106,19 +107,44 @@ describe("deploy-script", () => {
       expect(s).toContain("--health-cmd 'curl -f http://localhost/ || exit 1'"); // container carries the health-cmd
     });
 
-    it("resolveHealthProbe: healthCmd→native, domain→httpExternal, else stableWait", () => {
-      expect(resolveHealthProbe({ ...base, healthCmd: "x" }, {})).toEqual({ kind: "native" });
-      expect(resolveHealthProbe({ ...base, domain: "x.com", containerPort: 3000 }, {})).toEqual({
+    it("resolveHealthProbe auto (type unset): healthCmd→native, domain→httpExternal, else stableWait", () => {
+      expect(resolveHealthProbe({ ...base, healthCmd: "x" })).toEqual({ kind: "native" });
+      expect(resolveHealthProbe({ ...base, domain: "x.com", containerPort: 3000 })).toEqual({
         kind: "httpExternal",
         port: 3000,
         path: "/",
       });
-      expect(resolveHealthProbe(base, {})).toEqual({ kind: "stableWait" });
-      expect(resolveHealthProbe({ ...base, domain: "x.com" }, { path: "/up" })).toEqual({
+      expect(resolveHealthProbe(base)).toEqual({ kind: "stableWait" });
+    });
+
+    it("resolveHealthProbe honours explicit type/path/port config", () => {
+      // explicit CMD → native (even without auto-derivation)
+      expect(resolveHealthProbe({ ...base, healthCheckType: "CMD", healthCmd: "x" })).toEqual({ kind: "native" });
+      // explicit NONE overrides an auto-HTTP domain app → liveness only
+      expect(resolveHealthProbe({ ...base, domain: "x.com", healthCheckType: "NONE" })).toEqual({ kind: "stableWait" });
+      // HTTP with custom path + port on a routed app (proxy network, container name)
+      expect(resolveHealthProbe({ ...base, domain: "x.com", healthCheckType: "HTTP", healthCheckPath: "/up", healthCheckPort: 9000 })).toEqual({
         kind: "httpExternal",
-        port: 80,
+        port: 9000,
         path: "/up",
       });
+      // HTTP on a host-port app probes localhost over the host network, pinned to the app's
+      // OWN published port — a custom healthCheckPort is IGNORED so it can't scan other ports
+      expect(resolveHealthProbe({ ...base, hostPort: 8080, healthCheckType: "HTTP", healthCheckPath: "/health", healthCheckPort: 9999 })).toEqual({
+        kind: "httpExternal",
+        port: 8080,
+        path: "/health",
+        onHost: true,
+      });
+      // HTTP configured but nothing reachable (no domain, no host port) → liveness wait
+      expect(resolveHealthProbe({ ...base, healthCheckType: "HTTP" })).toEqual({ kind: "stableWait" });
+    });
+
+    it("a host-port HTTP probe uses the host network + localhost (not the proxy), single-quoted URL", () => {
+      const s = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 8080, path: "/health", onHost: true }, gate);
+      const joined = s.join("\n");
+      expect(joined).toContain(`docker run --rm --network host ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://localhost:8080/health'`);
+      expect(joined).not.toContain("tugra-proxy");
     });
   });
 
@@ -190,7 +216,7 @@ describe("deploy-script", () => {
         ...gate,
       });
       expect(s).toContain(
-        `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 http://tugra_abc:3000/healthz`,
+        `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc:3000/healthz'`,
       );
     });
   });

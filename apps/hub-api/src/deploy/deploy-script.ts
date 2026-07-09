@@ -27,6 +27,11 @@ export interface AppSpec {
   outputDir?: string | null;
   composeFile?: string | null;
   healthCmd?: string | null;
+  /** Deploy-gate health check policy. type null = auto (healthCmd→CMD, domain→HTTP, else
+   *  NONE); "NONE"|"HTTP"|"CMD" force it. path/port refine an HTTP check. */
+  healthCheckType?: string | null;
+  healthCheckPath?: string | null;
+  healthCheckPort?: number | null;
   memoryMb?: number | null;
   cpus?: number | null;
   volumes?: AppVolume[] | null;
@@ -456,10 +461,10 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
   ].join("\n");
 }
 
-/** How to health-check a rolling container before cutting traffic over to it. */
+/** How to health-check a container before treating a deploy as live. */
 export type HealthProbe =
   | { kind: "native" } // the container has a --health-cmd; poll docker's health status
-  | { kind: "httpExternal"; port: number; path: string } // pinned probe container on tugra-proxy
+  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
   | { kind: "stableWait" }; // no port/health-cmd → require it to stay Running
 
 /** Timing knobs for the health gate. */
@@ -469,12 +474,27 @@ export interface HealthGate {
   startPeriodSec: number;
 }
 
-/** Pick the best available probe: a container health-cmd if set, else an external
- *  HTTP probe for a routed app, else a "did it stay up" liveness wait. */
-export function resolveHealthProbe(app: AppSpec, cfg: { path?: string }): HealthProbe {
-  if (app.healthCmd) return { kind: "native" };
-  if (app.domain) return { kind: "httpExternal", port: app.containerPort ?? 80, path: cfg.path || "/" };
-  return { kind: "stableWait" };
+/**
+ * Pick the deploy-gate probe from the app's health-check config. `healthCheckType`:
+ * null = auto (a container health-cmd → native; a routed OR host-port app → HTTP; else a
+ * liveness wait); "CMD"/"HTTP"/"NONE" force it. An HTTP check reaches a routed app by its
+ * container name over tugra-proxy, or a host-port app via localhost on the host network;
+ * with neither reachable it degrades to a liveness wait.
+ */
+export function resolveHealthProbe(app: AppSpec): HealthProbe {
+  const type = app.healthCheckType ?? (app.healthCmd ? "CMD" : app.domain ? "HTTP" : "NONE");
+  if (type === "CMD") return { kind: "native" };
+  if (type === "HTTP") {
+    const path = app.healthCheckPath || "/";
+    // Routed app: probe its own container on the proxy network (a custom port still only
+    // reaches this app's container). Host-port app: probe localhost over the host network —
+    // pinned to the app's OWN published port, never an arbitrary one, so it can't be turned
+    // into a host-wide localhost port scanner.
+    if (app.domain) return { kind: "httpExternal", port: app.healthCheckPort ?? app.containerPort ?? 80, path };
+    if (app.hostPort) return { kind: "httpExternal", port: app.hostPort, path, onHost: true };
+    return { kind: "stableWait" }; // HTTP configured but no reachable endpoint
+  }
+  return { kind: "stableWait" }; // NONE
 }
 
 /**
@@ -494,13 +514,20 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
       "done",
     );
   } else if (probe.kind === "httpExternal") {
-    // "Reachable and serving" = any HTTP response below 500. A booted app commonly answers
-    // the probe path with 404 (root of an API), 401/403 (auth-gated), or 400 (a strict
-    // Host allow-list rejecting the container-name Host header) — those must NOT fail the
-    // gate. Only a refused/timed-out connection (curl → "000") or a 5xx counts as unhealthy.
+    // Reach a routed app by its container name over the proxy network; reach a host-port
+    // app via localhost on the host network (onHost). "Reachable and serving" = any HTTP
+    // response below 500: a booted app commonly answers the probe path with 404 (API root),
+    // 401/403 (auth-gated), or 400 (a strict Host allow-list rejecting the container-name
+    // Host header) — those must NOT fail the gate. Only a refused/timed-out connection
+    // (curl → "000") or a 5xx counts as unhealthy.
+    const net = probe.onHost ? "host" : PROXY_NETWORK;
+    const host = probe.onHost ? "localhost" : target;
+    // Single-quote the URL so the probe path can never break out of the docker-run word
+    // even if the path validation is ever loosened (defence-in-depth).
+    const url = shq(`http://${host}:${probe.port}${probe.path}`);
     lines.push(
       `for i in $(seq 1 ${t.retries}); do`,
-      `  code=$(docker run --rm --network ${PROXY_NETWORK} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 http://${target}:${probe.port}${probe.path} 2>/dev/null || echo 000)`,
+      `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 ${url} 2>/dev/null || echo 000)`,
       `  if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`,
       `  sleep ${t.intervalSec}`,
       "done",

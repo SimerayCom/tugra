@@ -305,6 +305,9 @@ export interface Application {
   outputDir: string | null;
   composeFile: string | null;
   healthCmd: string | null;
+  healthCheckType: string | null;
+  healthCheckPath: string | null;
+  healthCheckPort: number | null;
   memoryMb: number | null;
   cpus: number | null;
   deployTimeoutSec: number | null;

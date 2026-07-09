@@ -87,6 +87,9 @@ export interface AppView {
   outputDir: string | null;
   composeFile: string | null;
   healthCmd: string | null;
+  healthCheckType: string | null;
+  healthCheckPath: string | null;
+  healthCheckPort: number | null;
   memoryMb: number | null;
   cpus: number | null;
   deployTimeoutSec: number | null;
@@ -446,6 +449,9 @@ export class ApplicationsService {
           outputDir: parent.outputDir,
           composeFile: parent.composeFile,
           healthCmd: parent.healthCmd,
+          healthCheckType: parent.healthCheckType,
+          healthCheckPath: parent.healthCheckPath,
+          healthCheckPort: parent.healthCheckPort,
           memoryMb: parent.memoryMb,
           cpus: parent.cpus,
           volumes: (parent.volumes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
@@ -592,13 +598,13 @@ export class ApplicationsService {
       const command = isCompose
         ? buildComposeUpScript(spec, noCache)
         : rolling
-          ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec, {}), ...ROLLING_GATE })
+          ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), ...ROLLING_GATE })
           : recreate
             ? buildRecreateDeployScript(spec, dep.id, {
                 build: true,
                 noCache,
                 prevVersion: prev?.id ?? null,
-                probe: resolveHealthProbe(spec, {}),
+                probe: resolveHealthProbe(spec),
                 ...ROLLING_GATE,
               })
             : buildRunScript(spec, dep.id, true, noCache);
@@ -949,19 +955,41 @@ export class ApplicationsService {
   async setLimits(
     userId: string,
     id: string,
-    limits: { healthCmd?: string | null; memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null },
+    limits: { memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
       where: { id },
       data: {
-        healthCmd: limits.healthCmd ?? null,
         memoryMb: limits.memoryMb ?? null,
         cpus: limits.cpus ?? null,
         deployTimeoutSec: limits.deployTimeoutSec ?? null,
       },
     });
     await this.audit.log({ actor: userId, action: "app.limits.update", target: id });
+  }
+
+  /** Configure the deploy-gate health check. type null = auto; "NONE"|"HTTP"|"CMD" force
+   *  it. A CMD check reuses `healthCmd`; HTTP uses path/port. */
+  async setHealthCheck(
+    userId: string,
+    id: string,
+    hc: { type?: string | null; path?: string | null; port?: number | null; command?: string | null },
+  ): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        healthCheckType: hc.type ?? null,
+        healthCheckPath: hc.path ?? null,
+        healthCheckPort: hc.port ?? null,
+        // Only a CMD check owns healthCmd; other types leave any existing command intact
+        // (resolveHealthProbe ignores it when the type isn't CMD/auto) so a save under
+        // Auto/HTTP/None never silently wipes a previously-configured command.
+        ...(hc.type === "CMD" ? { healthCmd: hc.command ?? null } : {}),
+      },
+    });
+    await this.audit.log({ actor: userId, action: "app.healthcheck.update", target: id });
   }
 
   async setVolumes(userId: string, id: string, volumes: AppVolume[]): Promise<void> {
@@ -1191,6 +1219,9 @@ export class ApplicationsService {
       outputDir: app.outputDir,
       composeFile: app.composeFile,
       healthCmd: app.healthCmd,
+      healthCheckType: app.healthCheckType,
+      healthCheckPath: app.healthCheckPath,
+      healthCheckPort: app.healthCheckPort,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       dockerOptions: app.dockerOptions,
@@ -1264,6 +1295,9 @@ export class ApplicationsService {
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       healthCmd: app.healthCmd,
+      healthCheckType: app.healthCheckType,
+      healthCheckPath: app.healthCheckPath,
+      healthCheckPort: app.healthCheckPort,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       deployTimeoutSec: app.deployTimeoutSec,

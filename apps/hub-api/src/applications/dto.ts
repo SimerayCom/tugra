@@ -60,13 +60,39 @@ export const SetDockerOptionsSchema = z.object({
 });
 export type SetDockerOptionsInput = z.infer<typeof SetDockerOptionsSchema>;
 
-export const SetLimitsSchema = z.object({
-  healthCmd: z.string().min(1).nullable().optional(),
-  memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
-  cpus: z.number().min(0.1).max(64).nullable().optional(),
-  deployTimeoutSec: z.number().int().min(30).max(3600).nullable().optional(),
-});
+export const SetLimitsSchema = z
+  .object({
+    memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
+    cpus: z.number().min(0.1).max(64).nullable().optional(),
+    deployTimeoutSec: z.number().int().min(30).max(3600).nullable().optional(),
+  })
+  // healthCmd moved to PUT /health-check; reject (not silently drop) a stale client still
+  // sending it so a lost edit surfaces as an error instead of vanishing.
+  .strict();
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
+
+export const SetHealthCheckSchema = z
+  .object({
+    type: z.enum(["NONE", "HTTP", "CMD"]).nullable().optional(), // null = auto-derive
+    // A URL path — the probe interpolates it into the deploy script's curl URL. Restrict to
+    // safe path characters with NO shell/URL-control metacharacters (no whitespace, quotes,
+    // and crucially no '&'/'?'/'#' which would either background a command or split the URL).
+    // A probe path never needs a query/fragment. Combined with single-quoting at the call
+    // site this is defence-in-depth against shell injection.
+    path: z
+      .string()
+      .max(200)
+      .regex(/^\/[A-Za-z0-9\-._~/%=]*$/, "path must start with / and use URL-safe characters")
+      .nullable()
+      .optional(),
+    port: z.number().int().min(1).max(65535).nullable().optional(),
+    command: z.string().min(1).max(1000).nullable().optional(),
+  })
+  .refine((v) => v.type !== "CMD" || (v.command != null && v.command.trim().length > 0), {
+    message: "a CMD health check requires a command",
+    path: ["command"],
+  });
+export type SetHealthCheckInput = z.infer<typeof SetHealthCheckSchema>;
 
 export const SetCredentialsSchema = z
   .object({
