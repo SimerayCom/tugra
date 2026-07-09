@@ -60,6 +60,7 @@ import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
 import { appUrl } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
+import { inferComposeWeb } from "../deploy/compose-web";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -162,6 +163,16 @@ export class ApplicationsService {
    * reachable the instant the app is created. If no public IP is available (or
    * exposeMode isn't magic), leave it domainless and fall back to the host:port URL.
    */
+  /** The primary web service + container port of a COMPOSE app: an explicit template
+   *  `web` override, else inferred from the compose file. Null when undeterminable. */
+  private composeWeb(app: {
+    templateSlug?: string | null;
+    composeFile?: string | null;
+  }): { service: string; port: number } | null {
+    const override = app.templateSlug ? TEMPLATES[app.templateSlug]?.web : undefined;
+    return override ?? inferComposeWeb(app.composeFile ?? null);
+  }
+
   private resolveExpose(
     input: { name: string; domain?: string | null; exposeMode?: string; https?: boolean },
     server: {
@@ -171,6 +182,9 @@ export class ApplicationsService {
       magicSuffix: string | null;
     },
     source: string,
+    // For a COMPOSE app, the resolved web service (or null) — magic is only offered
+    // when we know which service to route, otherwise the domain would be unreachable.
+    composeWebService?: string | null,
   ): { domain: string | null; https: boolean; exposeMode: string; domainKind: string; certType: string } {
     const exposeMode = input.exposeMode ?? "magic";
     if (input.domain) {
@@ -179,7 +193,7 @@ export class ApplicationsService {
       // caller passing https:false would show http:// while Traefik serves HTTPS.
       return { domain: input.domain, https: true, exposeMode: "custom", domainKind: "custom", certType: "le-http" };
     }
-    if (exposeMode === "magic" && source !== "COMPOSE") {
+    if (exposeMode === "magic" && (source !== "COMPOSE" || !!composeWebService)) {
       const suffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
       const magic = magicDomain({
         name: input.name,
@@ -257,7 +271,9 @@ export class ApplicationsService {
     }
 
     const source = dto.source ?? "IMAGE";
-    const expose = this.resolveExpose(dto, server, source);
+    const composeWebService =
+      source === "COMPOSE" ? (this.composeWeb({ templateSlug: dto.templateSlug, composeFile: dto.composeFile })?.service ?? null) : null;
+    const expose = this.resolveExpose(dto, server, source, composeWebService);
 
     const app = await this.prisma.application.create({
       data: {
@@ -512,7 +528,9 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       const isCompose = app.source === "COMPOSE";
-      if (app.domain && !isCompose) await this.proxy.ensureProxy(app.serverId);
+      // A compose app also needs the proxy when its web service is routable (magic).
+      const composeRoutable = isCompose && !!this.composeWeb(app);
+      if (app.domain && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
@@ -929,10 +947,12 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id);
     const server = await this.prisma.server.findUnique({ where: { id: app.serverId } });
     if (!server) throw new NotFoundException("server not found");
+    const composeWebService = app.source === "COMPOSE" ? (this.composeWeb(app)?.service ?? null) : null;
     const e = this.resolveExpose(
       { name: app.name, domain: input.mode === "custom" ? input.domain : null, exposeMode: input.mode },
       server,
       app.source,
+      composeWebService,
     );
     await this.prisma.application.update({
       where: { id },
@@ -1050,6 +1070,10 @@ export class ApplicationsService {
   }
 
   private toSpec(app: Application): AppSpec {
+    // For a COMPOSE app, resolve the primary web service so the Traefik router
+    // targets the right service + its real container port (not the meaningless 80
+    // default a multi-service stack stores).
+    const web = app.source === "COMPOSE" ? this.composeWeb(app) : null;
     return {
       id: app.id,
       source: app.source,
@@ -1070,12 +1094,13 @@ export class ApplicationsService {
       registryAuth: this.appRegistryAuth(app),
       env: this.appEnv(app),
       hostPort: app.hostPort,
-      containerPort: app.containerPort,
+      containerPort: web?.port ?? app.containerPort,
       domain: app.domain,
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
       certType: app.certType,
+      composeWebService: web?.service ?? null,
     };
   }
 

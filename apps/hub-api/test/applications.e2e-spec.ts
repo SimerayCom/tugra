@@ -718,4 +718,34 @@ describe("Applications / deploy (e2e)", () => {
       .send({ mode: "custom" })
       .expect(400);
   });
+
+  it("gives a one-click Compose/template app an instant magic domain routed via a label override", async () => {
+    // server already has publicIp 203.0.113.7 from the earlier magic test
+    const inst = await request(app.getHttpServer())
+      .post("/apps/templates/wordpress")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Blog", serverId })
+      .expect(201);
+    expect(inst.body.source).toBe("COMPOSE");
+    expect(inst.body.domainKind).toBe("magic");
+    expect(inst.body.domain).toMatch(/^blog-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${inst.body.id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const sent = commands.join("\n");
+    // the compose deploy layers a Traefik label override joining the web service to the proxy
+    expect(sent).toContain(
+      `-f /etc/tugra/compose/${inst.body.id}/docker-compose.yml -f /etc/tugra/compose/${inst.body.id}/docker-compose.tugra.yml`,
+    );
+    // decode the override file to confirm the router labels + proxy network
+    const m = sent.match(
+      new RegExp(`printf %s '([A-Za-z0-9+/=]+)' \\| base64 -d > /etc/tugra/compose/${inst.body.id}/docker-compose\\.tugra\\.yml`),
+    );
+    expect(m).toBeTruthy();
+    const yaml = Buffer.from(m![1], "base64").toString();
+    expect(yaml).toContain("traefik.enable=true");
+    expect(yaml).toContain(`Host(\`${inst.body.domain}\`)`);
+    expect(yaml).toContain("- tugra-proxy");
+  });
 });

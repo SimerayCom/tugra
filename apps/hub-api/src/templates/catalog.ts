@@ -40,6 +40,10 @@ export interface TemplateDef {
   composeFile: string;
   env?: Record<string, string>;
   secrets?: SecretSpec[]; // env keys auto-filled with a generated secret
+  // Primary web service + its container port, for attaching a magic domain. Optional
+  // override — when unset it is inferred from the compose file (first service with a
+  // published port). Set it only when inference would pick the wrong service.
+  web?: { service: string; port: number };
 }
 
 /** Public metadata for the gallery — never exposes composeFile or secrets. */

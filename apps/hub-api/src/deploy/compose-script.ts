@@ -10,6 +10,8 @@ import {
   envFileB64,
   registryLoginPrelude,
   registryLogoutSteps,
+  traefikLabels,
+  PROXY_NETWORK,
   type AppSpec,
 } from "./deploy-script";
 
@@ -21,6 +23,41 @@ export function composeDir(app: { id: string }): string {
 
 export function composeFilePath(app: { id: string }): string {
   return `${composeDir(app)}/docker-compose.yml`;
+}
+
+/** Tugra-managed label-only override, layered with a second `-f` (user YAML untouched). */
+export function composeOverridePath(app: { id: string }): string {
+  return `${composeDir(app)}/docker-compose.tugra.yml`;
+}
+
+/**
+ * A minimal override compose file that joins the app's primary web service to the
+ * Traefik proxy network and stamps it with the router labels — deep-merged over the
+ * user's YAML by compose. Reuses traefikLabels() (certType-aware); values are
+ * JSON-quoted so backticks/special chars in the Host rule stay valid YAML.
+ *
+ * The web service is kept on the project `default` network AND joined to the proxy:
+ * once a service declares a `networks:` key, compose drops its implicit `default`
+ * membership, so we must re-list `default` or the service loses reach to its DB/
+ * sibling services (e.g. WordPress → its mariadb).
+ */
+export function composeOverride(app: AppSpec): string {
+  const labels = traefikLabels(app)
+    .map((l) => `      - ${JSON.stringify(l)}`)
+    .join("\n");
+  return [
+    "services:",
+    `  ${app.composeWebService}:`,
+    "    networks:",
+    "      - default",
+    `      - ${PROXY_NETWORK}`,
+    "    labels:",
+    labels,
+    "networks:",
+    `  ${PROXY_NETWORK}:`,
+    "    external: true",
+    "",
+  ].join("\n");
 }
 
 /** Compose project name — namespaces all services of this app. */
@@ -43,12 +80,18 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const env = app.env && typeof app.env === "object" ? app.env : {};
   const hasEnv = Object.keys(env).length > 0;
   const envPath = `${dir}/.env`;
+  // Route the web service through Traefik (magic/custom domain) via a label override.
+  const magic = !!(app.domain && app.composeWebService);
+  const overridePath = composeOverridePath(app);
 
   const lines = [
     "set -e",
     `mkdir -p ${dir}`,
     `printf %s ${shq(b64(app.composeFile ?? ""))} | base64 -d > ${file}`,
   ];
+  if (magic) {
+    lines.push(`printf %s ${shq(b64(composeOverride(app)))} | base64 -d > ${overridePath}`);
+  }
   if (hasEnv) {
     lines.push(
       `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
@@ -58,10 +101,11 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   // Private registry: log in (isolated config) before pulling, log out after.
   lines.push(...registryLoginPrelude(app.registryAuth));
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
+  const overrideArg = magic ? `-f ${overridePath} ` : "";
   lines.push(
-    `docker compose -p ${proj} -f ${file} ${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
+    `docker compose -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
-    `docker compose -p ${proj} -f ${file} ps`,
+    `docker compose -p ${proj} -f ${file} ${overrideArg}ps`,
   );
   return lines.join("\n");
 }

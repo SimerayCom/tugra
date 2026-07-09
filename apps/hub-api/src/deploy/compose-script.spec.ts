@@ -45,6 +45,42 @@ describe("compose-script", () => {
     expect(buildComposeUpScript(base, false)).not.toContain("--pull always");
   });
 
+  it("writes NO Traefik override when the app has no domain/web service (regression)", () => {
+    const s = buildComposeUpScript(base);
+    expect(s).not.toContain("docker-compose.tugra.yml");
+    expect(s).not.toContain("traefik");
+  });
+
+  it("layers a label-only override joining the web service to the proxy when magic-exposed", () => {
+    const magic: AppSpec = {
+      ...base,
+      domain: "web-abc123.1-2-3-4.sslip.io",
+      composeWebService: "web",
+      containerPort: 3000,
+      certType: "http",
+    };
+    const s = buildComposeUpScript(magic);
+    // override file is written and layered with a second -f, before the user file's -f
+    expect(s).toContain("base64 -d > /etc/tugra/compose/abc/docker-compose.tugra.yml");
+    expect(s).toContain(
+      "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml -f /etc/tugra/compose/abc/docker-compose.tugra.yml up -d --remove-orphans",
+    );
+    // the override YAML targets the web service with the proxy network + Traefik labels
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
+    expect(m).toBeTruthy();
+    const yaml = Buffer.from(m![1], "base64").toString();
+    expect(yaml).toContain("services:\n  web:");
+    // keeps the default network (DB reach) AND joins the proxy
+    expect(yaml).toContain("- default");
+    expect(yaml).toContain("- tugra-proxy");
+    expect(yaml).toContain("traefik.enable=true");
+    expect(yaml).toContain("Host(`web-abc123.1-2-3-4.sslip.io`)");
+    expect(yaml).toContain("loadbalancer.server.port=3000");
+    expect(yaml).toContain("tugra-proxy:\n    external: true");
+    // magic is plain HTTP (certType http) → no TLS/LE on the compose label set
+    expect(yaml).not.toContain("certresolver");
+  });
+
   it("writes a .env and passes --env-file when the app has env vars", () => {
     const s = buildComposeUpScript({ ...base, env: { FOO: "bar" } });
     expect(s).toContain("base64 -d > /etc/tugra/compose/abc/.env");
