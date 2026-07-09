@@ -42,6 +42,8 @@ export interface AppSpec {
   buildArgs?: Record<string, string>;
   /** Raw extra flags appended to `docker run` (advanced; passed through verbatim). */
   dockerOptions?: string | null;
+  /** When set, the built image is tagged + pushed to this registry after building. */
+  registryPush?: { auth: RegistryAuth; tag: string } | null;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
@@ -106,6 +108,34 @@ export function imageRef(app: AppSpec): string {
   return app.image ?? "";
 }
 
+/** The registry reference the built image is pushed to:
+ *  `[<host>/]<namespace>/tugra_<appId>:<version>`. Docker Hub has no host component. The
+ *  namespace is the configured imagePrefix, falling back to the username — a bare
+ *  `tugra_<id>` would resolve to the unwritable `library/` namespace and the push would be
+ *  denied. */
+export function registryImageRef(
+  reg: { url?: string | null; imagePrefix?: string | null; username?: string | null },
+  app: { id: string },
+  version: string,
+): string {
+  const trim = (s: string) => s.replace(/\/+$/, "");
+  const host = reg.url ? `${trim(reg.url)}/` : "";
+  const ns = reg.imagePrefix ? trim(reg.imagePrefix) : trim(reg.username ?? "");
+  const prefix = ns ? `${ns}/` : "";
+  return `${host}${prefix}${containerName(app)}:${version}`;
+}
+
+/** Tag the locally-built image under the registry ref and push it, reusing the stdin login
+ *  (isolated DOCKER_CONFIG, token never in argv) + logout. */
+export function buildRegistryPushSteps(localTag: string, pushTag: string, auth: RegistryAuth): string[] {
+  return [
+    `docker tag ${localTag} ${shq(pushTag)}`,
+    ...registryLoginPrelude(auth),
+    `docker push ${shq(pushTag)}`,
+    ...registryLogoutSteps(auth),
+  ];
+}
+
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
@@ -120,16 +150,20 @@ export function gitAuthUrl(gitUrl: string): string {
 }
 
 /**
- * Shell prelude that creates a 0700 temp dir ($sd) for build-time secrets and a
- * single trap to wipe it on exit (success or failure). Reused for git askpass
- * and isolated docker registry config so no token persists on disk.
+ * Shell prelude that creates a 0700 temp dir ($sd) for build-time secrets. Reused for git
+ * askpass and isolated docker registry config so no token persists on disk. When called
+ * more than once in a script (e.g. a private git clone AND a registry push), each dir is
+ * accumulated into $TUGRA_SEC_DIRS and a single EXIT trap wipes ALL of them — a plain
+ * `trap … "$sd"` would be replaced by the second call and orphan the first dir on disk.
+ * mktemp paths under /etc/tugra/builds contain no spaces, so the unquoted expansion is safe.
  */
 function secretsDirPrelude(): string[] {
   return [
     "mkdir -p /etc/tugra/builds",
     "sd=$(mktemp -d /etc/tugra/builds/.sec.XXXXXX)",
     'chmod 700 "$sd"',
-    `trap 'rm -rf "$sd"' EXIT`,
+    'TUGRA_SEC_DIRS="${TUGRA_SEC_DIRS:+$TUGRA_SEC_DIRS }$sd"',
+    "trap 'rm -rf $TUGRA_SEC_DIRS' EXIT",
   ];
 }
 
@@ -337,15 +371,19 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         `rm -f ${plan} ${plan}.tmp`,
       );
     }
+    // Push the freshly-built image to the team registry when requested.
+    if (app.registryPush) steps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth));
     return steps;
   }
   // IMAGE: pull upstream (optionally authenticating), then snapshot to the tag.
-  return [
+  const imgSteps = [
     ...registryLoginPrelude(app.registryAuth),
     `docker pull ${shq(imageRef(app))}`,
     `docker tag ${shq(imageRef(app))} ${tag}`,
     ...registryLogoutSteps(app.registryAuth),
   ];
+  if (app.registryPush) imgSteps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth));
+  return imgSteps;
 }
 
 /** Login to a private registry into an isolated DOCKER_CONFIG ($sd), password via stdin. */

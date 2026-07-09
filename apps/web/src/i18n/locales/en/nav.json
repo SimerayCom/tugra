@@ -12,6 +12,7 @@
   "uptime": "Uptime",
   "servers": "Servers",
   "sources": "Git Sources",
+  "registries": "Container Registries",
   "projects": "Projects",
   "apps": "Apps",
   "databases": "Databases",
