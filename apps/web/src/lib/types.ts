@@ -320,6 +320,9 @@ export interface Application {
   securityHeaders: boolean;
   forwardAuth: string | null;
   https: boolean;
+  domainKind: string;
+  exposeMode: string;
+  certType: string;
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;

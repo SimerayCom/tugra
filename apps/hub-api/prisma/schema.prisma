@@ -163,6 +163,8 @@ model Server {
   publicIpv6           String?      // observed reachable IPv6
   ipSource             String       @default("observed") // observed | reported | manual
   reportedIps          String[]     @default([]) // agent-reported candidate interface IPs (reconcile)
+  wildcardDomain       String?      // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
+  magicSuffix          String?      // override the global magic suffix ("sslip.io" | "nip.io")
   os                   String?
   osVersion            String?
   arch                 String?
@@ -463,6 +465,9 @@ model Application {
   securityHeaders Boolean     @default(false)
   forwardAuth    String?
   https          Boolean      @default(true)
+  domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
+  exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"
+  certType       String       @default("http")  // "http" | "none" | "le-http" | "le-dns" | "custom"
   status         AppStatus    @default(NEW)
   webhookToken   String?      @unique
   webhookSecret  String?

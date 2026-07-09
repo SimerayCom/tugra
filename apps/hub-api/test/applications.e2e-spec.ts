@@ -680,4 +680,19 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
   });
+
+  it("generates an instantly-reachable magic domain when the server has a public IP", async () => {
+    // The e2e agent dials in from loopback, so no public IP is observed — set one
+    // directly to exercise the magic-domain path end to end.
+    await prisma.server.update({ where: { id: serverId }, data: { publicIp: "203.0.113.7" } });
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Magic Web", serverId, image: "nginx:alpine" }) // exposeMode defaults to "magic"
+      .expect(201);
+    expect(appRes.body.domainKind).toBe("magic");
+    expect(appRes.body.certType).toBe("http");
+    expect(appRes.body.domain).toMatch(/^magic-web-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
+    expect(appRes.body.url).toBe(`http://${appRes.body.domain}`);
+  });
 });

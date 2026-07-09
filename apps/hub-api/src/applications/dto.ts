@@ -22,6 +22,7 @@ export const CreateAppSchema = z
     containerPort: z.number().int().min(1).max(65535).optional(),
     domain: z.string().min(1).optional(),
     https: z.boolean().optional(),
+    exposeMode: z.enum(["magic", "port", "none", "custom"]).optional(),
     tags: z.array(z.string().max(40)).max(50).optional(),
   })
   .refine(

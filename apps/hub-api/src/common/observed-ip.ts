@@ -13,9 +13,43 @@ function isPrivateV4(ip: string): boolean {
   return /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
 }
 
+/** RFC 6598 carrier-grade NAT (100.64.0.0/10) — a shared ISP address, never publicly reachable. */
+function isCgnatV4(ip: string): boolean {
+  return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
+}
+
+/** Strip an IPv4-mapped IPv6 prefix (::ffff:1.2.3.4 → 1.2.3.4) so a mapped address
+ *  is judged and stored as its underlying IPv4, never as an opaque "IPv6". */
+export function normalizeIp(ip: string): string {
+  return ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, "");
+}
+
+/**
+ * Is this a globally-routable public address (safe to embed in a magic domain
+ * that resolves back to it)? Excludes loopback, unspecified, RFC1918, CGNAT and
+ * link-local for IPv4; loopback, unspecified, link-local (fe80::/10) and ULA
+ * (fc00::/7) for IPv6. IPv4-mapped IPv6 is judged as its IPv4 — otherwise a mapped
+ * private/link-local address (e.g. ::ffff:169.254.169.254) would slip the guard
+ * and point the hub's own probes at internal/metadata hosts (SSRF).
+ */
+export function isPublicIp(ip: string): boolean {
+  if (!ip) return false;
+  const v = normalizeIp(ip);
+  if (isLoopbackIp(v)) return false;
+  if (isIpv6(v)) {
+    if (v === "::") return false; // unspecified
+    return !/^fe[89ab][0-9a-f]:/i.test(v) && !/^f[cd][0-9a-f]{2}:/i.test(v); // link-local /10 + ULA /7
+  }
+  if (v === "0.0.0.0") return false; // unspecified IPv4 (resolves to localhost on connect)
+  if (/^169\.254\./.test(v)) return false; // link-local IPv4
+  return !isPrivateV4(v) && !isCgnatV4(v);
+}
+
 /** Best reachable candidate from agent-reported interface IPs: public IPv4 > private IPv4 > any non-loopback. */
 export function bestReportedIp(reportedIps: string[]): string | null {
-  const usable = reportedIps.filter((ip) => ip && !isLoopbackIp(ip));
+  // Normalize first so an IPv4-mapped address is treated (and stored) as its IPv4,
+  // not misclassified as an "IPv6" and dropped into publicIpv6 unstripped.
+  const usable = reportedIps.map(normalizeIp).filter((ip) => ip && !isLoopbackIp(ip));
   return (
     usable.find((ip) => !isIpv6(ip) && !isPrivateV4(ip)) ??
     usable.find((ip) => !isIpv6(ip)) ??

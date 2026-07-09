@@ -59,6 +59,7 @@ import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
 import { appUrl } from "../common/app-url";
+import { magicDomain } from "./magic-domain";
 import type { CreateAppInput } from "./dto";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -101,6 +102,9 @@ export interface AppView {
   securityHeaders: boolean;
   forwardAuth: string | null;
   https: boolean;
+  domainKind: string;
+  exposeMode: string;
+  certType: string;
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;
@@ -150,6 +154,45 @@ export class ApplicationsService {
     private readonly teamDefaults: TeamDefaultsService,
   ) {}
 
+  /**
+   * Resolve a new app's initial exposure. A user-provided domain is "custom" and
+   * served over HTTPS (Let's Encrypt) as today. Otherwise, with the default
+   * exposeMode "magic" on a non-COMPOSE app, generate a sslip.io magic domain from
+   * the server's public IP — served over plain HTTP (certType "http") so it's
+   * reachable the instant the app is created. If no public IP is available (or
+   * exposeMode isn't magic), leave it domainless and fall back to the host:port URL.
+   */
+  private resolveExpose(
+    dto: CreateAppInput,
+    server: {
+      publicIp: string | null;
+      publicIpv6: string | null;
+      wildcardDomain: string | null;
+      magicSuffix: string | null;
+    },
+    source: string,
+  ): { domain: string | null; https: boolean; exposeMode: string; domainKind: string; certType: string } {
+    const exposeMode = dto.exposeMode ?? "magic";
+    if (dto.domain) {
+      // A user domain is custom + HTTPS (Let's Encrypt). Force https:true so the
+      // stored scheme matches certType le-http (mirrors setDomain) — otherwise a
+      // caller passing https:false would show http:// while Traefik serves HTTPS.
+      return { domain: dto.domain, https: true, exposeMode: "custom", domainKind: "custom", certType: "le-http" };
+    }
+    if (exposeMode === "magic" && source !== "COMPOSE") {
+      const suffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
+      const magic = magicDomain({
+        name: dto.name,
+        publicIp: server.publicIp,
+        publicIpv6: server.publicIpv6,
+        wildcardDomain: server.wildcardDomain,
+        suffix,
+      });
+      if (magic) return { domain: magic, https: false, exposeMode, domainKind: "magic", certType: "http" };
+    }
+    return { domain: null, https: dto.https ?? true, exposeMode, domainKind: "none", certType: "http" };
+  }
+
   async create(userId: string, dto: CreateAppInput): Promise<AppView> {
     const server = await this.prisma.server.findUnique({
       where: { id: dto.serverId },
@@ -165,12 +208,15 @@ export class ApplicationsService {
       if (!gs || gs.teamId !== server.teamId) throw new BadRequestException("git source not found in this team");
     }
 
+    const source = dto.source ?? "IMAGE";
+    const expose = this.resolveExpose(dto, server, source);
+
     const app = await this.prisma.application.create({
       data: {
         name: dto.name,
         templateSlug: dto.templateSlug ?? null,
         environmentId,
-        source: dto.source ?? "IMAGE",
+        source,
         image: dto.image ?? null,
         gitUrl: dto.gitUrl ?? null,
         gitBranch: dto.gitBranch ?? "main",
@@ -186,8 +232,11 @@ export class ApplicationsService {
         envEnc: this.crypto.encrypt(JSON.stringify(dto.env ?? {})),
         hostPort: dto.hostPort ?? null,
         containerPort: dto.containerPort ?? 80,
-        domain: dto.domain ?? null,
-        https: dto.https ?? true,
+        domain: expose.domain,
+        https: expose.https,
+        exposeMode: expose.exposeMode,
+        domainKind: expose.domainKind,
+        certType: expose.certType,
         tags: normalizeTags(dto.tags ?? []),
         webhookToken: generateWebhookToken(),
         webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
@@ -328,6 +377,12 @@ export class ApplicationsService {
           containerPort: parent.containerPort,
           domain: previewDomain,
           https: parent.https,
+          // Mirror the parent's exposure so a preview of an HTTPS custom-domain app
+          // keeps certType le-http (a subdomain cert) instead of falling to the
+          // "http" default and being served over plain HTTP by the certType-aware labels.
+          domainKind: parent.domainKind,
+          exposeMode: parent.exposeMode,
+          certType: parent.certType,
           // Preview-specific: no webhook of its own (parent owns the trigger).
           isPreview: true,
           parentAppId: parent.id,
@@ -800,7 +855,14 @@ export class ApplicationsService {
   /** Assign, change or clear an app's domain after creation (applied on next deploy). */
   async setDomain(userId: string, id: string, domain: string | null): Promise<void> {
     await this.requireWrite(userId, id);
-    await this.prisma.application.update({ where: { id }, data: { domain } });
+    // A user-set domain is "custom" and served over HTTPS (Let's Encrypt); clearing
+    // it resets the kind. This keeps custom domains on HTTPS under the certType-aware
+    // Traefik labels (a bare `{ domain }` update would leave certType at the "http"
+    // default and silently drop the app to plain HTTP).
+    const data: Prisma.ApplicationUpdateInput = domain
+      ? { domain, domainKind: "custom", certType: "le-http", https: true }
+      : { domain: null, domainKind: "none" };
+    await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.domain.update", target: id });
   }
 
@@ -1016,6 +1078,9 @@ export class ApplicationsService {
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
       https: app.https,
+      domainKind: app.domainKind,
+      exposeMode: app.exposeMode,
+      certType: app.certType,
       url: appUrl(app, serverIp ?? null),
       // Webhook credentials are only exposed to members who can deploy.
       webhookToken: canWrite ? app.webhookToken : null,

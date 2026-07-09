@@ -1,4 +1,4 @@
-import { observedIp, isIpv6, isLoopbackIp, bestReportedIp, reconcileReportedIp } from "./observed-ip";
+import { observedIp, isIpv6, isLoopbackIp, isPublicIp, bestReportedIp, reconcileReportedIp } from "./observed-ip";
 
 describe("observedIp", () => {
   it("uses the raw TCP peer address by default", () => {
@@ -54,6 +54,34 @@ describe("isLoopbackIp", () => {
   });
 });
 
+describe("isPublicIp", () => {
+  it("accepts globally-routable IPv4 and IPv6", () => {
+    expect(isPublicIp("203.0.113.7")).toBe(true);
+    expect(isPublicIp("8.8.8.8")).toBe(true);
+    expect(isPublicIp("2001:db8::1")).toBe(true);
+  });
+  it("rejects loopback, RFC1918, CGNAT and link-local IPv4", () => {
+    for (const ip of ["127.0.0.1", "10.0.0.5", "192.168.1.5", "172.16.0.1", "172.31.255.1", "100.64.0.1", "100.127.0.1", "169.254.1.1"]) {
+      expect(isPublicIp(ip)).toBe(false);
+    }
+  });
+  it("rejects loopback, link-local (full fe80::/10) and ULA IPv6, and the unspecified addresses", () => {
+    for (const ip of ["::1", "fe80::1", "fe90::1", "fea0::1", "febf::1", "fc00::1", "fd12:3456::1", "::", "0.0.0.0"]) {
+      expect(isPublicIp(ip)).toBe(false);
+    }
+  });
+  it("judges an IPv4-mapped IPv6 as its IPv4 (SSRF guard — mapped private/link-local rejected)", () => {
+    expect(isPublicIp("::ffff:10.0.0.1")).toBe(false);
+    expect(isPublicIp("::ffff:169.254.169.254")).toBe(false);
+    expect(isPublicIp("::ffff:192.168.1.5")).toBe(false);
+    expect(isPublicIp("::ffff:8.8.8.8")).toBe(true); // mapped public IPv4 is fine
+  });
+  it("treats public-adjacent IPv4 (100.128+, 172.32) as public", () => {
+    expect(isPublicIp("100.128.0.1")).toBe(true); // just outside CGNAT
+    expect(isPublicIp("172.32.0.1")).toBe(true); // just outside RFC1918
+  });
+});
+
 describe("bestReportedIp", () => {
   it("prefers a public IPv4 over a private one", () => {
     expect(bestReportedIp(["10.0.0.5", "203.0.113.7"])).toBe("203.0.113.7");
@@ -63,6 +91,9 @@ describe("bestReportedIp", () => {
   });
   it("takes an IPv6 only when no IPv4 candidate exists", () => {
     expect(bestReportedIp(["2001:db8::1"])).toBe("2001:db8::1");
+  });
+  it("normalizes an IPv4-mapped IPv6 to its IPv4 (not misfiled as IPv6)", () => {
+    expect(bestReportedIp(["::ffff:203.0.113.7"])).toBe("203.0.113.7");
   });
   it("skips loopback and returns null for an empty/loopback-only set", () => {
     expect(bestReportedIp(["127.0.0.1", "::1"])).toBeNull();
