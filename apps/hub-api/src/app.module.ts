@@ -8,6 +8,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
 import { TeamAccessModule } from "./common/team-access.module";
+import { MailModule } from "./mail/mail.module";
 import { AuthModule } from "./auth/auth.module";
 import { ServersModule } from "./servers/servers.module";
 import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
@@ -39,6 +40,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
     RedisModule,
     AuditModule,
     TeamAccessModule,
+    MailModule,
     AuthModule,
     ServersModule,
     AgentGatewayModule,
