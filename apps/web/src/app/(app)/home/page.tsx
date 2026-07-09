@@ -12,7 +12,7 @@ import { appColor } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
-import { SetDomainModal } from "../../../components/set-domain-modal";
+import { ExposeModal } from "../../../components/expose-modal";
 import { TileActionsSheet } from "../../../components/tile-actions-sheet";
 import { AppLogo } from "../../../components/app-logo";
 
@@ -33,7 +33,7 @@ export default function HomePage() {
 
   const { data: apps = [], isLoading, isError, refetch } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
   const tiles = launcherTiles(apps);
-  const [addDomainFor, setAddDomainFor] = useState<string | null>(null);
+  const [exposeFor, setExposeFor] = useState<string | null>(null);
   const [actionsFor, setActionsFor] = useState<LauncherTile | null>(null);
 
   return (
@@ -61,12 +61,23 @@ export default function HomePage() {
         </div>
       )}
 
-      {addDomainFor && <SetDomainModal appId={addDomainFor} onClose={() => setAddDomainFor(null)} />}
+      {exposeFor &&
+        (() => {
+          const tile = tiles.find((t) => t.id === exposeFor);
+          return tile ? (
+            <ExposeModal
+              appId={tile.id}
+              current={tile.exposeMode}
+              currentDomain={tile.domain}
+              onClose={() => setExposeFor(null)}
+            />
+          ) : null;
+        })()}
       {actionsFor && (
         <TileActionsSheet
           tile={actionsFor}
           onClose={() => setActionsFor(null)}
-          onAddDomain={(id) => setAddDomainFor(id)}
+          onExpose={(id) => setExposeFor(id)}
         />
       )}
     </div>

@@ -14,8 +14,6 @@
   "installed": "Installing {name} — it will appear on your Home.",
   "noServer": "You need a server to install apps.",
   "connectServer": "Connect a server →",
-  "addDomain": "Add domain",
-  "setDomainTitle": "Add a domain",
   "manage": "Manage",
   "uninstall": "Uninstall",
   "uninstallConfirm": "Uninstall {name}? This removes the app and its data.",
@@ -24,6 +22,6 @@
   "action_start": "Start",
   "action_restart": "Restart",
   "action_stop": "Stop",
-  "action_addDomain": "Add domain",
+  "action_expose": "Expose",
   "action_uninstall": "Uninstall"
 }

@@ -604,6 +604,61 @@ describe("ApplicationsService", () => {
     expect(update).not.toHaveBeenCalled(); // magicDomain → null → skip, don't clobber
   });
 
+  it("expose(magic) switches an existing app to a magic domain over plain HTTP", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const exposed = { ...app, domain: null };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(exposed), update },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).expose("u1", "app1", { mode: "magic" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.domainKind).toBe("magic");
+    expect(data.certType).toBe("http");
+    expect(data.https).toBe(false);
+    expect(data.domain).toMatch(/\.203-0-113-7\.sslip\.io$/);
+    expect(view.url).toBe(`http://${data.domain}`);
+  });
+
+  it("expose(custom) pins a user domain on HTTPS", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).expose("u1", "app1", { mode: "custom", domain: "app.example.com" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.domain).toBe("app.example.com");
+    expect(data.domainKind).toBe("custom");
+    expect(data.certType).toBe("le-http");
+    expect(data.https).toBe(true);
+  });
+
+  it("expose(none) clears the domain", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, domain: "old.example.com" }), update },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
+    } as unknown as PrismaService;
+    const access = {
+      requireRole: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).expose("u1", "app1", { mode: "none" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.domain).toBeNull();
+    expect(data.domainKind).toBe("none");
+    expect(data.exposeMode).toBe("none");
+  });
+
   it("places a template app into the chosen environment", async () => {
     const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
     const prisma = {

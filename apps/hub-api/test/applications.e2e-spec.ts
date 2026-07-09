@@ -695,4 +695,27 @@ describe("Applications / deploy (e2e)", () => {
     expect(appRes.body.domain).toMatch(/^magic-web-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
     expect(appRes.body.url).toBe(`http://${appRes.body.domain}`);
   });
+
+  it("re-exposes an existing app via PUT /apps/:id/expose", async () => {
+    // The server has a public IP (set in the test above). Create domainless, then expose as magic.
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Reexpose Me", serverId, image: "nginx:alpine", exposeMode: "none" })
+      .expect(201);
+    expect(created.body.domain).toBeNull();
+    const exposed = await request(app.getHttpServer())
+      .put(`/apps/${created.body.id}/expose`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ mode: "magic" })
+      .expect(200);
+    expect(exposed.body.domainKind).toBe("magic");
+    expect(exposed.body.url).toMatch(/^http:\/\/reexpose-me-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
+    // custom mode requires a domain
+    await request(app.getHttpServer())
+      .put(`/apps/${created.body.id}/expose`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ mode: "custom" })
+      .expect(400);
+  });
 });

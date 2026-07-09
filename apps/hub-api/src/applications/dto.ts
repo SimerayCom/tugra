@@ -112,6 +112,18 @@ export const SetDomainSchema = z.object({
 });
 export type SetDomainInput = z.infer<typeof SetDomainSchema>;
 
+// (Re)expose an existing app. A custom mode requires a domain; the other modes ignore it.
+export const ExposeSchema = z
+  .object({
+    mode: z.enum(["magic", "port", "none", "custom"]),
+    domain: z.string().trim().min(1).max(253).regex(DOMAIN_RE, "invalid domain").optional(),
+  })
+  .refine((d) => d.mode !== "custom" || !!d.domain, {
+    message: "domain is required for custom mode",
+    path: ["domain"],
+  });
+export type ExposeInput = z.infer<typeof ExposeSchema>;
+
 export const PreviewConfigSchema = z.object({
   enabled: z.boolean(),
 });

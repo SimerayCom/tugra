@@ -14,11 +14,11 @@ import { useConfirm } from "./confirm";
 export function TileActionsSheet({
   tile,
   onClose,
-  onAddDomain,
+  onExpose,
 }: {
   tile: LauncherTile;
   onClose: () => void;
-  onAddDomain: (id: string) => void;
+  onExpose: (id: string) => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -39,7 +39,7 @@ export function TileActionsSheet({
     start: Play,
     restart: RotateCw,
     stop: Square,
-    addDomain: Globe,
+    expose: Globe,
     uninstall: Trash2,
   };
 
@@ -55,9 +55,9 @@ export function TileActionsSheet({
         return run.mutate(() => api.restartApp(tile.id));
       case "stop":
         return run.mutate(() => api.stopApp(tile.id));
-      case "addDomain":
+      case "expose":
         onClose();
-        onAddDomain(tile.id);
+        onExpose(tile.id);
         return;
       case "uninstall":
         if (await confirm({ title: t("home.uninstall"), body: t("home.uninstallConfirm", { name: tile.name }), danger: true })) {
