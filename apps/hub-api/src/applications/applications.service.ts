@@ -19,6 +19,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
 import {
   buildImageRemoveScript,
+  buildImageRemoveScriptForTag,
   buildRemoveScript,
   buildRestartScript,
   buildRunScript,
@@ -587,6 +588,9 @@ export class ApplicationsService {
           spec.registryPush = { auth, tag: registryImageRef(reg, app, dep.id) };
         }
       }
+      // Capture the pushed ref before it is cleared (build-server path nulls registryPush) so
+      // the deployment records it → a later rollback can pull it even after local prune.
+      const registryRef = spec.registryPush?.tag ?? null;
       // Record a redacted config snapshot so the Deployments view can diff it.
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -655,6 +659,9 @@ export class ApplicationsService {
           // Compose stacks are multi-image → no single rollback tag; a rolled-back
           // deploy's image never went live → no rollback tag either.
           imageTag: ok && !isCompose ? runTag(app, dep.id) : null,
+          // The registry ref this build pushed to — lets rollback pull it even if the local
+          // image was pruned. Only recorded on a successful push.
+          registryImage: ok ? registryRef : null,
         },
       });
       await this.prisma.application.update({
@@ -712,8 +719,25 @@ export class ApplicationsService {
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
     });
-    if (!target || !target.imageTag) {
+    // Rollbackable if either the local image tag is still retained OR the deploy pushed a
+    // portable registry image (which survives a local prune / host re-provision).
+    if (!target || (!target.imageTag && !target.registryImage)) {
       throw new NotFoundException("no rollbackable deployment with that id");
+    }
+    // Resolve the image source BEFORE creating the deployment / touching app status. Prefer the
+    // retained LOCAL tag (fast, no network — and a transient registry outage can't break it);
+    // pull from the registry only when the local image is gone. If neither is usable, 404 up
+    // front so a still-running app is never flipped to FAILED for an impossible rollback.
+    let registryPull: { auth: RegistryAuth; ref: string } | null = null;
+    if (!target.imageTag && target.registryImage && app.registryId) {
+      const reg = await this.prisma.registry.findFirst({ where: { id: app.registryId, teamId: app.teamId } });
+      if (reg) {
+        const auth: RegistryAuth = { url: reg.url ?? undefined, user: reg.username, token: this.crypto.decrypt(reg.passwordEnc) };
+        registryPull = { auth, ref: target.registryImage };
+      }
+    }
+    if (!registryPull && !target.imageTag) {
+      throw new NotFoundException("the image for this deployment is no longer available locally and cannot be pulled from a registry");
     }
     const dep = await this.prisma.deployment.create({
       data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK" },
@@ -724,9 +748,11 @@ export class ApplicationsService {
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app);
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
+      if (registryPull) spec.registryPull = registryPull;
+      // registryPull → build=true so prepSteps PULLS + tags; else build=false re-runs the local tag.
       const r = await this.agentWs.sendCommand(
         app.serverId,
-        buildRunScript(spec, target.id, false),
+        buildRunScript(spec, target.id, !!registryPull),
         "deploy",
         this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
@@ -738,7 +764,8 @@ export class ApplicationsService {
           status: ok ? "SUCCESS" : "FAILED",
           logs: `rolled back to ${target.id}\n${r.output.slice(0, 65000)}`,
           exitCode: r.exitCode,
-          imageTag: ok ? target.imageTag : null,
+          imageTag: ok ? runTag(app, target.id) : null,
+          registryImage: ok ? target.registryImage : null,
         },
       });
       await this.prisma.application.update({
@@ -777,9 +804,13 @@ export class ApplicationsService {
       orderBy: { createdAt: "desc" },
     });
     for (const d of kept.slice(DEPLOY_IMAGE_KEEP)) {
-      await this.agentWs
-        .sendCommand(app.serverId, buildImageRemoveScript(app, d.id), "cleanup")
-        .catch(() => undefined);
+      // Remove the EXACT recorded tag: a rollback row stores the target's tag (tugra_<id>:<targetId>),
+      // not one derived from its own deployment id, so reconstructing from d.id would miss it.
+      if (d.imageTag) {
+        await this.agentWs
+          .sendCommand(app.serverId, buildImageRemoveScriptForTag(d.imageTag), "cleanup")
+          .catch(() => undefined);
+      }
       await this.prisma.deployment.update({
         where: { id: d.id },
         data: { imageTag: null },

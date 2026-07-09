@@ -388,9 +388,11 @@ export interface ConfigChange {
 export interface Deployment {
   id: string;
   status: DeploymentStatus;
+  kind: string; // "DEPLOY" | "ROLLBACK" | "AUTO_ROLLBACK"
   logs: string | null;
   exitCode: number | null;
   imageTag: string | null;
+  registryImage: string | null;
   configChanges?: ConfigChange[];
   createdAt: string;
 }

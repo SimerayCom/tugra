@@ -10,6 +10,7 @@ import {
   buildRemoveScript,
   buildRunScript,
   buildRegistryPushSteps,
+  buildBuildOnlyScript,
   registryImageRef,
   buildRollingDeployScript,
   buildRecreateDeployScript,
@@ -695,6 +696,47 @@ describe("deploy-script", () => {
         false,
       );
       expect(s).not.toContain("docker push");
+    });
+
+    it("registryPull makes the deploy PULL a ref + tag it locally instead of building (no clone/build)", () => {
+      const s = buildRunScript(
+        {
+          ...base,
+          source: "GIT",
+          image: null,
+          gitUrl: "https://x/r.git",
+          buildType: "NIXPACKS",
+          registryPull: { auth: { url: "ghcr.io", user: "bot", token: "tok" }, ref: "ghcr.io/org/tugra_abc:v1" },
+        },
+        "v1",
+      );
+      // pulls the ref and snapshots it to the local versioned tag
+      expect(s).toContain("docker pull 'ghcr.io/org/tugra_abc:v1'");
+      expect(s).toContain("docker tag 'ghcr.io/org/tugra_abc:v1' tugra_abc:v1");
+      expect(s).toContain("docker --config \"$sd\" login 'ghcr.io' -u 'bot' --password-stdin");
+      // NO build/clone happened (registryPull short-circuits prepSteps)
+      expect(s).not.toContain("git clone");
+      expect(s).not.toContain("nixpacks build");
+      expect(s).not.toContain("docker push"); // pull path never pushes
+      // and it still runs the container
+      expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:v1'");
+    });
+
+    it("buildBuildOnlyScript builds + pushes but does NOT run (for a build server)", () => {
+      const s = buildBuildOnlyScript(
+        {
+          ...base,
+          source: "GIT",
+          image: null,
+          gitUrl: "https://x/r.git",
+          buildType: "NIXPACKS",
+          registryPush: { auth: { url: "ghcr.io", user: "bot", token: "tok" }, tag: "ghcr.io/org/tugra_abc:v1" },
+        },
+        "v1",
+      );
+      expect(s).toContain("nixpacks build -c"); // builds
+      expect(s).toContain("docker push 'ghcr.io/org/tugra_abc:v1'"); // and pushes
+      expect(s).not.toContain("docker run -d"); // but never runs the container
     });
 
     it("a private GIT clone + registry push cleans up BOTH secrets dirs (cumulative trap, no orphaned token)", () => {

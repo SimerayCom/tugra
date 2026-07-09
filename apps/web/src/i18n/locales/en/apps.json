@@ -100,6 +100,8 @@
   "aiFailed": "Analysis failed",
   "rollback": "Rollback",
   "rollbackConfirm": "Roll back to this deployment's image? The app will restart on the old version.",
+  "kind_ROLLBACK": "rollback",
+  "kind_AUTO_ROLLBACK": "auto-rollback",
   "streaming": "Streaming live build logs…",
   "openShell": "Open shell",
   "limits": "Resources",

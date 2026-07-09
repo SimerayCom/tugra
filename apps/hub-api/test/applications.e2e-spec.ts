@@ -445,6 +445,43 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).not.toContain("s3cr3t");
   });
 
+  it("rolls back by pulling the registry image after the local tag is pruned", async () => {
+    const regRes = await request(app.getHttpServer())
+      .post("/registries")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "rbreg", teamId, type: "generic", url: "reg.example.com", username: "bot", password: "pw", imagePrefix: "org" })
+      .expect(201);
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "rbpush", serverId, image: "nginx:alpine", hostPort: 8140 })
+      .expect(201);
+    const rid = created.body.id;
+    await request(app.getHttpServer())
+      .put(`/apps/${rid}/build-config`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ registryId: regRes.body.id, pushToRegistry: true })
+      .expect(200);
+
+    // deploy → records the portable registry image on the deployment
+    nextExit = 0;
+    await request(app.getHttpServer()).post(`/apps/${rid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const dep = await prisma.deployment.findFirst({ where: { appId: rid, status: "SUCCESS" }, orderBy: { createdAt: "desc" } });
+    expect(dep!.registryImage).toBe(`reg.example.com/org/tugra_${rid}:${dep!.id}`);
+
+    // simulate a local prune: the versioned image tag is gone from the host
+    await prisma.deployment.update({ where: { id: dep!.id }, data: { imageTag: null } });
+
+    // rollback must now PULL the registry image (not rely on the pruned local tag)
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${rid}/rollback/${dep!.id}`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const sent = commands.join("\n");
+    expect(sent).toContain(`docker pull 'reg.example.com/org/tugra_${rid}:${dep!.id}'`);
+    expect(sent).toContain(`docker tag 'reg.example.com/org/tugra_${rid}:${dep!.id}' tugra_${rid}:${dep!.id}`);
+  });
+
   it("rejects build-config with an unknown/other-team registry (400)", async () => {
     const created = await request(app.getHttpServer())
       .post("/apps")

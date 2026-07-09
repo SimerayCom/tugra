@@ -44,6 +44,9 @@ export interface AppSpec {
   dockerOptions?: string | null;
   /** When set, the built image is tagged + pushed to this registry after building. */
   registryPush?: { auth: RegistryAuth; tag: string } | null;
+  /** When set, the local tag is produced by PULLING this registry ref (built elsewhere),
+   *  not by building — for a build-server deploy or a registry-backed rollback. */
+  registryPull?: { auth: RegistryAuth; ref: string } | null;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
@@ -123,6 +126,12 @@ export function registryImageRef(
   const ns = reg.imagePrefix ? trim(reg.imagePrefix) : trim(reg.username ?? "");
   const prefix = ns ? `${ns}/` : "";
   return `${host}${prefix}${containerName(app)}:${version}`;
+}
+
+/** Build (+ push, if the spec carries registryPush) the image WITHOUT running it — for a
+ *  build server that builds and pushes so a separate deploy server can pull and run. */
+export function buildBuildOnlyScript(app: AppSpec, version: string, noCache = false): string {
+  return ["set -e", ...prepSteps(app, version, noCache)].join("\n");
 }
 
 /** Tag the locally-built image under the registry ref and push it, reusing the stdin login
@@ -299,6 +308,18 @@ export function staticNginxConf(): string {
 /** Build the prep steps (clone+build, or pull) that produce `tugra_<appId>:<version>`. */
 function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   const tag = runTag(app, version);
+  // registryPull: materialise the local tag by PULLING a specific registry ref instead of
+  // building — the image was already built+pushed elsewhere (a build server, or a previous
+  // deploy for a registry-backed rollback). Mutually exclusive with a build/push in one
+  // script, so return early (never appends the registryPush steps below).
+  if (app.registryPull) {
+    return [
+      ...registryLoginPrelude(app.registryPull.auth),
+      `docker pull ${shq(app.registryPull.ref)}`,
+      `docker tag ${shq(app.registryPull.ref)} ${tag}`,
+      ...registryLogoutSteps(app.registryPull.auth),
+    ];
+  }
   const nc = noCache ? "--no-cache " : "";
   // Build-time variables: `--build-arg K=V` for docker build, `--env K=V` for
   // the CNB/nixpacks/railpack builders. Empty → no flags (regression-safe).
@@ -680,9 +701,15 @@ export function buildRecreateDeployScript(
   ].join("\n");
 }
 
-/** Remove a versioned image (used when pruning old rollback points). */
+/** Remove a versioned image by deriving its tag from the deployment id. */
 export function buildImageRemoveScript(app: { id: string }, version: string): string {
   return `docker rmi ${runTag(app, version)} 2>/dev/null || true`;
+}
+
+/** Remove an image by its exact stored tag — a rollback records the TARGET's tag, not its own
+ *  deployment id, so pruning must key off the recorded tag rather than reconstruct it. */
+export function buildImageRemoveScriptForTag(tag: string): string {
+  return `docker rmi ${shq(tag)} 2>/dev/null || true`;
 }
 
 export const PROXY_DNS_ENV_DIR = "/etc/tugra/proxy";
