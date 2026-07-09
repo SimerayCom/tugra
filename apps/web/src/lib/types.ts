@@ -330,6 +330,7 @@ export interface Application {
   registryUser: string | null;
   registryId: string | null;
   pushToRegistry: boolean;
+  buildServerId: string | null;
   environmentId: string;
   projectId: string | null;
   projectName: string | null;

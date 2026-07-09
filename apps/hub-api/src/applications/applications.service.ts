@@ -23,6 +23,7 @@ import {
   buildRemoveScript,
   buildRestartScript,
   buildRunScript,
+  buildBuildOnlyScript,
   buildRollingDeployScript,
   buildRecreateDeployScript,
   resolveHealthProbe,
@@ -102,6 +103,7 @@ export interface AppView {
   registryUser: string | null;
   registryId: string | null;
   pushToRegistry: boolean;
+  buildServerId: string | null;
   templateSlug: string | null;
   templateLogo: string | null;
   environmentId: string | null;
@@ -610,6 +612,28 @@ export class ApplicationsService {
             orderBy: { createdAt: "desc" },
           })
         : null;
+      // Separate build server: build + push the image on it, then have the deploy server PULL
+      // + run it (via registryPull). Registry is mandatory (the deploy server never builds).
+      let buildLog = "";
+      if (!isCompose && app.buildServerId) {
+        if (!spec.registryPush) {
+          throw new Error("a build server is set but no registry is configured — assign a registry to deploy");
+        }
+        const buildScript = buildBuildOnlyScript(spec, dep.id, noCache);
+        const br = await this.agentWs.sendCommand(
+          app.buildServerId,
+          buildScript,
+          "deploy",
+          this.deployTimeoutMs(app),
+          (chunk) => this.deployLogs.push(app.id, chunk),
+        );
+        buildLog = br.output;
+        // Surface the real build error in the persisted record, not just a generic message.
+        if (br.exitCode !== 0) throw new Error(`image build failed on the build server\n${br.output}`);
+        // The deploy server pulls the just-pushed image instead of building it.
+        spec.registryPull = { auth: spec.registryPush.auth, ref: spec.registryPush.tag };
+        spec.registryPush = null;
+      }
       const command = isCompose
         ? buildComposeUpScript(spec, noCache)
         : rolling
@@ -654,7 +678,8 @@ export class ApplicationsService {
         data: {
           status: ok ? "SUCCESS" : "FAILED",
           kind: rolledBack ? "AUTO_ROLLBACK" : "DEPLOY",
-          logs: r.output.slice(0, 65536),
+          // Prepend the build-server phase output so the persisted record has the full log.
+          logs: (buildLog ? `${buildLog}\n${r.output}` : r.output).slice(0, 65536),
           exitCode: code,
           // Compose stacks are multi-image → no single rollback tag; a rolled-back
           // deploy's image never went live → no rollback tag either.
@@ -1071,11 +1096,12 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.credentials.update", target: id });
   }
 
-  /** Configure where a build is pushed: a team registry + whether to push at all. */
+  /** Configure the build: which team registry to push to, whether to push, and an optional
+   *  separate build server (which requires a registry — the deploy server pulls the image). */
   async setBuildConfig(
     userId: string,
     id: string,
-    cfg: { registryId?: string | null; pushToRegistry?: boolean },
+    cfg: { registryId?: string | null; pushToRegistry?: boolean; buildServerId?: string | null },
   ): Promise<void> {
     const app = await this.requireWrite(userId, id);
     // A registry must belong to the app's own team (no cross-team credential use).
@@ -1085,13 +1111,26 @@ export class ApplicationsService {
         throw new BadRequestException("registry not found in this team");
       }
     }
-    await this.prisma.application.update({
-      where: { id },
-      data: {
-        ...(cfg.registryId !== undefined ? { registryId: cfg.registryId } : {}),
-        ...(cfg.pushToRegistry !== undefined ? { pushToRegistry: cfg.pushToRegistry } : {}),
-      },
-    });
+    const data: Prisma.ApplicationUncheckedUpdateInput = {};
+    if (cfg.registryId !== undefined) data.registryId = cfg.registryId;
+    if (cfg.pushToRegistry !== undefined) data.pushToRegistry = cfg.pushToRegistry;
+    if (cfg.buildServerId !== undefined) {
+      if (cfg.buildServerId) {
+        // The build server must be a server of the app's own team (no cross-team image path).
+        const bs = await this.prisma.server.findUnique({ where: { id: cfg.buildServerId } });
+        if (!bs || bs.teamId !== app.teamId) {
+          throw new BadRequestException("build server not found in this team");
+        }
+        // A build server hands the image to the deploy server via a registry → it's mandatory.
+        const effectiveRegistry = cfg.registryId !== undefined ? cfg.registryId : app.registryId;
+        if (!effectiveRegistry) {
+          throw new BadRequestException("a build server requires a registry to hand the built image to the deploy server");
+        }
+        data.pushToRegistry = true; // implied — the deploy server can only pull a pushed image
+      }
+      data.buildServerId = cfg.buildServerId;
+    }
+    await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
   }
 
@@ -1374,6 +1413,7 @@ export class ApplicationsService {
       registryUser: this.appRegistryAuth(app)?.user ?? null,
       registryId: app.registryId,
       pushToRegistry: app.pushToRegistry,
+      buildServerId: app.buildServerId,
       templateSlug: app.templateSlug,
       templateLogo: app.templateSlug ? (TEMPLATES[app.templateSlug]?.logo ?? app.templateSlug) : null,
       environmentId: app.environmentId,
