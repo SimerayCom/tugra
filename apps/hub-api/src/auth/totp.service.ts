@@ -3,15 +3,17 @@ import { authenticator } from "otplib";
 import * as QRCode from "qrcode";
 
 const ISSUER = "Tugra";
+// Accept the adjacent 30s steps (±1) to tolerate clock skew between the hub and the app.
+const totp = authenticator.clone({ window: 1 });
 
 @Injectable()
 export class TotpService {
   generateSecret(): string {
-    return authenticator.generateSecret();
+    return totp.generateSecret();
   }
 
   keyUri(accountName: string, secret: string): string {
-    return authenticator.keyuri(accountName, ISSUER, secret);
+    return totp.keyuri(accountName, ISSUER, secret);
   }
 
   async qrDataUrl(otpauthUri: string): Promise<string> {
@@ -20,7 +22,7 @@ export class TotpService {
 
   verify(token: string, secret: string): boolean {
     try {
-      return authenticator.verify({ token, secret });
+      return totp.verify({ token, secret });
     } catch {
       return false;
     }

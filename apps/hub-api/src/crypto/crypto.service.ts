@@ -58,4 +58,17 @@ export class CryptoService implements OnModuleInit {
     );
     return this.sodium.to_string(plain);
   }
+
+  /**
+   * Keyed hash (MAC) for storing high-value, LOW-entropy secrets like 2FA recovery codes.
+   * Unlike a bare sha256, the digest cannot be brute-forced from a DB-only leak because it
+   * depends on the server key (derived from SECRETS_ENCRYPTION_KEY, never stored in the DB) —
+   * matching the protection the encrypted TOTP secret already has. Deterministic → still an
+   * O(1) indexed lookup.
+   */
+  hmac(data: string): string {
+    return this.sodium.to_hex(
+      this.sodium.crypto_generichash(32, this.sodium.from_string(data), this.key),
+    );
+  }
 }

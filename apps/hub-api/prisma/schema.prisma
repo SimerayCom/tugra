@@ -21,18 +21,32 @@ enum ServerStatus {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  password     String
-  name         String?
-  twoFaSecret  String?
-  twoFaEnabled Boolean      @default(false)
-  uiMode       String       @default("fleet") // "fleet" | "home"
-  memberships  Membership[]
-  apiTokens    ApiToken[]
-  savedViews   SavedView[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id            String                  @id @default(cuid())
+  email         String                  @unique
+  password      String
+  name          String?
+  twoFaSecret   String?
+  twoFaEnabled  Boolean                 @default(false)
+  twoFaEnabledAt DateTime?
+  uiMode        String                  @default("fleet") // "fleet" | "home"
+  memberships   Membership[]
+  apiTokens     ApiToken[]
+  savedViews    SavedView[]
+  recoveryCodes TwoFactorRecoveryCode[]
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+}
+
+// One-time 2FA recovery codes (hashed) — a fallback to log in when the TOTP device is lost.
+model TwoFactorRecoveryCode {
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  codeHash  String // sha256 of the canonical (dashless, upper-cased) code
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // A user's named fleet filter (status + tags) for the servers/fleet table.

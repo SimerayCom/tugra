@@ -14,6 +14,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { TotpService } from "./totp.service";
+import { generateRecoveryCodes, recoveryHashInput } from "./recovery-codes";
 
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -116,7 +117,7 @@ export class AuthService {
     email: string,
     password: string,
     totp?: string,
-  ): Promise<{ tokens: TokenPair } | { twoFaRequired: true }> {
+  ): Promise<{ tokens: TokenPair; recoveryLow?: true } | { twoFaRequired: true }> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
       throw new UnauthorizedException("invalid credentials");
@@ -132,12 +133,30 @@ export class AuthService {
       throw new UnauthorizedException("invalid credentials");
     }
 
+    let recoveryLow = false;
     if (user.twoFaEnabled) {
       if (!totp) {
         return { twoFaRequired: true };
       }
       const secret = this.crypto.decrypt(user.twoFaSecret as string);
-      if (!this.totp.verify(totp, secret)) {
+      let ok = this.totp.verify(totp, secret);
+      if (!ok) {
+        // Fall back to a one-time recovery code. updateMany({usedAt:null}) consumes it
+        // atomically, so two concurrent logins can't both spend the same code.
+        const consumed = await this.prisma.twoFactorRecoveryCode.updateMany({
+          where: { userId: user.id, codeHash: this.crypto.hmac(recoveryHashInput(user.id, totp)), usedAt: null },
+          data: { usedAt: new Date() },
+        });
+        if (consumed.count === 1) {
+          ok = true;
+          const remaining = await this.prisma.twoFactorRecoveryCode.count({
+            where: { userId: user.id, usedAt: null },
+          });
+          recoveryLow = remaining <= 2;
+          await this.audit.log({ actor: user.id, action: "auth.2fa.recovery_used", meta: { remaining } });
+        }
+      }
+      if (!ok) {
         await this.audit.log({
           actor: user.id,
           action: "auth.login.failed",
@@ -148,7 +167,8 @@ export class AuthService {
     }
 
     await this.audit.log({ actor: user.id, action: "auth.login" });
-    return { tokens: await this.issueTokens(user.id) };
+    const tokens = await this.issueTokens(user.id);
+    return recoveryLow ? { tokens, recoveryLow: true } : { tokens };
   }
 
   // ---- tokens (rotation + reuse detection) ---------------------------------
@@ -245,7 +265,7 @@ export class AuthService {
     return { otpauthUrl, qrDataUrl: await this.totp.qrDataUrl(otpauthUrl) };
   }
 
-  async enable2FA(userId: string, token: string): Promise<void> {
+  async enable2FA(userId: string, token: string): Promise<{ recoveryCodes: string[] }> {
     const user = await this.requireUser(userId);
     if (!user.twoFaSecret) {
       throw new UnauthorizedException("2FA not set up");
@@ -254,11 +274,21 @@ export class AuthService {
     if (!this.totp.verify(token, secret)) {
       throw new UnauthorizedException("invalid 2FA code");
     }
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { twoFaEnabled: true },
+    // Issue 10 one-time recovery codes; return them in plaintext ONCE (only their hashes
+    // are stored). Replace any codes from a previous 2FA setup.
+    const recoveryCodes = generateRecoveryCodes(10);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { twoFaEnabled: true, twoFaEnabledAt: new Date() },
+      });
+      await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
+      await tx.twoFactorRecoveryCode.createMany({
+        data: recoveryCodes.map((code) => ({ userId, codeHash: this.crypto.hmac(recoveryHashInput(userId, code)) })),
+      });
     });
     await this.audit.log({ actor: userId, action: "auth.2fa.enabled" });
+    return { recoveryCodes };
   }
 
   async me(userId: string): Promise<PublicUser> {

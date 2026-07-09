@@ -1,5 +1,6 @@
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
+import { createHash } from "node:crypto";
 import * as argon2 from "argon2";
 import { AuthService } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -118,6 +119,80 @@ describe("AuthService login", () => {
     await expect(svc.login("nope@b.c", "x")).rejects.toThrow(
       /invalid credentials/,
     );
+  });
+});
+
+describe("AuthService 2FA recovery codes", () => {
+  // Build a service with custom crypto/totp mocks (makeService uses empty stubs).
+  function make2fa(prisma: Partial<PrismaService>, totpVerify: jest.Mock) {
+    return new AuthService(
+      prisma as PrismaService,
+      new JwtService({}),
+      config,
+      { decrypt: () => "SECRET", encrypt: (s: string) => s, hmac: (d: string) => createHash("sha256").update(d).digest("hex") } as unknown as CryptoService,
+      { verify: totpVerify } as unknown as TotpService,
+      { log: jest.fn() } as unknown as AuditService,
+      new FakeRedis() as unknown as RedisService,
+      { ensureDefaults: jest.fn() } as unknown as TeamDefaultsService,
+    );
+  }
+
+  it("enable2FA issues 10 recovery codes and stores their hashes (plaintext returned once)", async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 10 });
+    const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    const userUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", twoFaSecret: "enc" }) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
+        cb({ user: { update: userUpdate }, twoFactorRecoveryCode: { deleteMany, createMany } }),
+      ),
+    } as unknown as PrismaService;
+    const res = await make2fa(prisma, jest.fn().mockReturnValue(true)).enable2FA("u1", "123456");
+    expect(res.recoveryCodes).toHaveLength(10);
+    expect(userUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ twoFaEnabled: true }) }));
+    expect(deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
+    // stored rows are HASHES, never the plaintext codes
+    const rows = createMany.mock.calls[0][0].data as { codeHash: string }[];
+    expect(rows).toHaveLength(10);
+    for (const r of rows) expect(r.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(rows)).not.toContain(res.recoveryCodes[0]);
+  });
+
+  it("login falls back to a recovery code when TOTP fails, consumes it, and flags recoveryLow", async () => {
+    const passwordHash = await argon2.hash("pw", { type: argon2.argon2id });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 }); // the code matched + was consumed
+    const count = jest.fn().mockResolvedValue(2); // 2 left → low
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", email: "a@b.c", password: passwordHash, twoFaEnabled: true, twoFaSecret: "enc" }) },
+      twoFactorRecoveryCode: { updateMany, count },
+    } as unknown as PrismaService;
+    const res = await make2fa(prisma, jest.fn().mockReturnValue(false)).login("a@b.c", "pw", "AB12-CD34");
+    expect(res).toMatchObject({ recoveryLow: true });
+    expect((res as { tokens: unknown }).tokens).toBeTruthy();
+    // consumed atomically: updateMany scoped to an UNUSED code
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ userId: "u1", usedAt: null }) }));
+  });
+
+  it("login rejects when TOTP fails AND the recovery code is invalid/already used", async () => {
+    const passwordHash = await argon2.hash("pw", { type: argon2.argon2id });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", email: "a@b.c", password: passwordHash, twoFaEnabled: true, twoFaSecret: "enc" }) },
+      twoFactorRecoveryCode: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), count: jest.fn() },
+    } as unknown as PrismaService;
+    await expect(make2fa(prisma, jest.fn().mockReturnValue(false)).login("a@b.c", "pw", "WRONG-CODE")).rejects.toThrow(/2FA/);
+  });
+
+  it("login with a valid TOTP does NOT touch recovery codes", async () => {
+    const passwordHash = await argon2.hash("pw", { type: argon2.argon2id });
+    const updateMany = jest.fn();
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", email: "a@b.c", password: passwordHash, twoFaEnabled: true, twoFaSecret: "enc" }) },
+      twoFactorRecoveryCode: { updateMany, count: jest.fn() },
+    } as unknown as PrismaService;
+    const res = await make2fa(prisma, jest.fn().mockReturnValue(true)).login("a@b.c", "pw", "123456");
+    expect((res as { tokens: unknown }).tokens).toBeTruthy();
+    expect((res as { recoveryLow?: true }).recoveryLow).toBeUndefined();
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });
 
