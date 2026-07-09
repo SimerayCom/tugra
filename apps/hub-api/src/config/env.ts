@@ -50,6 +50,17 @@ export const envSchema = z
   // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),
+  // Transactional email (password reset, email verification, team invites). All optional:
+  // when MAIL_HOST is unset the mailer is fail-soft (no email is sent, flows still work).
+  MAIL_HOST: z.string().min(1).optional(),
+  MAIL_PORT: z.coerce.number().int().positive().default(587),
+  MAIL_SECURE: z.enum(["true", "false"]).default("false"),
+  MAIL_USER: z.string().min(1).optional(),
+  MAIL_PASS: z.string().min(1).optional(),
+  MAIL_FROM: z.string().min(1).default("Tugra <no-reply@localhost>"),
+  // When true, unverified users are blocked from write actions after login. Off by default
+  // (self-host convenience); wired by the email-verification slice.
+  REQUIRE_EMAIL_VERIFICATION: z.enum(["true", "false"]).default("false"),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live
