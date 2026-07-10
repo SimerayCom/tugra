@@ -176,4 +176,53 @@ describe("TerminalGateway", () => {
     expect((gw as any).sessions.size).toBe(0);
     expect((gw as any).byServer.size).toBe(0);
   });
+
+  it("accepts a short-lived term_ticket JWT (subprotocol)", async () => {
+    const { gw, agentWs } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "term_ticket" }),
+      server: { id: "s1", teamId: "t1" },
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1"));
+    expect(ws.close).not.toHaveBeenCalled();
+    expect(agentWs.sendToAgent).toHaveBeenCalled();
+  });
+
+  it("falls back to the tg_access cookie when the subprotocol carries no token", async () => {
+    const { gw, agentWs } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+      server: { id: "s1", teamId: "t1" },
+    });
+    const ws = fakeWs();
+    // No subprotocol header, but a same-origin browser upgrade carries the httpOnly cookie.
+    await connect(gw, ws, {
+      url: "/terminal?server=s1",
+      headers: { cookie: "tg_access=jwt-from-cookie" },
+    } as any);
+    expect(agentWs.sendToAgent).toHaveBeenCalled();
+  });
+
+  describe("originAllowed", () => {
+    function gw(webUrl = "http://localhost:3001") {
+      const config = { get: jest.fn().mockReturnValue(webUrl) } as any;
+      return new TerminalGateway({} as any, {} as any, {} as any, config, {} as any, {} as any, {} as any, {} as any);
+    }
+    const check = (g: TerminalGateway, origin?: string) =>
+      (g as any).originAllowed({ headers: origin ? { origin } : {} });
+
+    it("allows a request with no Origin header (CLI/agent, subprotocol-authed)", () => {
+      expect(check(gw())).toBe(true);
+    });
+    it("allows the SPA origin", () => {
+      expect(check(gw("http://localhost:3001"), "http://localhost:3001")).toBe(true);
+    });
+    it("blocks a different origin (incl. same-site sibling subdomains)", () => {
+      const g = gw("http://localhost:3001");
+      expect(check(g, "http://evil.localhost:3001")).toBe(false);
+      expect(check(g, "https://app.attacker.com")).toBe(false);
+    });
+    it("blocks a malformed Origin", () => {
+      expect(check(gw(), "not-a-url")).toBe(false);
+    });
+  });
 });

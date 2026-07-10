@@ -17,6 +17,8 @@ import { TeamAccessService } from "../common/team-access.service";
 import { ApiTokensService } from "../api-tokens/api-tokens.service";
 import { AuditService } from "../audit/audit.service";
 import { isApiToken } from "../api-tokens/api-token.util";
+import { parseCookies, TG_ACCESS } from "../common/cookies";
+import { webBaseUrl } from "../common/web-url";
 import type { AccessTokenPayload } from "../auth/strategies/jwt.strategy";
 import { containerName } from "../deploy/deploy-script";
 import { dbContainerName } from "../databases/database-script";
@@ -77,6 +79,14 @@ export class TerminalGateway
       (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
         const pathname = new URL(req.url ?? "", "ws://localhost").pathname;
         if (pathname !== "/terminal") return;
+        // Defense-in-depth against cross-site WebSocket hijacking: a browser upgrade carries an
+        // Origin header we pin to the SPA origin. Non-browser clients (CLI/agent) send no Origin and
+        // authenticate with a subprotocol token (never an ambient cookie), so they're allowed.
+        if (!this.originAllowed(req)) {
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
         this.wss!.handleUpgrade(req, socket, head, (ws) => this.wss!.emit("connection", ws, req));
       },
     );
@@ -234,23 +244,43 @@ export class TerminalGateway
       return u?.userId ?? null;
     }
     try {
-      const payload = await this.jwt.verifyAsync<AccessTokenPayload>(token, {
+      const payload = await this.jwt.verifyAsync<AccessTokenPayload | { sub: string; type: string }>(token, {
         secret: this.config.get<string>("JWT_ACCESS_SECRET"),
       });
-      return payload.type === "access" ? payload.sub : null;
+      // Accept a normal access JWT (bearer/cookie) OR a short-lived terminal ticket (subprotocol).
+      return payload.type === "access" || payload.type === "term_ticket" ? payload.sub : null;
     } catch {
       return null;
     }
   }
 
+  /**
+   * Whether a WS upgrade's Origin is allowed. Missing Origin → non-browser client (CLI/agent),
+   * allowed. Present Origin → must equal the SPA origin, blocking cross-site WebSocket hijacking of
+   * a cookie/ticket session from any other (even same-site sibling) origin.
+   */
+  private originAllowed(req: IncomingMessage): boolean {
+    const origin = req.headers.origin;
+    if (!origin) return true;
+    try {
+      return new URL(origin).origin === new URL(webBaseUrl(this.config)).origin;
+    } catch {
+      return false;
+    }
+  }
+
   private extractToken(req: IncomingMessage): string {
+    // Subprotocol carries a bearer/PAT/term_ticket token; on a same-origin browser upgrade the
+    // access JWT rides in the httpOnly cookie instead (JS can't set the subprotocol from a cookie).
     const header = req.headers["sec-websocket-protocol"];
-    if (!header) return "";
-    const parts = (Array.isArray(header) ? header.join(",") : header)
-      .split(",")
-      .map((s) => s.trim());
-    const idx = parts.indexOf(SUBPROTOCOL);
-    return idx >= 0 && parts[idx + 1] ? parts[idx + 1] : "";
+    if (header) {
+      const parts = (Array.isArray(header) ? header.join(",") : header)
+        .split(",")
+        .map((s) => s.trim());
+      const idx = parts.indexOf(SUBPROTOCOL);
+      if (idx >= 0 && parts[idx + 1]) return parts[idx + 1];
+    }
+    return parseCookies(req.headers.cookie)[TG_ACCESS] ?? "";
   }
 
   onModuleDestroy(): void {

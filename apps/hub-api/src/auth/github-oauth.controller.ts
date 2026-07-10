@@ -1,9 +1,10 @@
 import { Controller, Get, Query, Res } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { CookieResponse, setAuthCookies } from "../common/cookies";
 import { GithubOAuthService } from "./github-oauth.service";
 
 /** Minimal Express response shape we use (avoids a hard @types/express dependency). */
-interface RedirectResponse {
+interface RedirectResponse extends CookieResponse {
   redirect(url: string): void;
 }
 
@@ -28,7 +29,11 @@ export class GithubOAuthController {
     res.redirect(await this.oauth.authorizeUrl());
   }
 
-  /** Callback: exchange the code, then hand Tugra tokens to the SPA via URL fragment. */
+  /**
+   * Callback: exchange the code, set httpOnly session cookies, then redirect to the SPA. The URL
+   * fragment is kept for now (dual-mode) so the current localStorage-based web still works; it is
+   * removed once the SPA switches to cookie auth.
+   */
   @Get("callback")
   async callback(
     @Query("code") code: string,
@@ -37,6 +42,7 @@ export class GithubOAuthController {
   ): Promise<void> {
     try {
       const tokens = await this.oauth.handleCallback(code, state);
+      setAuthCookies(res, tokens);
       res.redirect(
         `${this.web()}/oauth/callback#access=${encodeURIComponent(tokens.accessToken)}&refresh=${encodeURIComponent(tokens.refreshToken)}`,
       );
