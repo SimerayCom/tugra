@@ -38,8 +38,19 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.redis.sadd(key, member);
   }
 
-  async srem(key: string, member: string): Promise<void> {
-    await this.redis.srem(key, member);
+  async srem(key: string, ...members: string[]): Promise<void> {
+    if (members.length) await this.redis.srem(key, ...members);
+  }
+
+  /**
+   * Atomic counter with a fixed-window TTL applied on the FIRST increment (the count
+   * expires as a whole once the window lapses). Used for per-email login rate limiting and
+   * the failed-attempt lockout counter. Returns the post-increment value.
+   */
+  async incr(key: string, ttlSeconds?: number): Promise<number> {
+    const n = await this.redis.incr(key);
+    if (ttlSeconds && n === 1) await this.redis.expire(key, ttlSeconds);
+    return n;
   }
 
   async smembers(key: string): Promise<string[]> {
