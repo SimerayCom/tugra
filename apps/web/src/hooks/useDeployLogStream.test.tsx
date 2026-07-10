@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { useDeployLogStream } from "./useDeployLogStream";
-import { tokens } from "../lib/api";
 
 function streamFrom(parts: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -22,10 +21,6 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("useDeployLogStream", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    tokens.set({ accessToken: "acc", refreshToken: "rt" });
-  });
   afterEach(() => vi.unstubAllGlobals());
 
   it("accumulates streamed chunks and captures the done result", async () => {

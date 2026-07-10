@@ -30,9 +30,10 @@ export class GithubOAuthController {
   }
 
   /**
-   * Callback: exchange the code, set httpOnly session cookies, then redirect to the SPA. The URL
-   * fragment is kept for now (dual-mode) so the current localStorage-based web still works; it is
-   * removed once the SPA switches to cookie auth.
+   * Callback: exchange the code, set httpOnly session cookies, then redirect to the SPA. Tokens are
+   * delivered only via the cookies — never in the URL — so they can't leak through browser history
+   * or the Referer header. (Requires the hub and SPA to share a public origin, which the same-origin
+   * reverse-proxy deployment provides, so the cookies are visible to the SPA.)
    */
   @Get("callback")
   async callback(
@@ -43,9 +44,7 @@ export class GithubOAuthController {
     try {
       const tokens = await this.oauth.handleCallback(code, state);
       setAuthCookies(res, tokens);
-      res.redirect(
-        `${this.web()}/oauth/callback#access=${encodeURIComponent(tokens.accessToken)}&refresh=${encodeURIComponent(tokens.refreshToken)}`,
-      );
+      res.redirect(`${this.web()}/oauth/callback`);
     } catch {
       res.redirect(`${this.web()}/login?error=oauth`);
     }

@@ -3,7 +3,6 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { useMetricsStream } from "./useMetricsStream";
-import { tokens } from "../lib/api";
 import type { MetricsSample } from "../lib/types";
 
 function sample(over: Partial<MetricsSample> = {}): MetricsSample {
@@ -41,8 +40,6 @@ function wrapper({ children }: { children: React.ReactNode }) {
 describe("useMetricsStream", () => {
   beforeEach(() => {
     qc = new QueryClient();
-    localStorage.clear();
-    tokens.set({ accessToken: "acc", refreshToken: "rt" });
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -114,6 +111,21 @@ describe("useMetricsStream", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderHook(() => useMetricsStream("s1", false), { wrapper });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not consume a non-2xx (401) stream — no hot-loop, cache untouched", async () => {
+    qc.setQueryData<MetricsSample[]>(["metrics", "s1"], [sample({ ts: 1000, cpu: 1 })]);
+    const fetchMock = vi.fn(
+      async () =>
+        ({ ok: false, status: 401, body: streamFrom([frame(sample({ ts: 2000, cpu: 2 }))]) }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unmount } = renderHook(() => useMetricsStream("s1", true), { wrapper });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    // The 401 body is treated as a failed connect, never consumed → seed cache is unchanged.
+    expect(qc.getQueryData<MetricsSample[]>(["metrics", "s1"])?.map((m) => m.cpu)).toEqual([1]);
+    unmount();
   });
 
   it("aborts the request on unmount", async () => {

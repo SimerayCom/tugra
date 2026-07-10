@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { api } from "../lib/api";
 import {
   connectTerminal,
   decodeOutput,
@@ -37,18 +38,22 @@ export default function TerminalView({
     term.open(host);
     fit.fit();
 
-    const conn = connectTerminal(target, {
-      onOpen: () => conn.send(encodeResize(term.cols, term.rows)),
-      onEvent: (e) => {
-        if (e.type === "term_output") {
-          term.write(decodeOutput(e.data));
-        } else {
-          term.write(`\r\n[process exited ${e.exitCode}]\r\n`);
-          onClose?.();
-        }
+    const conn = connectTerminal(
+      target,
+      {
+        onOpen: () => conn.send(encodeResize(term.cols, term.rows)),
+        onEvent: (e) => {
+          if (e.type === "term_output") {
+            term.write(decodeOutput(e.data));
+          } else {
+            term.write(`\r\n[process exited ${e.exitCode}]\r\n`);
+            onClose?.();
+          }
+        },
+        onClose: () => term.write("\r\n[disconnected]\r\n"),
       },
-      onClose: () => term.write("\r\n[disconnected]\r\n"),
-    });
+      { fetchTicket: () => api.terminalTicket().then((r) => r.ticket) },
+    );
 
     const dataSub = term.onData((d) => conn.send(encodeInput(d)));
     const ro = new ResizeObserver(() => {
