@@ -47,13 +47,29 @@ function AccountCard() {
   const toast = useToast();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
   useEffect(() => {
     setName(user?.name ?? "");
     setEmail(user?.email ?? "");
+    setPw("");
   }, [user]);
+  // An email change is deferred + password-gated on the server; the new address must confirm a link.
+  const emailChanged = email.trim() !== (user?.email ?? "");
   const save = useMutation({
-    mutationFn: () => api.updateProfile({ name: name.trim() || undefined, email: email.trim() || undefined }),
-    onSuccess: async () => { await reload(); toast(t("settings.profileSaved"), "success"); },
+    mutationFn: () =>
+      api.updateProfile({
+        name: name.trim() || undefined,
+        email: email.trim() || undefined,
+        currentPassword: emailChanged ? pw : undefined,
+      }),
+    onSuccess: async () => {
+      const target = email.trim();
+      const wasEmailChange = emailChanged;
+      await reload(); // resets `email` back to the (unchanged) current address via the effect
+      setPw("");
+      toast(wasEmailChange ? t("settings.emailVerifyPending", { email: target }) : t("settings.profileSaved"), "success");
+    },
+    onError: (e) => toast(e instanceof Error ? e.message : t("settings.profileSaveFailed"), "error"),
   });
   return (
     <Card style={{ padding: 18, marginBottom: 16 }}>
@@ -65,9 +81,16 @@ function AccountCard() {
         <Field label={t("settings.email")} htmlFor="acc-email">
           <TextInput id="acc-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
+        {emailChanged && (
+          <Field label={t("settings.currentPasswordToChangeEmail")} htmlFor="acc-pw">
+            <TextInput id="acc-pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
+          </Field>
+        )}
       </div>
       <div style={{ marginTop: 14 }}>
-        <Btn onClick={() => save.mutate()} disabled={save.isPending || !email.trim()}>{save.isPending ? "…" : t("settings.save")}</Btn>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !email.trim() || (emailChanged && !pw)}>
+          {save.isPending ? "…" : t("settings.save")}
+        </Btn>
       </div>
     </Card>
   );

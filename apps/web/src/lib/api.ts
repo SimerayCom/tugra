@@ -137,6 +137,14 @@ export const api = {
   resetPassword(token: string, newPassword: string) {
     return apiFetch<{ ok: true }>("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword }) }, false);
   },
+  // Public: confirm an emailed verification link (clicked possibly on another device / logged out).
+  verifyEmail(token: string) {
+    return apiFetch<{ ok: true }>("/auth/verify-email", { method: "POST", body: JSON.stringify({ token }) }, false);
+  },
+  // Authed: re-send the current user's verification email (no-op once verified).
+  resendVerification() {
+    return apiFetch<{ ok: true }>("/auth/resend-verification", { method: "POST" });
+  },
 
   async login(email: string, password: string, totp?: string) {
     // On success the hub sets the session cookies; the 2FA-required step sets none.
@@ -150,7 +158,9 @@ export const api = {
   me() {
     return apiFetch<PublicUser>("/auth/me");
   },
-  updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home" }) {
+  updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
+    // An email change is deferred (confirmed via a link to the new address) and requires the current
+    // password — the response keeps the OLD email until the new one is confirmed.
     return apiFetch<PublicUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) });
   },
   changePassword(input: { currentPassword: string; newPassword: string }) {

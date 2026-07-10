@@ -38,6 +38,7 @@ export interface PublicUser {
   email: string;
   name: string | null;
   twoFaEnabled: boolean;
+  emailVerified: boolean;
   uiMode: "fleet" | "home";
 }
 
