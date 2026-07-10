@@ -18,23 +18,21 @@ import (
 	"github.com/mrcandev/tugra/agent/internal/client"
 	"github.com/mrcandev/tugra/agent/internal/config"
 	"github.com/mrcandev/tugra/agent/internal/keys"
+	"github.com/mrcandev/tugra/agent/internal/protocol"
 )
 
 // Version is overridden at build time via -ldflags "-X main.Version=...".
 var Version = "0.0.0-dev"
 
-// protocolVersion must match PROTOCOL_VERSION in packages/shared.
-const protocolVersion = 1
-
 func main() {
 	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com/agent")
 	token := flag.String("token", envOr("TUGRA_TOKEN", ""), "enrollment token (first run only)")
-	caps := flag.String("caps", envOr("TUGRA_CAPS", ""), "comma-separated allowed capabilities (deploy,database,backup,cleanup,bulk,terminal); empty = all")
+	caps := flag.String("caps", envOr("TUGRA_CAPS", ""), "\"all\" to disable the fail-closed allowlist (operator/upgrade escape); otherwise the hub pushes the granted set — a bootstrap list here is only used before the hub connects")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("tugra-agent %s (protocol %d)\n", Version, protocolVersion)
+		fmt.Printf("tugra-agent %s (protocol %d)\n", Version, protocol.Version)
 		return
 	}
 	if *hub == "" {
@@ -42,6 +40,13 @@ func main() {
 		return
 	}
 
+	// "all" is an explicit escape hatch that disables the fail-closed allowlist; any other value is
+	// a pre-handshake bootstrap list (the hub pushes the authoritative set on connect).
+	capsBypass := strings.EqualFold(strings.TrimSpace(*caps), "all")
+	var bootstrapCaps []string
+	if !capsBypass {
+		bootstrapCaps = parseCaps(*caps)
+	}
 	home, _ := os.UserHomeDir()
 	cfg := config.Config{
 		HubURL:       *hub,
@@ -49,7 +54,8 @@ func main() {
 		Version:      Version,
 		KeyPath:      filepath.Join(home, ".tugra", "agent.key"),
 		StatePath:    filepath.Join(home, ".tugra", "agent.json"),
-		Capabilities: parseCaps(*caps),
+		Capabilities: bootstrapCaps,
+		CapsBypass:   capsBypass,
 	}
 
 	kp, err := keys.LoadOrCreate(cfg.KeyPath)
@@ -86,7 +92,8 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// parseCaps turns "deploy, terminal" into ["deploy","terminal"]; empty → nil (all allowed).
+// parseCaps turns "deploy, terminal" into ["deploy","terminal"]; empty → nil. Enforcement is
+// fail-closed, so an empty list denies everything until the hub pushes the granted set.
 func parseCaps(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {

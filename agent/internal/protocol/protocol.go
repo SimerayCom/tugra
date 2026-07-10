@@ -8,7 +8,9 @@ import (
 	"strconv"
 )
 
-const Version = 1
+// Version is the on-wire protocol version — must match PROTOCOL_VERSION in packages/shared.
+// Bumped to 2 when the hub began pushing per-server capabilities (enrolled/auth_ok + "capabilities").
+const Version = 2
 
 type MetricsSample struct {
 	Ts        int64   `json:"ts"`
@@ -115,6 +117,9 @@ type ServerMsg struct {
 	HubKey     string `json:"hubKey"`
 	Sig        string `json:"sig"`
 	Capability string `json:"capability"`
+	// Granted capabilities pushed by the hub (on enrolled/auth_ok and the "capabilities" message);
+	// the agent enforces them fail-closed (empty = deny all).
+	Capabilities []string `json:"capabilities"`
 	// Log drains (type "log_drains"): forward container logs to these sinks.
 	Drains []DrainCfg `json:"drains"`
 }

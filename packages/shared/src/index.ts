@@ -3,7 +3,7 @@
  * The agent (Go) mirrors these shapes (same JSON field names); keep them in sync.
  */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /**
  * Notification event types — single source of truth for the hub (Zod enum) and
@@ -86,6 +86,8 @@ export interface EnrolledMsg {
   seal: string;
   /** Hub's ed25519 public key (base64 SPKI) — agent pins it to verify command signatures. */
   hubKey?: string;
+  /** The capabilities the hub grants this server — the agent enforces them fail-closed (empty = deny). */
+  capabilities?: AgentCapability[];
 }
 
 /** Re-auth (reconnect) accepted. */
@@ -93,6 +95,8 @@ export interface AuthOkMsg {
   type: "auth_ok";
   serverId: string;
   hubKey?: string;
+  /** Granted capabilities (re-pushed on every reconnect). */
+  capabilities?: AgentCapability[];
 }
 
 export interface ErrorMsg {
@@ -240,6 +244,13 @@ export interface LogDrainsMsg {
   drains: LogDrainCfg[];
 }
 
+/** Pushed when a server's granted capabilities change, so a connected agent updates its
+ *  fail-closed allowlist live (no re-enrollment needed). */
+export interface CapabilitiesMsg {
+  type: "capabilities";
+  capabilities: AgentCapability[];
+}
+
 export type AgentMessage =
   | EnrollMsg
   | AuthMsg
@@ -260,4 +271,5 @@ export type HubMessage =
   | TermInputMsg
   | TermResizeMsg
   | TermCloseMsg
-  | LogDrainsMsg;
+  | LogDrainsMsg
+  | CapabilitiesMsg;

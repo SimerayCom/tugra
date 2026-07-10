@@ -1,11 +1,15 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/mrcandev/tugra/agent/internal/protocol"
+)
 
 func TestProtocolVersionMatchesShared(t *testing.T) {
 	// Must stay in sync with PROTOCOL_VERSION in packages/shared.
-	if protocolVersion != 1 {
-		t.Fatalf("expected protocol version 1, got %d", protocolVersion)
+	if protocol.Version != 2 {
+		t.Fatalf("expected protocol version 2, got %d", protocol.Version)
 	}
 }
 

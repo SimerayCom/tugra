@@ -90,6 +90,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       this.wss!.handleUpgrade(req, socket, head, (ws) => this.wss!.emit("connection", ws, req));
     });
     this.logger.log("agent WS listening on /agent");
+    // Push a server's granted capabilities to its connected agent whenever they change, so the
+    // agent's fail-closed allowlist updates live (no re-enrollment). On (re)connect the set is
+    // (re)sent inside enrolled/auth_ok above. Registered here to avoid a servers→agentWs require
+    // cycle (agentWs already depends on servers; servers just holds the callback).
+    this.servers.setCapabilityPusher((serverId, capabilities) =>
+      this.sendToAgent(serverId, { type: "capabilities", capabilities }),
+    );
   }
 
   private onConnection(socket: WebSocket, req?: import("node:http").IncomingMessage): void {
@@ -147,6 +154,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             serverId,
             seal,
             hubKey: this.hubSign.publicKeySpkiBase64,
+            capabilities: await this.servers.grantedCapabilities(serverId),
           });
           this.logDrainProvider?.(serverId);
           return;
@@ -166,6 +174,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             type: "auth_ok",
             serverId: msg.serverId,
             hubKey: this.hubSign.publicKeySpkiBase64,
+            capabilities: await this.servers.grantedCapabilities(msg.serverId),
           });
           this.logDrainProvider?.(msg.serverId);
           return;

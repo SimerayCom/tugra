@@ -264,6 +264,15 @@ export class ServersService {
     return server?.capabilities ?? [];
   }
 
+  // Callback set by AgentWsServer at boot to push a capability change to a connected agent, so its
+  // fail-closed allowlist updates live. Kept as a callback (not a direct injection) to avoid a
+  // servers→agentWs require cycle — agentWs already depends on ServersService.
+  private capabilityPusher?: (serverId: string, capabilities: string[]) => void;
+
+  setCapabilityPusher(fn: (serverId: string, capabilities: string[]) => void): void {
+    this.capabilityPusher = fn;
+  }
+
   /** Set the granted capabilities (least-privilege toggle). Deduped + restricted to the known
    *  capability set and stored verbatim — an empty set means deny-all (fail-safe), NOT "all",
    *  so unchecking everything can never invert into granting everything. */
@@ -273,6 +282,8 @@ export class ServersService {
     await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
     const next = [...new Set(capabilities)].filter((c) => ALL_CAPABILITIES.includes(c));
     await this.prisma.server.update({ where: { id }, data: { capabilities: next } });
+    // Live-push the new set to the connected agent (fail-closed allowlist updates immediately).
+    this.capabilityPusher?.(id, next);
     await this.audit.log({ actor: userId, action: "server.capabilities.update", target: id });
   }
 

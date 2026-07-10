@@ -13,9 +13,13 @@ type Config struct {
 	Version   string
 	KeyPath   string
 	StatePath string
-	// Capabilities the agent will run (deploy/database/backup/cleanup/bulk/terminal).
-	// Empty = all allowed; set to lock a server down (e.g. no bulk/terminal).
+	// Capabilities the agent starts with before the hub pushes the authoritative set (on
+	// enrolled/auth_ok). Enforcement is FAIL-CLOSED: empty = deny all. The hub keeps this in sync
+	// live via the "capabilities" message, so this is only a pre-handshake bootstrap value.
 	Capabilities []string
+	// CapsBypass (--caps=all / TUGRA_CAPS=all) disables the fail-closed allowlist entirely — an
+	// explicit operator/upgrade escape hatch. Persistent: the hub's pushed set never overrides it.
+	CapsBypass bool
 }
 
 // Store persists what we learn at enrollment so reconnects use key auth.

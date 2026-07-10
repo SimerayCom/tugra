@@ -105,6 +105,14 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		}
 	}
 
+	// Fail-closed capability allowlist, seeded from the flags and then made authoritative by the
+	// hub's granted set carried in enrolled/auth_ok (nil = an older hub that didn't send it → keep
+	// the bootstrap value; an explicit empty [] = deny all). Live-updated via "capabilities" below.
+	cs := newCapState(cfg.Capabilities, cfg.CapsBypass)
+	if resp.Capabilities != nil {
+		cs.set(resp.Capabilities)
+	}
+
 	// Send host inventory right after auth, and refresh it periodically so it
 	// stays current across server upgrades / kernel patches on long sessions.
 	sendHostInfo := func() {
@@ -143,7 +151,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 					fmt.Fprintln(os.Stderr, "rejected command: invalid or missing hub signature")
 					continue
 				}
-				if !allowsCapability(cfg.Capabilities, m.Capability) {
+				if !cs.allows(m.Capability) {
 					fmt.Fprintln(os.Stderr, "rejected command: capability not allowed:", m.Capability)
 					continue
 				}
@@ -171,7 +179,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 					fmt.Fprintln(os.Stderr, "rejected term_start: invalid or missing hub signature")
 					continue
 				}
-				if !allowsCapability(cfg.Capabilities, m.Capability) {
+				if !cs.allows(m.Capability) {
 					fmt.Fprintln(os.Stderr, "rejected term_start: capability not allowed:", m.Capability)
 					continue
 				}
@@ -223,6 +231,9 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 				}
 			case "log_drains":
 				fwd.SetDrains(ctx, m.Drains)
+			case "capabilities":
+				// Hub pushed an updated granted set → refresh the fail-closed allowlist live.
+				cs.set(m.Capabilities)
 			}
 		}
 	}()
@@ -249,16 +260,41 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	}
 }
 
-// allowsCapability reports whether the agent's local policy permits a capability.
-// An empty allowlist means no restrictions (all capabilities allowed).
+// allowsCapability reports whether the allowlist permits a capability. FAIL-CLOSED: an empty
+// allowlist denies everything (deny-by-default). The bypass escape hatch lives in capState.
 func allowsCapability(allowed []string, capability string) bool {
-	if len(allowed) == 0 {
-		return true
-	}
 	for _, c := range allowed {
 		if c == capability {
 			return true
 		}
 	}
 	return false
+}
+
+// capState holds the agent's live fail-closed capability allowlist. The hub is authoritative and
+// pushes updates (in enrolled/auth_ok and the "capabilities" message). Reads happen on the reader
+// goroutine while command handlers run on their own goroutines, so access is mutex-guarded.
+type capState struct {
+	mu     sync.RWMutex
+	caps   []string
+	bypass bool
+}
+
+func newCapState(caps []string, bypass bool) *capState {
+	return &capState{caps: caps, bypass: bypass}
+}
+
+func (c *capState) set(caps []string) {
+	c.mu.Lock()
+	c.caps = caps
+	c.mu.Unlock()
+}
+
+func (c *capState) allows(capability string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.bypass {
+		return true // explicit --caps=all / TUGRA_CAPS=all operator escape
+	}
+	return allowsCapability(c.caps, capability)
 }
