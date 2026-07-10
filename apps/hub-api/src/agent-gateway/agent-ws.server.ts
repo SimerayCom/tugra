@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   Logger,
   OnApplicationBootstrap,
@@ -217,7 +218,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
    * given, the agent's live command_log chunks are delivered to it as they
    * arrive (used for streaming build logs).
    */
-  sendCommand(
+  async sendCommand(
     serverId: string,
     command: string,
     capability: AgentCapability,
@@ -226,7 +227,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   ): Promise<{ exitCode: number; output: string }> {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error("agent offline"));
+      throw new Error("agent offline");
+    }
+    // Hub-side capability grant check BEFORE signing: never sign a command for a capability the
+    // server hasn't been granted.
+    if (!(await this.isCapabilityGranted(serverId, capability))) {
+      throw new ForbiddenException(`capability "${capability}" is not granted for this server`);
     }
     const reqId = randomUUID();
     return new Promise((resolve, reject) => {
@@ -290,6 +296,14 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   isOnline(serverId: string): boolean {
     const socket = this.sockets.get(serverId);
     return !!socket && socket.readyState === WebSocket.OPEN;
+  }
+
+  /** Whether the hub may act on `capability` for this server. The granted set is enforced
+   *  verbatim — [] = none (fail-safe), so an unknown/unenrolled server or a fully-revoked one
+   *  is denied. Read fresh so a capability toggle applies immediately. */
+  async isCapabilityGranted(serverId: string, capability: AgentCapability): Promise<boolean> {
+    const granted = await this.servers.grantedCapabilities(serverId);
+    return granted.includes(capability);
   }
 
   /** Reject (and clean up) every pending command for a server that went away. */

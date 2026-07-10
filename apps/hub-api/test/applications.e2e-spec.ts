@@ -988,4 +988,47 @@ describe("Applications / deploy (e2e)", () => {
     expect(yaml).toContain(`Host(\`${inst.body.domain}\`)`);
     expect(yaml).toContain("- tugra-proxy");
   });
+
+  // Runs LAST — it mutates the shared server's capabilities and restores them at the end.
+  it("enforces per-server capability grants (deploy blocked when revoked) + rejects invalid caps", async () => {
+    // a server created via POST /servers defaults to all-except-terminal (least privilege)
+    const d0 = await request(app.getHttpServer()).get(`/servers/${serverId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(d0.body.capabilities).not.toContain("terminal");
+
+    // an unknown capability is rejected
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/capabilities`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ capabilities: ["bogus"] })
+      .expect(400);
+
+    // revoke deploy → a deploy to this server is refused hub-side (never signed/sent)
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/capabilities`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ capabilities: ["backup", "cleanup"] })
+      .expect(200);
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "capblock", serverId, image: "nginx:alpine", hostPort: 8142 })
+      .expect(201);
+    nextExit = 0;
+    await request(app.getHttpServer()).post(`/apps/${created.body.id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await sleep(200);
+    const deps = await request(app.getHttpServer()).get(`/apps/${created.body.id}/deployments`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(deps.body[0].status).toBe("FAILED");
+    expect((deps.body[0].logs ?? "").toLowerCase()).toContain("capability");
+
+    // restore full capabilities (stored verbatim — [] would mean deny-all, not "all") so
+    // nothing else is affected
+    await request(app.getHttpServer())
+      .put(`/servers/${serverId}/capabilities`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ capabilities: ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"] })
+      .expect(200);
+    const restored = await request(app.getHttpServer()).get(`/servers/${serverId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(restored.body.capabilities).toContain("terminal");
+    expect(restored.body.capabilities).toHaveLength(8);
+  });
 });

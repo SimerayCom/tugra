@@ -32,6 +32,8 @@ import {
   CreateServerSchema,
   NetworkSettingsInput,
   NetworkSettingsSchema,
+  SetCapabilitiesInput,
+  SetCapabilitiesSchema,
 } from "./dto/servers.schemas";
 
 /** Best-effort public base URL of this hub from the request (proxy-aware). */
@@ -135,6 +137,17 @@ export class ServersController {
     @Body(new ZodValidationPipe(NetworkSettingsSchema)) body: NetworkSettingsInput,
   ) {
     await this.servers.setNetwork(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/capabilities")
+  @HttpCode(200)
+  async setCapabilities(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetCapabilitiesSchema)) body: SetCapabilitiesInput,
+  ) {
+    await this.servers.setCapabilities(user.userId, id, body.capabilities);
     return { ok: true };
   }
 

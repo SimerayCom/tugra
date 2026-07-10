@@ -270,6 +270,12 @@ export const api = {
       body: JSON.stringify({ tags }),
     });
   },
+  setServerCapabilities(id: string, capabilities: string[]) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/capabilities`, {
+      method: "PUT",
+      body: JSON.stringify({ capabilities }),
+    });
+  },
   checkUpdates(id: string) {
     return apiFetch<PatchInfo>(`/servers/${id}/updates`);
   },

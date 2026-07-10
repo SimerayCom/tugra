@@ -6,8 +6,14 @@ import { AgentWsServer } from "./agent-ws.server";
  */
 const hubSign = { sign: jest.fn().mockReturnValue("SIG"), publicKeySpkiBase64: "HUBKEY" } as any;
 
+// sendCommand awaits the hub-side capability grant check (a DB read) before it signs + sends,
+// so flush the microtask/macrotask queue before asserting on the outbound message.
+const flush = () => new Promise((r) => setImmediate(r));
+
+const ALL_CAPS = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
+
 function harness() {
-  const servers = { markOffline: jest.fn() } as any;
+  const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(ALL_CAPS) } as any;
   const server = new AgentWsServer({} as any, servers, {} as any, hubSign);
   const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any; // 1 === WebSocket.OPEN
   (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
@@ -22,6 +28,7 @@ describe("AgentWsServer command streaming", () => {
     const { server, lastSent, deliver } = harness();
     const chunks: string[] = [];
     const p = server.sendCommand("s1", "echo hi", "deploy", 5000, (c) => chunks.push(c));
+    await flush();
     const sent = lastSent();
     expect(sent.type).toBe("command");
     expect(sent.capability).toBe("deploy");
@@ -36,6 +43,29 @@ describe("AgentWsServer command streaming", () => {
     await expect(p).resolves.toEqual({ exitCode: 0, output: "ok" });
   });
 
+  it("refuses to sign a command for a capability the server hasn't granted", async () => {
+    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "database"]) } as any;
+    const server = new AgentWsServer({} as any, servers, {} as any, hubSign);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (server as any).sockets.set("s1", socket);
+    // "terminal" is not in the granted set → rejected BEFORE any signing/send
+    await expect(server.sendCommand("s1", "sh", "terminal", 5000)).rejects.toThrow(/not granted/);
+    expect(socket.send).not.toHaveBeenCalled();
+    // a granted capability goes through
+    server.sendCommand("s1", "deploy.sh", "deploy", 5000).catch(() => undefined);
+    await flush();
+    expect(socket.send).toHaveBeenCalled();
+  });
+
+  it("fail-safe: an empty grant denies every capability (never means 'all')", async () => {
+    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
+    const server = new AgentWsServer({} as any, servers, {} as any, hubSign);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (server as any).sockets.set("s1", socket);
+    await expect(server.sendCommand("s1", "deploy.sh", "deploy", 5000)).rejects.toThrow(/not granted/);
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
   it("swallows command_log for an unknown reqId", async () => {
     const { deliver } = harness();
     await expect(deliver({ type: "command_log", reqId: "bogus", chunk: "x" })).resolves.toBeUndefined();
@@ -45,6 +75,7 @@ describe("AgentWsServer command streaming", () => {
     const { server, lastSent, deliver } = harness();
     const chunks: string[] = [];
     const p = server.sendCommand("s1", "echo", "deploy", 5000, (c) => chunks.push(c));
+    await flush();
     const reqId = lastSent().reqId;
     await deliver({ type: "command_result", reqId, exitCode: 0, output: "ok" });
     await p;
@@ -55,6 +86,7 @@ describe("AgentWsServer command streaming", () => {
   it("rejects pending commands when the agent disconnects mid-stream", async () => {
     const { server } = harness();
     const p = server.sendCommand("s1", "sleep 999", "deploy", 300_000, () => undefined);
+    await flush();
     (server as any).rejectPendingFor("s1");
     await expect(p).rejects.toThrow(/disconnected/);
     expect((server as any).chunkListeners.size).toBe(0);
@@ -75,11 +107,12 @@ describe("AgentWsServer terminal relay", () => {
     expect(delegate.handleAgentTerminal).toHaveBeenCalledWith("s1", exit);
   });
 
-  it("signs outbound command messages with the hub key", () => {
+  it("signs outbound command messages with the hub key", async () => {
     const { server, lastSent } = harness();
     // never resolved here → guard the unhandled rejection AND clear the pending
     // timeout timer so it can't fire after the suite (this crashed CI).
     server.sendCommand("s1", "echo hi", "deploy", 5000).catch(() => undefined);
+    await flush();
     const sent = lastSent();
     expect(sent.type).toBe("command");
     expect(sent.sig).toBe("SIG"); // signOutbound attached the hub signature

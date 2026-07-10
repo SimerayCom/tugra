@@ -29,6 +29,11 @@ import type { NetworkSettingsInput } from "./dto/servers.schemas";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
+// The capabilities a NEW server is granted by default — everything except `terminal`
+// (interactive shell), which is opt-in (least privilege). Legacy servers were backfilled
+// to the full set by the migration, so an empty grant now safely means "deny all" (fail-safe).
+const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch"];
+const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
 
 export interface ServerView {
   id: string;
@@ -60,6 +65,7 @@ export interface ServerView {
   createdAt: Date;
   seal: string | null;
   tags: string[];
+  capabilities: string[]; // granted agent capabilities the hub may act on; [] = none (fail-safe)
   role: Role;
   canWrite: boolean;
 }
@@ -103,6 +109,7 @@ export class ServersService {
         enrollToken,
         enrollTokenExpiresAt: new Date(Date.now() + ENROLL_TTL_MS),
         status: ServerStatus.PENDING,
+        capabilities: DEFAULT_CAPABILITIES, // least privilege: no terminal by default
       },
     });
     await this.audit.log({
@@ -118,7 +125,9 @@ export class ServersService {
     };
   }
 
-  /** The one-line agent install command (enroll token embedded). */
+  /** The one-line agent install command (enroll token embedded). The hub enforces every
+   *  capability grant afresh before signing a command, so the agent needs no local allowlist
+   *  snapshot (which would go stale the moment a grant is toggled — the hub is the sole gate). */
   private buildInstallCommand(token: string, publicUrl?: string): string {
     return `tugra-agent --hub ${this.agentWsUrl(publicUrl)} --token ${token}`;
   }
@@ -245,6 +254,26 @@ export class ServersService {
       data: { tags: normalizeTags(tags) },
     });
     await this.audit.log({ actor: userId, action: "server.tags.update", target: id });
+  }
+
+  /** The set of agent capabilities the hub is allowed to sign commands for on this server.
+   *  The stored set is enforced verbatim; [] = none (fail-safe). Legacy servers were backfilled
+   *  to the full set by the migration, so [] never silently means "all". */
+  async grantedCapabilities(serverId: string): Promise<string[]> {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId }, select: { capabilities: true } });
+    return server?.capabilities ?? [];
+  }
+
+  /** Set the granted capabilities (least-privilege toggle). Deduped + restricted to the known
+   *  capability set and stored verbatim — an empty set means deny-all (fail-safe), NOT "all",
+   *  so unchecking everything can never invert into granting everything. */
+  async setCapabilities(userId: string, id: string, capabilities: string[]): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    const next = [...new Set(capabilities)].filter((c) => ALL_CAPABILITIES.includes(c));
+    await this.prisma.server.update({ where: { id }, data: { capabilities: next } });
+    await this.audit.log({ actor: userId, action: "server.capabilities.update", target: id });
   }
 
   /**
@@ -498,6 +527,7 @@ export class ServersService {
       createdAt: Date;
       seal: string | null;
       tags?: string[];
+      capabilities?: string[];
     },
     role: Role,
   ): ServerView {
@@ -533,6 +563,7 @@ export class ServersService {
       createdAt: s.createdAt,
       seal: s.seal,
       tags: s.tags ?? [],
+      capabilities: s.capabilities ?? [],
       role,
       canWrite: WRITE_ROLES.includes(role),
     };

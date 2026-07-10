@@ -156,6 +156,7 @@ export default function ServerDetailPage() {
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
           <ProxyCard id={id} canWrite={server.canWrite} />
           {server.canWrite && <NetworkCard id={id} server={server} />}
+          {server.canWrite && <CapabilitiesCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
         </>
       )}
@@ -410,6 +411,47 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
         </label>
         <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       </div>
+    </Card>
+  );
+}
+
+const CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
+
+function CapabilitiesCard({ id, server }: { id: string; server: ServerView }) {
+  const t = useT();
+  const qc = useQueryClient();
+  // The checked set IS the granted set: what's ticked is exactly what the hub may do. An empty
+  // grant means "nothing allowed" (fail-safe) — unchecking everything revokes, never grants.
+  const [caps, setCaps] = useState<Set<string>>(() => new Set(server.capabilities));
+  useEffect(() => {
+    setCaps(new Set(server.capabilities));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server.id]);
+  const toggle = (c: string) =>
+    setCaps((prev) => {
+      const n = new Set(prev);
+      if (n.has(c)) n.delete(c);
+      else n.add(c);
+      return n;
+    });
+  const save = useMutation({
+    mutationFn: () => api.setServerCapabilities(id, [...caps]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
+  });
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("servers.capabilities")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.capabilitiesDesc")}</p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+        {CAPABILITIES.map((c) => (
+          <label key={c} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+            <input type="checkbox" checked={caps.has(c)} onChange={() => toggle(c)} />
+            {t(`servers.cap_${c}`)}
+          </label>
+        ))}
+      </div>
+      <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
+      {save.isSuccess && <span style={{ fontSize: 12, color: "var(--c-g)", marginLeft: 10 }}>{t("servers.capsSaved")}</span>}
     </Card>
   );
 }

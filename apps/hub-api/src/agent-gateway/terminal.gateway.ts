@@ -140,6 +140,10 @@ export class TerminalGateway
     }
 
     if (!this.agentWs.isOnline(serverId)) return ws.close(1011, "agent offline");
+    // The terminal capability must be granted for this server (off by default, least privilege).
+    if (!(await this.agentWs.isCapabilityGranted(serverId, "terminal"))) {
+      return ws.close(1008, "terminal capability not granted for this server");
+    }
 
     const sessionId = randomUUID();
     const cols = toSize(url.searchParams.get("cols"), 80);
