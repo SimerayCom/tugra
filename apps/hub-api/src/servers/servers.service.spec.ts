@@ -298,6 +298,54 @@ describe("ServersService.setTags", () => {
   });
 });
 
+describe("ServersService capabilities", () => {
+  it("forbids a VIEWER from changing capabilities", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
+      ...owner(Role.VIEWER),
+    } as unknown as PrismaService;
+    await expect(svcWith(prisma).setCapabilities("u1", "s1", ["deploy"])).rejects.toThrow(/insufficient role/);
+  });
+
+  it("stores a restricted (deduped, validated) capability set", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setCapabilities("u1", "s1", ["deploy", "deploy", "bogus" as never, "backup"]);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { capabilities: ["deploy", "backup"] } }));
+  });
+
+  it("granting EVERY capability is stored verbatim (not collapsed to [] = fail-open)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    const all = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
+    await svcWith(prisma).setCapabilities("u1", "s1", all);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { capabilities: all } }));
+  });
+
+  it("unchecking every capability stores [] (deny-all, fail-safe) — never inverts into 'all'", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setCapabilities("u1", "s1", []);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { capabilities: [] } }));
+  });
+
+  it("grantedCapabilities returns the stored set", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ capabilities: ["deploy"] }) },
+    } as unknown as PrismaService;
+    expect(await svcWith(prisma).grantedCapabilities("s1")).toEqual(["deploy"]);
+  });
+});
+
 describe("ServersService.setNetwork", () => {
   beforeEach(() => regenerateMagicForServer.mockClear());
 

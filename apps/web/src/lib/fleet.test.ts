@@ -37,6 +37,7 @@ const s = (
   createdAt: new Date().toISOString(),
   seal: null,
   tags: [],
+  capabilities: [],
   role: canWrite ? "OWNER" : "VIEWER",
   canWrite,
 });

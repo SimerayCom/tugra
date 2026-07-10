@@ -199,6 +199,10 @@ model Server {
   team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId               String
   tags                 String[]     @default([])
+  // Granted agent capabilities the hub will sign commands for. Enforced verbatim; empty = none
+  // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
+  // to all-except-terminal (least privilege — the interactive shell is opt-in).
+  capabilities         String[]     @default([])
   metrics              Metric[]
   logDrains            LogDrain[]
   createdAt            DateTime     @default(now())

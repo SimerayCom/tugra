@@ -12,10 +12,12 @@ function make(over: {
   application?: any;
   server?: any;
   isOnline?: boolean;
+  terminalGranted?: boolean;
 } = {}) {
   const agentWs = {
     sendToAgent: jest.fn().mockReturnValue(true),
     isOnline: jest.fn().mockReturnValue(over.isOnline ?? true),
+    isCapabilityGranted: jest.fn().mockResolvedValue(over.terminalGranted ?? true),
     setTerminalDelegate: jest.fn(),
   } as any;
   const jwt = { verifyAsync: over.verifyAsync ?? jest.fn() } as any;

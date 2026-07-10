@@ -7,6 +7,12 @@ export const CreateServerSchema = z.object({
 });
 export type CreateServerInput = z.infer<typeof CreateServerSchema>;
 
+// Granted agent capabilities the hub will sign commands for on this server.
+export const SetCapabilitiesSchema = z.object({
+  capabilities: z.array(z.enum(["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"])),
+});
+export type SetCapabilitiesInput = z.infer<typeof SetCapabilitiesSchema>;
+
 // Per-server network settings: a manual public-IP pin (null → resume observing),
 // a magic-domain wildcard root, and a magic suffix override. IP reachability is
 // validated in the service (isPublicIp); domains are lenient hostnames.

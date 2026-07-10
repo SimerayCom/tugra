@@ -69,6 +69,7 @@ export interface ServerView {
   createdAt: string;
   seal: string | null;
   tags: string[];
+  capabilities: string[]; // granted agent capabilities; [] = all
   role: Role;
   canWrite: boolean;
 }
