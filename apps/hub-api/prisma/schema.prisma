@@ -33,8 +33,32 @@ model User {
   apiTokens     ApiToken[]
   savedViews    SavedView[]
   recoveryCodes TwoFactorRecoveryCode[]
+  verificationTokens VerificationToken[]
   createdAt     DateTime                @default(now())
   updatedAt     DateTime                @updatedAt
+}
+
+// Purpose of an emailed single-use token. EMAIL_VERIFY is reserved for the email-verification
+// slice — this table is shared so that slice needs no new migration.
+enum VerificationPurpose {
+  PASSWORD_RESET
+  EMAIL_VERIFY
+}
+
+// A single-use, expiring token delivered by email (password reset / email verification). Only the
+// sha256 hash is stored — the raw token lives only in the emailed URL. Single-use via `usedAt`.
+model VerificationToken {
+  id        String              @id @default(cuid())
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  purpose   VerificationPurpose
+  tokenHash String              @unique
+  email     String              // target email (forward-compat for email-change verify; = user.email for reset)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, purpose])
 }
 
 // One-time 2FA recovery codes (hashed) — a fallback to log in when the TOTP device is lost.

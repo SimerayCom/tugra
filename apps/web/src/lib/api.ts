@@ -133,6 +133,14 @@ export const api = {
     return out.user;
   },
 
+  // Public + no refresh-retry: request a reset link (always resolves — no account enumeration).
+  forgotPassword(email: string) {
+    return apiFetch<{ ok: true }>("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }, false);
+  },
+  resetPassword(token: string, newPassword: string) {
+    return apiFetch<{ ok: true }>("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword }) }, false);
+  },
+
   async login(email: string, password: string, totp?: string) {
     const out = await apiFetch<
       { tokens: TokenPair } | { twoFaRequired: true }

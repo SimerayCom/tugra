@@ -8,16 +8,20 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { Role } from "@prisma/client";
+import { Role, VerificationPurpose } from "@prisma/client";
 import * as argon2 from "argon2";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
+import { MailService } from "../mail/mail.service";
+import { resetPasswordEmail } from "../mail/templates";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { TotpService } from "./totp.service";
 import { generateRecoveryCodes, recoveryHashInput } from "./recovery-codes";
+import { hashToken } from "../api-tokens/api-token.util";
+import { webBaseUrl } from "../common/web-url";
 
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -29,6 +33,11 @@ const LOGIN_RATE_MAX = 20; // login attempts per email per window before a soft 
 const LOGIN_RATE_WINDOW = 60; // seconds
 const LOCKOUT_THRESHOLD = 10; // failed attempts within the window → temporary lock
 const LOCKOUT_WINDOW = 15 * 60; // 900s — both the fail-counter window and the lock duration (bounded, auto-clears)
+
+// Password reset: short-lived emailed token + a per-email request cap.
+const PASSWORD_RESET_TTL_MS = 45 * 60 * 1000; // 45 min (matches the email copy)
+const PASSWORD_RESET_RATE_MAX = 5; // reset requests per email per window before a soft 429
+const PASSWORD_RESET_RATE_WINDOW = 60; // seconds
 
 export interface TokenPair {
   accessToken: string;
@@ -62,6 +71,7 @@ export class AuthService {
     private readonly audit: AuditService,
     private readonly redis: RedisService,
     private readonly teamDefaults: TeamDefaultsService,
+    private readonly mail: MailService,
   ) {}
 
   // ---- registration / login ------------------------------------------------
@@ -456,6 +466,90 @@ export class AuthService {
     await this.audit.log({ actor: userId, action: "auth.password.change" });
     await this.logoutAll(userId);
     return this.issueTokens(userId);
+  }
+
+  // ---- password reset (forgot / reset via emailed single-use token) --------
+
+  /**
+   * Start a password reset. ENUMERATION-SAFE: always resolves (the controller returns a fixed 200)
+   * whether or not the email exists. If it does: invalidate any prior reset tokens, mint a 32-byte
+   * token (only its sha256 hash is stored), and email the reset link. FAIL-SOFT: if the mailer is
+   * unconfigured or the send fails, the token is dropped into the audit log so a self-host operator
+   * can still recover — and the endpoint still returns 200.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    // Rate key is normalized (case/space-insensitive bucket); the LOOKUP uses the raw email so it
+    // matches how register stores and login reads it (both case-sensitive) — otherwise a mixed-case
+    // account would silently never get a link.
+    const rateKey = email.trim().toLowerCase();
+    // Per-email rate limit (uniform for existing/non-existing emails so 429 can't reveal existence).
+    if ((await this.redis.incr(`rate:forgot:${rateKey}`, PASSWORD_RESET_RATE_WINDOW)) > PASSWORD_RESET_RATE_MAX) {
+      throw new HttpException("too many reset requests — try again later", HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) return; // silent — no enumeration
+
+    // Only one live reset token per user: burn any prior unused ones.
+    await this.prisma.verificationToken.updateMany({
+      where: { userId: user.id, purpose: VerificationPurpose.PASSWORD_RESET, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    const raw = randomBytes(32).toString("base64url");
+    await this.prisma.verificationToken.create({
+      data: {
+        userId: user.id,
+        purpose: VerificationPurpose.PASSWORD_RESET,
+        tokenHash: hashToken(raw),
+        email: user.email,
+        expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+      },
+    });
+    const resetUrl = `${webBaseUrl(this.config)}/reset-password?token=${raw}`;
+    // Fire-and-forget the email: never await the SMTP round-trip in the request path, so response
+    // latency doesn't depend on whether the account exists (closes the enumeration TIMING oracle).
+    // The token is already persisted, so the link works whenever dispatch completes. Fail-soft: an
+    // unconfigured/failed mailer records the link in the audit log (server-side only, never surfaced
+    // to the requester) so a self-host operator can still deliver it out of band.
+    void this.mail
+      .send(user.email, resetPasswordEmail({ name: user.name, resetUrl }))
+      .then((sent) =>
+        this.audit.log({
+          actor: user.id,
+          action: "auth.password.forgot",
+          meta: sent ? { delivered: true } : { delivered: false, resetUrl },
+        }),
+      )
+      .catch(() =>
+        this.audit.log({ actor: user.id, action: "auth.password.forgot", meta: { delivered: false, resetUrl } }),
+      );
+  }
+
+  /**
+   * Complete a password reset with the emailed token (the token IS the authorization — no current
+   * password needed). Single-use via an atomic consume; on success the new password is written and
+   * EVERY session is revoked (logoutAll) so a stolen live session can't survive the reset.
+   */
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const vt = await this.prisma.verificationToken.findUnique({ where: { tokenHash: hashToken(token) } });
+    if (
+      !vt ||
+      vt.purpose !== VerificationPurpose.PASSWORD_RESET ||
+      vt.usedAt ||
+      vt.expiresAt.getTime() < Date.now()
+    ) {
+      throw new BadRequestException("invalid or expired reset link");
+    }
+    // Atomic single-use consume — a concurrent reset can't spend the same token twice.
+    const consumed = await this.prisma.verificationToken.updateMany({
+      where: { id: vt.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (consumed.count !== 1) throw new BadRequestException("invalid or expired reset link");
+
+    const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+    await this.prisma.user.update({ where: { id: vt.userId }, data: { password: passwordHash } });
+    await this.logoutAll(vt.userId); // revoke every session — the user re-logs in with the new password
+    await this.audit.log({ actor: vt.userId, action: "auth.password.reset" });
   }
 
   private async requireUser(userId: string) {
