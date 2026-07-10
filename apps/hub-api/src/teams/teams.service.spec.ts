@@ -1,17 +1,21 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Role } from "@prisma/client";
+import { ConfigService } from "@nestjs/config";
 import { TeamsService } from "./teams.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
+import { MailService } from "../mail/mail.service";
 import { TeamDefaultsService } from "./team-defaults.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 const ensureDefaults = jest.fn().mockResolvedValue(undefined);
 const teamDefaults = { ensureDefaults } as unknown as TeamDefaultsService;
+const mail = { send: jest.fn().mockResolvedValue(true), isConfigured: () => true } as unknown as MailService;
+const config = { get: () => "http://localhost:3001" } as unknown as ConfigService;
 
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new TeamsService(prisma as PrismaService, access as TeamAccessService, audit, teamDefaults);
+  return new TeamsService(prisma as PrismaService, access as TeamAccessService, audit, teamDefaults, mail, config);
 }
 
 describe("TeamsService", () => {
@@ -65,16 +69,42 @@ describe("TeamsService", () => {
     await expect(make(prisma, access).setRole("u1", "t1", "u2", Role.ADMIN)).rejects.toThrow(ConflictException);
   });
 
-  it("invites a user and returns a token", async () => {
+  it("invites a user, returns the token, and emails the accept link", async () => {
     const upsert = jest.fn().mockResolvedValue({ id: "i1", email: "b@x.com", role: Role.VIEWER, token: "tok", expiresAt: new Date() });
     const prisma = {
-      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      // 1st user.findUnique = the "already a member?" check (by email → null); 2nd = inviter (by id).
+      user: { findUnique: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ name: "Alice" }) },
+      team: { findUnique: jest.fn().mockResolvedValue({ name: "Platform" }) },
       teamInvitation: { upsert },
     } as unknown as PrismaService;
     const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    (mail.send as jest.Mock).mockClear();
+    (mail.send as jest.Mock).mockResolvedValue(true);
     const inv = await make(prisma, access).invite("u1", "t1", "B@X.com", Role.VIEWER);
-    expect(inv.token).toBe("tok");
+    expect(inv.token).toBe("tok"); // copy-link UX preserved — token still returned
     expect(upsert.mock.calls[0][0].create.email).toBe("b@x.com"); // lowercased
+    // emailed to the invitee, carrying the accept link with the EXACT stored token + team name
+    expect(mail.send).toHaveBeenCalledTimes(1);
+    const storedToken = upsert.mock.calls[0][0].create.token as string;
+    const [to, email] = (mail.send as jest.Mock).mock.calls[0];
+    expect(to).toBe("b@x.com");
+    expect(email.html).toContain(`/teams?invite=${storedToken}`);
+    expect(email.html).toContain("Platform");
+  });
+
+  it("still creates the invitation (returns the token) when the mailer fails — fail-soft", async () => {
+    const upsert = jest.fn().mockResolvedValue({ id: "i1", email: "b@x.com", role: Role.VIEWER, token: "tok", expiresAt: new Date() });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ name: null }) },
+      team: { findUnique: jest.fn().mockResolvedValue({ name: "Platform" }) },
+      teamInvitation: { upsert },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    (mail.send as jest.Mock).mockClear();
+    (mail.send as jest.Mock).mockResolvedValue(false); // mailer unconfigured / send failed
+    const inv = await make(prisma, access).invite("u1", "t1", "b@x.com", Role.VIEWER);
+    expect(inv.token).toBe("tok");
+    (mail.send as jest.Mock).mockResolvedValue(true); // restore for other tests
   });
 
   it("rejects inviting an existing member", async () => {

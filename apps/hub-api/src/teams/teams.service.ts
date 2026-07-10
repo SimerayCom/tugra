@@ -6,11 +6,15 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
+import { ConfigService } from "@nestjs/config";
 import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { MailService } from "../mail/mail.service";
+import { teamInviteEmail } from "../mail/templates";
 import { TeamAccessService } from "../common/team-access.service";
 import { TeamDefaultsService } from "./team-defaults.service";
+import { webBaseUrl } from "../common/web-url";
 
 const MANAGE: Role[] = [Role.OWNER, Role.ADMIN];
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -50,6 +54,8 @@ export class TeamsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly teamDefaults: TeamDefaultsService,
+    private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
 
   async list(userId: string): Promise<TeamView[]> {
@@ -214,6 +220,18 @@ export class TeamsService {
       update: { role, token, invitedBy: userId, expiresAt },
     });
     await this.audit.log({ actor: userId, action: "team.invite", target: id, meta: { email: addr, role } });
+    // Email the invite too (on top of the copy-link the caller still gets back). Load the
+    // personalization, then FIRE-AND-FORGET the SMTP send AFTER the DB write so a mail hiccup can
+    // never block invitation creation (MailService.send is already fail-soft / never-throws).
+    const [team, inviter] = await Promise.all([
+      this.prisma.team.findUnique({ where: { id }, select: { name: true } }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    ]);
+    const acceptUrl = `${webBaseUrl(this.config)}/teams?invite=${token}`;
+    void this.mail
+      .send(addr, teamInviteEmail({ inviterName: inviter?.name ?? null, teamName: team?.name ?? "a team", acceptUrl }))
+      .then((sent) => this.audit.log({ actor: userId, action: "team.invite.sent", target: id, meta: { email: addr, delivered: sent } }))
+      .catch(() => undefined);
     return { id: inv.id, email: inv.email, role: inv.role, token: inv.token, expiresAt: inv.expiresAt };
   }
 
