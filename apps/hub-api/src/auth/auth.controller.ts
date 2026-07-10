@@ -21,6 +21,7 @@ import {
   TG_REFRESH,
 } from "../common/cookies";
 import { CsrfExempt } from "../common/csrf-exempt.decorator";
+import { AllowUnverified } from "../common/allow-unverified.decorator";
 import { AuthService } from "./auth.service";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
@@ -44,6 +45,8 @@ import {
   TwoFaSudoSchema,
   UpdateProfileInput,
   UpdateProfileSchema,
+  VerifyEmailInput,
+  VerifyEmailSchema,
 } from "./dto/auth.schemas";
 
 /** Minimal request shape we read for cookies — avoids a hard @types/express dependency. */
@@ -52,6 +55,7 @@ interface CookieRequest {
 }
 
 @Controller("auth")
+@AllowUnverified() // every auth self-service route stays reachable for unverified users
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
@@ -98,6 +102,26 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async resetPassword(@Body(new ZodValidationPipe(ResetPasswordSchema)) body: ResetPasswordInput) {
     await this.auth.resetPassword(body.token, body.newPassword);
+    return { ok: true };
+  }
+
+  @Post("verify-email")
+  @HttpCode(200)
+  @CsrfExempt()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async verifyEmail(@Body(new ZodValidationPipe(VerifyEmailSchema)) body: VerifyEmailInput) {
+    // Public: the token IS the authorization (clicked from an email, possibly on another device).
+    await this.auth.verifyEmail(body.token);
+    return { ok: true };
+  }
+
+  @Post("resend-verification")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async resendVerification(@CurrentUser() user: AuthUser) {
+    // Authenticated (no enumeration surface) — re-sends for the current user, no-op if verified.
+    await this.auth.resendVerification(user.userId);
     return { ok: true };
   }
 

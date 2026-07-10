@@ -70,6 +70,22 @@ export function verifyEmail(v: { name: string | null; verifyUrl: string }): Rend
   };
 }
 
+/** Security notice sent to the CURRENT (old) address when an email change is requested. */
+export function emailChangeNoticeEmail(v: { name: string | null; newEmail: string }): RenderedEmail {
+  const hi = v.name ? `Hi ${escapeHtml(v.name)},` : "Hi,";
+  const to = escapeHtml(v.newEmail);
+  return {
+    subject: "Your Tugra email is being changed",
+    html: layout(
+      "Your Tugra email is being changed",
+      `<p style="margin:0 0 12px;">${hi}</p>` +
+        `<p style="margin:0 0 20px;">A request was made to change your account email to <strong>${to}</strong>. The change only takes effect once that new address confirms it — your current address stays in control until then.</p>` +
+        `<p style="margin:0;color:#666;font-size:13px;">If you didn't request this, change your password now — someone may have access to your session.</p>`,
+    ),
+    text: `${v.name ? `Hi ${v.name},` : "Hi,"}\n\nA request was made to change your Tugra account email to ${v.newEmail}. It takes effect only once that address confirms it. If you didn't request this, change your password immediately.`,
+  };
+}
+
 export function teamInviteEmail(v: { inviterName: string | null; teamName: string; acceptUrl: string }): RenderedEmail {
   const who = v.inviterName ? escapeHtml(v.inviterName) : "Someone";
   return {

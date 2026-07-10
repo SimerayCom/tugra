@@ -2,8 +2,10 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { JwtModule } from "@nestjs/jwt";
 import { validateEnv } from "./config/env";
 import { CsrfGuard } from "./common/csrf.guard";
+import { EmailVerifiedGuard } from "./common/email-verified.guard";
 import { HealthController } from "./health/health.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
@@ -37,6 +39,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
+    JwtModule.register({}), // for EmailVerifiedGuard to verify the access token itself
     PrismaModule,
     RedisModule,
     AuditModule,
@@ -69,6 +72,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
+    { provide: APP_GUARD, useClass: EmailVerifiedGuard },
   ],
 })
 export class AppModule {}
