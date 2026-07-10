@@ -185,10 +185,23 @@ export const api = {
   },
 
   enable2fa(token: string) {
-    return apiFetch<{ ok: true }>("/auth/2fa/enable", {
+    // Returns the 10 one-time recovery codes (shown once) — the caller MUST surface them.
+    return apiFetch<{ recoveryCodes: string[] }>("/auth/2fa/enable", {
       method: "POST",
       body: JSON.stringify({ token }),
     });
+  },
+
+  disable2fa(password: string, code: string) {
+    return apiFetch<{ ok: true }>("/auth/2fa/disable", { method: "POST", body: JSON.stringify({ password, code }) });
+  },
+
+  regenerateRecoveryCodes(password: string, code: string) {
+    return apiFetch<{ recoveryCodes: string[] }>("/auth/2fa/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ password, code }) });
+  },
+
+  recoveryCodesStatus() {
+    return apiFetch<{ remaining: number }>("/auth/2fa/recovery-codes/status");
   },
 
   listTeams() {

@@ -24,6 +24,8 @@ import {
   RefreshSchema,
   RegisterInput,
   RegisterSchema,
+  TwoFaSudoInput,
+  TwoFaSudoSchema,
   UpdateProfileInput,
   UpdateProfileSchema,
 } from "./dto/auth.schemas";
@@ -114,5 +116,35 @@ export class AuthController {
   ) {
     // Returns the plaintext recovery codes ONCE — the client must show + let the user save them.
     return this.auth.enable2FA(user.userId, body.token);
+  }
+
+  @Post("2fa/disable")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async disable2fa(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(TwoFaSudoSchema)) body: TwoFaSudoInput,
+  ) {
+    await this.auth.disable2FA(user.userId, body.password, body.code);
+    return { ok: true };
+  }
+
+  @Post("2fa/recovery-codes/regenerate")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async regenerateRecoveryCodes(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(TwoFaSudoSchema)) body: TwoFaSudoInput,
+  ) {
+    // Returns the fresh plaintext recovery codes ONCE.
+    return this.auth.regenerateRecoveryCodes(user.userId, body.password, body.code);
+  }
+
+  @Get("2fa/recovery-codes/status")
+  @UseGuards(JwtAuthGuard)
+  recoveryCodesStatus(@CurrentUser() user: AuthUser) {
+    return this.auth.recoveryCodesStatus(user.userId);
   }
 }

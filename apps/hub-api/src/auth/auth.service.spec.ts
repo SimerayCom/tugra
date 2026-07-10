@@ -200,6 +200,77 @@ describe("AuthService 2FA recovery codes", () => {
     expect((res as { recoveryLow?: true }).recoveryLow).toBeUndefined();
     expect(updateMany).not.toHaveBeenCalled();
   });
+
+  const enabledUser = async () => ({
+    id: "u1",
+    email: "a@b.c",
+    password: await argon2.hash("pw", { type: argon2.argon2id }),
+    twoFaEnabled: true,
+    twoFaSecret: "enc",
+  });
+
+  it("disable2FA wipes the secret + recovery codes with password + TOTP", async () => {
+    const userUpdate = jest.fn().mockResolvedValue({});
+    const deleteMany = jest.fn().mockResolvedValue({ count: 10 });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(await enabledUser()) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb({ user: { update: userUpdate }, twoFactorRecoveryCode: { deleteMany } })),
+    } as unknown as PrismaService;
+    await make2fa(prisma, jest.fn().mockReturnValue(true)).disable2FA("u1", "pw", "123456");
+    expect(userUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ twoFaEnabled: false, twoFaSecret: null, twoFaEnabledAt: null }) }));
+    expect(deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
+  });
+
+  it("disable2FA also accepts a recovery code as the second factor", async () => {
+    const userUpdate = jest.fn().mockResolvedValue({});
+    const deleteMany = jest.fn().mockResolvedValue({ count: 9 });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(await enabledUser()) },
+      twoFactorRecoveryCode: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), count: jest.fn().mockResolvedValue(9) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb({ user: { update: userUpdate }, twoFactorRecoveryCode: { deleteMany } })),
+    } as unknown as PrismaService;
+    // TOTP fails → recovery-code fallback consumes one, then disable proceeds.
+    await make2fa(prisma, jest.fn().mockReturnValue(false)).disable2FA("u1", "pw", "AB12-CD34");
+    expect(userUpdate).toHaveBeenCalled();
+  });
+
+  it("disable2FA rejects a wrong password (before touching 2FA state)", async () => {
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(await enabledUser()) } } as unknown as PrismaService;
+    await expect(make2fa(prisma, jest.fn().mockReturnValue(true)).disable2FA("u1", "WRONG", "123456")).rejects.toThrow(/password is incorrect/);
+  });
+
+  it("disable2FA rejects an invalid 2FA code", async () => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(await enabledUser()) },
+      twoFactorRecoveryCode: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    } as unknown as PrismaService;
+    await expect(make2fa(prisma, jest.fn().mockReturnValue(false)).disable2FA("u1", "pw", "BAD-CODE")).rejects.toThrow(/2FA/);
+  });
+
+  it("disable2FA 400s when 2FA is not enabled", async () => {
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", password: await argon2.hash("pw", { type: argon2.argon2id }), twoFaEnabled: false }) } } as unknown as PrismaService;
+    await expect(make2fa(prisma, jest.fn()).disable2FA("u1", "pw", "123456")).rejects.toThrow(/not enabled/);
+  });
+
+  it("regenerateRecoveryCodes replaces old codes with 10 fresh hashed ones (password + TOTP)", async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 10 });
+    const deleteMany = jest.fn().mockResolvedValue({ count: 8 });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(await enabledUser()) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb({ twoFactorRecoveryCode: { deleteMany, createMany } })),
+    } as unknown as PrismaService;
+    const res = await make2fa(prisma, jest.fn().mockReturnValue(true)).regenerateRecoveryCodes("u1", "pw", "123456");
+    expect(res.recoveryCodes).toHaveLength(10);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
+    const rows = createMany.mock.calls[0][0].data as { codeHash: string }[];
+    for (const r of rows) expect(r.codeHash).toMatch(/^[0-9a-f]{64}$/); // stored hashed, never plaintext
+    expect(JSON.stringify(rows)).not.toContain(res.recoveryCodes[0]);
+  });
+
+  it("recoveryCodesStatus returns the unused-code count", async () => {
+    const prisma = { twoFactorRecoveryCode: { count: jest.fn().mockResolvedValue(7) } } as unknown as PrismaService;
+    expect(await make2fa(prisma, jest.fn()).recoveryCodesStatus("u1")).toEqual({ remaining: 7 });
+  });
 });
 
 describe("AuthService.updateProfile", () => {

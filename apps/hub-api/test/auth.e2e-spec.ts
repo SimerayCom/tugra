@@ -190,6 +190,43 @@ describe("Auth (e2e)", () => {
       .expect(401);
   });
 
+  it("supports recovery-code status, regenerate, and 2FA disable (password + code re-auth)", async () => {
+    // Fresh user so this lifecycle doesn't perturb the shared account, and to spare the login throttle.
+    const u = `e2e-2fa-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const pw = "supersecret123";
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: u, password: pw }).expect(201);
+    const at = reg.body.tokens.accessToken as string;
+    const auth = (r: request.Test) => r.set("Authorization", `Bearer ${at}`);
+
+    const setup = await auth(request(app.getHttpServer()).post("/auth/2fa/setup")).expect(201);
+    const secret = /secret=([A-Z0-9]+)/.exec(setup.body.otpauthUrl)![1];
+    const enable = await auth(request(app.getHttpServer()).post("/auth/2fa/enable")).send({ token: authenticator.generate(secret) }).expect(200);
+    const oldCodes = enable.body.recoveryCodes as string[];
+
+    // Status shows 10 unused codes.
+    const status = await auth(request(app.getHttpServer()).get("/auth/2fa/recovery-codes/status")).expect(200);
+    expect(status.body.remaining).toBe(10);
+
+    // Regenerate (password + TOTP) returns 10 fresh codes, distinct from the old set.
+    const regen = await auth(request(app.getHttpServer()).post("/auth/2fa/recovery-codes/regenerate"))
+      .send({ password: pw, code: authenticator.generate(secret) })
+      .expect(200);
+    const newCodes = regen.body.recoveryCodes as string[];
+    expect(newCodes).toHaveLength(10);
+    expect(newCodes).not.toContain(oldCodes[0]);
+
+    // Disable needs password + a valid code: wrong password → 401; correct password + a NEW recovery code → 200.
+    await auth(request(app.getHttpServer()).post("/auth/2fa/disable")).send({ password: "wrong-pw", code: authenticator.generate(secret) }).expect(401);
+    await auth(request(app.getHttpServer()).post("/auth/2fa/disable")).send({ password: pw, code: newCodes[0] }).expect(200);
+
+    // 2FA is off → login no longer asks for a code (the one login here keeps within the throttle).
+    const login = await request(app.getHttpServer()).post("/auth/login").send({ email: u, password: pw }).expect(200);
+    expect(login.body.tokens.accessToken).toBeTruthy();
+    expect(login.body.twoFaRequired).toBeUndefined();
+
+    await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
+  });
+
   it("rejects a bad password", async () => {
     await request(app.getHttpServer())
       .post("/auth/login")

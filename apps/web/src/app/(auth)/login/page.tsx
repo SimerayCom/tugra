@@ -71,7 +71,10 @@ export default function LoginPage() {
             <input style={field} type="password" placeholder={t("auth.password")} value={password} onChange={(e) => setPassword(e.target.value)} required />
           </>
         ) : (
-          <input style={{ ...field, letterSpacing: "0.3em", textAlign: "center" }} className="mono" placeholder="000000" value={totp} onChange={(e) => setTotp(e.target.value)} maxLength={6} autoFocus />
+          <>
+            <input style={{ ...field, letterSpacing: "0.2em", textAlign: "center", marginBottom: 6 }} className="mono" placeholder="000000" value={totp} onChange={(e) => setTotp(e.target.value)} maxLength={14} autoFocus />
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("auth.recoveryHint")}</div>
+          </>
         )}
         {err && <div style={{ color: "var(--c-r)", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <Btn type="submit" disabled={busy} style={{ width: "100%" }}>

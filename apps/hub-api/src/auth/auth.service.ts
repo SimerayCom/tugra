@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   HttpException,
   HttpStatus,
@@ -165,25 +166,8 @@ export class AuthService {
       if (!totp) {
         return { twoFaRequired: true };
       }
-      const secret = this.crypto.decrypt(user.twoFaSecret as string);
-      let ok = this.totp.verify(totp, secret);
-      if (!ok) {
-        // Fall back to a one-time recovery code. updateMany({usedAt:null}) consumes it
-        // atomically, so two concurrent logins can't both spend the same code.
-        const consumed = await this.prisma.twoFactorRecoveryCode.updateMany({
-          where: { userId: user.id, codeHash: this.crypto.hmac(recoveryHashInput(user.id, totp)), usedAt: null },
-          data: { usedAt: new Date() },
-        });
-        if (consumed.count === 1) {
-          ok = true;
-          const remaining = await this.prisma.twoFactorRecoveryCode.count({
-            where: { userId: user.id, usedAt: null },
-          });
-          recoveryLow = remaining <= 2;
-          await this.audit.log({ actor: user.id, action: "auth.2fa.recovery_used", meta: { remaining } });
-        }
-      }
-      if (!ok) {
+      const result = await this.verifyTwoFactorCode(user, totp);
+      if (!result.ok) {
         await this.registerLoginFailure(key);
         await this.audit.log({
           actor: user.id,
@@ -192,6 +176,8 @@ export class AuthService {
         });
         throw new UnauthorizedException("invalid 2FA code");
       }
+      // A recovery code was spent (remaining !== null) and few remain → nudge the user.
+      recoveryLow = result.remaining !== null && result.remaining <= 2;
     }
 
     // Success — clear the failure counter so an earlier typo streak doesn't linger.
@@ -356,6 +342,78 @@ export class AuthService {
     });
     await this.audit.log({ actor: userId, action: "auth.2fa.enabled" });
     return { recoveryCodes };
+  }
+
+  /**
+   * Verify a 2FA code against the user's TOTP secret, falling back to a one-time recovery code
+   * (consumed atomically via updateMany so two concurrent attempts can't both spend it). Returns
+   * `remaining` = how many recovery codes are left when one was spent, or null when TOTP matched
+   * (so callers can flag "running low"). The `auth.2fa.recovery_used` audit is logged here.
+   */
+  private async verifyTwoFactorCode(
+    user: { id: string; twoFaSecret: string | null },
+    code: string,
+  ): Promise<{ ok: boolean; remaining: number | null }> {
+    if (this.totp.verify(code, this.crypto.decrypt(user.twoFaSecret as string))) {
+      return { ok: true, remaining: null };
+    }
+    const consumed = await this.prisma.twoFactorRecoveryCode.updateMany({
+      where: { userId: user.id, codeHash: this.crypto.hmac(recoveryHashInput(user.id, code)), usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (consumed.count !== 1) return { ok: false, remaining: null };
+    const remaining = await this.prisma.twoFactorRecoveryCode.count({ where: { userId: user.id, usedAt: null } });
+    await this.audit.log({ actor: user.id, action: "auth.2fa.recovery_used", meta: { remaining } });
+    return { ok: true, remaining };
+  }
+
+  /**
+   * Disable 2FA. Sudo re-auth: current password AND a valid 2FA code (TOTP or a recovery code).
+   * Wipes the secret, flips twoFaEnabled off, and deletes every recovery code. So a lost
+   * authenticator never becomes a permanent lockout: log in via a recovery code, then disable.
+   */
+  async disable2FA(userId: string, password: string, code: string): Promise<void> {
+    const user = await this.requireUser(userId);
+    if (!(await argon2.verify(user.password, password))) {
+      throw new UnauthorizedException("password is incorrect");
+    }
+    if (!user.twoFaEnabled) throw new BadRequestException("2FA is not enabled");
+    if (!(await this.verifyTwoFactorCode(user, code)).ok) {
+      throw new UnauthorizedException("invalid 2FA code");
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { twoFaEnabled: false, twoFaSecret: null, twoFaEnabledAt: null } });
+      await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
+    });
+    await this.audit.log({ actor: userId, action: "auth.2fa.disabled" });
+  }
+
+  /** Replace all recovery codes with 10 fresh ones (returned in plaintext ONCE). Same
+   *  password + code sudo re-auth as disable. */
+  async regenerateRecoveryCodes(userId: string, password: string, code: string): Promise<{ recoveryCodes: string[] }> {
+    const user = await this.requireUser(userId);
+    if (!(await argon2.verify(user.password, password))) {
+      throw new UnauthorizedException("password is incorrect");
+    }
+    if (!user.twoFaEnabled) throw new BadRequestException("2FA is not enabled");
+    if (!(await this.verifyTwoFactorCode(user, code)).ok) {
+      throw new UnauthorizedException("invalid 2FA code");
+    }
+    const recoveryCodes = generateRecoveryCodes(10);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.twoFactorRecoveryCode.deleteMany({ where: { userId } });
+      await tx.twoFactorRecoveryCode.createMany({
+        data: recoveryCodes.map((c) => ({ userId, codeHash: this.crypto.hmac(recoveryHashInput(userId, c)) })),
+      });
+    });
+    await this.audit.log({ actor: userId, action: "auth.2fa.recovery_regenerated" });
+    return { recoveryCodes };
+  }
+
+  /** How many unused recovery codes remain (drives the "N remaining" UI). */
+  async recoveryCodesStatus(userId: string): Promise<{ remaining: number }> {
+    const remaining = await this.prisma.twoFactorRecoveryCode.count({ where: { userId, usedAt: null } });
+    return { remaining };
   }
 
   async me(userId: string): Promise<PublicUser> {
