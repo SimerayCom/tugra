@@ -13,30 +13,10 @@ import { Field, TextInput } from "../../../components/form";
 import { CopyBtn } from "../../../components/copy-row";
 import { useConfirm } from "../../../components/confirm";
 import { useToast } from "../../../components/toast";
+import { Modal } from "../../../components/modal";
 
 export default function SettingsPage() {
   const t = useT();
-  const { user, reload } = useAuth();
-  const [setup, setSetup] = useState<{ otpauthUrl: string; qrDataUrl: string } | null>(null);
-  const [code, setCode] = useState("");
-  const [msg, setMsg] = useState("");
-
-  const startSetup = async () => {
-    setMsg("");
-    setSetup(await api.setup2fa());
-  };
-  const enable = async () => {
-    setMsg("");
-    try {
-      await api.enable2fa(code);
-      setSetup(null);
-      setCode("");
-      await reload();
-      setMsg(t("settings.enabled2fa"));
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : t("settings.codeWrong"));
-    }
-  };
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 520 }}>
@@ -46,31 +26,7 @@ export default function SettingsPage() {
       <UiModeCard />
       <PasswordCard />
       <SessionsCard />
-
-      <Card style={{ padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontWeight: 600 }}>{t("settings.twoFa")}</div>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
-              {user?.twoFaEnabled ? t("settings.enabled") : t("settings.disabled")}
-            </div>
-          </div>
-          {!user?.twoFaEnabled && !setup && <Btn onClick={startSetup}>{t("settings.setup")}</Btn>}
-        </div>
-
-        {setup && (
-          <div style={{ marginTop: 16 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={setup.qrDataUrl} alt="2FA QR" width={160} height={160} style={{ borderRadius: 8, background: "#fff", padding: 8 }} />
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <input className="mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder="000000" maxLength={6}
-                style={{ flex: 1, padding: "8px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", letterSpacing: "0.2em", textAlign: "center" }} />
-              <Btn onClick={enable}>{t("settings.enable")}</Btn>
-            </div>
-          </div>
-        )}
-        {msg && <div style={{ marginTop: 12, fontSize: 13, color: "var(--c-a)" }}>{msg}</div>}
-      </Card>
+      <TwoFactorCard />
 
       <ApiTokensCard />
 
@@ -288,5 +244,156 @@ function ApiTokensCard() {
         {tokens.length === 0 && <EmptyState icon={KeyRound} title={t("settings.noTokensTitle")}>{t("settings.noTokens")}</EmptyState>}
       </div>
     </Card>
+  );
+}
+
+const modalField: React.CSSProperties = {
+  width: "100%",
+  padding: "9px 11px",
+  background: "var(--c-el)",
+  border: "1px solid var(--c-bd)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 14,
+  fontFamily: "inherit",
+  boxSizing: "border-box",
+};
+
+function TwoFactorCard() {
+  const t = useT();
+  const { user, reload } = useAuth();
+  const qc = useQueryClient();
+  const enabled = !!user?.twoFaEnabled;
+  const [setup, setSetup] = useState<{ otpauthUrl: string; qrDataUrl: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [freshCodes, setFreshCodes] = useState<string[] | null>(null); // shown once after enable/regenerate
+  const [sudo, setSudo] = useState<null | "disable" | "regenerate">(null);
+  const { data: status } = useQuery({ queryKey: ["recoveryStatus"], queryFn: () => api.recoveryCodesStatus(), enabled });
+
+  const startSetup = async () => { setErr(""); setSetup(await api.setup2fa()); };
+  const enable = async () => {
+    setErr("");
+    try {
+      const { recoveryCodes } = await api.enable2fa(code);
+      setSetup(null);
+      setCode("");
+      await reload();
+      qc.invalidateQueries({ queryKey: ["recoveryStatus"] });
+      setFreshCodes(recoveryCodes); // surface the one-time codes
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("settings.codeWrong"));
+    }
+  };
+
+  return (
+    <Card style={{ padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>{t("settings.twoFa")}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{enabled ? t("settings.enabled") : t("settings.disabled")}</div>
+        </div>
+        {!enabled && !setup && <Btn onClick={startSetup}>{t("settings.setup")}</Btn>}
+        {enabled && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" onClick={() => setSudo("regenerate")}>{t("settings.regenerate")}</Btn>
+            <Btn variant="danger" onClick={() => setSudo("disable")}>{t("settings.disable2fa")}</Btn>
+          </div>
+        )}
+      </div>
+
+      {enabled && status && (
+        <div style={{ fontSize: 12, color: status.remaining <= 2 ? "var(--c-r)" : "var(--c-tx3)", marginTop: 8 }}>
+          {t("settings.recoveryRemaining", { n: status.remaining })}
+        </div>
+      )}
+
+      {setup && (
+        <div style={{ marginTop: 16 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={setup.qrDataUrl} alt="2FA QR" width={160} height={160} style={{ borderRadius: 8, background: "#fff", padding: 8 }} />
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <input className="mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder="000000" maxLength={6}
+              style={{ flex: 1, padding: "8px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", letterSpacing: "0.2em", textAlign: "center" }} />
+            <Btn onClick={enable}>{t("settings.enable")}</Btn>
+          </div>
+        </div>
+      )}
+      {err && <div style={{ marginTop: 12, fontSize: 13, color: "var(--c-r)" }}>{err}</div>}
+
+      {freshCodes && <RecoveryCodesModal codes={freshCodes} onClose={() => setFreshCodes(null)} />}
+      {sudo && (
+        <SudoPrompt
+          kind={sudo}
+          onClose={() => setSudo(null)}
+          onDone={async (codes) => {
+            setSudo(null);
+            await reload();
+            qc.invalidateQueries({ queryKey: ["recoveryStatus"] });
+            if (codes) setFreshCodes(codes);
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+/** Password + 2FA-code sudo prompt for disabling 2FA or regenerating recovery codes. */
+function SudoPrompt({ kind, onClose, onDone }: { kind: "disable" | "regenerate"; onClose: () => void; onDone: (codes: string[] | null) => void }) {
+  const t = useT();
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setErr("");
+    setBusy(true);
+    try {
+      if (kind === "disable") {
+        await api.disable2fa(password, code);
+        onDone(null);
+      } else {
+        const { recoveryCodes } = await api.regenerateRecoveryCodes(password, code);
+        onDone(recoveryCodes);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("settings.codeWrong"));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal onClose={onClose} zIndex={70}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{kind === "disable" ? t("settings.disable2fa") : t("settings.regenerate")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.sudoDesc")}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <input type="password" placeholder={t("settings.currentPassword")} value={password} onChange={(e) => setPassword(e.target.value)} style={modalField} autoFocus />
+        <input className="mono" placeholder={t("settings.codePrompt")} value={code} onChange={(e) => setCode(e.target.value)} style={modalField} />
+      </div>
+      {err && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
+        <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
+        <Btn variant={kind === "disable" ? "danger" : "primary"} onClick={submit} disabled={busy || !password || !code}>{busy ? "…" : t("common.confirm")}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/** One-time display of freshly issued recovery codes. */
+function RecoveryCodesModal({ codes, onClose }: { codes: string[]; onClose: () => void }) {
+  const t = useT();
+  return (
+    <Modal onClose={onClose} zIndex={70}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("settings.recoveryCodesTitle")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.recoveryCodesDesc")}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14 }}>
+        {codes.map((c) => (
+          <code key={c} className="mono" style={{ fontSize: 13, padding: "5px 8px", background: "var(--c-el)", borderRadius: "var(--r1)", textAlign: "center" }}>{c}</code>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+        <CopyBtn text={codes.join("\n")} label={t("settings.copy")} />
+        <Btn onClick={onClose}>{t("settings.savedThem")}</Btn>
+      </div>
+    </Modal>
   );
 }

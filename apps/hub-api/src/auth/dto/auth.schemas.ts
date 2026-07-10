@@ -24,6 +24,14 @@ export const Enable2faSchema = z.object({
 });
 export type Enable2faInput = z.infer<typeof Enable2faSchema>;
 
+// Sudo re-auth for sensitive 2FA mutations: current password + a 2FA code (TOTP 6-digit or a
+// recovery code like XXXX-XXXX). min(6) admits both.
+export const TwoFaSudoSchema = z.object({
+  password: z.string().min(1),
+  code: z.string().min(6),
+});
+export type TwoFaSudoInput = z.infer<typeof TwoFaSudoSchema>;
+
 export const UpdateProfileSchema = z
   .object({
     name: z.string().min(1).max(100).optional(),
