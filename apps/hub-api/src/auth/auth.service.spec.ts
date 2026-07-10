@@ -1,3 +1,4 @@
+import { HttpException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
@@ -25,12 +26,17 @@ class FakeRedis {
       this.sets.delete(k);
     }
   }
+  async incr(k: string): Promise<number> {
+    const n = (Number(this.kv.get(k)) || 0) + 1;
+    this.kv.set(k, String(n));
+    return n;
+  }
   async sadd(k: string, m: string): Promise<void> {
     if (!this.sets.has(k)) this.sets.set(k, new Set());
     this.sets.get(k)!.add(m);
   }
-  async srem(k: string, m: string): Promise<void> {
-    this.sets.get(k)?.delete(m);
+  async srem(k: string, ...members: string[]): Promise<void> {
+    for (const m of members) this.sets.get(k)?.delete(m);
   }
   async smembers(k: string): Promise<string[]> {
     return [...(this.sets.get(k) ?? [])];
@@ -239,6 +245,86 @@ describe("AuthService.changePassword", () => {
     const data = update.mock.calls[0][0].data;
     expect(data.password).toBeTruthy();
     expect(data.password).not.toBe("newpass1234"); // stored hashed, not plaintext
+  });
+});
+
+describe("AuthService session hardening", () => {
+  it("locks an email out after too many failed attempts (per-email, IP-independent)", async () => {
+    // Unknown email → no argon2 cost, but each miss still counts toward the lockout.
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    // 10 misses trip the lock; the 11th attempt is refused with 423 BEFORE credentials are checked.
+    for (let i = 0; i < 10; i++) {
+      await expect(svc.login("ghost@x.io", "guess")).rejects.toThrow(/invalid credentials/);
+    }
+    try {
+      await svc.login("ghost@x.io", "guess");
+      throw new Error("expected a lockout");
+    } catch (e) {
+      expect((e as HttpException).getStatus()).toBe(423); // 423 Locked
+    }
+    // A DIFFERENT email is unaffected (lock is scoped per-email, not global).
+    await expect(svc.login("someone-else@x.io", "guess")).rejects.toThrow(/invalid credentials/);
+  });
+
+  it("logoutAll revokes every session across all devices/families", async () => {
+    const svc = makeService();
+    const deviceA = await svc.issueTokens("u1");
+    const deviceB = await svc.issueTokens("u1"); // a second, independent family
+    const other = await svc.issueTokens("u2"); // a different user — must survive
+
+    await svc.logoutAll("u1");
+
+    await expect(svc.refresh(deviceA.refreshToken)).rejects.toThrow();
+    await expect(svc.refresh(deviceB.refreshToken)).rejects.toThrow();
+    // u2's session is untouched.
+    const rotated = await svc.refresh(other.refreshToken);
+    expect(rotated.refreshToken).toBeTruthy();
+  });
+
+  it("changing the password revokes all existing sessions", async () => {
+    const passwordHash = await argon2.hash("old-pass-1234", { type: argon2.argon2id });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", password: passwordHash }), update: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    const session = await svc.issueTokens("u1");
+
+    await svc.changePassword("u1", "old-pass-1234", "new-pass-5678");
+
+    await expect(svc.refresh(session.refreshToken)).rejects.toThrow();
+  });
+
+  it("revokes even a LEGACY refresh token that carries no generation stamp (deploy-transition gap)", async () => {
+    // A token minted before the generation mechanism: valid rt: entry, but its JWT has no `gen`
+    // claim. It must still be caught by logout-all (revocation is by generation, not by an index
+    // the token is missing from).
+    const redis = new FakeRedis();
+    const jwt = new JwtService({});
+    const secret = "refresh-secret-bbbbbbbbbbbb"; // matches the shared config mock
+    const svc = new AuthService(
+      {} as PrismaService,
+      jwt,
+      config,
+      {} as CryptoService,
+      {} as TotpService,
+      { log: jest.fn() } as unknown as AuditService,
+      redis as unknown as RedisService,
+      { ensureDefaults: jest.fn() } as unknown as TeamDefaultsService,
+    );
+    const legacy = async (jti: string) => {
+      const token = await jwt.signAsync({ sub: "u1", jti, family: `fam-${jti}`, type: "refresh" }, { secret, expiresIn: 3600 });
+      await redis.set(`rt:${jti}`, "u1");
+      return token;
+    };
+
+    // Before any revocation a legacy token still works (gen absent ⇒ 0 == current 0).
+    expect((await svc.refresh(await legacy("legacy-1"))).refreshToken).toBeTruthy();
+
+    // After logout-all bumps the generation, a legacy token (gen 0 < 1) is refused.
+    const stale = await legacy("legacy-2");
+    await svc.logoutAll("u1");
+    await expect(svc.refresh(stale)).rejects.toThrow(/session revoked/);
   });
 });
 

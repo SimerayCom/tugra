@@ -59,6 +59,15 @@ export class AuthController {
     return { ok: true };
   }
 
+  @Post("logout-all")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async logoutAll(@CurrentUser() user: AuthUser) {
+    await this.auth.logoutAll(user.userId);
+    return { ok: true };
+  }
+
   @Get("me")
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: AuthUser) {
@@ -77,16 +86,20 @@ export class AuthController {
   @Post("change-password")
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async changePassword(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(ChangePasswordSchema)) body: ChangePasswordInput,
   ) {
-    await this.auth.changePassword(user.userId, body.currentPassword, body.newPassword);
-    return { ok: true };
+    // Returns fresh tokens for THIS device (all other sessions were revoked) — the client swaps
+    // them in so the current session survives the password change seamlessly.
+    const tokens = await this.auth.changePassword(user.userId, body.currentPassword, body.newPassword);
+    return { ok: true, tokens };
   }
 
   @Post("2fa/setup")
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   setup2fa(@CurrentUser() user: AuthUser) {
     return this.auth.setup2FA(user.userId);
   }
@@ -94,6 +107,7 @@ export class AuthController {
   @Post("2fa/enable")
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async enable2fa(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(Enable2faSchema)) body: Enable2faInput,

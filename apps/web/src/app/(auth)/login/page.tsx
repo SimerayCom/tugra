@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
-import { api, API_BASE } from "../../../lib/api";
+import { api, API_BASE, ApiError } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
@@ -52,7 +52,9 @@ export default function LoginPage() {
         router.replace("/dashboard");
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t("auth.loginFailed"));
+      if (e instanceof ApiError && e.status === 423) setErr(t("auth.locked"));
+      else if (e instanceof ApiError && e.status === 429) setErr(t("auth.tooMany"));
+      else setErr(e instanceof Error ? e.message : t("auth.loginFailed"));
     }
     setBusy(false);
   };

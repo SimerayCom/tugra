@@ -1,5 +1,7 @@
 import {
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -19,6 +21,14 @@ import { generateRecoveryCodes, recoveryHashInput } from "./recovery-codes";
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+// Per-email login defence (complements the per-IP throttle, which shared NAT egress can defeat).
+// A high per-email burst backstop that never trips for a human but caps a scripted flood; the
+// LOCKOUT below (kept lower) is the primary brute-force defence and stays reachable first.
+const LOGIN_RATE_MAX = 20; // login attempts per email per window before a soft 429
+const LOGIN_RATE_WINDOW = 60; // seconds
+const LOCKOUT_THRESHOLD = 10; // failed attempts within the window → temporary lock
+const LOCKOUT_WINDOW = 15 * 60; // 900s — both the fail-counter window and the lock duration (bounded, auto-clears)
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
@@ -37,6 +47,7 @@ interface RefreshPayload {
   jti: string;
   family: string;
   type: "refresh";
+  gen?: number; // refresh generation at issue time; a bump (logout-all / password change) revokes older ones. Absent on legacy tokens ⇒ 0.
 }
 
 @Injectable()
@@ -118,13 +129,29 @@ export class AuthService {
     password: string,
     totp?: string,
   ): Promise<{ tokens: TokenPair; recoveryLow?: true } | { twoFaRequired: true }> {
+    const key = email.toLowerCase();
+
+    // Temporary lockout after too many recent failures — bounded (auto-clears in 15 min) so a
+    // guesser can't hammer forever, while a locked-out legit user recovers without operator help.
+    if (await this.redis.get(`lock:${key}`)) {
+      throw new HttpException("account temporarily locked — try again later", 423); // 423 Locked
+    }
+    // Per-email burst guard over a short fixed window, independent of the per-IP throttle.
+    if ((await this.redis.incr(`rate:login:${key}`, LOGIN_RATE_WINDOW)) > LOGIN_RATE_MAX) {
+      throw new HttpException("too many login attempts — slow down", HttpStatus.TOO_MANY_REQUESTS);
+    }
+
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
+      // Count the miss too so the lock/rate behaviour is identical whether or not the email
+      // exists (no account enumeration via lockout timing) — same generic error either way.
+      await this.registerLoginFailure(key);
       throw new UnauthorizedException("invalid credentials");
     }
 
     const valid = await argon2.verify(user.password, password);
     if (!valid) {
+      await this.registerLoginFailure(key);
       await this.audit.log({
         actor: user.id,
         action: "auth.login.failed",
@@ -157,6 +184,7 @@ export class AuthService {
         }
       }
       if (!ok) {
+        await this.registerLoginFailure(key);
         await this.audit.log({
           actor: user.id,
           action: "auth.login.failed",
@@ -166,6 +194,8 @@ export class AuthService {
       }
     }
 
+    // Success — clear the failure counter so an earlier typo streak doesn't linger.
+    await this.redis.del(`fail:${key}`);
     await this.audit.log({ actor: user.id, action: "auth.login" });
     const tokens = await this.issueTokens(user.id);
     return recoveryLow ? { tokens, recoveryLow: true } : { tokens };
@@ -176,6 +206,8 @@ export class AuthService {
   async issueTokens(userId: string, family?: string): Promise<TokenPair> {
     const fam = family ?? randomUUID();
     const jti = randomUUID();
+    // Stamp the token with the user's current refresh generation so a later bump revokes it.
+    const gen = await this.currentGen(userId);
 
     const accessToken = await this.jwt.signAsync(
       { sub: userId, type: "access" },
@@ -185,7 +217,7 @@ export class AuthService {
       },
     );
     const refreshToken = await this.jwt.signAsync(
-      { sub: userId, jti, family: fam, type: "refresh" },
+      { sub: userId, jti, family: fam, type: "refresh", gen },
       {
         secret: this.config.get<string>("JWT_REFRESH_SECRET"),
         expiresIn: REFRESH_TTL_SECONDS,
@@ -197,6 +229,12 @@ export class AuthService {
     await this.redis.expire(`rtfam:${fam}`, REFRESH_TTL_SECONDS);
 
     return { accessToken, refreshToken };
+  }
+
+  /** The user's current refresh generation (0 if never bumped). Bumping it (logout-all /
+   *  password change) invalidates every token stamped with an older generation. */
+  private async currentGen(userId: string): Promise<number> {
+    return Number(await this.redis.get(`rtgen:${userId}`)) || 0;
   }
 
   async refresh(refreshToken: string): Promise<TokenPair> {
@@ -224,6 +262,15 @@ export class AuthService {
       throw new UnauthorizedException("refresh token reuse detected");
     }
 
+    // Global revocation gate: a logout-all / password change bumps the user's generation, so any
+    // token stamped with an older gen is dead — including ones never individually tracked (e.g.
+    // tokens minted before this mechanism, whose gen is absent ⇒ 0).
+    if ((payload.gen ?? 0) < (await this.currentGen(payload.sub))) {
+      await this.redis.del(`rt:${payload.jti}`);
+      await this.redis.srem(`rtfam:${payload.family}`, payload.jti);
+      throw new UnauthorizedException("session revoked");
+    }
+
     // Rotate: invalidate the used token, issue a new pair in the same family.
     await this.redis.del(`rt:${payload.jti}`);
     await this.redis.srem(`rtfam:${payload.family}`, payload.jti);
@@ -242,12 +289,32 @@ export class AuthService {
     }
   }
 
+  /** Revoke EVERY active session for a user (all families/devices) by bumping their refresh
+   *  generation: refresh() then rejects any token stamped with an older gen. This catches tokens
+   *  the hub never individually tracked — including any minted before this mechanism existed —
+   *  because revocation is by generation, not by an index that such tokens are missing from. The
+   *  now-orphaned rt:/rtfam: keys expire via their own TTL; the caller's access token still lives
+   *  until it expires (short TTL). */
+  async logoutAll(userId: string): Promise<void> {
+    await this.redis.incr(`rtgen:${userId}`);
+    await this.audit.log({ actor: userId, action: "auth.logout_all" });
+  }
+
   private async revokeFamily(family: string): Promise<void> {
     const members = await this.redis.smembers(`rtfam:${family}`);
     await this.redis.del(
       `rtfam:${family}`,
       ...members.map((jti) => `rt:${jti}`),
     );
+  }
+
+  /** Record a failed login for this email and trip a temporary lock once too many pile up in
+   *  the window. Keyed by email (lowercased) so the lock survives an attacker rotating IPs. */
+  private async registerLoginFailure(emailKey: string): Promise<void> {
+    const fails = await this.redis.incr(`fail:${emailKey}`, LOCKOUT_WINDOW);
+    if (fails >= LOCKOUT_THRESHOLD) {
+      await this.redis.set(`lock:${emailKey}`, "1", LOCKOUT_WINDOW);
+    }
   }
 
   // ---- 2FA -----------------------------------------------------------------
@@ -317,8 +384,11 @@ export class AuthService {
     return this.toPublicUser(updated);
   }
 
-  /** Change the current user's password (verifies the current one first). */
-  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  /** Change the current user's password (verifies the current one first). Returns a FRESH token
+   *  pair for the calling device: every existing session is revoked first (the "someone had my
+   *  password" recovery — other devices must re-authenticate), then this device is re-issued so
+   *  the user who just changed their own password isn't bounced to the login screen. */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<TokenPair> {
     const user = await this.requireUser(userId);
     if (!(await argon2.verify(user.password, currentPassword))) {
       throw new UnauthorizedException("current password is incorrect");
@@ -326,6 +396,8 @@ export class AuthService {
     const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
     await this.prisma.user.update({ where: { id: userId }, data: { password: passwordHash } });
     await this.audit.log({ actor: userId, action: "auth.password.change" });
+    await this.logoutAll(userId);
+    return this.issueTokens(userId);
   }
 
   private async requireUser(userId: string) {

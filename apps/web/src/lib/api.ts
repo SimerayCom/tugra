@@ -151,8 +151,12 @@ export const api = {
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home" }) {
     return apiFetch<PublicUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) });
   },
-  changePassword(input: { currentPassword: string; newPassword: string }) {
-    return apiFetch<{ ok: true }>("/auth/change-password", { method: "POST", body: JSON.stringify(input) });
+  async changePassword(input: { currentPassword: string; newPassword: string }) {
+    // The server revokes every session and returns a fresh pair for THIS device — swap it in so
+    // the current session keeps working (other devices are signed out).
+    const out = await apiFetch<{ ok: true; tokens: TokenPair }>("/auth/change-password", { method: "POST", body: JSON.stringify(input) });
+    if (out.tokens) tokens.set(out.tokens);
+    return out;
   },
 
   async logout() {
@@ -164,6 +168,12 @@ export const api = {
         false,
       ).catch(() => undefined);
     }
+    tokens.clear();
+  },
+
+  /** Revoke every session for the current user (all devices), then clear this one locally. */
+  async logoutAll() {
+    await apiFetch<{ ok: true }>("/auth/logout-all", { method: "POST" }).catch(() => undefined);
     tokens.clear();
   },
 

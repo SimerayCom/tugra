@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Home, Server } from "lucide-react";
 import { api } from "../../../lib/api";
@@ -44,6 +45,7 @@ export default function SettingsPage() {
       <AccountCard />
       <UiModeCard />
       <PasswordCard />
+      <SessionsCard />
 
       <Card style={{ padding: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -197,6 +199,28 @@ function PasswordCard() {
       <div style={{ marginTop: 14 }}>
         <Btn onClick={submit} disabled={change.isPending || !current || !next}>{change.isPending ? "…" : t("settings.changePassword")}</Btn>
       </div>
+    </Card>
+  );
+}
+
+function SessionsCard() {
+  const t = useT();
+  const router = useRouter();
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const logoutEverywhere = async () => {
+    if (!(await confirm({ body: t("settings.logoutEverywhereConfirm"), danger: true }))) return;
+    setBusy(true);
+    await api.logoutAll();
+    router.replace("/login");
+  };
+  return (
+    <Card style={{ padding: 18, marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>{t("settings.sessions")}</div>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.sessionsDesc")}</div>
+      </div>
+      <Btn variant="ghost" onClick={logoutEverywhere} disabled={busy}>{busy ? "…" : t("settings.logoutEverywhere")}</Btn>
     </Card>
   );
 }

@@ -196,4 +196,29 @@ describe("Auth (e2e)", () => {
       .send({ email, password: "wrong" })
       .expect(401);
   });
+
+  it("logout-all revokes the caller's active sessions", async () => {
+    // Fresh user so this doesn't disturb the shared account (which now has 2FA enabled).
+    const u = `e2e-la-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: u, password }).expect(201);
+    const access = reg.body.tokens.accessToken as string;
+    // Rotate once so we hold a live, current refresh token.
+    const rotated = await request(app.getHttpServer())
+      .post("/auth/refresh")
+      .send({ refreshToken: reg.body.tokens.refreshToken })
+      .expect(200);
+    const liveRt = rotated.body.refreshToken as string;
+
+    await request(app.getHttpServer())
+      .post("/auth/logout-all")
+      .set("Authorization", `Bearer ${access}`)
+      .expect(200);
+
+    // Every refresh token for the user is revoked → the live one is now dead.
+    await request(app.getHttpServer()).post("/auth/refresh").send({ refreshToken: liveRt }).expect(401);
+    // logout-all requires auth.
+    await request(app.getHttpServer()).post("/auth/logout-all").expect(401);
+
+    await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
+  });
 });
