@@ -38,31 +38,26 @@ import type {
   TokenPair,
 } from "./types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+// Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
+// cookie rides along (SameSite=Lax, no CORS). Auth tokens live in cookies now, never JS/localStorage.
+export const API_BASE = "/api";
 
-const ACCESS_KEY = "tugra.access";
-const REFRESH_KEY = "tugra.refresh";
+// The hub's PUBLIC absolute origin — ONLY for URLs shown to the user to paste into external systems
+// (e.g. GitHub webhooks), which hit the hub directly, NOT through the SPA's same-origin proxy.
+export const HUB_PUBLIC_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
-export const tokens = {
-  access(): string | null {
-    if (typeof localStorage === "undefined") return null;
-    return localStorage.getItem(ACCESS_KEY);
-  },
-  refresh(): string | null {
-    if (typeof localStorage === "undefined") return null;
-    return localStorage.getItem(REFRESH_KEY);
-  },
-  set(pair: TokenPair): void {
-    localStorage.setItem(ACCESS_KEY, pair.accessToken);
-    localStorage.setItem(REFRESH_KEY, pair.refreshToken);
-  },
-  clear(): void {
-    if (typeof localStorage === "undefined") return;
-    localStorage.removeItem(ACCESS_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-  },
-};
+const TG_CSRF = "tg_csrf";
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** Read a JS-readable cookie by name (used for the double-submit CSRF token). */
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  for (const part of document.cookie.split("; ")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i) === name) return decodeURIComponent(part.slice(i + 1));
+  }
+  return null;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -73,20 +68,18 @@ export class ApiError extends Error {
   }
 }
 
+/** Try a cookie-based refresh; the hub reads tg_refresh from the cookie and rotates the session. */
 async function tryRefresh(): Promise<boolean> {
-  const rt = tokens.refresh();
-  if (!rt) return false;
+  const headers = new Headers({ "content-type": "application/json" });
+  const csrf = readCookie(TG_CSRF);
+  if (csrf) headers.set("x-csrf-token", csrf);
   const res = await fetch(`${API_BASE}/auth/refresh`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ refreshToken: rt }),
+    headers,
+    credentials: "include",
+    body: "{}",
   });
-  if (!res.ok) {
-    tokens.clear();
-    return false;
-  }
-  tokens.set((await res.json()) as TokenPair);
-  return true;
+  return res.ok;
 }
 
 export async function apiFetch<T>(
@@ -94,12 +87,16 @@ export async function apiFetch<T>(
   init: RequestInit = {},
   retry = true,
 ): Promise<T> {
+  const method = String(init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json");
-  const access = tokens.access();
-  if (access) headers.set("authorization", `Bearer ${access}`);
+  // Double-submit CSRF: echo the JS-readable tg_csrf cookie on state-changing requests.
+  if (MUTATING.has(method)) {
+    const csrf = readCookie(TG_CSRF);
+    if (csrf) headers.set("x-csrf-token", csrf);
+  }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: "include" });
 
   if (res.status === 401 && retry && (await tryRefresh())) {
     return apiFetch<T>(path, init, false);
@@ -124,12 +121,12 @@ export async function apiFetch<T>(
 
 export const api = {
   async register(email: string, password: string, name?: string) {
+    // The hub sets the httpOnly session cookies on the response; we only need the user back.
     const out = await apiFetch<{ user: PublicUser; tokens: TokenPair }>(
       "/auth/register",
       { method: "POST", body: JSON.stringify({ email, password, name }) },
       false,
     );
-    tokens.set(out.tokens);
     return out.user;
   },
 
@@ -142,15 +139,12 @@ export const api = {
   },
 
   async login(email: string, password: string, totp?: string) {
-    const out = await apiFetch<
-      { tokens: TokenPair } | { twoFaRequired: true }
-    >(
+    // On success the hub sets the session cookies; the 2FA-required step sets none.
+    return apiFetch<{ tokens: TokenPair } | { twoFaRequired: true }>(
       "/auth/login",
       { method: "POST", body: JSON.stringify({ email, password, totp }) },
       false,
     );
-    if ("tokens" in out) tokens.set(out.tokens);
-    return out;
   },
 
   me() {
@@ -159,30 +153,25 @@ export const api = {
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home" }) {
     return apiFetch<PublicUser>("/auth/me", { method: "PATCH", body: JSON.stringify(input) });
   },
-  async changePassword(input: { currentPassword: string; newPassword: string }) {
-    // The server revokes every session and returns a fresh pair for THIS device — swap it in so
-    // the current session keeps working (other devices are signed out).
-    const out = await apiFetch<{ ok: true; tokens: TokenPair }>("/auth/change-password", { method: "POST", body: JSON.stringify(input) });
-    if (out.tokens) tokens.set(out.tokens);
-    return out;
+  changePassword(input: { currentPassword: string; newPassword: string }) {
+    // The server revokes every other session and refreshes THIS device's cookies in place, so the
+    // current session survives the password change (other devices are signed out).
+    return apiFetch<{ ok: true; tokens: TokenPair }>("/auth/change-password", { method: "POST", body: JSON.stringify(input) });
   },
 
   async logout() {
-    const rt = tokens.refresh();
-    if (rt) {
-      await apiFetch(
-        "/auth/logout",
-        { method: "POST", body: JSON.stringify({ refreshToken: rt }) },
-        false,
-      ).catch(() => undefined);
-    }
-    tokens.clear();
+    // The hub reads the refresh cookie, revokes it, and clears all session cookies.
+    await apiFetch("/auth/logout", { method: "POST" }, false).catch(() => undefined);
   },
 
-  /** Revoke every session for the current user (all devices), then clear this one locally. */
+  /** Revoke every session for the current user (all devices); the hub clears this one's cookies. */
   async logoutAll() {
     await apiFetch<{ ok: true }>("/auth/logout-all", { method: "POST" }).catch(() => undefined);
-    tokens.clear();
+  },
+
+  /** Mint a short-lived terminal ticket (browser can't read the httpOnly access cookie for the WS). */
+  terminalTicket() {
+    return apiFetch<{ ticket: string }>("/terminal/ticket", { method: "POST" });
   },
 
   setup2fa() {

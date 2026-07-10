@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { apiFetch, tokens } from "./api";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { apiFetch } from "./api";
 
 function jsonRes(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -8,41 +8,54 @@ function jsonRes(status: number, body: unknown): Response {
   });
 }
 
-describe("apiFetch 401 → refresh → retry", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    tokens.set({ accessToken: "old-access", refreshToken: "rt" });
-  });
+describe("apiFetch 401 → cookie refresh → retry", () => {
+  afterEach(() => vi.unstubAllGlobals());
 
-  it("refreshes on 401 and retries with the new token", async () => {
-    const calls: { url: string; auth: string | null }[] = [];
+  it("refreshes on 401 (cookie-based) and retries the request, always with credentials", async () => {
+    const calls: { url: string; auth: string | null; credentials?: RequestCredentials }[] = [];
+    let serverHits = 0;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const auth = new Headers(init?.headers).get("authorization");
-      calls.push({ url: String(url), auth });
-      if (url.toString().endsWith("/auth/refresh")) {
-        return jsonRes(200, {
-          accessToken: "new-access",
-          refreshToken: "new-rt",
-        });
-      }
-      if (auth === "Bearer old-access") return jsonRes(401, { message: "expired" });
-      return jsonRes(200, { ok: true });
+      calls.push({
+        url: String(url),
+        auth: new Headers(init?.headers).get("authorization"),
+        credentials: init?.credentials,
+      });
+      if (String(url).endsWith("/auth/refresh")) return jsonRes(200, { accessToken: "a", refreshToken: "b" });
+      serverHits += 1;
+      return serverHits === 1 ? jsonRes(401, { message: "expired" }) : jsonRes(200, { ok: true });
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await apiFetch<{ ok: boolean }>("/servers");
     expect(out.ok).toBe(true);
-    expect(tokens.access()).toBe("new-access");
-    // first (401), refresh, retry with new token
-    expect(calls.some((c) => c.auth === "Bearer new-access")).toBe(true);
+    // No Authorization header is ever sent — auth is the cookie.
+    expect(calls.every((c) => c.auth === null)).toBe(true);
+    // Every request opts into credentials so the cookie rides along.
+    expect(calls.every((c) => c.credentials === "include")).toBe(true);
+    // Exactly one refresh, and /servers is called twice (401 then retry).
+    expect(calls.filter((c) => c.url.endsWith("/auth/refresh"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith("/servers"))).toHaveLength(2);
+    // Same-origin proxy path.
+    expect(calls[0].url).toBe("/api/servers");
+  });
 
-    vi.unstubAllGlobals();
+  it("sends the X-CSRF-Token header (from the tg_csrf cookie) on mutations", async () => {
+    document.cookie = "tg_csrf=csrf-abc";
+    let csrf: string | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        csrf = new Headers(init?.headers).get("x-csrf-token");
+        return jsonRes(200, { ok: true });
+      }),
+    );
+    await apiFetch("/apps/x/stop", { method: "POST" }, false);
+    expect(csrf).toBe("csrf-abc");
   });
 
   it("throws ApiError on non-ok without refresh", async () => {
     const fetchMock = vi.fn(async () => jsonRes(409, { message: "conflict" }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(apiFetch("/x", {}, false)).rejects.toThrow(/conflict/);
-    vi.unstubAllGlobals();
   });
 });

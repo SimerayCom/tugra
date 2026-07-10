@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   wsBase,
+  terminalBase,
   terminalUrl,
   encodeInput,
   encodeResize,
@@ -8,7 +9,6 @@ import {
   bytesToB64,
   connectTerminal,
 } from "./ws";
-import { tokens } from "./api";
 
 describe("ws url helpers", () => {
   it("converts http→ws and https→wss", () => {
@@ -20,6 +20,12 @@ describe("ws url helpers", () => {
     expect(terminalUrl({ app: "a1" }, "http://localhost:3000")).toBe("ws://localhost:3000/terminal?app=a1");
     expect(terminalUrl({ database: "d1" }, "https://h")).toBe("wss://h/terminal?database=d1");
     expect(terminalUrl({ server: "s1" }, "https://h")).toBe("wss://h/terminal?server=s1");
+  });
+
+  it("defaults the terminal base to the hub directly (WS can't traverse the /api proxy)", () => {
+    // HUB_PUBLIC_URL falls back to http://localhost:3000 in the test env → ws://localhost:3000.
+    expect(terminalBase()).toBe("ws://localhost:3000");
+    expect(terminalUrl({ server: "s1" })).toBe("ws://localhost:3000/terminal?server=s1");
   });
 });
 
@@ -71,16 +77,20 @@ const FakeWSCtor = FakeWS as unknown as typeof WebSocket;
 
 describe("connectTerminal", () => {
   beforeEach(() => {
-    localStorage.clear();
-    tokens.set({ accessToken: "acc-tok", refreshToken: "rt" });
     FakeWS.last = undefined;
   });
 
-  it("opens with the bearer subprotocol carrying the token and routes events", () => {
+  it("fetches a ticket then opens with the bearer subprotocol carrying it, and routes events", async () => {
     const events: unknown[] = [];
-    const conn = connectTerminal({ server: "s1" }, { onEvent: (e) => events.push(e) }, FakeWSCtor);
+    const conn = connectTerminal(
+      { server: "s1" },
+      { onEvent: (e) => events.push(e) },
+      { WS: FakeWSCtor, fetchTicket: async () => "tkt-123" },
+    );
+    // The socket opens only after the ticket promise resolves.
+    await vi.waitFor(() => expect(FakeWS.last).toBeDefined());
     const created = FakeWS.last!;
-    expect(created.protocols).toEqual(["tugra.bearer", "acc-tok"]);
+    expect(created.protocols).toEqual(["tugra.bearer", "tkt-123"]);
 
     created.onmessage!({ data: JSON.stringify({ type: "term_output", sessionId: "x", data: "aGk=" }) });
     expect(events).toEqual([{ type: "term_output", sessionId: "x", data: "aGk=" }]);
@@ -91,9 +101,23 @@ describe("connectTerminal", () => {
     expect(created.closed).toBe(true);
   });
 
-  it("ignores malformed frames", () => {
+  it("does not open the socket if closed before the ticket resolves", async () => {
+    let release: (t: string) => void = () => {};
+    const conn = connectTerminal(
+      { server: "s1" },
+      { onEvent: () => {} },
+      { WS: FakeWSCtor, fetchTicket: () => new Promise<string>((r) => (release = r)) },
+    );
+    conn.close(); // close before the ticket arrives
+    release("late-ticket");
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(FakeWS.last).toBeUndefined(); // never opened
+  });
+
+  it("ignores malformed frames", async () => {
     const events: unknown[] = [];
-    connectTerminal({ app: "a1" }, { onEvent: (e) => events.push(e) }, FakeWSCtor);
+    connectTerminal({ app: "a1" }, { onEvent: (e) => events.push(e) }, { WS: FakeWSCtor, fetchTicket: async () => "t" });
+    await vi.waitFor(() => expect(FakeWS.last).toBeDefined());
     FakeWS.last!.onmessage!({ data: "not json" });
     expect(events).toEqual([]);
   });

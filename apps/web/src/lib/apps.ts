@@ -1,5 +1,5 @@
 import type { AppStatus, DeploymentStatus } from "./types";
-import { API_BASE } from "./api";
+import { HUB_PUBLIC_URL } from "./api";
 
 export function appColor(s: AppStatus): string {
   if (s === "RUNNING") return "var(--c-g)";
@@ -28,7 +28,9 @@ export function appSourceSummary(app: {
   return app.source === "GIT" ? `git:${app.gitBranch ?? "main"}` : (app.image ?? "");
 }
 
-/** The public webhook URL a user pastes into GitHub/GitLab for auto-deploy. */
+/** The public webhook URL a user pastes into GitHub/GitLab for auto-deploy. This is called by an
+ *  external service directly against the hub, so it must be the hub's absolute public URL — not the
+ *  SPA's same-origin "/api" proxy path. */
 export function webhookUrl(token: string): string {
-  return `${API_BASE}/webhooks/deploy/${token}`;
+  return `${HUB_PUBLIC_URL}/webhooks/deploy/${token}`;
 }

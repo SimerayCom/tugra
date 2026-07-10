@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, tokens } from "./api";
+import { api } from "./api";
 import type { PublicUser } from "./types";
 
 interface AuthCtx {
@@ -29,11 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const reload = async () => {
-    if (!tokens.access()) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
+    // The session lives in httpOnly cookies (invisible to JS), so ask the hub who we are: a valid
+    // cookie returns the user, otherwise api.me() 401s (after a cookie-refresh attempt) → logged out.
     try {
       setUser(await api.me());
     } catch {

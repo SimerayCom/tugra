@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { API_BASE, tokens } from "../lib/api";
+import { API_BASE } from "../lib/api";
 import { consumeSseStream } from "../lib/sse";
 import type { MetricsSample } from "../lib/types";
 
@@ -40,13 +40,14 @@ export function useMetricsStream(serverId: string, active: boolean): void {
       while (!controller.signal.aborted) {
         try {
           const res = await fetch(`${API_BASE}/servers/${serverId}/metrics/stream`, {
-            headers: {
-              authorization: `Bearer ${tokens.access() ?? ""}`,
-              accept: "text/event-stream",
-            },
+            headers: { accept: "text/event-stream" },
+            credentials: "include", // same-origin session cookie authenticates the stream
             signal: controller.signal,
           });
-          if (!res.body) throw new Error("no stream body");
+          // Treat a non-2xx (e.g. 401 after the access cookie expired) as a failed connect: throw so
+          // we back off instead of hot-looping. A co-located query's apiFetch refreshes the cookie,
+          // so a later reconnect succeeds. (A 401 carries a JSON body, so `!res.body` alone misses it.)
+          if (res.ok === false || !res.body) throw new Error(`metrics stream ${res.status}`);
           backoff = 1000; // reset after a successful connect
           await consumeSseStream(res.body, (raw) => {
             let msg: unknown;

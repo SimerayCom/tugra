@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { API_BASE, tokens } from "../lib/api";
+import { API_BASE } from "../lib/api";
 import { consumeDeployLogStream } from "../lib/sse";
 
 export interface DeployLogState {
@@ -33,13 +33,11 @@ function useLogStream(path: string, active: boolean, onDone?: () => void): Deplo
     void (async () => {
       try {
         const res = await fetch(`${API_BASE}${path}`, {
-          headers: {
-            authorization: `Bearer ${tokens.access() ?? ""}`,
-            accept: "text/event-stream",
-          },
+          headers: { accept: "text/event-stream" },
+          credentials: "include", // same-origin session cookie authenticates the stream
           signal: controller.signal,
         });
-        if (!res.body) return;
+        if (res.ok === false || !res.body) return; // non-2xx (e.g. expired cookie) → bail; the UI falls back to polling
         await consumeDeployLogStream(res.body, (event) => {
           if (event.type === "chunk") {
             setState((s) => ({ ...s, lines: s.lines + event.data }));
