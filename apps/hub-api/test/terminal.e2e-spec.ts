@@ -44,6 +44,9 @@ describe("Terminal (e2e)", () => {
       .send({ name: "term-node", teamId })
       .expect(201);
     serverId = created.body.server.id;
+    // New servers default to all-except-terminal (least privilege); this suite exercises the
+    // interactive shell, so grant the terminal capability explicitly.
+    await prisma.server.update({ where: { id: serverId }, data: { capabilities: { push: "terminal" } } });
     const enrollToken = created.body.enrollToken;
     const { publicKey } = generateKeyPairSync("ed25519");
     const spkiB64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");

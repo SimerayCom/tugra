@@ -144,9 +144,13 @@ describe("Bulk ops (e2e)", () => {
 
   it("bulk-applies backup schedule to writable databases and skips foreign ones", async () => {
     const dbData = { serverId: "srv-x", name: "d", engine: "POSTGRES" as const, version: "16", image: "postgres:16-alpine", port: 5432, credentials: "x" };
-    const mineDb = await prisma.database.create({ data: { ...dbData, teamId, name: "bulk-db" } });
+    // Databases require an environment (FK). Reuse my team's default env; give the foreign team its own.
+    const mineEnv = (await prisma.environment.findFirst({ where: { project: { teamId } } }))!;
+    const mineDb = await prisma.database.create({ data: { ...dbData, teamId, environmentId: mineEnv.id, name: "bulk-db" } });
     const otherTeam = await prisma.team.create({ data: { name: "db-other" } });
-    const foreignDb = await prisma.database.create({ data: { ...dbData, teamId: otherTeam.id, name: "db-foreign" } });
+    const otherProject = await prisma.project.create({ data: { name: "p", teamId: otherTeam.id } });
+    const otherEnv = await prisma.environment.create({ data: { name: "e", projectId: otherProject.id } });
+    const foreignDb = await prisma.database.create({ data: { ...dbData, teamId: otherTeam.id, environmentId: otherEnv.id, name: "db-foreign" } });
 
     // enabled:false → no long-lived scheduler timer; still exercises route + role-gating + persistence.
     const res = await request(app.getHttpServer())
