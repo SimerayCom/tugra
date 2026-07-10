@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { MailService } from "../src/mail/mail.service";
 
 describe("Teams (e2e)", () => {
   let app: INestApplication;
@@ -16,9 +17,20 @@ describe("Teams (e2e)", () => {
   let tokenB = "";
   let userBId = "";
   let teamId = "";
+  // Capture "sent" invite emails to assert the accept link is delivered.
+  const sentInvites: { to: string; html: string }[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MailService)
+      .useValue({
+        isConfigured: () => true,
+        send: async (to: string, e: { html: string }) => {
+          sentInvites.push({ to, html: e.html });
+          return true;
+        },
+      })
+      .compile();
     app = moduleRef.createNestApplication();
     prisma = app.get(PrismaService);
     await app.listen(0);
@@ -52,6 +64,10 @@ describe("Teams (e2e)", () => {
       .send({ email: emailB, role: "VIEWER" })
       .expect(201);
     expect(inv.body.token).toBeTruthy();
+    // The invitation was ALSO emailed to B, carrying the accept link with the token.
+    const emailed = sentInvites.filter((e) => e.to === emailB);
+    expect(emailed.length).toBeGreaterThanOrEqual(1);
+    expect(emailed[emailed.length - 1].html).toContain(`/teams?invite=${inv.body.token}`);
 
     // B sees it
     const mine = await request(app.getHttpServer())
