@@ -15,7 +15,9 @@ export const LoginSchema = z.object({
 export type LoginInput = z.infer<typeof LoginSchema>;
 
 export const RefreshSchema = z.object({
-  refreshToken: z.string().min(1),
+  // Optional: browser sessions carry the refresh token in the httpOnly `tg_refresh` cookie instead
+  // of the body. Body clients (PAT/CLI/e2e) still send it here. The controller reads cookie-or-body.
+  refreshToken: z.string().min(1).optional(),
 });
 export type RefreshInput = z.infer<typeof RefreshSchema>;
 

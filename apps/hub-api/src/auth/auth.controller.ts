@@ -5,10 +5,22 @@ import {
   HttpCode,
   Patch,
   Post,
+  Req,
+  Res,
+  UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import {
+  CookieResponse,
+  clearAuthCookies,
+  parseCookies,
+  setAuthCookies,
+  TG_CSRF,
+  TG_REFRESH,
+} from "../common/cookies";
+import { CsrfExempt } from "../common/csrf-exempt.decorator";
 import { AuthService } from "./auth.service";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
@@ -34,25 +46,45 @@ import {
   UpdateProfileSchema,
 } from "./dto/auth.schemas";
 
+/** Minimal request shape we read for cookies — avoids a hard @types/express dependency. */
+interface CookieRequest {
+  headers?: { cookie?: string | string[] };
+}
+
 @Controller("auth")
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post("register")
+  @CsrfExempt()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  register(@Body(new ZodValidationPipe(RegisterSchema)) body: RegisterInput) {
-    return this.auth.register(body.email, body.password, body.name);
+  async register(
+    @Body(new ZodValidationPipe(RegisterSchema)) body: RegisterInput,
+    @Res({ passthrough: true }) res: CookieResponse,
+  ) {
+    // Dual-mode: also set httpOnly session cookies for the browser, while keeping `tokens` in the
+    // body so PAT/CLI/e2e bearer clients are unaffected.
+    const result = await this.auth.register(body.email, body.password, body.name);
+    setAuthCookies(res, result.tokens);
+    return result;
   }
 
   @Post("login")
   @HttpCode(200)
+  @CsrfExempt()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  login(@Body(new ZodValidationPipe(LoginSchema)) body: LoginInput) {
-    return this.auth.login(body.email, body.password, body.totp);
+  async login(
+    @Body(new ZodValidationPipe(LoginSchema)) body: LoginInput,
+    @Res({ passthrough: true }) res: CookieResponse,
+  ) {
+    const result = await this.auth.login(body.email, body.password, body.totp);
+    if ("tokens" in result) setAuthCookies(res, result.tokens); // no cookies on the 2FA-required step
+    return result;
   }
 
   @Post("forgot-password")
   @HttpCode(200)
+  @CsrfExempt()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async forgotPassword(@Body(new ZodValidationPipe(ForgotPasswordSchema)) body: ForgotPasswordInput) {
     // Always 200 whether or not the email exists — no account enumeration.
@@ -62,6 +94,7 @@ export class AuthController {
 
   @Post("reset-password")
   @HttpCode(200)
+  @CsrfExempt()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async resetPassword(@Body(new ZodValidationPipe(ResetPasswordSchema)) body: ResetPasswordInput) {
     await this.auth.resetPassword(body.token, body.newPassword);
@@ -71,14 +104,32 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  refresh(@Body(new ZodValidationPipe(RefreshSchema)) body: RefreshInput) {
-    return this.auth.refresh(body.refreshToken);
+  async refresh(
+    @Req() req: CookieRequest,
+    @Body(new ZodValidationPipe(RefreshSchema)) body: RefreshInput,
+    @Res({ passthrough: true }) res: CookieResponse,
+  ) {
+    const cookies = parseCookies(req.headers?.cookie);
+    // Browser sessions carry the refresh token in the cookie; body clients still send it inline.
+    const token = cookies[TG_REFRESH] ?? body.refreshToken;
+    if (!token) throw new UnauthorizedException("missing refresh token");
+    const tokens = await this.auth.refresh(token);
+    // Preserve the existing CSRF value so a background refresh doesn't rotate the double-submit
+    // token out from under concurrent in-flight requests.
+    setAuthCookies(res, tokens, { csrf: cookies[TG_CSRF] });
+    return tokens;
   }
 
   @Post("logout")
   @HttpCode(200)
-  async logout(@Body(new ZodValidationPipe(RefreshSchema)) body: RefreshInput) {
-    await this.auth.logout(body.refreshToken);
+  async logout(
+    @Req() req: CookieRequest,
+    @Body(new ZodValidationPipe(RefreshSchema)) body: RefreshInput,
+    @Res({ passthrough: true }) res: CookieResponse,
+  ) {
+    const token = parseCookies(req.headers?.cookie)[TG_REFRESH] ?? body.refreshToken;
+    if (token) await this.auth.logout(token);
+    clearAuthCookies(res);
     return { ok: true };
   }
 
@@ -86,8 +137,9 @@ export class AuthController {
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async logoutAll(@CurrentUser() user: AuthUser) {
+  async logoutAll(@CurrentUser() user: AuthUser, @Res({ passthrough: true }) res: CookieResponse) {
     await this.auth.logoutAll(user.userId);
+    clearAuthCookies(res);
     return { ok: true };
   }
 
@@ -112,11 +164,15 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async changePassword(
     @CurrentUser() user: AuthUser,
+    @Req() req: CookieRequest,
     @Body(new ZodValidationPipe(ChangePasswordSchema)) body: ChangePasswordInput,
+    @Res({ passthrough: true }) res: CookieResponse,
   ) {
     // Returns fresh tokens for THIS device (all other sessions were revoked) — the client swaps
     // them in so the current session survives the password change seamlessly.
     const tokens = await this.auth.changePassword(user.userId, body.currentPassword, body.newPassword);
+    // Refresh the cookies too (preserving CSRF), so a cookie session survives the password change.
+    setAuthCookies(res, tokens, { csrf: parseCookies(req.headers?.cookie)[TG_CSRF] });
     return { ok: true, tokens };
   }
 
