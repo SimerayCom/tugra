@@ -7,6 +7,7 @@ import { Application, Role, ScheduledTask } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { loadProjectCtx } from "../common/resource-project";
 import { ScheduledTasksSchedulerService } from "./scheduled-tasks.scheduler.service";
 import type { CreateTaskInput, UpdateTaskInput } from "./dto";
 
@@ -90,6 +91,11 @@ export class ScheduledTasksService {
     if (!(await this.access.teamRole(userId, app.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
+    // Per-resource scoping: a restricted member can't read tasks of an app they can't access.
+    await this.access.requireResourceAccess(userId, app.teamId, {
+      resourceId: app.id,
+      resolveProjectId: () => loadProjectCtx(this.prisma, app.environmentId).then((c) => c.projectId),
+    });
     return app;
   }
 

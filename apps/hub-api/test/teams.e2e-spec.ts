@@ -124,4 +124,44 @@ describe("Teams (e2e)", () => {
       .set("Authorization", `Bearer ${tokenA}`)
       .expect(200);
   });
+
+  it("restricts a VIEWER to specific projects (per-resource RBAC scoping, end-to-end)", async () => {
+    const bearerA = `Bearer ${tokenA}`;
+    const bearerB = `Bearer ${tokenB}`;
+    // Fresh team so earlier tests (which removed B) don't interfere; re-invite B as VIEWER.
+    const team = await request(app.getHttpServer()).post("/teams").set("Authorization", bearerA).send({ name: "Scoped" }).expect(201);
+    const tid = team.body.id;
+    const inv = await request(app.getHttpServer()).post(`/teams/${tid}/members/invite`).set("Authorization", bearerA).send({ email: emailB, role: "VIEWER" }).expect(201);
+    await request(app.getHttpServer()).post(`/teams/invitations/${inv.body.token}/accept`).set("Authorization", bearerB).expect(200);
+
+    const p1 = await request(app.getHttpServer()).post("/projects").set("Authorization", bearerA).send({ teamId: tid, name: "visible" }).expect(201);
+    const p2 = await request(app.getHttpServer()).post("/projects").set("Authorization", bearerA).send({ teamId: tid, name: "secret" }).expect(201);
+    const inThisTeam = (body: { teamId: string; id: string }[]) => body.filter((p) => p.teamId === tid).map((p) => p.id);
+
+    // Unrestricted VIEWER sees every project in the team (the team's default project + p1 + p2).
+    const before = await request(app.getHttpServer()).get("/projects").set("Authorization", bearerB).expect(200);
+    expect(inThisTeam(before.body)).toEqual(expect.arrayContaining([p1.body.id, p2.body.id]));
+
+    // Restrict B to only p1.
+    await request(app.getHttpServer())
+      .patch(`/teams/${tid}/members/${userBId}/access`)
+      .set("Authorization", bearerA)
+      .send({ restrictedAccess: true, accessedProjects: [p1.body.id] })
+      .expect(200);
+
+    // Now the list is filtered and the ungranted project is 403 (get is scoped too).
+    const after = await request(app.getHttpServer()).get("/projects").set("Authorization", bearerB).expect(200);
+    expect(inThisTeam(after.body)).toEqual([p1.body.id]);
+    await request(app.getHttpServer()).get(`/projects/${p1.body.id}`).set("Authorization", bearerB).expect(200);
+    await request(app.getHttpServer()).get(`/projects/${p2.body.id}`).set("Authorization", bearerB).expect(403);
+
+    // A VIEWER can't change scoping (manager-only).
+    await request(app.getHttpServer())
+      .patch(`/teams/${tid}/members/${userBId}/access`)
+      .set("Authorization", bearerB)
+      .send({ restrictedAccess: false, accessedProjects: [] })
+      .expect(403);
+
+    await prisma.team.deleteMany({ where: { id: tid } }).catch(() => undefined);
+  });
 });

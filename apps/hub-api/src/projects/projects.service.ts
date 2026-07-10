@@ -7,7 +7,7 @@ import {
 import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { TeamAccessService } from "../common/team-access.service";
+import { TeamAccessService, canAccessProject } from "../common/team-access.service";
 import { appUrl } from "../common/app-url";
 
 const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
@@ -54,14 +54,16 @@ export class ProjectsService {
   ) {}
 
   async list(userId: string): Promise<ProjectView[]> {
-    const roles = await this.access.roleByTeam(userId);
-    const teamIds = [...roles.keys()];
+    const access = await this.access.accessByTeam(userId);
+    const teamIds = [...access.keys()];
     if (!teamIds.length) return [];
-    const projects = await this.prisma.project.findMany({
+    const allProjects = await this.prisma.project.findMany({
       where: { teamId: { in: teamIds } },
       include: { environments: { orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     });
+    // Per-resource scoping: a restricted member only sees the projects they're granted.
+    const projects = allProjects.filter((p) => canAccessProject(access.get(p.teamId), p.id));
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
         where: { teamId: { in: teamIds } },
@@ -79,8 +81,8 @@ export class ProjectsService {
       teamId: p.teamId,
       name: p.name,
       isDefault: p.isDefault,
-      role: roles.get(p.teamId)!,
-      canWrite: WRITE.includes(roles.get(p.teamId)!),
+      role: access.get(p.teamId)!.role,
+      canWrite: WRITE.includes(access.get(p.teamId)!.role),
       environments: p.environments.map((e) => ({
         id: e.id,
         name: e.name,
@@ -101,6 +103,7 @@ export class ProjectsService {
     if (!project) throw new NotFoundException("project not found");
     const role = await this.access.teamRole(userId, project.teamId);
     if (!role) throw new ForbiddenException("not a member of this team");
+    await this.access.requireProjectAccess(userId, project.teamId, project.id);
     const envIds = project.environments.map((e) => e.id);
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
@@ -166,6 +169,9 @@ export class ProjectsService {
       // is that project's default (every project has exactly one default env).
       data: { teamId, name, environments: { create: { name: "production", isDefault: true } } },
     });
+    // Grant-on-create: the creator retains access to what they made even if later restricted
+    // (Dokploy addNewProject parity). A no-op for OWNER/ADMIN, who bypass scoping anyway.
+    await this.access.grantProjectAccess(userId, teamId, project.id);
     await this.audit.log({ actor: userId, action: "project.create", target: project.id });
     return this.get(userId, project.id);
   }

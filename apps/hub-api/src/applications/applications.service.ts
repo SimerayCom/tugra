@@ -8,7 +8,7 @@ import {
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { TeamAccessService } from "../common/team-access.service";
+import { TeamAccessService, canAccessResource } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
@@ -333,6 +333,8 @@ export class ApplicationsService {
         webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
       },
     });
+    // Grant-on-create: the creator keeps access to what they made even if later restricted.
+    await this.access.grantResourceAccess(userId, server.teamId, app.id);
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
     // Auto-track uptime for a domained app (best-effort; never blocks creation).
     await this.monitors.createForApp(app).catch(() => undefined);
@@ -373,8 +375,8 @@ export class ApplicationsService {
   }
 
   async list(userId: string): Promise<AppView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const ids = [...roleByTeam.keys()];
+    const access = await this.access.accessByTeam(userId);
+    const ids = [...access.keys()];
     if (!ids.length) return [];
     const apps = await this.prisma.application.findMany({
       // Preview apps are nested under their parent, never in the top-level list.
@@ -383,9 +385,12 @@ export class ApplicationsService {
     });
     const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
     const ipByServer = await this.serverIpMap(apps.map((a) => a.serverId));
-    return apps.map((a) =>
-      this.view(a, roleByTeam.get(a.teamId)!, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
-    );
+    // Per-resource scoping: a restricted member only sees apps in projects they're granted.
+    return apps
+      .filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null))
+      .map((a) =>
+        this.view(a, access.get(a.teamId)!.role, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
+      );
   }
 
   async get(userId: string, id: string): Promise<AppView> {
@@ -1372,6 +1377,11 @@ export class ApplicationsService {
     if (!(await this.access.teamRole(userId, app.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
+    // Per-resource scoping: a restricted member must be granted this app (or its project).
+    await this.access.requireResourceAccess(userId, app.teamId, {
+      resourceId: app.id,
+      resolveProjectId: () => loadProjectCtx(this.prisma, app.environmentId).then((c) => c.projectId),
+    });
     return app;
   }
 

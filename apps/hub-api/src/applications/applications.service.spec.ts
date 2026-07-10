@@ -35,6 +35,20 @@ function makeMonitors(): MonitorsMock {
   return { createForApp: jest.fn().mockResolvedValue(undefined), removeForApp: jest.fn().mockResolvedValue(undefined) };
 }
 
+// Permissive per-resource-scoping defaults so tests that don't exercise scoping stay green;
+// a test overrides any of these to assert scoping behaviour.
+function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
+  return {
+    requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+    requireProjectAccess: jest.fn().mockResolvedValue(undefined),
+    grantResourceAccess: jest.fn().mockResolvedValue(undefined),
+    grantProjectAccess: jest.fn().mockResolvedValue(undefined),
+    membershipAccess: jest.fn().mockResolvedValue(null),
+    accessByTeam: jest.fn().mockResolvedValue(new Map()),
+    ...access,
+  } as unknown as TeamAccessService;
+}
+
 function make(
   prisma: Partial<PrismaService>,
   access: Partial<TeamAccessService>,
@@ -60,7 +74,7 @@ function make(
   } as unknown as Partial<PrismaService>;
   return new ApplicationsService(
     withServerDefaults as PrismaService,
-    access as TeamAccessService,
+    accessWith(access),
     audit,
     agentWs as AgentWsServer,
     deployLogs,
@@ -1518,7 +1532,7 @@ describe("ApplicationsService", () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const prisma = { application: { findMany } } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", Role.OWNER]])),
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).list("u1");
     expect(findMany).toHaveBeenCalledWith(
@@ -1535,12 +1549,39 @@ describe("ApplicationsService", () => {
       environment: { findMany: envFindMany },
     } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", Role.OWNER]])),
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access, {} as AgentWsServer).list("u1");
     expect(envFindMany).toHaveBeenCalledTimes(1); // one query for the whole list
     expect(out[0].projectName).toBe("Default");
     expect(out[0].environmentName).toBe("production");
+  });
+
+  it("list() hides apps outside a restricted member's granted projects", async () => {
+    const prisma = {
+      application: { findMany: jest.fn().mockResolvedValue([
+        { ...app, id: "a-ok", environmentId: "e1" },
+        { ...app, id: "a-hidden", environmentId: "e2" },
+      ]) },
+      environment: { findMany: jest.fn().mockResolvedValue([
+        { id: "e1", name: "production", project: { id: "p-ok", name: "Ok" } },
+        { id: "e2", name: "production", project: { id: "p-secret", name: "Secret" } },
+      ]) },
+    } as unknown as PrismaService;
+    const access = {
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.VIEWER, restrictedAccess: true, accessedProjects: ["p-ok"], accessedResources: [] }]])),
+    } as unknown as TeamAccessService;
+    const out = await make(prisma, access, {} as AgentWsServer).list("u1");
+    expect(out.map((a) => a.id)).toEqual(["a-ok"]); // the p-secret app is filtered out
+  });
+
+  it("get() propagates a per-resource scoping denial", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(Role.VIEWER),
+      requireResourceAccess: jest.fn().mockRejectedValue(new ForbiddenException("no access to this resource")),
+    } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).get("u1", "app1")).rejects.toThrow(/no access/);
   });
 
   it("rolls back by re-running the target image tag without rebuilding", async () => {

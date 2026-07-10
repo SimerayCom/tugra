@@ -6,7 +6,8 @@ import {
 import { Monitor, MonitorStatus, MonitorType, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { TeamAccessService } from "../common/team-access.service";
+import { TeamAccessService, canAccessResource } from "../common/team-access.service";
+import { loadProjectCtx, loadProjectCtxMany } from "../common/resource-project";
 import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 import { uptimePercent } from "./transition";
@@ -77,14 +78,34 @@ export class MonitorsService {
   }
 
   async list(userId: string): Promise<MonitorView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const ids = [...roleByTeam.keys()];
+    const access = await this.access.accessByTeam(userId);
+    const ids = [...access.keys()];
     if (!ids.length) return [];
     const rows = await this.prisma.monitor.findMany({
       where: { teamId: { in: ids } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((m) => this.view(m, roleByTeam.get(m.teamId)!));
+    // Per-resource scoping: a monitor's project is its app's project. A restricted member only sees
+    // monitors for apps in their granted projects; standalone monitors (no app) are hidden from them.
+    const projectByApp = await this.projectIdsForApps(rows.map((m) => m.appId));
+    return rows
+      .filter((m) => canAccessResource(access.get(m.teamId), m.appId ?? m.id, m.appId ? projectByApp.get(m.appId) ?? null : null))
+      .map((m) => this.view(m, access.get(m.teamId)!.role));
+  }
+
+  /** Owning project id per app id, for monitor scoping (batched, no N+1). */
+  private async projectIdsForApps(appIds: (string | null)[]): Promise<Map<string, string | null>> {
+    const ids = [...new Set(appIds.filter(Boolean))] as string[];
+    if (!ids.length) return new Map();
+    const apps = await this.prisma.application.findMany({ where: { id: { in: ids } }, select: { id: true, environmentId: true } });
+    const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
+    return new Map(apps.map((a) => [a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null]));
+  }
+
+  private async monitorProjectId(appId: string | null): Promise<string | null> {
+    if (!appId) return null;
+    const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { environmentId: true } });
+    return app ? (await loadProjectCtx(this.prisma, app.environmentId)).projectId : null;
   }
 
   async get(userId: string, id: string): Promise<MonitorView> {
@@ -267,6 +288,11 @@ export class MonitorsService {
     if (!(await this.access.teamRole(userId, m.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
+    // Per-resource scoping: a restricted member only reaches monitors for apps they can access.
+    await this.access.requireResourceAccess(userId, m.teamId, {
+      resourceId: m.appId ?? m.id,
+      resolveProjectId: () => this.monitorProjectId(m.appId),
+    });
     return m;
   }
 

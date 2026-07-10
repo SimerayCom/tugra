@@ -10,6 +10,7 @@ import { Backup, Database, Role, RestoreKind, RestoreStatus } from "@prisma/clie
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { loadProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { supportsBackup, type DbEngine } from "../databases/database-script";
@@ -314,6 +315,11 @@ export class BackupsService {
     if (!(await this.access.teamRole(userId, db.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
+    // Per-resource scoping: a restricted member can't read backups of a db they can't access.
+    await this.access.requireResourceAccess(userId, db.teamId, {
+      resourceId: db.id,
+      resolveProjectId: () => loadProjectCtx(this.prisma, db.environmentId).then((c) => c.projectId),
+    });
     return db;
   }
 

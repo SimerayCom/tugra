@@ -12,6 +12,17 @@ const crypto = {
   decrypt: (s: string) => s.replace(/^enc:/, ""),
 } as unknown as CryptoService;
 
+// Permissive per-resource-scoping defaults so non-scoping tests stay green; overridden per test.
+function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
+  return {
+    requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+    grantResourceAccess: jest.fn().mockResolvedValue(undefined),
+    membershipAccess: jest.fn().mockResolvedValue(null),
+    accessByTeam: jest.fn().mockResolvedValue(new Map()),
+    ...access,
+  } as unknown as TeamAccessService;
+}
+
 function make(
   prisma: Partial<PrismaService>,
   access: Partial<TeamAccessService>,
@@ -22,7 +33,7 @@ function make(
 ) {
   return new DatabasesService(
     prisma as PrismaService,
-    access as TeamAccessService,
+    accessWith(access),
     audit,
     agentWs as AgentWsServer,
     crypto,
@@ -55,7 +66,7 @@ describe("DatabasesService", () => {
       environment: { findMany: envFindMany },
     } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"]])),
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: "OWNER", restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access).list("u1");
     expect(envFindMany).toHaveBeenCalledTimes(1);

@@ -14,6 +14,8 @@ export interface TeamMember {
   email: string;
   name: string | null;
   role: Role;
+  restrictedAccess: boolean;
+  accessedProjects: string[];
 }
 
 export interface TeamInvitation {

@@ -230,6 +230,9 @@ export const api = {
   removeTeamMember(id: string, userId: string) {
     return apiFetch<{ ok: true }>(`/teams/${id}/members/${userId}`, { method: "DELETE" });
   },
+  setTeamMemberAccess(id: string, userId: string, input: { restrictedAccess: boolean; accessedProjects: string[] }) {
+    return apiFetch<{ ok: true }>(`/teams/${id}/members/${userId}/access`, { method: "PATCH", body: JSON.stringify(input) });
+  },
   myInvitations() {
     return apiFetch<MyInvitation[]>("/teams/invitations/mine");
   },
