@@ -28,6 +28,15 @@ describe("ScheduledTasksService", () => {
     ).rejects.toThrow(/nope/);
   });
 
+  it("list propagates a per-resource scoping denial (restricted member, ungranted app)", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(Role.VIEWER),
+      requireResourceAccess: jest.fn().mockRejectedValue(new ForbiddenException("no access to this resource")),
+    } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {}).list("u1", "app1")).rejects.toThrow(/no access/);
+  });
+
   it("creates an enabled task and schedules it", async () => {
     const created = { id: "tk1", appId: "app1", name: "x", schedule: "0 2 * * *", command: "echo", enabled: true, lastRunAt: null };
     const prisma = {

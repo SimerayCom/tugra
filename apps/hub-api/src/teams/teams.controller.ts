@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   Put,
   UseGuards,
@@ -22,6 +23,8 @@ import {
   InviteSchema,
   RenameTeamInput,
   RenameTeamSchema,
+  SetMemberAccessInput,
+  SetMemberAccessSchema,
   SetRoleInput,
   SetRoleSchema,
 } from "./dto";
@@ -122,6 +125,18 @@ export class TeamsController {
     @Body(new ZodValidationPipe(SetRoleSchema)) body: SetRoleInput,
   ) {
     await this.teams.setRole(user.userId, id, targetUserId, body.role as Role);
+    return { ok: true };
+  }
+
+  @Patch(":id/members/:userId/access")
+  @HttpCode(200)
+  async setMemberAccess(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("userId") targetUserId: string,
+    @Body(new ZodValidationPipe(SetMemberAccessSchema)) body: SetMemberAccessInput,
+  ) {
+    await this.teams.setMemberAccess(user.userId, id, targetUserId, body);
     return { ok: true };
   }
 

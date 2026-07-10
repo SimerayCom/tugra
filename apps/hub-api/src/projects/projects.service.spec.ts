@@ -7,8 +7,19 @@ import { AuditService } from "../audit/audit.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 
+// Permissive per-resource-scoping defaults so non-scoping tests stay green; overridden per test.
+function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
+  return {
+    requireProjectAccess: jest.fn().mockResolvedValue(undefined),
+    grantProjectAccess: jest.fn().mockResolvedValue(undefined),
+    membershipAccess: jest.fn().mockResolvedValue(null),
+    accessByTeam: jest.fn().mockResolvedValue(new Map()),
+    ...access,
+  } as unknown as TeamAccessService;
+}
+
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new ProjectsService(prisma as PrismaService, access as TeamAccessService, audit);
+  return new ProjectsService(prisma as PrismaService, accessWith(access), audit);
 }
 
 describe("ProjectsService", () => {
@@ -133,7 +144,7 @@ describe("ProjectsService", () => {
       database: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", Role.ADMIN]])),
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.ADMIN, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access).list("u1");
     expect(out[0].environments[0].appCount).toBe(1);

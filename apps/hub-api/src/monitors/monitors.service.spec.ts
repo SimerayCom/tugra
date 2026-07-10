@@ -39,6 +39,47 @@ const monitor = {
   createdAt: new Date(),
 };
 
+describe("MonitorsService.list scoping", () => {
+  it("hides monitors for apps outside a restricted member's granted projects (standalone hidden too)", async () => {
+    const rows = [
+      { ...monitor, id: "m-ok", appId: "a-ok" },
+      { ...monitor, id: "m-hidden", appId: "a-hidden" },
+      { ...monitor, id: "m-standalone", appId: null }, // no app → not in any granted project
+    ];
+    const prisma = {
+      monitor: { findMany: jest.fn().mockResolvedValue(rows) },
+      application: { findMany: jest.fn().mockResolvedValue([
+        { id: "a-ok", environmentId: "e-ok" },
+        { id: "a-hidden", environmentId: "e-secret" },
+      ]) },
+      environment: { findMany: jest.fn().mockResolvedValue([
+        { id: "e-ok", name: "production", project: { id: "p-ok", name: "Ok" } },
+        { id: "e-secret", name: "production", project: { id: "p-secret", name: "Secret" } },
+      ]) },
+    } as unknown as PrismaService;
+    const access = {
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.VIEWER, restrictedAccess: true, accessedProjects: ["p-ok"], accessedResources: [] }]])),
+    } as unknown as TeamAccessService;
+    const out = await make(prisma, access, {}).list("u1");
+    expect(out.map((m) => m.id)).toEqual(["m-ok"]);
+  });
+
+  it("shows every monitor to an unrestricted member (owner bypass, no project lookup needed)", async () => {
+    const rows = [{ ...monitor, id: "m1", appId: null }, { ...monitor, id: "m2", appId: "a1" }];
+    const appFindMany = jest.fn().mockResolvedValue([{ id: "a1", environmentId: "e1" }]);
+    const prisma = {
+      monitor: { findMany: jest.fn().mockResolvedValue(rows) },
+      application: { findMany: appFindMany },
+      environment: { findMany: jest.fn().mockResolvedValue([{ id: "e1", name: "production", project: { id: "p1", name: "P" } }]) },
+    } as unknown as PrismaService;
+    const access = {
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+    } as unknown as TeamAccessService;
+    const out = await make(prisma, access, {}).list("u1");
+    expect(out.map((m) => m.id).sort()).toEqual(["m1", "m2"]);
+  });
+});
+
 describe("MonitorsService.update", () => {
   it("forbids a non-writer", async () => {
     const prisma = { monitor: { findUnique: jest.fn().mockResolvedValue(monitor) } } as unknown as PrismaService;

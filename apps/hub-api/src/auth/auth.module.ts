@@ -8,13 +8,12 @@ import { AuthService } from "./auth.service";
 import { GithubOAuthController } from "./github-oauth.controller";
 import { GithubOAuthService } from "./github-oauth.service";
 import { JwtStrategy } from "./strategies/jwt.strategy";
-import { RolesGuard } from "./guards/roles.guard";
 import { TotpService } from "./totp.service";
 
 @Module({
   imports: [PassportModule, JwtModule.register({}), CryptoModule, TeamDefaultsModule],
   controllers: [AuthController, GithubOAuthController],
-  providers: [AuthService, GithubOAuthService, TotpService, JwtStrategy, RolesGuard],
+  providers: [AuthService, GithubOAuthService, TotpService, JwtStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

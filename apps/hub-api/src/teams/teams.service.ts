@@ -26,6 +26,8 @@ export interface TeamMemberView {
   email: string;
   name: string | null;
   role: Role;
+  restrictedAccess: boolean;
+  accessedProjects: string[];
 }
 export interface InvitationView {
   id: string;
@@ -120,7 +122,47 @@ export class TeamsService {
       include: { user: { select: { id: true, email: true, name: true } } },
       orderBy: { role: "asc" },
     });
-    return ms.map((m) => ({ userId: m.user.id, email: m.user.email, name: m.user.name, role: m.role }));
+    return ms.map((m) => ({
+      userId: m.user.id,
+      email: m.user.email,
+      name: m.user.name,
+      role: m.role,
+      restrictedAccess: m.restrictedAccess,
+      accessedProjects: m.accessedProjects,
+    }));
+  }
+
+  /** Set a member's per-resource access scoping (restrict them to a set of projects). Manager-only;
+   *  granted project ids are validated to belong to this team. OWNER/ADMIN bypass scoping regardless,
+   *  so this is only meaningful for a VIEWER. */
+  async setMemberAccess(
+    userId: string,
+    id: string,
+    targetUserId: string,
+    input: { restrictedAccess: boolean; accessedProjects: string[] },
+  ): Promise<void> {
+    await this.access.requireRole(userId, id, MANAGE);
+    const target = await this.prisma.membership.findUnique({
+      where: { userId_teamId: { userId: targetUserId, teamId: id } },
+    });
+    if (!target) throw new NotFoundException("member not found");
+    // Only keep project ids that actually belong to this team (drop cross-team / stale ids).
+    const owned = await this.prisma.project.findMany({
+      where: { id: { in: input.accessedProjects }, teamId: id },
+      select: { id: true },
+    });
+    const validIds = new Set(owned.map((p) => p.id));
+    const accessedProjects = [...new Set(input.accessedProjects)].filter((pid) => validIds.has(pid));
+    await this.prisma.membership.update({
+      where: { userId_teamId: { userId: targetUserId, teamId: id } },
+      data: { restrictedAccess: input.restrictedAccess, accessedProjects },
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "team.member.access",
+      target: id,
+      meta: { targetUserId, restrictedAccess: input.restrictedAccess, projects: accessedProjects.length },
+    });
   }
 
   async setRole(userId: string, id: string, targetUserId: string, role: Role): Promise<void> {

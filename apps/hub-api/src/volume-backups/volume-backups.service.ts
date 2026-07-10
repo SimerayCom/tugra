@@ -3,6 +3,7 @@ import { Application, Role, VolumeBackup } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { loadProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { appVolumeName } from "../deploy/deploy-script";
 import { buildVolumeDeleteScript, buildVolumeRestoreScript } from "./volume-backup-script";
@@ -115,6 +116,11 @@ export class VolumeBackupsService {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new NotFoundException("app not found");
     if (!(await this.access.teamRole(userId, app.teamId))) throw new ForbiddenException("not a member of this team");
+    // Per-resource scoping: a restricted member can't read volume backups of an app they can't access.
+    await this.access.requireResourceAccess(userId, app.teamId, {
+      resourceId: app.id,
+      resolveProjectId: () => loadProjectCtx(this.prisma, app.environmentId).then((c) => c.projectId),
+    });
     return app;
   }
 

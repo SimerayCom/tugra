@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import type { Role } from "../../../../lib/types";
+import type { Role, TeamMember, Project } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
@@ -33,6 +33,8 @@ export default function TeamDetailPage() {
   const isOwner = team?.role === "OWNER";
 
   const { data: members = [] } = useQuery({ queryKey: ["teamMembers", id], queryFn: () => api.listTeamMembers(id) });
+  const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects(), enabled: canManage });
+  const teamProjects = allProjects.filter((p) => p.teamId === id);
   const { data: invitations = [] } = useQuery({
     queryKey: ["teamInvitations", id],
     queryFn: () => api.listTeamInvitations(id),
@@ -102,22 +104,27 @@ export default function TeamDetailPage() {
           {members.map((m) => {
             const lastOwner = m.role === "OWNER" && ownerCount <= 1;
             return (
-              <div key={m.userId} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <span style={{ fontSize: 13 }}>{m.email}</span>
-                  {m.name && <span style={{ fontSize: 11, color: "var(--c-tx3)", marginLeft: 8 }}>{m.name}</span>}
+              <div key={m.userId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 13 }}>{m.email}</span>
+                    {m.name && <span style={{ fontSize: 11, color: "var(--c-tx3)", marginLeft: 8 }}>{m.name}</span>}
+                  </div>
+                  {canManage && !lastOwner ? (
+                    <select style={field} value={m.role} onChange={(e) => setRole.mutate({ userId: m.userId, role: e.target.value as Role })}>
+                      <option value="VIEWER">VIEWER</option>
+                      <option value="ADMIN">ADMIN</option>
+                      {isOwner && <option value="OWNER">OWNER</option>}
+                    </select>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.role}</span>
+                  )}
+                  {canManage && !lastOwner && (
+                    <IconBtn label={t("common.remove")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) removeMember.mutate(m.userId); }}>×</IconBtn>
+                  )}
                 </div>
-                {canManage && !lastOwner ? (
-                  <select style={field} value={m.role} onChange={(e) => setRole.mutate({ userId: m.userId, role: e.target.value as Role })}>
-                    <option value="VIEWER">VIEWER</option>
-                    <option value="ADMIN">ADMIN</option>
-                    {isOwner && <option value="OWNER">OWNER</option>}
-                  </select>
-                ) : (
-                  <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.role}</span>
-                )}
-                {canManage && !lastOwner && (
-                  <IconBtn label={t("common.remove")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) removeMember.mutate(m.userId); }}>×</IconBtn>
+                {canManage && m.role === "VIEWER" && (
+                  <MemberAccessEditor teamId={id} member={m} projects={teamProjects} onSaved={refetch} />
                 )}
               </div>
             );
@@ -159,6 +166,59 @@ export default function TeamDetailPage() {
           )}
         </Card>
       )}
+    </div>
+  );
+}
+
+/** Per-member access scoping: restrict a VIEWER to a chosen set of the team's projects. */
+function MemberAccessEditor({
+  teamId,
+  member,
+  projects,
+  onSaved,
+}: {
+  teamId: string;
+  member: TeamMember;
+  projects: Project[];
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const [restricted, setRestricted] = useState(member.restrictedAccess);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(member.accessedProjects));
+  const toggle = (pid: string) =>
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(pid)) n.delete(pid);
+      else n.add(pid);
+      return n;
+    });
+  const save = useMutation({
+    mutationFn: () =>
+      api.setTeamMemberAccess(teamId, member.userId, { restrictedAccess: restricted, accessedProjects: [...selected] }),
+    onSuccess: onSaved,
+  });
+  return (
+    <div style={{ marginLeft: 12, padding: "8px 12px", background: "var(--c-el)", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
+        <input type="checkbox" checked={restricted} onChange={(e) => setRestricted(e.target.checked)} />
+        {t("teams.restrictAccess")}
+      </label>
+      {restricted && (
+        <>
+          <div style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 4px" }}>{t("teams.accessDesc")}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
+            {projects.length === 0 && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("teams.noProjects")}</span>}
+            {projects.map((p) => (
+              <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--c-tx2)" }}>
+                <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
+                {p.name}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("teams.saveAccess")}</Btn>
+      {save.isSuccess && <span style={{ fontSize: 11, color: "var(--c-g)", marginLeft: 8 }}>{t("teams.accessSaved")}</span>}
     </div>
   );
 }

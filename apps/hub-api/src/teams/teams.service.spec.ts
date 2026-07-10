@@ -118,3 +118,37 @@ describe("TeamsService.get", () => {
     await expect(make(prisma, access).get("u9", "t1")).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
+
+describe("TeamsService.setMemberAccess", () => {
+  it("forbids a non-manager (VIEWER) from changing member access", async () => {
+    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("insufficient role for this team")) } as unknown as TeamAccessService;
+    await expect(
+      make({} as PrismaService, access).setMemberAccess("viewer", "t1", "target", { restrictedAccess: true, accessedProjects: ["p1"] }),
+    ).rejects.toThrow(/insufficient role/);
+  });
+
+  it("restricts a member and keeps only projects that belong to the team (drops cross-team ids)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      membership: { findUnique: jest.fn().mockResolvedValue({ userId: "target", teamId: "t1", role: Role.VIEWER }), update },
+      // Only p1 belongs to t1; p-foreign is a cross-team id and must be silently dropped.
+      project: { findMany: jest.fn().mockResolvedValue([{ id: "p1" }]) },
+    } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access).setMemberAccess("owner", "t1", "target", {
+      restrictedAccess: true,
+      accessedProjects: ["p1", "p-foreign"],
+    });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { restrictedAccess: true, accessedProjects: ["p1"] } }),
+    );
+  });
+
+  it("404s when the target is not a member", async () => {
+    const prisma = { membership: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access).setMemberAccess("owner", "t1", "ghost", { restrictedAccess: false, accessedProjects: [] }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

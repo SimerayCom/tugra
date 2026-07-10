@@ -159,6 +159,14 @@ model Membership {
   team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId String
 
+  // Per-resource access scoping (least privilege). Opt-in via `restrictedAccess`: while false
+  // (the default, and every existing member) the member has full access at their team role — no
+  // regression. When true, a VIEWER only sees the granted projects (+ their resources) and any
+  // explicitly granted resource ids. OWNER/ADMIN always bypass scoping (they manage the team).
+  restrictedAccess  Boolean  @default(false)
+  accessedProjects  String[] @default([]) // project ids this member may access when restricted
+  accessedResources String[] @default([]) // app/db ids (fine-grained escape hatch + grant-on-create)
+
   @@unique([userId, teamId])
 }
 

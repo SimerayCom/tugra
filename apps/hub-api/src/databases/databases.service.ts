@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { TeamAccessService } from "../common/team-access.service";
+import { TeamAccessService, canAccessResource } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
@@ -113,21 +113,26 @@ export class DatabasesService {
         status: DbStatus.NEW,
       },
     });
+    // Grant-on-create: the creator keeps access to what they made even if later restricted.
+    await this.access.grantResourceAccess(userId, server.teamId, db.id);
     await this.audit.log({ actor: userId, action: "database.create", target: db.id });
     const role = (await this.access.teamRole(userId, server.teamId))!;
     return this.view(db, role);
   }
 
   async list(userId: string): Promise<DatabaseView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const ids = [...roleByTeam.keys()];
+    const access = await this.access.accessByTeam(userId);
+    const ids = [...access.keys()];
     if (!ids.length) return [];
     const dbs = await this.prisma.database.findMany({
       where: { teamId: { in: ids } },
       orderBy: { createdAt: "desc" },
     });
     const ctxByEnv = await loadProjectCtxMany(this.prisma, dbs.map((d) => d.environmentId));
-    return dbs.map((d) => this.view(d, roleByTeam.get(d.teamId)!, ctxByEnv.get(d.environmentId)));
+    // Per-resource scoping: a restricted member only sees dbs in projects they're granted.
+    return dbs
+      .filter((d) => canAccessResource(access.get(d.teamId), d.id, ctxByEnv.get(d.environmentId)?.projectId ?? null))
+      .map((d) => this.view(d, access.get(d.teamId)!.role, ctxByEnv.get(d.environmentId)));
   }
 
   async get(userId: string, id: string): Promise<DatabaseView> {
@@ -247,6 +252,11 @@ export class DatabasesService {
     if (!(await this.access.teamRole(userId, db.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
+    // Per-resource scoping: a restricted member must be granted this db (or its project).
+    await this.access.requireResourceAccess(userId, db.teamId, {
+      resourceId: db.id,
+      resolveProjectId: () => loadProjectCtx(this.prisma, db.environmentId).then((c) => c.projectId),
+    });
     return db;
   }
 
