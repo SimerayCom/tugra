@@ -9,7 +9,8 @@ import { useAuth } from "../lib/auth";
 import { navForMode, uiMode } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
-import { Spinner } from "./ui";
+import { Spinner, Btn } from "./ui";
+import { useToast } from "./toast";
 import { CommandPalette, type CommandDest } from "./command-palette";
 import { TeamScopeSelect } from "./team-scope";
 import {
@@ -314,6 +315,46 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
   );
 }
 
+/** Amber strip shown while the signed-in user's email is unverified, with a one-click resend. */
+function VerifyBanner() {
+  const { user } = useAuth();
+  const t = useT();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (!user || user.emailVerified) return null;
+  const resend = async () => {
+    setBusy(true);
+    try {
+      await api.resendVerification();
+      toast(t("auth.resendSent"), "success");
+    } catch {
+      toast(t("auth.resendFailed"), "error");
+    }
+    setBusy(false);
+  };
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        padding: "8px 18px",
+        background: "color-mix(in srgb, var(--c-am) 14%, transparent)",
+        borderBottom: "1px solid var(--c-bd)",
+        fontSize: 13,
+        color: "var(--c-tx2)",
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 180 }}>{t("auth.verifyBanner")}</span>
+      <Btn variant="ghost" onClick={resend} disabled={busy}>
+        {busy ? "…" : t("auth.resend")}
+      </Btn>
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -341,6 +382,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       )}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <TopHeader onMenu={() => setDrawer(true)} showMenu={isMobile} />
+        <VerifyBanner />
         <main style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
       {palette && <CommandPalette dests={DESTS} onClose={() => setPalette(false)} />}
