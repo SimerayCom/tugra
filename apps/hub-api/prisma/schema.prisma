@@ -28,6 +28,8 @@ model User {
   twoFaSecret   String?
   twoFaEnabled  Boolean                 @default(false)
   twoFaEnabledAt DateTime?
+  emailVerified Boolean                 @default(false)
+  emailVerifiedAt DateTime?
   uiMode        String                  @default("fleet") // "fleet" | "home"
   memberships   Membership[]
   apiTokens     ApiToken[]

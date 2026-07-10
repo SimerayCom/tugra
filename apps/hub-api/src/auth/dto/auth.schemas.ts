@@ -39,6 +39,8 @@ export const UpdateProfileSchema = z
     name: z.string().min(1).max(100).optional(),
     email: z.string().email().optional(),
     uiMode: z.enum(["fleet", "home"]).optional(),
+    // Required only when changing the email — sudo re-auth so a stolen session can't swap the address.
+    currentPassword: z.string().optional(),
   })
   .refine(
     (v) => v.name !== undefined || v.email !== undefined || v.uiMode !== undefined,
@@ -60,3 +62,8 @@ export const ResetPasswordSchema = z.object({
   newPassword: z.string().min(8, "password must be at least 8 chars"),
 });
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
+
+export const VerifyEmailSchema = z.object({
+  token: z.string().min(1),
+});
+export type VerifyEmailInput = z.infer<typeof VerifyEmailSchema>;

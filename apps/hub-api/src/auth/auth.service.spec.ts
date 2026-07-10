@@ -279,7 +279,7 @@ describe("AuthService 2FA recovery codes", () => {
 });
 
 describe("AuthService.updateProfile", () => {
-  const me = { id: "u1", email: "a@b.c", name: "Old", twoFaEnabled: false, uiMode: "fleet", password: "h" };
+  const me = { id: "u1", email: "a@b.c", name: "Old", twoFaEnabled: false, emailVerified: true, uiMode: "fleet", password: "h" };
 
   it("updates the display name", async () => {
     const update = jest.fn().mockResolvedValue({ ...me, name: "New" });
@@ -297,12 +297,28 @@ describe("AuthService.updateProfile", () => {
     expect(update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { uiMode: "home" } });
   });
 
+  it("requires the current password to change the email (sudo re-auth)", async () => {
+    const passwordHash = await argon2.hash("pw", { type: argon2.argon2id });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ ...me, password: passwordHash }), update: jest.fn() },
+    } as unknown as PrismaService;
+    // Missing or wrong current password → rejected before anything is written.
+    await expect(makeService(prisma).updateProfile("u1", { email: "new@x.c" })).rejects.toThrow(/current password/);
+    await expect(
+      makeService(prisma).updateProfile("u1", { email: "new@x.c", currentPassword: "wrong" }),
+    ).rejects.toThrow(/current password/);
+  });
+
   it("rejects an email already used by someone else", async () => {
+    const passwordHash = await argon2.hash("pw", { type: argon2.argon2id });
+    const meWithPw = { ...me, password: passwordHash };
     const findUnique = jest.fn(({ where }: { where: { id?: string; email?: string } }) =>
-      Promise.resolve(where.id ? me : where.email === "taken@x.c" ? { id: "other" } : null),
+      Promise.resolve(where.id ? meWithPw : where.email === "taken@x.c" ? { id: "other" } : null),
     );
     const prisma = { user: { findUnique, update: jest.fn() } } as unknown as PrismaService;
-    await expect(makeService(prisma).updateProfile("u1", { email: "taken@x.c" })).rejects.toThrow(/already in use/);
+    await expect(
+      makeService(prisma).updateProfile("u1", { email: "taken@x.c", currentPassword: "pw" }),
+    ).rejects.toThrow(/already in use/);
   });
 });
 
@@ -430,10 +446,11 @@ describe("AuthService.loginWithGithub", () => {
     expect(pair.accessToken).toBeTruthy();
   });
 
-  it("logs an existing user in without creating anything", async () => {
+  it("logs an existing (already-verified) user in without creating or updating anything", async () => {
     const tx = jest.fn();
+    const update = jest.fn();
     const prisma = {
-      user: { findUnique: jest.fn().mockResolvedValue({ id: "u9", email: "gh@x.io" }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u9", email: "gh@x.io", emailVerified: true }), update },
       $transaction: tx,
     } as unknown as PrismaService;
     const svc = makeService(prisma);
@@ -442,7 +459,25 @@ describe("AuthService.loginWithGithub", () => {
     await svc.loginWithGithub("gh@x.io");
 
     expect(tx).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
     expect(issue).toHaveBeenCalledWith("u9");
+  });
+
+  it("heals a pre-existing unverified account by marking it verified (GitHub proved ownership)", async () => {
+    const update = jest.fn().mockResolvedValue({ id: "u9", email: "gh@x.io", emailVerified: true });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u9", email: "gh@x.io", emailVerified: false }), update },
+      $transaction: jest.fn(),
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+
+    await svc.loginWithGithub("gh@x.io");
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "u9" },
+      data: expect.objectContaining({ emailVerified: true }),
+    });
   });
 });
 

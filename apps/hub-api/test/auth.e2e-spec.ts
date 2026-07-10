@@ -48,6 +48,7 @@ describe("Auth (e2e)", () => {
 
     expect(res.body.user.email).toBe(email);
     expect(res.body.user.twoFaEnabled).toBe(false);
+    expect(res.body.user.emailVerified).toBe(false); // new registrations start unverified
     expect(res.body.tokens.accessToken).toBeTruthy();
     accessToken = res.body.tokens.accessToken;
     refreshToken = res.body.tokens.refreshToken;
@@ -301,5 +302,95 @@ describe("Auth (e2e)", () => {
     await request(app.getHttpServer()).post("/auth/reset-password").send({ token, newPassword: "another-9999" }).expect(400);
 
     await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
+  });
+
+  it("verifies a new account via the emailed token, and rejects bad/reused tokens", async () => {
+    const u = `e2e-verify-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    sentEmails.length = 0;
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: u, password: "verify-pass-1234" }).expect(201);
+    const tok = reg.body.tokens.accessToken as string;
+    expect(reg.body.user.emailVerified).toBe(false);
+
+    // A verification email with a /verify-email?token= link was sent; only the hash is stored.
+    const mine = sentEmails.filter((e) => e.to === u);
+    expect(mine).toHaveLength(1);
+    const token = /verify-email\?token=([A-Za-z0-9_-]+)/.exec(mine[0].html)![1];
+    expect(token).toBeTruthy();
+    expect(await prisma.verificationToken.findFirst({ where: { tokenHash: token } })).toBeNull();
+
+    // A garbage token is rejected.
+    await request(app.getHttpServer()).post("/auth/verify-email").send({ token: "nope" }).expect(400);
+
+    // The real token verifies (public — no auth needed).
+    await request(app.getHttpServer()).post("/auth/verify-email").send({ token }).expect(200);
+    const me = await request(app.getHttpServer()).get("/auth/me").set("Authorization", `Bearer ${tok}`).expect(200);
+    expect(me.body.emailVerified).toBe(true);
+
+    // Single-use: the same token can't verify again.
+    await request(app.getHttpServer()).post("/auth/verify-email").send({ token }).expect(400);
+
+    await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
+  });
+
+  it("resends the verification email for an unverified user (no-op once verified)", async () => {
+    const u = `e2e-resend-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: u, password: "resend-pass-1234" }).expect(201);
+    const tok = reg.body.tokens.accessToken as string;
+
+    sentEmails.length = 0;
+    await request(app.getHttpServer()).post("/auth/resend-verification").set("Authorization", `Bearer ${tok}`).expect(200);
+    const mine = sentEmails.filter((e) => e.to === u);
+    expect(mine).toHaveLength(1);
+    const token = /verify-email\?token=([A-Za-z0-9_-]+)/.exec(mine[0].html)![1];
+
+    await request(app.getHttpServer()).post("/auth/verify-email").send({ token }).expect(200);
+    // Already verified → resend is a silent no-op (still 200, but no new email).
+    sentEmails.length = 0;
+    await request(app.getHttpServer()).post("/auth/resend-verification").set("Authorization", `Bearer ${tok}`).expect(200);
+    expect(sentEmails.filter((e) => e.to === u)).toHaveLength(0);
+
+    await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
+  });
+
+  it("defers an email change until the new address confirms the link", async () => {
+    const u = `e2e-chg-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const newEmail = `e2e-chg-new-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: u, password: "change-pass-1234" }).expect(201);
+    const tok = reg.body.tokens.accessToken as string;
+
+    // An email change requires the current password (sudo re-auth) — a session alone can't do it.
+    await request(app.getHttpServer())
+      .patch("/auth/me")
+      .set("Authorization", `Bearer ${tok}`)
+      .send({ email: newEmail })
+      .expect(401);
+    await request(app.getHttpServer())
+      .patch("/auth/me")
+      .set("Authorization", `Bearer ${tok}`)
+      .send({ email: newEmail, currentPassword: "wrong-pw" })
+      .expect(401);
+
+    sentEmails.length = 0;
+    // Request the change with the password — the response still carries the OLD email (deferred).
+    const patched = await request(app.getHttpServer())
+      .patch("/auth/me")
+      .set("Authorization", `Bearer ${tok}`)
+      .send({ email: newEmail, currentPassword: "change-pass-1234" })
+      .expect(200);
+    expect(patched.body.email).toBe(u); // unchanged until confirmed
+
+    // The confirmation email went to the NEW address; a security notice went to the OLD one.
+    const mine = sentEmails.filter((e) => e.to === newEmail);
+    expect(mine).toHaveLength(1);
+    expect(sentEmails.filter((e) => e.to === u).length).toBeGreaterThanOrEqual(1);
+    const token = /verify-email\?token=([A-Za-z0-9_-]+)/.exec(mine[0].html)![1];
+
+    // Confirming applies the new email.
+    await request(app.getHttpServer()).post("/auth/verify-email").send({ token }).expect(200);
+    const me = await request(app.getHttpServer()).get("/auth/me").set("Authorization", `Bearer ${tok}`).expect(200);
+    expect(me.body.email).toBe(newEmail);
+    expect(me.body.emailVerified).toBe(true);
+
+    await prisma.user.deleteMany({ where: { email: { in: [u, newEmail] } } }).catch(() => undefined);
   });
 });

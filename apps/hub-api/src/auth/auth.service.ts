@@ -16,7 +16,11 @@ import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { MailService } from "../mail/mail.service";
-import { resetPasswordEmail } from "../mail/templates";
+import {
+  resetPasswordEmail,
+  verifyEmail as verifyEmailTemplate,
+  emailChangeNoticeEmail,
+} from "../mail/templates";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { TotpService } from "./totp.service";
 import { generateRecoveryCodes, recoveryHashInput } from "./recovery-codes";
@@ -39,6 +43,9 @@ const PASSWORD_RESET_TTL_MS = 45 * 60 * 1000; // 45 min (matches the email copy)
 const PASSWORD_RESET_RATE_MAX = 5; // reset requests per email per window before a soft 429
 const PASSWORD_RESET_RATE_WINDOW = 60; // seconds
 
+// Email verification: a longer-lived emailed token (people verify hours later, from another device).
+const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
@@ -49,6 +56,7 @@ export interface PublicUser {
   email: string;
   name: string | null;
   twoFaEnabled: boolean;
+  emailVerified: boolean;
   uiMode: string;
 }
 
@@ -104,6 +112,10 @@ export class AuthService {
 
     await this.audit.log({ actor: user.id, action: "auth.register" });
     const tokens = await this.issueTokens(user.id);
+    // The account is usable immediately (logged in but unverified); enforcement (if enabled) and the
+    // web banner nudge the user to confirm. We await the token persistence (fast, fail-soft) but the
+    // SMTP send itself stays fire-and-forget inside the helper, so register latency isn't SMTP-bound.
+    await this.sendEmailVerification(user.id, user.email, user.name).catch(() => undefined);
     return { user: this.toPublicUser(user), tokens };
   }
 
@@ -118,7 +130,8 @@ export class AuthService {
       const passwordHash = await argon2.hash(randomUUID(), { type: argon2.argon2id });
       user = await this.prisma.$transaction(async (tx) => {
         const created = await tx.user.create({
-          data: { email, password: passwordHash, name: name ?? null },
+          // OAuth emails are provider-verified, so the account starts verified.
+          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date() },
         });
         const team = await tx.team.create({
           data: { name: name ? `${name}'s Team` : "My Team" },
@@ -130,6 +143,13 @@ export class AuthService {
         return created;
       });
       await this.audit.log({ actor: user.id, action: "auth.register", meta: { provider: "github" } });
+    } else if (!user.emailVerified) {
+      // GitHub proves the user owns this email — heal a pre-existing password account that never
+      // verified (otherwise enforcement would block someone who just proved email ownership).
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true, emailVerifiedAt: new Date() },
+      });
     }
     await this.audit.log({ actor: user.id, action: "auth.login", meta: { provider: "github" } });
     return this.issueTokens(user.id);
@@ -430,25 +450,41 @@ export class AuthService {
     return this.toPublicUser(await this.requireUser(userId));
   }
 
-  /** Update the current user's display name and/or email. */
+  /**
+   * Update the current user's display name and/or email. An EMAIL CHANGE is DEFERRED: we don't
+   * write the new address, we email it a confirmation link — the old (verified) address stays in
+   * control until the new owner clicks it. This blocks a typo'd address from locking the account and
+   * a briefly-hijacked session from silently swapping the email. name/uiMode apply immediately.
+   */
   async updateProfile(
     userId: string,
-    input: { name?: string; email?: string; uiMode?: "fleet" | "home" },
+    input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string },
   ): Promise<PublicUser> {
     const user = await this.requireUser(userId);
+    let emailChangeTarget: string | null = null;
     if (input.email && input.email !== user.email) {
+      // Sudo re-auth: an email change is a takeover vector (→ password reset to the new address), so
+      // require the current password — mirrors changePassword. A stolen session alone can't do it.
+      if (!input.currentPassword || !(await argon2.verify(user.password, input.currentPassword))) {
+        throw new UnauthorizedException("current password is required to change your email");
+      }
       const taken = await this.prisma.user.findUnique({ where: { email: input.email } });
       if (taken && taken.id !== userId) throw new ConflictException("email already in use");
+      emailChangeTarget = input.email; // deferred — verified into user.email only on confirm
     }
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.email !== undefined ? { email: input.email } : {}),
         ...(input.uiMode !== undefined ? { uiMode: input.uiMode } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "auth.profile.update" });
+    if (emailChangeTarget) {
+      await this.sendEmailVerification(userId, emailChangeTarget, updated.name).catch(() => undefined);
+      // Security notice to the CURRENT (old) address so a change is never silent to the real owner.
+      void this.mail.send(user.email, emailChangeNoticeEmail({ name: updated.name, newEmail: emailChangeTarget })).catch(() => undefined);
+    }
     return this.toPublicUser(updated);
   }
 
@@ -552,6 +588,91 @@ export class AuthService {
     await this.audit.log({ actor: vt.userId, action: "auth.password.reset" });
   }
 
+  // ---- email verification (register confirm + deferred email change) --------
+
+  /**
+   * Mint + email a single-use EMAIL_VERIFY token for `targetEmail`. Mirrors requestPasswordReset:
+   * only one live token per user (prior unused ones burned), only the sha256 hash is stored, and the
+   * send is FIRE-AND-FORGET + FAIL-SOFT (an unconfigured/failed mailer records the link in the audit
+   * log). `targetEmail` may differ from user.email during a deferred email change.
+   */
+  private async sendEmailVerification(userId: string, targetEmail: string, name: string | null): Promise<void> {
+    await this.prisma.verificationToken.updateMany({
+      where: { userId, purpose: VerificationPurpose.EMAIL_VERIFY, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    const raw = randomBytes(32).toString("base64url");
+    await this.prisma.verificationToken.create({
+      data: {
+        userId,
+        purpose: VerificationPurpose.EMAIL_VERIFY,
+        tokenHash: hashToken(raw),
+        email: targetEmail,
+        expiresAt: new Date(Date.now() + EMAIL_VERIFY_TTL_MS),
+      },
+    });
+    const verifyUrl = `${webBaseUrl(this.config)}/verify-email?token=${raw}`;
+    void this.mail
+      .send(targetEmail, verifyEmailTemplate({ name, verifyUrl }))
+      .then((sent) =>
+        this.audit.log({
+          actor: userId,
+          action: "auth.email.verify.sent",
+          meta: sent ? { delivered: true } : { delivered: false, verifyUrl },
+        }),
+      )
+      .catch(() =>
+        this.audit.log({ actor: userId, action: "auth.email.verify.sent", meta: { delivered: false, verifyUrl } }),
+      );
+  }
+
+  /**
+   * Confirm an emailed EMAIL_VERIFY token. Single-use via an atomic consume. Applies the token's
+   * target email (a no-op for a registration confirm, the new address for an email change) and marks
+   * the account verified. No logoutAll: unlike a password reset, the credential is unchanged.
+   */
+  async verifyEmail(token: string): Promise<void> {
+    const vt = await this.prisma.verificationToken.findUnique({ where: { tokenHash: hashToken(token) } });
+    if (
+      !vt ||
+      vt.purpose !== VerificationPurpose.EMAIL_VERIFY ||
+      vt.usedAt ||
+      vt.expiresAt.getTime() < Date.now()
+    ) {
+      throw new BadRequestException("invalid or expired verification link");
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: vt.userId } });
+    if (!user) throw new BadRequestException("invalid or expired verification link");
+    // For an email change, make sure the target wasn't claimed since the token was minted.
+    if (vt.email !== user.email) {
+      const taken = await this.prisma.user.findUnique({ where: { email: vt.email } });
+      if (taken && taken.id !== vt.userId) throw new BadRequestException("email already in use");
+    }
+    // Atomic single-use consume — a concurrent verify can't spend the same token twice.
+    const consumed = await this.prisma.verificationToken.updateMany({
+      where: { id: vt.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (consumed.count !== 1) throw new BadRequestException("invalid or expired verification link");
+    try {
+      await this.prisma.user.update({
+        where: { id: vt.userId },
+        data: { email: vt.email, emailVerified: true, emailVerifiedAt: new Date() },
+      });
+    } catch {
+      // Unique-constraint race on the target email (claimed between the check and the write).
+      throw new BadRequestException("email already in use");
+    }
+    await this.audit.log({ actor: vt.userId, action: "auth.email.verified" });
+  }
+
+  /** Re-send the verification email for the current user (no-op if already verified). */
+  async resendVerification(userId: string): Promise<void> {
+    const user = await this.requireUser(userId);
+    if (user.emailVerified) return;
+    await this.sendEmailVerification(userId, user.email, user.name);
+  }
+
   private async requireUser(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -565,6 +686,7 @@ export class AuthService {
     email: string;
     name: string | null;
     twoFaEnabled: boolean;
+    emailVerified: boolean;
     uiMode: string;
   }): PublicUser {
     return {
@@ -572,6 +694,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       twoFaEnabled: user.twoFaEnabled,
+      emailVerified: user.emailVerified,
       uiMode: user.uiMode,
     };
   }

@@ -1,4 +1,10 @@
-import { escapeHtml, resetPasswordEmail, verifyEmail, teamInviteEmail } from "./templates";
+import {
+  escapeHtml,
+  resetPasswordEmail,
+  verifyEmail,
+  teamInviteEmail,
+  emailChangeNoticeEmail,
+} from "./templates";
 
 describe("mail templates", () => {
   it("escapeHtml neutralizes the HTML-significant characters", () => {
@@ -22,6 +28,16 @@ describe("mail templates", () => {
     expect(inv.subject).toContain("Acme");
     expect(inv.html).toContain("https://x/invite/tok");
     expect(inv.text).toContain("https://x/invite/tok");
+  });
+
+  it("emailChangeNoticeEmail names the new address and escapes it", () => {
+    const e = emailChangeNoticeEmail({ name: "Ada", newEmail: "new@example.com" });
+    expect(e.subject).toMatch(/email is being changed/i);
+    expect(e.html).toContain("new@example.com");
+    expect(e.text).toContain("new@example.com");
+    const evil = emailChangeNoticeEmail({ name: null, newEmail: "<b>x</b>@y.com" });
+    expect(evil.html).not.toContain("<b>x</b>");
+    expect(evil.html).toContain("&lt;b&gt;x&lt;/b&gt;");
   });
 
   it("HTML-escapes user-controlled name/teamName (no markup injection)", () => {
