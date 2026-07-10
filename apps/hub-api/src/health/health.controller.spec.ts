@@ -6,7 +6,7 @@ describe("HealthController", () => {
 
     expect(result.status).toBe("ok");
     expect(result.service).toBe("tugra-hub-api");
-    expect(result.protocol).toBe(1);
+    expect(result.protocol).toBe(2);
     expect(typeof result.time).toBe("string");
   });
 });

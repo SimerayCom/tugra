@@ -2,8 +2,8 @@ import { PROTOCOL_VERSION } from "./index";
 import type { MetricsSample, EnrollMsg } from "./index";
 
 describe("shared protocol", () => {
-  it("pins the protocol version to 1", () => {
-    expect(PROTOCOL_VERSION).toBe(1);
+  it("pins the protocol version to 2", () => {
+    expect(PROTOCOL_VERSION).toBe(2);
   });
 
   it("shapes a metrics sample", () => {
@@ -31,6 +31,6 @@ describe("shared protocol", () => {
       fingerprint: "fp",
     };
     expect(msg.type).toBe("enroll");
-    expect(msg.protocol).toBe(1);
+    expect(msg.protocol).toBe(2);
   });
 });

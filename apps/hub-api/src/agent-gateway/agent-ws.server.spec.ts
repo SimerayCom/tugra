@@ -132,3 +132,36 @@ describe("AgentWsServer terminal relay", () => {
     expect(server.isOnline("ghost")).toBe(false);
   });
 });
+
+describe("AgentWsServer capability delivery (agent fail-closed)", () => {
+  it("seeds the agent's allowlist by putting the granted set in the enrolled payload", async () => {
+    const servers = {
+      markOffline: jest.fn(),
+      enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
+      grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "backup"]),
+    } as any;
+    const server = new AgentWsServer({} as any, servers, {} as any, hubSign);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "n", authed: false });
+    await (server as any).onMessage(socket, JSON.stringify({ type: "enroll", token: "t", publicKey: "pk", agentVersion: "1", hostname: "h" }));
+    const sent = JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    expect(sent.type).toBe("enrolled");
+    expect(sent.capabilities).toEqual(["deploy", "backup"]);
+  });
+
+  it("registers a pusher that live-sends the granted set as a 'capabilities' message", () => {
+    const setCapabilityPusher = jest.fn();
+    const servers = { markOffline: jest.fn(), setCapabilityPusher } as any;
+    const fakeHttp = { on: jest.fn() };
+    const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
+    const server = new AgentWsServer(httpAdapterHost, servers, {} as any, hubSign);
+    server.onApplicationBootstrap();
+    expect(setCapabilityPusher).toHaveBeenCalledTimes(1);
+    // The registered pusher forwards to the connected agent as an unsigned "capabilities" message.
+    const socket = { readyState: 1, send: jest.fn() } as any;
+    (server as any).sockets.set("s1", socket);
+    (setCapabilityPusher.mock.calls[0][0] as (id: string, caps: string[]) => void)("s1", ["deploy"]);
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "capabilities", capabilities: ["deploy"] });
+    void server.onModuleDestroy(); // close the WS server created by bootstrap (no lingering handle)
+  });
+});

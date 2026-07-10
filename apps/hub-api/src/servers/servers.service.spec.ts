@@ -338,6 +338,18 @@ describe("ServersService capabilities", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { capabilities: [] } }));
   });
 
+  it("live-pushes the new capability set to the connected agent (agent fail-closed update)", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update: jest.fn().mockResolvedValue({}) },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    const push = jest.fn();
+    svc.setCapabilityPusher(push);
+    await svc.setCapabilities("u1", "s1", ["deploy", "backup"]);
+    expect(push).toHaveBeenCalledWith("s1", ["deploy", "backup"]);
+  });
+
   it("grantedCapabilities returns the stored set", async () => {
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue({ capabilities: ["deploy"] }) },
