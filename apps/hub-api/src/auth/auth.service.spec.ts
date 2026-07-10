@@ -10,6 +10,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { TotpService } from "./totp.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
+import { MailService } from "../mail/mail.service";
 
 class FakeRedis {
   private kv = new Map<string, string>();
@@ -53,6 +54,8 @@ const config = {
         : undefined,
 } as unknown as ConfigService;
 
+const mail = { send: jest.fn().mockResolvedValue(true), isConfigured: () => true } as unknown as MailService;
+
 function makeService(
   prisma: Partial<PrismaService> = {},
   teamDefaults: { ensureDefaults: jest.Mock } = { ensureDefaults: jest.fn().mockResolvedValue(undefined) },
@@ -66,6 +69,7 @@ function makeService(
     { log: jest.fn() } as unknown as AuditService,
     new FakeRedis() as unknown as RedisService,
     teamDefaults as unknown as TeamDefaultsService,
+    mail,
   );
 }
 
@@ -140,6 +144,7 @@ describe("AuthService 2FA recovery codes", () => {
       { log: jest.fn() } as unknown as AuditService,
       new FakeRedis() as unknown as RedisService,
       { ensureDefaults: jest.fn() } as unknown as TeamDefaultsService,
+      mail,
     );
   }
 
@@ -382,6 +387,7 @@ describe("AuthService session hardening", () => {
       { log: jest.fn() } as unknown as AuditService,
       redis as unknown as RedisService,
       { ensureDefaults: jest.fn() } as unknown as TeamDefaultsService,
+      mail,
     );
     const legacy = async (jti: string) => {
       const token = await jwt.signAsync({ sub: "u1", jti, family: `fam-${jti}`, type: "refresh" }, { secret, expiresIn: 3600 });
@@ -437,5 +443,89 @@ describe("AuthService.loginWithGithub", () => {
 
     expect(tx).not.toHaveBeenCalled();
     expect(issue).toHaveBeenCalledWith("u9");
+  });
+});
+
+describe("AuthService password reset", () => {
+  it("forgot: creates a hashed single-use token and emails the reset link (existing user)", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const invalidate = jest.fn().mockResolvedValue({ count: 0 });
+    const findUnique = jest.fn().mockResolvedValue({ id: "u1", email: "Mixed@Case.com", name: "A" });
+    const prisma = {
+      user: { findUnique },
+      verificationToken: { updateMany: invalidate, create },
+    } as unknown as PrismaService;
+    (mail.send as jest.Mock).mockClear();
+    (mail.send as jest.Mock).mockResolvedValue(true);
+    await makeService(prisma).requestPasswordReset("Mixed@Case.com");
+    // Looks up by the RAW email (matches register/login, which are case-sensitive) — NOT lowercased,
+    // so a mixed-case account isn't silently skipped.
+    expect(findUnique).toHaveBeenCalledWith({ where: { email: "Mixed@Case.com" } });
+    // prior reset tokens are burned first
+    expect(invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: "u1", purpose: "PASSWORD_RESET", usedAt: null }) }),
+    );
+    // what's STORED is a sha256 hash, never the raw token
+    const data = create.mock.calls[0][0].data;
+    expect(data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(data.purpose).toBe("PASSWORD_RESET");
+    // the emailed link carries a raw token (distinct from the stored hash)
+    const [, email] = (mail.send as jest.Mock).mock.calls[0];
+    expect(email.html).toContain("/reset-password?token=");
+    expect(email.html).not.toContain(data.tokenHash);
+  });
+
+  it("forgot: silent + still resolves for an unknown email (no enumeration)", async () => {
+    const create = jest.fn();
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(null) }, verificationToken: { create } } as unknown as PrismaService;
+    await expect(makeService(prisma).requestPasswordReset("ghost@x.io")).resolves.toBeUndefined();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("forgot: fail-soft — a mailer failure still resolves (link goes to the audit log)", async () => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", email: "a@b.c", name: null }) },
+      verificationToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), create: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
+    (mail.send as jest.Mock).mockClear();
+    (mail.send as jest.Mock).mockResolvedValue(false);
+    await expect(makeService(prisma).requestPasswordReset("a@b.c")).resolves.toBeUndefined();
+    (mail.send as jest.Mock).mockResolvedValue(true); // restore for other tests
+  });
+
+  it("reset: valid token updates the password, consumes the token, and revokes all sessions", async () => {
+    const userUpdate = jest.fn().mockResolvedValue({});
+    const consume = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      verificationToken: {
+        findUnique: jest.fn().mockResolvedValue({ id: "vt1", userId: "u1", purpose: "PASSWORD_RESET", usedAt: null, expiresAt: new Date(Date.now() + 10000) }),
+        updateMany: consume,
+      },
+      user: { update: userUpdate },
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    const revoke = jest.spyOn(svc, "logoutAll");
+    await svc.resetPassword("raw-token", "new-pass-1234");
+    expect(consume).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "vt1", usedAt: null } }));
+    const data = userUpdate.mock.calls[0][0].data;
+    expect(data.password).toBeTruthy();
+    expect(data.password).not.toBe("new-pass-1234"); // stored hashed
+    expect(revoke).toHaveBeenCalledWith("u1");
+  });
+
+  it("reset: rejects an unknown or expired token", async () => {
+    const unknown = { verificationToken: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    await expect(makeService(unknown).resetPassword("bogus", "new-pass-1234")).rejects.toThrow(/invalid or expired/);
+    const expired = {
+      verificationToken: { findUnique: jest.fn().mockResolvedValue({ id: "vt", userId: "u1", purpose: "PASSWORD_RESET", usedAt: null, expiresAt: new Date(Date.now() - 1000) }) },
+    } as unknown as PrismaService;
+    await expect(makeService(expired).resetPassword("x", "new-pass-1234")).rejects.toThrow(/invalid or expired/);
+  });
+
+  it("forgot: per-email rate limit trips a 429 after too many requests", async () => {
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    const svc = makeService(prisma); // one FakeRedis (counter) for the whole test
+    for (let i = 0; i < 5; i++) await svc.requestPasswordReset("spam@x.io");
+    await expect(svc.requestPasswordReset("spam@x.io")).rejects.toThrow(/too many/);
   });
 });

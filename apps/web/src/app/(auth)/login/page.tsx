@@ -91,6 +91,8 @@ export default function LoginPage() {
       </a>
       <div style={{ marginTop: 14, fontSize: 13, color: "var(--c-tx3)", textAlign: "center" }}>
         {t("auth.noAccount")} <Link href="/register" style={{ color: "var(--c-a)" }}>{t("auth.register")}</Link>
+        <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
+        <Link href="/forgot-password" style={{ color: "var(--c-a)" }}>{t("auth.forgotLink")}</Link>
       </div>
     </Card>
   );

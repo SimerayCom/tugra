@@ -18,8 +18,12 @@ import {
   ChangePasswordSchema,
   Enable2faInput,
   Enable2faSchema,
+  ForgotPasswordInput,
+  ForgotPasswordSchema,
   LoginInput,
   LoginSchema,
+  ResetPasswordInput,
+  ResetPasswordSchema,
   RefreshInput,
   RefreshSchema,
   RegisterInput,
@@ -45,6 +49,23 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   login(@Body(new ZodValidationPipe(LoginSchema)) body: LoginInput) {
     return this.auth.login(body.email, body.password, body.totp);
+  }
+
+  @Post("forgot-password")
+  @HttpCode(200)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async forgotPassword(@Body(new ZodValidationPipe(ForgotPasswordSchema)) body: ForgotPasswordInput) {
+    // Always 200 whether or not the email exists — no account enumeration.
+    await this.auth.requestPasswordReset(body.email);
+    return { ok: true };
+  }
+
+  @Post("reset-password")
+  @HttpCode(200)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async resetPassword(@Body(new ZodValidationPipe(ResetPasswordSchema)) body: ResetPasswordInput) {
+    await this.auth.resetPassword(body.token, body.newPassword);
+    return { ok: true };
   }
 
   @Post("refresh")

@@ -4,17 +4,29 @@ import { authenticator } from "otplib";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { MailService } from "../src/mail/mail.service";
 
 describe("Auth (e2e)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   const email = `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
   const password = "supersecret123";
+  // Capture "sent" emails so the reset test can read the raw token out of the emailed link.
+  const sentEmails: { to: string; html: string }[] = [];
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(MailService)
+      .useValue({
+        isConfigured: () => true,
+        send: async (to: string, e: { html: string }) => {
+          sentEmails.push({ to, html: e.html });
+          return true;
+        },
+      })
+      .compile();
     app = moduleRef.createNestApplication();
     prisma = app.get(PrismaService);
     await app.init();
@@ -255,6 +267,38 @@ describe("Auth (e2e)", () => {
     await request(app.getHttpServer()).post("/auth/refresh").send({ refreshToken: liveRt }).expect(401);
     // logout-all requires auth.
     await request(app.getHttpServer()).post("/auth/logout-all").expect(401);
+
+    await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
+  });
+
+  it("resets a password via an emailed single-use token (enumeration-safe, revokes sessions)", async () => {
+    const u = `e2e-reset-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const oldPw = "old-pass-1234";
+    const newPw = "new-pass-5678";
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: u, password: oldPw }).expect(201);
+    const preResetRefresh = reg.body.tokens.refreshToken as string;
+
+    sentEmails.length = 0;
+    // Forgot returns 200 for BOTH an existing and an unknown email (no account enumeration).
+    await request(app.getHttpServer()).post("/auth/forgot-password").send({ email: u }).expect(200);
+    await request(app.getHttpServer()).post("/auth/forgot-password").send({ email: `ghost-${Date.now()}@x.io` }).expect(200);
+    // Only the real account got an email; pull the raw token out of the link.
+    const mine = sentEmails.filter((e) => e.to === u);
+    expect(mine).toHaveLength(1);
+    const token = /reset-password\?token=([A-Za-z0-9_-]+)/.exec(mine[0].html)![1];
+    expect(token).toBeTruthy();
+    // The DB stores only a hash — the raw token from the link is never a stored value.
+    expect(await prisma.verificationToken.findFirst({ where: { tokenHash: token } })).toBeNull();
+
+    await request(app.getHttpServer()).post("/auth/reset-password").send({ token, newPassword: newPw }).expect(200);
+
+    // Reset revoked every session → the pre-reset refresh token is dead.
+    await request(app.getHttpServer()).post("/auth/refresh").send({ refreshToken: preResetRefresh }).expect(401);
+    // The new password logs in.
+    const login = await request(app.getHttpServer()).post("/auth/login").send({ email: u, password: newPw }).expect(200);
+    expect(login.body.tokens.accessToken).toBeTruthy();
+    // The token is single-use.
+    await request(app.getHttpServer()).post("/auth/reset-password").send({ token, newPassword: "another-9999" }).expect(400);
 
     await prisma.user.deleteMany({ where: { email: u } }).catch(() => undefined);
   });
