@@ -127,6 +127,40 @@ describe("TeamsService", () => {
   });
 });
 
+describe("TeamsService.previewInvitation", () => {
+  function prismaFor(inv: { email: string; role: Role; teamId: string; invitedBy: string; expiresAt: Date } | null) {
+    return {
+      teamInvitation: { findUnique: jest.fn().mockResolvedValue(inv) },
+      team: { findUnique: jest.fn().mockResolvedValue({ name: "Acme" }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ name: "Ada" }) },
+    } as unknown as PrismaService;
+  }
+
+  it("returns team/inviter/role/email without an email match (public), expired=false when live", async () => {
+    const prisma = prismaFor({ email: "b@x.com", role: Role.ADMIN, teamId: "t1", invitedBy: "u1", expiresAt: new Date(Date.now() + 1e6) });
+    const res = await make(prisma, {} as TeamAccessService).previewInvitation("tok");
+    expect(res).toEqual({ teamName: "Acme", inviterName: "Ada", role: Role.ADMIN, email: "b@x.com", expiresAt: expect.any(Date), expired: false });
+  });
+
+  it("flags an expired invitation", async () => {
+    const prisma = prismaFor({ email: "b@x.com", role: Role.VIEWER, teamId: "t1", invitedBy: "u1", expiresAt: new Date(Date.now() - 1000) });
+    expect((await make(prisma, {} as TeamAccessService).previewInvitation("tok")).expired).toBe(true);
+  });
+
+  it("404s an unknown token", async () => {
+    await expect(make(prismaFor(null), {} as TeamAccessService).previewInvitation("nope")).rejects.toThrow(NotFoundException);
+  });
+
+  it("tolerates a deleted inviter (null name)", async () => {
+    const prisma = {
+      teamInvitation: { findUnique: jest.fn().mockResolvedValue({ email: "b@x.com", role: Role.VIEWER, teamId: "t1", invitedBy: "gone", expiresAt: new Date(Date.now() + 1e6) }) },
+      team: { findUnique: jest.fn().mockResolvedValue({ name: "Acme" }) },
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    expect((await make(prisma, {} as TeamAccessService).previewInvitation("tok")).inviterName).toBeNull();
+  });
+});
+
 describe("TeamsService.get", () => {
   const teamRow = { id: "t1", name: "Shop", _count: { memberships: 3 } };
 
