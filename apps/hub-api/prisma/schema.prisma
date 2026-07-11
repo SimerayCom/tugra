@@ -292,6 +292,8 @@ model Metric {
   diskTotal BigInt
   netRx     BigInt
   netTx     BigInt
+  diskRead  BigInt @default(0) // bytes/s; @default so the additive migration needs no backfill
+  diskWrite BigInt @default(0)
 
   @@index([serverId, ts])
 }

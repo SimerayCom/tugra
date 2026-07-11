@@ -15,6 +15,8 @@ function sample(over: Partial<MetricsSample> = {}): MetricsSample {
     diskTotal: 2,
     netRx: 0,
     netTx: 0,
+    diskRead: 0,
+    diskWrite: 0,
     ...over,
   };
 }

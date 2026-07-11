@@ -101,6 +101,8 @@ export interface MetricsSample {
   diskTotal: number; // bytes
   netRx: number; // bytes/s
   netTx: number; // bytes/s
+  diskRead: number; // bytes/s (physical-disk read throughput)
+  diskWrite: number; // bytes/s
 }
 
 // ---- Hub -> Agent --------------------------------------------------------

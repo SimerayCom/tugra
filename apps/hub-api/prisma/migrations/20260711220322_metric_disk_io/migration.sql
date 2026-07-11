@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Metric" ADD COLUMN     "diskRead" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN     "diskWrite" BIGINT NOT NULL DEFAULT 0;

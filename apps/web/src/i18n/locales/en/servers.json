@@ -63,6 +63,8 @@
   "ram": "RAM",
   "netIn": "Network In",
   "netOut": "Network Out",
+  "diskRead": "Disk Read",
+  "diskWrite": "Disk Write",
   "os": "OS",
   "arch": "Architecture",
   "kernel": "Kernel",

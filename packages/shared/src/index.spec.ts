@@ -25,6 +25,8 @@ describe("shared protocol", () => {
       diskTotal: 50,
       netRx: 0,
       netTx: 0,
+      diskRead: 0,
+      diskWrite: 0,
     };
     expect(sample.cpu).toBeLessThanOrEqual(100);
   });

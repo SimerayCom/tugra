@@ -142,6 +142,8 @@ export interface MetricsSample {
   diskTotal: number;
   netRx: number;
   netTx: number;
+  diskRead: number;
+  diskWrite: number;
 }
 
 export type MetricsRange = "1h" | "6h" | "24h";
