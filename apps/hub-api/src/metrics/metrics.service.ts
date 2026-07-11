@@ -22,6 +22,11 @@ export class MetricsService {
         diskTotal: BigInt(Math.round(sample.diskTotal)),
         netRx: BigInt(Math.round(sample.netRx)),
         netTx: BigInt(Math.round(sample.netTx)),
+        // Finite-guard: an OLDER agent doesn't send these → sample.diskRead is undefined →
+        // BigInt(Math.round(undefined)) = BigInt(NaN) would THROW and drop the whole metrics message
+        // (disconnecting the agent every tick). Coerce undefined/NaN/Infinity → 0.
+        diskRead: BigInt(Math.round(Number.isFinite(sample.diskRead) ? sample.diskRead : 0)),
+        diskWrite: BigInt(Math.round(Number.isFinite(sample.diskWrite) ? sample.diskWrite : 0)),
       },
     });
     // Live fan-out for the UI (best-effort).
@@ -45,6 +50,8 @@ export class MetricsService {
       diskTotal: Number(r.diskTotal),
       netRx: Number(r.netRx),
       netTx: Number(r.netTx),
+      diskRead: Number(r.diskRead),
+      diskWrite: Number(r.diskWrite),
     }));
   }
 }

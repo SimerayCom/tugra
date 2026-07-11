@@ -21,6 +21,8 @@ type MetricsSample struct {
 	DiskTotal float64 `json:"diskTotal"`
 	NetRx     float64 `json:"netRx"`
 	NetTx     float64 `json:"netTx"`
+	DiskRead  float64 `json:"diskRead"`  // bytes/s (physical-disk read throughput)
+	DiskWrite float64 `json:"diskWrite"` // bytes/s
 }
 
 // Agent -> Hub

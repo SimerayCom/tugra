@@ -52,11 +52,15 @@ export function MetricChart({
   decimals?: number;
 }) {
   const width = 600;
-  const last = data.length ? data[data.length - 1] : 0;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
+  // Sanitize: a series may carry undefined/NaN (e.g. an older agent that omits a newer metric field,
+  // whose live SSE sample reaches the chart unmapped). Coerce to 0 so `.toFixed()` and the SVG path
+  // never see a non-finite value and crash the whole tab.
+  const clean = data.map((v) => (Number.isFinite(v) ? v : 0));
+  const last = clean.length ? clean[clean.length - 1] : 0;
+  const max = Math.max(...clean, 1);
+  const min = Math.min(...clean, 0);
   const span = max - min || 1;
-  const pts = data
+  const pts = clean
     .map((v, i) => {
       const x = (i / Math.max(data.length - 1, 1)) * width;
       const y = height - ((v - min) / span) * (height - 16) - 8;

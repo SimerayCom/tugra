@@ -73,6 +73,10 @@ export default function ServerDetailPage() {
   const ram = metrics.map((m) => pct(m.memUsed, m.memTotal));
   const netIn = humanizeRateSeries(metrics.map((m) => m.netRx));
   const netOut = humanizeRateSeries(metrics.map((m) => m.netTx));
+  // `?? 0`: an older agent's live SSE sample omits diskRead/diskWrite (undefined) — default it so the
+  // rate humanizer picks the right unit and the chart never sees a non-finite value.
+  const diskRead = humanizeRateSeries(metrics.map((m) => m.diskRead ?? 0));
+  const diskWrite = humanizeRateSeries(metrics.map((m) => m.diskWrite ?? 0));
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -143,6 +147,8 @@ export default function ServerDetailPage() {
             <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
             <MetricChart data={netIn.data} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
             <MetricChart data={netOut.data} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
+            <MetricChart data={diskRead.data} label={t("servers.diskRead")} unit={" " + diskRead.unit} color="var(--c-lapis)" decimals={1} />
+            <MetricChart data={diskWrite.data} label={t("servers.diskWrite")} unit={" " + diskWrite.unit} color="var(--c-am)" decimals={1} />
           </div>
         )
       )}

@@ -2,6 +2,7 @@
 package metrics
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -44,30 +45,45 @@ func isVirtualNIC(name string) bool {
 		strings.HasPrefix(name, "virbr") // libvirt/KVM bridges
 }
 
-// netRate turns cumulative byte counters into a per-second rate. It guards
-// against a zero/negative interval and counter resets (interface flap, reboot,
-// counter wraparound): a channel whose counter went backwards yields 0 rather
-// than a bogus negative or huge spike, and each channel is guarded independently.
-func netRate(prevRx, prevTx, curRx, curTx uint64, elapsed float64) (rx, tx float64) {
+// physicalDiskRe matches WHOLE physical disks (sda, vda, nvme0n1, mmcblk0) but not partitions
+// (sda1, nvme0n1p1) or virtual devices (loop*, dm-*, sr*, md*, ram*). Summing partitions and their
+// parent disk — or an LVM/loop layer over a physical disk — would double-count every byte.
+var physicalDiskRe = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme\d+n\d+|mmcblk\d+)$`)
+
+func isPhysicalDisk(name string) bool { return physicalDiskRe.MatchString(name) }
+
+// ioRate turns a pair of cumulative byte counters into per-second rates. It guards a zero/negative
+// interval and counter resets (device flap, reboot, wraparound): a channel whose counter went
+// backwards yields 0 rather than a bogus negative or huge spike, guarded independently. Shared by
+// the network and disk-I/O paths (both are cumulative → rate).
+func ioRate(prevA, prevB, curA, curB uint64, elapsed float64) (a, b float64) {
 	if elapsed <= 0 {
 		return 0, 0
 	}
-	if curRx >= prevRx {
-		rx = float64(curRx-prevRx) / elapsed
+	if curA >= prevA {
+		a = float64(curA-prevA) / elapsed
 	}
-	if curTx >= prevTx {
-		tx = float64(curTx-prevTx) / elapsed
+	if curB >= prevB {
+		b = float64(curB-prevB) / elapsed
 	}
-	return rx, tx
+	return a, b
 }
 
-// Collector wraps Collect with the state needed to derive network rates from
-// successive samples. It is not safe for concurrent use; call Sample from a
-// single goroutine (the agent's metrics ticker loop).
+// Collector wraps Collect with the state needed to derive network + disk-I/O rates from successive
+// samples. It is not safe for concurrent use; call Sample from a single goroutine (the agent's
+// metrics ticker loop).
 type Collector struct {
+	// Each source keeps its OWN baseline timestamp so `elapsed` always spans exactly the interval
+	// its counter accumulated over. A transient IOCounters failure on one source freezes only that
+	// source's baseline+time (its next success divides by the true multi-interval span, not a single
+	// tick — no spike), and never disturbs the other source.
 	prevRx, prevTx uint64
-	prevTime       time.Time
-	hasPrev        bool
+	prevTimeNet    time.Time
+	hasPrevNet     bool
+
+	prevDiskRead, prevDiskWrite uint64
+	prevTimeDisk                time.Time
+	hasPrevDisk                 bool
 }
 
 // NewCollector returns a Collector whose first Sample reports zero network rate.
@@ -92,10 +108,27 @@ func (c *Collector) Sample() (protocol.MetricsSample, error) {
 			rx += nic.BytesRecv
 			tx += nic.BytesSent
 		}
-		if c.hasPrev {
-			s.NetRx, s.NetTx = netRate(c.prevRx, c.prevTx, rx, tx, now.Sub(c.prevTime).Seconds())
+		if c.hasPrevNet {
+			s.NetRx, s.NetTx = ioRate(c.prevRx, c.prevTx, rx, tx, now.Sub(c.prevTimeNet).Seconds())
 		}
-		c.prevRx, c.prevTx, c.prevTime, c.hasPrev = rx, tx, now, true
+		// Advance baseline + time ATOMICALLY: elapsed must always match the counter span.
+		c.prevRx, c.prevTx, c.prevTimeNet, c.hasPrevNet = rx, tx, now, true
+	}
+	// Disk I/O throughput: sum ReadBytes/WriteBytes over whole physical disks only (partitions and
+	// LVM/loop layers would double-count). First sample has no baseline → rate stays 0.
+	if io, e := disk.IOCounters(); e == nil {
+		var read, write uint64
+		for name, st := range io {
+			if !isPhysicalDisk(name) {
+				continue
+			}
+			read += st.ReadBytes
+			write += st.WriteBytes
+		}
+		if c.hasPrevDisk {
+			s.DiskRead, s.DiskWrite = ioRate(c.prevDiskRead, c.prevDiskWrite, read, write, now.Sub(c.prevTimeDisk).Seconds())
+		}
+		c.prevDiskRead, c.prevDiskWrite, c.prevTimeDisk, c.hasPrevDisk = read, write, now, true
 	}
 	return s, nil
 }
