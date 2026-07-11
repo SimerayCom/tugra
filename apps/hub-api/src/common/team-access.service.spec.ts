@@ -5,12 +5,41 @@ import {
   canAccessProject,
   canAccessResource,
   isScoped,
+  resolvePermissions,
   type MembershipAccess,
 } from "./team-access.service";
 import { PrismaService } from "../prisma/prisma.service";
 
+describe("resolvePermissions (built-in tiers + custom roles)", () => {
+  it("grants OWNER and ADMIN every permission", () => {
+    expect(resolvePermissions({ role: Role.OWNER }).has("servers:manage")).toBe(true);
+    expect(resolvePermissions({ role: Role.ADMIN }).has("apps:deploy")).toBe(true);
+    expect(resolvePermissions({ role: Role.OWNER }).size).toBeGreaterThanOrEqual(12);
+  });
+
+  it("grants VIEWER nothing", () => {
+    expect(resolvePermissions({ role: Role.VIEWER }).size).toBe(0);
+  });
+
+  it("a custom role grants exactly its permission set, overriding the enum tier", () => {
+    const perms = resolvePermissions({ role: Role.VIEWER, teamRole: { permissions: ["apps:deploy", "monitors"] } });
+    expect([...perms].sort()).toEqual(["apps:deploy", "monitors"]);
+    expect(perms.has("databases")).toBe(false);
+  });
+
+  it("filters out unknown/invalid permission strings in a custom role", () => {
+    const perms = resolvePermissions({ role: Role.VIEWER, teamRole: { permissions: ["apps:deploy", "totally:bogus", ""] } });
+    expect([...perms]).toEqual(["apps:deploy"]);
+  });
+
+  it("returns an empty set for a null membership", () => {
+    expect(resolvePermissions(null).size).toBe(0);
+  });
+});
+
 const m = (over: Partial<MembershipAccess>): MembershipAccess => ({
   role: Role.VIEWER,
+  teamRoleId: null,
   restrictedAccess: false,
   accessedProjects: [],
   accessedResources: [],
@@ -24,6 +53,9 @@ describe("team-access scoping (pure)", () => {
     expect(isScoped(m({ role: Role.ADMIN, restrictedAccess: true }))).toBe(false); // admin bypasses
     expect(isScoped(m({ role: Role.VIEWER, restrictedAccess: false }))).toBe(false); // not restricted
     expect(isScoped(m({ role: Role.VIEWER, restrictedAccess: true }))).toBe(true);
+    // A custom-role member is permission-based and team-wide — scoping never constrains them
+    // (their writes are permission-gated, so a "restriction" would silently not apply to writes).
+    expect(isScoped(m({ role: Role.VIEWER, teamRoleId: "role1", restrictedAccess: true }))).toBe(false);
   });
 
   it("OWNER/ADMIN and unrestricted members access every project/resource", () => {

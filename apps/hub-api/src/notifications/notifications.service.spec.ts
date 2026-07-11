@@ -20,7 +20,7 @@ describe("NotificationsService", () => {
     const create = jest.fn().mockResolvedValue({ id: "c1", name: "n", type: "webhook", teamId: "t1", enabled: true, eventTypes: [] });
     const svc = make(
       { notificationChannel: { create } } as unknown as PrismaService,
-      { requireRole: jest.fn().mockResolvedValue(undefined) },
+      { requirePermission: jest.fn().mockResolvedValue(undefined) },
     );
     await svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "https://x" }, eventTypes: ["deploy_failed"] });
     const data = create.mock.calls[0][0].data;
@@ -30,7 +30,7 @@ describe("NotificationsService", () => {
   });
 
   it("rejects an unsupported channel type", async () => {
-    const svc = make({} as PrismaService, { requireRole: jest.fn().mockResolvedValue(undefined) });
+    const svc = make({} as PrismaService, { requirePermission: jest.fn().mockResolvedValue(undefined) });
     await expect(
       svc.create("u1", { name: "n", type: "carrierpigeon", teamId: "t1", config: {} }),
     ).rejects.toThrow(/unsupported/);
@@ -62,7 +62,7 @@ describe("NotificationsService", () => {
     const update = jest.fn().mockResolvedValue({ ...existing, eventTypes: ["server_offline"] });
     const svc = make(
       { notificationChannel: { findUnique: jest.fn().mockResolvedValue(existing), update } } as unknown as PrismaService,
-      { requireRole: jest.fn().mockResolvedValue(undefined) },
+      { requirePermission: jest.fn().mockResolvedValue(undefined) },
     );
     const v = await svc.update("u1", "c1", { eventTypes: ["server_offline"] });
     expect(v.eventTypes).toEqual(["server_offline"]);
@@ -78,8 +78,12 @@ describe("NotificationsService", () => {
         ]),
       },
     } as unknown as PrismaService;
+    const allPerms = new Set([
+      "apps:deploy", "apps:config", "databases", "backups", "servers:manage",
+      "servers:ops", "terminal", "bulk", "monitors", "projects", "integrations", "variables",
+    ]);
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", "OWNER"], ["tViewer", "VIEWER"]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", allPerms], ["tViewer", new Set()]])),
     } as unknown as TeamAccessService;
     const list = await make(prisma, access).list("u1");
     expect(list.find((c) => c.id === "c1")!.canWrite).toBe(true);

@@ -1,5 +1,4 @@
 import { ForbiddenException } from "@nestjs/common";
-import { Role } from "@prisma/client";
 import { PatchService } from "./patch.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -27,13 +26,13 @@ const server = { id: "s1", teamId: "t1" };
 describe("PatchService", () => {
   it("forbids a viewer from checking updates", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.VIEWER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("insufficient role")) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {}).checkUpdates("u1", "s1")).rejects.toThrow(/insufficient role/);
   });
 
   it("checkUpdates sends a 'patch' command and parses the output", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let cap = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, _c: string, capability: string) => {
@@ -49,7 +48,7 @@ describe("PatchService", () => {
 
   it("upgradeAll streams via DeployLogHub and returns final output", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s, _c, _cap, _t, onChunk?: (c: string) => void) => {
         onChunk?.("Reading package lists...\n");
@@ -67,7 +66,7 @@ describe("PatchService", () => {
 
   it("streamLogs subscribes to the server's patch log", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const logs = makeLogs();
     await make(prisma, access, {}, logs).streamLogs("u1", "s1");
     expect(logs.subscribe).toHaveBeenCalledWith("s1");

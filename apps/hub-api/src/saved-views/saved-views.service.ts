@@ -1,10 +1,8 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { Role, SavedView } from "@prisma/client";
+import { SavedView } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import type { CreateSavedViewInput } from "./dto";
-
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
 export interface SavedViewView {
   id: string;
@@ -25,12 +23,12 @@ export class SavedViewsService {
 
   /** A user's own views + every view shared with a team they belong to. */
   async list(userId: string): Promise<SavedViewView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
+    const permsByTeam = await this.access.permissionsByTeam(userId);
     const views = await this.prisma.savedView.findMany({
-      where: { OR: [{ userId }, { teamId: { in: [...roleByTeam.keys()] } }] },
+      where: { OR: [{ userId }, { teamId: { in: [...permsByTeam.keys()] } }] },
       orderBy: { createdAt: "asc" },
     });
-    return views.map((v) => this.view(v, this.mayDelete(v, userId, roleByTeam)));
+    return views.map((v) => this.view(v, this.mayDelete(v, userId, permsByTeam)));
   }
 
   async create(userId: string, dto: CreateSavedViewInput): Promise<SavedViewView> {
@@ -47,16 +45,15 @@ export class SavedViewsService {
   async remove(userId: string, id: string): Promise<void> {
     const v = await this.prisma.savedView.findUnique({ where: { id } });
     if (!v) throw new NotFoundException("saved view not found");
-    const roleByTeam = await this.access.roleByTeam(userId);
-    if (!this.mayDelete(v, userId, roleByTeam)) throw new ForbiddenException("cannot delete this view");
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    if (!this.mayDelete(v, userId, permsByTeam)) throw new ForbiddenException("cannot delete this view");
     await this.prisma.savedView.delete({ where: { id } });
   }
 
   /** The creator, or a team admin for shared views, may delete. */
-  private mayDelete(v: SavedView, userId: string, roleByTeam: Map<string, Role>): boolean {
+  private mayDelete(v: SavedView, userId: string, permsByTeam: Map<string, Set<string>>): boolean {
     if (v.userId === userId) return true;
-    const role = v.teamId ? roleByTeam.get(v.teamId) : undefined;
-    return !!role && WRITE.includes(role);
+    return v.teamId ? (permsByTeam.get(v.teamId)?.has("projects") ?? false) : false;
   }
 
   private view(v: SavedView, canDelete: boolean): SavedViewView {

@@ -12,9 +12,35 @@ const config = { get: jest.fn().mockReturnValue("me@x.com") } as unknown as Conf
 const crypto = { encrypt: (s: string) => s, decrypt: (s: string) => s } as unknown as import("../crypto/crypto.service").CryptoService;
 const server = { id: "s1", teamId: "t1" };
 
+const ALL_PERMS = [
+  "apps:deploy",
+  "apps:config",
+  "databases",
+  "backups",
+  "servers:manage",
+  "servers:ops",
+  "terminal",
+  "bulk",
+  "monitors",
+  "projects",
+  "integrations",
+  "variables",
+];
+
 function make(role: Role | null, send: jest.Mock) {
   const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
-  const access = { teamRole: jest.fn().mockResolvedValue(role) } as unknown as TeamAccessService;
+  // OWNER/ADMIN hold every granular permission; VIEWER holds none.
+  const perms = new Set(role === Role.OWNER || role === Role.ADMIN ? ALL_PERMS : []);
+  const access = {
+    // read path (status) still checks team membership
+    teamRole: jest.fn().mockResolvedValue(role),
+    // write path enforces the granular servers:ops permission
+    requirePermission: jest.fn((_u: string, _t: string, perm: string) =>
+      perms.has(perm)
+        ? Promise.resolve(undefined)
+        : Promise.reject(new ForbiddenException("insufficient role for this team")),
+    ),
+  } as unknown as TeamAccessService;
   const agentWs = { sendCommand: send } as unknown as AgentWsServer;
   return new ProxyOpsService(prisma, access, audit, agentWs, config, crypto);
 }

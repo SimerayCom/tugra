@@ -8,7 +8,7 @@ function fakeWs() {
 function make(over: {
   validate?: jest.Mock;
   verifyAsync?: jest.Mock;
-  requireRole?: jest.Mock;
+  requirePermission?: jest.Mock;
   application?: any;
   server?: any;
   isOnline?: boolean;
@@ -26,7 +26,9 @@ function make(over: {
     application: { findUnique: jest.fn().mockResolvedValue(over.application ?? null) },
     server: { findUnique: jest.fn().mockResolvedValue(over.server ?? null) },
   } as any;
-  const access = { requireRole: over.requireRole ?? jest.fn().mockResolvedValue(undefined) } as any;
+  const access = {
+    requirePermission: over.requirePermission ?? jest.fn().mockResolvedValue(undefined),
+  } as any;
   const apiTokens = { validate: over.validate ?? jest.fn() } as any;
   const audit = { log: jest.fn() } as any;
   const gw = new TerminalGateway({} as any, agentWs, jwt, config, prisma, access, apiTokens, audit);
@@ -92,7 +94,7 @@ describe("TerminalGateway", () => {
     const { gw, agentWs } = make({
       verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
       server: { id: "s1", teamId: "t1" },
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     });
     const ws = fakeWs();
     await connect(gw, ws, req("/terminal?server=s1"));

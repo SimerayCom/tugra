@@ -22,7 +22,7 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
   );
 }
 
-const writeAccess = { requireRole: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+const writeAccess = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
 const s3Dest = { id: "d1", teamId: "t1", type: "S3", s3Bucket: "b", s3Region: "r", s3Endpoint: "s3.x", s3AccessKey: "enc:AKIA", s3SecretKey: "enc:sek", s3Prefix: "tugra" };
 
 const s3Input = {
@@ -41,7 +41,7 @@ const s3Input = {
 describe("DestinationsService", () => {
   it("forbids creating a destination for a team the user can't write to", async () => {
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     const svc = make({}, access);
     await expect(svc.create("u1", s3Input)).rejects.toThrow(/nope/);
@@ -58,7 +58,7 @@ describe("DestinationsService", () => {
       },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
       teamRole: jest.fn().mockResolvedValue("OWNER"),
     } as unknown as TeamAccessService;
     const svc = make(prisma, access);

@@ -200,4 +200,50 @@ describe("Teams (e2e)", () => {
 
     await prisma.team.deleteMany({ where: { id: tid } }).catch(() => undefined);
   });
+
+  it("grants a member exactly a custom role's permissions (granular RBAC, end-to-end)", async () => {
+    const bearerA = `Bearer ${tokenA}`;
+    const bearerB = `Bearer ${tokenB}`;
+    const team = await request(app.getHttpServer()).post("/teams").set("Authorization", bearerA).send({ name: "Roles" }).expect(201);
+    const tid = team.body.id;
+    const inv = await request(app.getHttpServer()).post(`/teams/${tid}/members/invite`).set("Authorization", bearerA).send({ email: emailB, role: "VIEWER" }).expect(201);
+    await request(app.getHttpServer()).post(`/teams/invitations/${inv.body.token}/accept`).set("Authorization", bearerB).expect(200);
+
+    // Baseline: a plain VIEWER can write nothing.
+    await request(app.getHttpServer()).post("/projects").set("Authorization", bearerB).send({ teamId: tid, name: "nope" }).expect(403);
+
+    // Owner defines a custom role that grants ONLY "projects", and assigns it to B.
+    const role = await request(app.getHttpServer())
+      .post(`/teams/${tid}/roles`)
+      .set("Authorization", bearerA)
+      .send({ name: "Project Manager", permissions: ["projects", "not-a-real-permission"] })
+      .expect(201);
+    expect(role.body.permissions).toEqual(["projects"]); // invalid permission filtered out
+    await request(app.getHttpServer()).put(`/teams/${tid}/members/${userBId}`).set("Authorization", bearerA).send({ teamRoleId: role.body.id }).expect(200);
+
+    // The member row now shows the custom role name.
+    const members = await request(app.getHttpServer()).get(`/teams/${tid}/members`).set("Authorization", bearerA).expect(200);
+    expect(members.body.find((m: { userId: string }) => m.userId === userBId).roleName).toBe("Project Manager");
+
+    // Project scoping doesn't apply to a custom-role member (it wouldn't gate their writes) → refused,
+    // so an admin can't set an unenforceable restriction that gives a false sense of confinement.
+    await request(app.getHttpServer())
+      .patch(`/teams/${tid}/members/${userBId}/access`)
+      .set("Authorization", bearerA)
+      .send({ restrictedAccess: true, accessedProjects: [] })
+      .expect(409);
+
+    // B can now create a project (has "projects")…
+    await request(app.getHttpServer()).post("/projects").set("Authorization", bearerB).send({ teamId: tid, name: "allowed" }).expect(201);
+    // …but still can't create a server (lacks "servers:manage").
+    await request(app.getHttpServer()).post("/servers").set("Authorization", bearerB).send({ name: "srv", teamId: tid }).expect(403);
+    // …and can't manage the role catalog (that stays built-in-admin only — no self-escalation).
+    await request(app.getHttpServer()).post(`/teams/${tid}/roles`).set("Authorization", bearerB).send({ name: "Hacker", permissions: ["servers:manage"] }).expect(403);
+
+    // Deleting the role reverts B to their enum tier (VIEWER) → project creation is forbidden again.
+    await request(app.getHttpServer()).delete(`/teams/${tid}/roles/${role.body.id}`).set("Authorization", bearerA).expect(200);
+    await request(app.getHttpServer()).post("/projects").set("Authorization", bearerB).send({ teamId: tid, name: "nope2" }).expect(403);
+
+    await prisma.team.deleteMany({ where: { id: tid } }).catch(() => undefined);
+  });
 });

@@ -66,7 +66,7 @@ describe("TeamsService", () => {
       requireRole: jest.fn().mockResolvedValue(undefined),
       teamRole: jest.fn().mockResolvedValue(Role.OWNER),
     } as unknown as TeamAccessService;
-    await expect(make(prisma, access).setRole("u1", "t1", "u2", Role.ADMIN)).rejects.toThrow(ConflictException);
+    await expect(make(prisma, access).setRole("u1", "t1", "u2", { role: Role.ADMIN })).rejects.toThrow(ConflictException);
   });
 
   it("invites a user, returns the token, and emails the accept link", async () => {
@@ -88,7 +88,7 @@ describe("TeamsService", () => {
     const storedToken = upsert.mock.calls[0][0].create.token as string;
     const [to, email] = (mail.send as jest.Mock).mock.calls[0];
     expect(to).toBe("b@x.com");
-    expect(email.html).toContain(`/teams?invite=${storedToken}`);
+    expect(email.html).toContain(`/invite/${storedToken}`);
     expect(email.html).toContain("Platform");
   });
 

@@ -14,8 +14,6 @@ import { uptimePercent } from "./transition";
 import { planTargets } from "../bulk/bulk.service";
 import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
-
 export interface MonitorView {
   id: string;
   name: string;
@@ -50,7 +48,7 @@ export class MonitorsService {
   ) {}
 
   async create(userId: string, dto: CreateMonitorInput): Promise<MonitorView> {
-    await this.access.requireRole(userId, dto.teamId, WRITE);
+    await this.access.requirePermission(userId, dto.teamId, 'monitors');
     const m = await this.prisma.monitor.create({
       data: {
         name: dto.name,
@@ -74,11 +72,12 @@ export class MonitorsService {
     }
     await this.audit.log({ actor: userId, action: "monitor.create", target: m.id });
     await this.scheduler.schedule(m.id, m.intervalSec);
-    return this.view(m, Role.OWNER);
+    return this.view(m, Role.OWNER, true);
   }
 
   async list(userId: string): Promise<MonitorView[]> {
     const access = await this.access.accessByTeam(userId);
+    const perms = await this.access.permissionsByTeam(userId);
     const ids = [...access.keys()];
     if (!ids.length) return [];
     const rows = await this.prisma.monitor.findMany({
@@ -90,7 +89,7 @@ export class MonitorsService {
     const projectByApp = await this.projectIdsForApps(rows.map((m) => m.appId));
     return rows
       .filter((m) => canAccessResource(access.get(m.teamId), m.appId ?? m.id, m.appId ? projectByApp.get(m.appId) ?? null : null))
-      .map((m) => this.view(m, access.get(m.teamId)!.role));
+      .map((m) => this.view(m, access.get(m.teamId)!.role, perms.get(m.teamId)?.has('monitors') ?? false));
   }
 
   /** Owning project id per app id, for monitor scoping (batched, no N+1). */
@@ -111,18 +110,20 @@ export class MonitorsService {
   async get(userId: string, id: string): Promise<MonitorView> {
     const m = await this.require(userId, id);
     const role = (await this.access.teamRole(userId, m.teamId))!;
+    const perms = await this.access.permissionsByTeam(userId);
+    const canWrite = perms.get(m.teamId)?.has('monitors') ?? false;
     const channels = await this.prisma.monitorChannel.findMany({
       where: { monitorId: id },
       select: { channelId: true },
     });
-    return this.view(m, role, channels.map((c) => c.channelId));
+    return this.view(m, role, canWrite, channels.map((c) => c.channelId));
   }
 
   /** Edit an existing monitor; re-schedules when the cadence/enabled changes. */
   async update(userId: string, id: string, dto: UpdateMonitorInput): Promise<MonitorView> {
     const m = await this.prisma.monitor.findUnique({ where: { id } });
     if (!m) throw new NotFoundException("monitor not found");
-    await this.access.requireRole(userId, m.teamId, WRITE);
+    await this.access.requirePermission(userId, m.teamId, 'monitors');
 
     const updated = await this.prisma.monitor.update({
       where: { id },
@@ -151,7 +152,7 @@ export class MonitorsService {
     }
     await this.audit.log({ actor: userId, action: "monitor.update", target: id });
     const role = (await this.access.teamRole(userId, m.teamId))!;
-    return this.view(updated, role, dto.channelIds);
+    return this.view(updated, role, true, dto.channelIds);
   }
 
   /**
@@ -173,8 +174,8 @@ export class MonitorsService {
       where: { id: { in: channelIds } },
       select: { id: true, teamId: true },
     });
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const plan = planTargets(monitorIds, monitors, roleByTeam);
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    const plan = planTargets(monitorIds, monitors, permsByTeam, "monitors");
 
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -245,7 +246,7 @@ export class MonitorsService {
   async remove(userId: string, id: string): Promise<void> {
     const m = await this.prisma.monitor.findUnique({ where: { id } });
     if (!m) throw new NotFoundException("monitor not found");
-    await this.access.requireRole(userId, m.teamId, WRITE);
+    await this.access.requirePermission(userId, m.teamId, 'monitors');
     await this.scheduler.unschedule(id);
     await this.prisma.monitor.delete({ where: { id } });
   }
@@ -296,7 +297,7 @@ export class MonitorsService {
     return m;
   }
 
-  private view(m: Monitor, role: Role, channelIds: string[] = []): MonitorView {
+  private view(m: Monitor, role: Role, canWrite: boolean, channelIds: string[] = []): MonitorView {
     return {
       id: m.id,
       name: m.name,
@@ -316,7 +317,7 @@ export class MonitorsService {
       channelIds,
       teamId: m.teamId,
       role,
-      canWrite: WRITE.includes(role),
+      canWrite,
       createdAt: m.createdAt,
     };
   }

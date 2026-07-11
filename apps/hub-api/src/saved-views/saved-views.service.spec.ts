@@ -4,9 +4,29 @@ import { SavedViewsService } from "./saved-views.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 
+const ALL_PERMS = new Set([
+  "apps:deploy",
+  "apps:config",
+  "databases",
+  "backups",
+  "servers:manage",
+  "servers:ops",
+  "terminal",
+  "bulk",
+  "monitors",
+  "projects",
+  "integrations",
+  "variables",
+]);
+
+function permsFor(role: Role): Set<string> {
+  return role === Role.VIEWER ? new Set() : new Set(ALL_PERMS);
+}
+
 function make(prisma: Partial<PrismaService>, roleByTeam: Map<string, Role> = new Map()) {
+  const permissionsByTeam = new Map([...roleByTeam].map(([t, role]) => [t, permsFor(role)]));
   const access = {
-    roleByTeam: jest.fn().mockResolvedValue(roleByTeam),
+    permissionsByTeam: jest.fn().mockResolvedValue(permissionsByTeam),
     teamIds: jest.fn().mockResolvedValue([...roleByTeam.keys()]),
   } as unknown as TeamAccessService;
   return new SavedViewsService(prisma as PrismaService, access);

@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { TeamAccessService, canAccessResource } from "../common/team-access.service";
+import { TeamAccessService, canAccessResource, resolvePermissions } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
@@ -29,7 +29,6 @@ import {
 import { normalizeTags } from "../common/tags";
 import type { CreateDatabaseInput, SetDatabaseLimitsInput } from "./dto";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const PROVISION_TIMEOUT_MS = 300_000; // image pull can be slow
 
 export interface DatabaseView {
@@ -85,7 +84,7 @@ export class DatabasesService {
   async create(userId: string, dto: CreateDatabaseInput): Promise<DatabaseView> {
     const server = await this.prisma.server.findUnique({ where: { id: dto.serverId } });
     if (!server) throw new NotFoundException("server not found");
-    await this.access.requireRole(userId, server.teamId, WRITE);
+    await this.access.requirePermission(userId, server.teamId, "databases");
     if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
     // Never orphan: fall back to the team's default environment when none is chosen.
     const environmentId =
@@ -117,11 +116,13 @@ export class DatabasesService {
     await this.access.grantResourceAccess(userId, server.teamId, db.id);
     await this.audit.log({ actor: userId, action: "database.create", target: db.id });
     const role = (await this.access.teamRole(userId, server.teamId))!;
-    return this.view(db, role);
+    // Creator just passed the 'databases' permission gate above, so they can write.
+    return this.view(db, role, true);
   }
 
   async list(userId: string): Promise<DatabaseView[]> {
     const access = await this.access.accessByTeam(userId);
+    const perms = await this.access.permissionsByTeam(userId);
     const ids = [...access.keys()];
     if (!ids.length) return [];
     const dbs = await this.prisma.database.findMany({
@@ -132,14 +133,22 @@ export class DatabasesService {
     // Per-resource scoping: a restricted member only sees dbs in projects they're granted.
     return dbs
       .filter((d) => canAccessResource(access.get(d.teamId), d.id, ctxByEnv.get(d.environmentId)?.projectId ?? null))
-      .map((d) => this.view(d, access.get(d.teamId)!.role, ctxByEnv.get(d.environmentId)));
+      .map((d) =>
+        this.view(
+          d,
+          access.get(d.teamId)!.role,
+          perms.get(d.teamId)?.has("databases") ?? false,
+          ctxByEnv.get(d.environmentId),
+        ),
+      );
   }
 
   async get(userId: string, id: string): Promise<DatabaseView> {
     const db = await this.require(userId, id);
     const role = (await this.access.teamRole(userId, db.teamId))!;
+    const canWrite = await this.canWriteDatabases(userId, db.teamId);
     const ctx = await loadProjectCtx(this.prisma, db.environmentId);
-    return this.view(db, role, ctx);
+    return this.view(db, role, canWrite, ctx);
   }
 
   async provision(userId: string, id: string): Promise<DatabaseView> {
@@ -159,7 +168,8 @@ export class DatabasesService {
     const updated = await this.prisma.database.update({ where: { id }, data: { status } });
     await this.audit.log({ actor: userId, action: "database.provision", target: id });
     const role = (await this.access.teamRole(userId, db.teamId))!;
-    return this.view(updated, role);
+    // requireWrite above enforced the 'databases' permission, so the actor can write.
+    return this.view(updated, role, true);
   }
 
   async stop(userId: string, id: string): Promise<void> {
@@ -263,12 +273,20 @@ export class DatabasesService {
   private async requireWrite(userId: string, id: string): Promise<Database> {
     const db = await this.prisma.database.findUnique({ where: { id } });
     if (!db) throw new NotFoundException("database not found");
-    await this.access.requireRole(userId, db.teamId, WRITE);
+    await this.access.requirePermission(userId, db.teamId, "databases");
     return db;
   }
 
-  private view(db: Database, role: Role, ctx?: ResourceProjectCtx): DatabaseView {
-    const canWrite = WRITE.includes(role);
+  /** Effective 'databases' write permission for a member in one team (single membership read). */
+  private async canWriteDatabases(userId: string, teamId: string): Promise<boolean> {
+    const m = await this.prisma.membership.findUnique({
+      where: { userId_teamId: { userId, teamId } },
+      select: { role: true, teamRole: { select: { permissions: true } } },
+    });
+    return resolvePermissions(m).has("databases");
+  }
+
+  private view(db: Database, role: Role, canWrite: boolean, ctx?: ResourceProjectCtx): DatabaseView {
     const conn = canWrite ? connectionInfo(this.toSpec(db)) : null;
     return {
       id: db.id,

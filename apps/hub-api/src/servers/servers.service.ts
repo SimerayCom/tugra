@@ -12,6 +12,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { TeamAccessService } from "../common/team-access.service";
 // Type-only import (erased at build) + a string DI token resolved lazily via
 // ModuleRef, so there is no static edge servers.service → applications.service.
 // A value import WOULD create a require cycle: applications.service imports
@@ -28,7 +29,6 @@ import { isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
-const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
 // The capabilities a NEW server is granted by default — everything except `terminal`
 // (interactive shell), which is opt-in (least privilege). Legacy servers were backfilled
 // to the full set by the migration, so an empty grant now safely means "deny all" (fail-safe).
@@ -66,7 +66,6 @@ export interface ServerView {
   seal: string | null;
   tags: string[];
   capabilities: string[]; // granted agent capabilities the hub may act on; [] = none (fail-safe)
-  role: Role;
   canWrite: boolean;
 }
 
@@ -89,6 +88,7 @@ export class ServersService {
     private readonly notifications: NotificationsService,
     private readonly moduleRef: ModuleRef,
     private readonly crypto: CryptoService,
+    private readonly access: TeamAccessService,
   ) {}
 
   // ---- REST (operator-facing) ---------------------------------------------
@@ -99,7 +99,7 @@ export class ServersService {
     teamId: string,
     publicUrl?: string,
   ): Promise<{ server: ServerView; enrollToken: string; installCommand: string }> {
-    await this.requireTeamRole(userId, teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, teamId, "servers:manage");
 
     const enrollToken = generateEnrollToken();
     const created = await this.prisma.server.create({
@@ -119,7 +119,7 @@ export class ServersService {
     });
 
     return {
-      server: this.toView(created, Role.OWNER),
+      server: this.toView(created, true),
       enrollToken,
       installCommand: this.buildInstallCommand(enrollToken, publicUrl),
     };
@@ -145,7 +145,7 @@ export class ServersService {
   ): Promise<{ status: ServerStatus; installCommand: string | null; expiresAt: Date | null }> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
     const valid =
       server.status === ServerStatus.PENDING &&
       !!server.enrollToken &&
@@ -166,7 +166,7 @@ export class ServersService {
   ): Promise<{ installCommand: string; expiresAt: Date }> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
     if (server.status !== ServerStatus.PENDING) {
       throw new ConflictException("server already enrolled");
     }
@@ -210,8 +210,8 @@ export class ServersService {
     userId: string,
     filter?: { teamId?: string; status?: ServerStatus },
   ): Promise<ServerView[]> {
-    const roleByTeam = await this.roleByTeam(userId);
-    const teamIds = [...roleByTeam.keys()];
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    const teamIds = [...permsByTeam.keys()];
     if (teamIds.length === 0) return [];
 
     const servers = await this.prisma.server.findMany({
@@ -225,22 +225,22 @@ export class ServersService {
     });
 
     return servers
-      .filter((s) => roleByTeam.has(s.teamId))
-      .map((s) => this.toView(s, roleByTeam.get(s.teamId)!));
+      .filter((s) => permsByTeam.has(s.teamId))
+      .map((s) => this.toView(s, permsByTeam.get(s.teamId)?.has("servers:manage") ?? false));
   }
 
   async getForUser(userId: string, id: string): Promise<ServerView> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    const role = await this.teamRole(userId, server.teamId);
-    if (!role) throw new ForbiddenException("not a member of this team");
-    return this.toView(server, role);
+    const perms = await this.access.membershipPermissions(userId, server.teamId);
+    if (!perms) throw new ForbiddenException("not a member of this team");
+    return this.toView(server, perms.has("servers:manage"));
   }
 
   async deleteForUser(userId: string, id: string): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
     await this.prisma.server.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "server.delete", target: id });
   }
@@ -248,7 +248,7 @@ export class ServersService {
   async setTags(userId: string, id: string, tags: string[]): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
     await this.prisma.server.update({
       where: { id },
       data: { tags: normalizeTags(tags) },
@@ -279,7 +279,7 @@ export class ServersService {
   async setCapabilities(userId: string, id: string, capabilities: string[]): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
     const next = [...new Set(capabilities)].filter((c) => ALL_CAPABILITIES.includes(c));
     await this.prisma.server.update({ where: { id }, data: { capabilities: next } });
     // Live-push the new set to the connected agent (fail-closed allowlist updates immediately).
@@ -297,7 +297,7 @@ export class ServersService {
   async setNetwork(userId: string, id: string, cfg: NetworkSettingsInput): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
-    await this.requireTeamRole(userId, server.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
 
     const data: Prisma.ServerUpdateInput = {};
     if (cfg.wildcardDomain !== undefined) data.wildcardDomain = cfg.wildcardDomain;
@@ -477,36 +477,6 @@ export class ServersService {
 
   // ---- helpers ------------------------------------------------------------
 
-  private async roleByTeam(userId: string): Promise<Map<string, Role>> {
-    const memberships = await this.prisma.membership.findMany({
-      where: { userId },
-      select: { teamId: true, role: true },
-    });
-    return new Map(memberships.map((m) => [m.teamId, m.role]));
-  }
-
-  private async teamRole(
-    userId: string,
-    teamId: string,
-  ): Promise<Role | null> {
-    const membership = await this.prisma.membership.findUnique({
-      where: { userId_teamId: { userId, teamId } },
-      select: { role: true },
-    });
-    return membership?.role ?? null;
-  }
-
-  private async requireTeamRole(
-    userId: string,
-    teamId: string,
-    roles: Role[],
-  ): Promise<void> {
-    const role = await this.teamRole(userId, teamId);
-    if (!role || !roles.includes(role)) {
-      throw new ForbiddenException("insufficient role for this team");
-    }
-  }
-
   private toView(
     s: {
       id: string;
@@ -540,7 +510,7 @@ export class ServersService {
       tags?: string[];
       capabilities?: string[];
     },
-    role: Role,
+    canWrite: boolean,
   ): ServerView {
     return {
       id: s.id,
@@ -575,8 +545,7 @@ export class ServersService {
       seal: s.seal,
       tags: s.tags ?? [],
       capabilities: s.capabilities ?? [],
-      role,
-      canWrite: WRITE_ROLES.includes(role),
+      canWrite,
     };
   }
 }

@@ -1,22 +1,41 @@
 import { ForbiddenException, Injectable } from "@nestjs/common";
 import { Role } from "@prisma/client";
+import { TEAM_PERMISSIONS, type TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
 /** Roles that bypass per-resource scoping entirely — they manage the whole team. */
 const BYPASS_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
 
+const ALL_PERMISSIONS = new Set<TeamPermission>(TEAM_PERMISSIONS);
+
+/** The effective resource permissions for a member. A custom role grants exactly its (validated)
+ *  permission set; otherwise built-in OWNER/ADMIN get everything and VIEWER gets nothing. A custom
+ *  role always takes precedence over the enum tier (its enum role is a VIEWER base). Pure. */
+export function resolvePermissions(
+  m: { role: Role; teamRole?: { permissions: string[] } | null } | null | undefined,
+): Set<TeamPermission> {
+  if (!m) return new Set();
+  if (m.teamRole) {
+    return new Set(m.teamRole.permissions.filter((p): p is TeamPermission => ALL_PERMISSIONS.has(p as TeamPermission)));
+  }
+  if (m.role === Role.OWNER || m.role === Role.ADMIN) return new Set(ALL_PERMISSIONS);
+  return new Set(); // VIEWER (or unknown) — read only
+}
+
 /** A member's role plus their per-resource access scoping (see Membership in schema.prisma). */
 export interface MembershipAccess {
   role: Role;
+  teamRoleId: string | null;
   restrictedAccess: boolean;
   accessedProjects: string[];
   accessedResources: string[];
 }
 
-/** True when scoping actually constrains this member (a restricted VIEWER). OWNER/ADMIN and
- *  unrestricted members are never constrained. Pure — safe to call anywhere. */
+/** True when project scoping actually constrains this member. OWNER/ADMIN bypass it; a CUSTOM-role
+ *  member is permission-based and team-wide (scoping is only for a plain restricted VIEWER, whose
+ *  reads AND writes it gates); unrestricted members aren't constrained. Pure — safe anywhere. */
 export function isScoped(m: MembershipAccess | null | undefined): boolean {
-  return !!m && !BYPASS_ROLES.includes(m.role) && m.restrictedAccess;
+  return !!m && !BYPASS_ROLES.includes(m.role) && !m.teamRoleId && m.restrictedAccess;
 }
 
 /** Whether the member may access a project. OWNER/ADMIN and unrestricted members: always. Pure. */
@@ -73,13 +92,44 @@ export class TeamAccessService {
     }
   }
 
+  // ---- granular resource permissions (custom roles) -------------------------
+
+  /** Enforce a resource permission; throws 403 if the member's effective set lacks it. */
+  async requirePermission(userId: string, teamId: string, permission: TeamPermission): Promise<void> {
+    const m = await this.prisma.membership.findUnique({
+      where: { userId_teamId: { userId, teamId } },
+      select: { role: true, teamRole: { select: { permissions: true } } },
+    });
+    if (!resolvePermissions(m).has(permission)) {
+      throw new ForbiddenException("insufficient permission for this team");
+    }
+  }
+
+  /** The member's effective permissions for ONE team (single lookup), or null if not a member. */
+  async membershipPermissions(userId: string, teamId: string): Promise<Set<TeamPermission> | null> {
+    const m = await this.prisma.membership.findUnique({
+      where: { userId_teamId: { userId, teamId } },
+      select: { role: true, teamRole: { select: { permissions: true } } },
+    });
+    return m ? resolvePermissions(m) : null;
+  }
+
+  /** Bulk effective permissions for every team the user belongs to (list-view canWrite, no N+1). */
+  async permissionsByTeam(userId: string): Promise<Map<string, Set<TeamPermission>>> {
+    const ms = await this.prisma.membership.findMany({
+      where: { userId },
+      select: { teamId: true, role: true, teamRole: { select: { permissions: true } } },
+    });
+    return new Map(ms.map((m) => [m.teamId, resolvePermissions(m)]));
+  }
+
   // ---- per-resource scoping -------------------------------------------------
 
   /** The member's role + scoping for one team (null if not a member). */
   async membershipAccess(userId: string, teamId: string): Promise<MembershipAccess | null> {
     const m = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      select: { role: true, restrictedAccess: true, accessedProjects: true, accessedResources: true },
+      select: { role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true },
     });
     return m ?? null;
   }
@@ -88,7 +138,7 @@ export class TeamAccessService {
   async accessByTeam(userId: string): Promise<Map<string, MembershipAccess>> {
     const ms = await this.prisma.membership.findMany({
       where: { userId },
-      select: { teamId: true, role: true, restrictedAccess: true, accessedProjects: true, accessedResources: true },
+      select: { teamId: true, role: true, teamRoleId: true, restrictedAccess: true, accessedProjects: true, accessedResources: true },
     });
     return new Map(ms.map((m) => [m.teamId, m]));
   }

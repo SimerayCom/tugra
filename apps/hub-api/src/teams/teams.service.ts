@@ -8,6 +8,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { Role } from "@prisma/client";
+import { TEAM_PERMISSIONS } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MailService } from "../mail/mail.service";
@@ -30,8 +31,15 @@ export interface TeamMemberView {
   email: string;
   name: string | null;
   role: Role;
+  teamRoleId: string | null;
+  roleName: string | null; // the custom role's name, when one is assigned
   restrictedAccess: boolean;
   accessedProjects: string[];
+}
+export interface TeamRoleView {
+  id: string;
+  name: string;
+  permissions: string[];
 }
 export interface InvitationView {
   id: string;
@@ -133,7 +141,7 @@ export class TeamsService {
     if (!(await this.access.teamRole(userId, id))) throw new ForbiddenException("not a member");
     const ms = await this.prisma.membership.findMany({
       where: { teamId: id },
-      include: { user: { select: { id: true, email: true, name: true } } },
+      include: { user: { select: { id: true, email: true, name: true } }, teamRole: { select: { name: true } } },
       orderBy: { role: "asc" },
     });
     return ms.map((m) => ({
@@ -141,6 +149,8 @@ export class TeamsService {
       email: m.user.email,
       name: m.user.name,
       role: m.role,
+      teamRoleId: m.teamRoleId,
+      roleName: m.teamRole?.name ?? null,
       restrictedAccess: m.restrictedAccess,
       accessedProjects: m.accessedProjects,
     }));
@@ -160,6 +170,9 @@ export class TeamsService {
       where: { userId_teamId: { userId: targetUserId, teamId: id } },
     });
     if (!target) throw new NotFoundException("member not found");
+    // Project scoping is only meaningful for a plain VIEWER — a custom role is permission-based and
+    // team-wide, so refuse to set an (unenforceable) scope on one rather than imply false confinement.
+    if (target.teamRoleId) throw new ConflictException("project scoping doesn't apply to a member with a custom role");
     // Only keep project ids that actually belong to this team (drop cross-team / stale ids).
     const owned = await this.prisma.project.findMany({
       where: { id: { in: input.accessedProjects }, teamId: id },
@@ -179,21 +192,108 @@ export class TeamsService {
     });
   }
 
-  async setRole(userId: string, id: string, targetUserId: string, role: Role): Promise<void> {
+  /**
+   * Assign a member a built-in role OR a custom team role. Manager-only (built-in ADMIN/OWNER); a
+   * custom-role member can't reach here, so it can't self-escalate. A custom role grants only
+   * resource permissions and sits on a VIEWER enum base (never OWNER), so owner powers stay put.
+   */
+  async setRole(
+    userId: string,
+    id: string,
+    targetUserId: string,
+    input: { role?: Role; teamRoleId?: string | null },
+  ): Promise<void> {
     await this.access.requireRole(userId, id, MANAGE);
     const target = await this.prisma.membership.findUnique({
       where: { userId_teamId: { userId: targetUserId, teamId: id } },
     });
     if (!target) throw new NotFoundException("member not found");
+
+    if (input.teamRoleId) {
+      const customRole = await this.prisma.teamRole.findFirst({ where: { id: input.teamRoleId, teamId: id } });
+      if (!customRole) throw new NotFoundException("role not found");
+      // Moving an owner onto a custom role is a demotion — keep at least one owner, owner-gated.
+      if (target.role === Role.OWNER) {
+        await this.requireOwner(userId, id);
+        await this.assertNotLastOwner(id);
+      }
+      await this.prisma.membership.update({
+        where: { userId_teamId: { userId: targetUserId, teamId: id } },
+        data: { role: Role.VIEWER, teamRoleId: input.teamRoleId },
+      });
+      await this.audit.log({ actor: userId, action: "team.member.role", target: id, meta: { targetUserId, teamRoleId: input.teamRoleId } });
+      return;
+    }
+
+    const role = input.role ?? Role.VIEWER;
     // Promoting to or demoting an OWNER is owner-only.
     if (role === Role.OWNER || target.role === Role.OWNER) await this.requireOwner(userId, id);
     // Never leave a team without an owner.
     if (target.role === Role.OWNER && role !== Role.OWNER) await this.assertNotLastOwner(id);
     await this.prisma.membership.update({
       where: { userId_teamId: { userId: targetUserId, teamId: id } },
-      data: { role },
+      data: { role, teamRoleId: null }, // clear any custom role when a built-in role is set
     });
     await this.audit.log({ actor: userId, action: "team.member.role", target: id, meta: { targetUserId, role } });
+  }
+
+  // ---- custom roles (granular permission presets) ---------------------------
+
+  /** Keep only valid, de-duplicated permission strings from the shared catalog. */
+  private validPermissions(perms: string[]): string[] {
+    const valid = new Set<string>(TEAM_PERMISSIONS);
+    return [...new Set(perms)].filter((p) => valid.has(p));
+  }
+
+  async listRoles(userId: string, id: string): Promise<TeamRoleView[]> {
+    if (!(await this.access.teamRole(userId, id))) throw new ForbiddenException("not a member");
+    const roles = await this.prisma.teamRole.findMany({ where: { teamId: id }, orderBy: { name: "asc" } });
+    return roles.map((r) => ({ id: r.id, name: r.name, permissions: r.permissions }));
+  }
+
+  async createRole(userId: string, id: string, input: { name: string; permissions: string[] }): Promise<TeamRoleView> {
+    // Managing the role CATALOG is built-in-admin only (a custom role can't grant team administration).
+    await this.access.requireRole(userId, id, MANAGE);
+    const name = input.name.trim();
+    if (!name) throw new ConflictException("role name is required");
+    const created = await this.prisma.teamRole
+      .create({ data: { teamId: id, name, permissions: this.validPermissions(input.permissions) } })
+      .catch(() => {
+        throw new ConflictException("a role with this name already exists");
+      });
+    await this.audit.log({ actor: userId, action: "team.role.create", target: id, meta: { name } });
+    return { id: created.id, name: created.name, permissions: created.permissions };
+  }
+
+  async updateRole(
+    userId: string,
+    id: string,
+    roleId: string,
+    input: { name?: string; permissions?: string[] },
+  ): Promise<TeamRoleView> {
+    await this.access.requireRole(userId, id, MANAGE);
+    const role = await this.prisma.teamRole.findFirst({ where: { id: roleId, teamId: id } });
+    if (!role) throw new NotFoundException("role not found");
+    const updated = await this.prisma.teamRole
+      .update({
+        where: { id: roleId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.permissions !== undefined ? { permissions: this.validPermissions(input.permissions) } : {}),
+        },
+      })
+      .catch(() => {
+        throw new ConflictException("a role with this name already exists");
+      });
+    await this.audit.log({ actor: userId, action: "team.role.update", target: id, meta: { roleId } });
+    return { id: updated.id, name: updated.name, permissions: updated.permissions };
+  }
+
+  async deleteRole(userId: string, id: string, roleId: string): Promise<void> {
+    await this.access.requireRole(userId, id, MANAGE);
+    // Members assigned this role revert to their enum role (teamRoleId → null via onDelete: SetNull).
+    await this.prisma.teamRole.deleteMany({ where: { id: roleId, teamId: id } });
+    await this.audit.log({ actor: userId, action: "team.role.delete", target: id, meta: { roleId } });
   }
 
   async removeMember(userId: string, id: string, targetUserId: string): Promise<void> {

@@ -5,6 +5,21 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 
+const ALL_PERMS = new Set([
+  "apps:deploy",
+  "apps:config",
+  "databases",
+  "backups",
+  "servers:manage",
+  "servers:ops",
+  "terminal",
+  "bulk",
+  "monitors",
+  "projects",
+  "integrations",
+  "variables",
+]);
+
 const audit = { log: jest.fn() } as unknown as AuditService;
 const crypto = {
   encrypt: (s: string) => `enc:${s}`,
@@ -17,7 +32,7 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
 
 describe("SharedVariablesService", () => {
   it("forbids a viewer from setting a variable", async () => {
-    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
     await expect(make({}, access).upsert("u1", "t1", "FOO", "bar")).rejects.toThrow(/nope/);
   });
 
@@ -31,7 +46,7 @@ describe("SharedVariablesService", () => {
         }),
       },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const v = await make(prisma, access).upsert("u1", "t1", "FOO", "bar");
     expect(saved.valueEnc).toBe("enc:bar");
     expect(v.value).toBe("bar");
@@ -41,7 +56,7 @@ describe("SharedVariablesService", () => {
     const prisma = {
       sharedVariable: { findMany: jest.fn().mockResolvedValue([{ id: "v1", teamId: "t1", key: "FOO", valueEnc: "enc:bar", createdAt: new Date() }]) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue("VIEWER") } as unknown as TeamAccessService;
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set()]])) } as unknown as TeamAccessService;
     const list = await make(prisma, access).list("u1", "t1");
     expect(list[0].value).toBeNull();
     expect(list[0].canWrite).toBe(false);
@@ -51,7 +66,7 @@ describe("SharedVariablesService", () => {
     const prisma = {
       sharedVariable: { findMany: jest.fn().mockResolvedValue([{ id: "v1", teamId: "t1", key: "FOO", valueEnc: "enc:bar", createdAt: new Date() }]) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])) } as unknown as TeamAccessService;
     const list = await make(prisma, access).list("u1", "t1");
     expect(list[0].value).toBe("bar");
     expect(list[0].canWrite).toBe(true);

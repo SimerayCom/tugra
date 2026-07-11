@@ -10,8 +10,6 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessProject } from "../common/team-access.service";
 import { appUrl } from "../common/app-url";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
-
 export interface ProjectResource {
   id: string;
   name: string;
@@ -55,6 +53,7 @@ export class ProjectsService {
 
   async list(userId: string): Promise<ProjectView[]> {
     const access = await this.access.accessByTeam(userId);
+    const perms = await this.access.permissionsByTeam(userId);
     const teamIds = [...access.keys()];
     if (!teamIds.length) return [];
     const allProjects = await this.prisma.project.findMany({
@@ -82,7 +81,7 @@ export class ProjectsService {
       name: p.name,
       isDefault: p.isDefault,
       role: access.get(p.teamId)!.role,
-      canWrite: WRITE.includes(access.get(p.teamId)!.role),
+      canWrite: perms.get(p.teamId)?.has("projects") ?? false,
       environments: p.environments.map((e) => ({
         id: e.id,
         name: e.name,
@@ -104,6 +103,8 @@ export class ProjectsService {
     const role = await this.access.teamRole(userId, project.teamId);
     if (!role) throw new ForbiddenException("not a member of this team");
     await this.access.requireProjectAccess(userId, project.teamId, project.id);
+    const perms = await this.access.permissionsByTeam(userId);
+    const canWrite = perms.get(project.teamId)?.has("projects") ?? false;
     const envIds = project.environments.map((e) => e.id);
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
@@ -130,7 +131,7 @@ export class ProjectsService {
       name: project.name,
       isDefault: project.isDefault,
       role,
-      canWrite: WRITE.includes(role),
+      canWrite,
       environments: project.environments.map((e) => {
         const resources: ProjectResource[] = [
           ...apps.filter((a) => a.environmentId === e.id).map((a) => ({
@@ -163,7 +164,7 @@ export class ProjectsService {
   }
 
   async create(userId: string, teamId: string, name: string): Promise<ProjectView> {
-    await this.access.requireRole(userId, teamId, WRITE);
+    await this.access.requirePermission(userId, teamId, "projects");
     const project = await this.prisma.project.create({
       // A user-created project is not the team default, but its sole environment
       // is that project's default (every project has exactly one default env).
@@ -233,7 +234,7 @@ export class ProjectsService {
   private async requireProjectWrite(userId: string, id: string) {
     const project = await this.prisma.project.findUnique({ where: { id } });
     if (!project) throw new NotFoundException("project not found");
-    await this.access.requireRole(userId, project.teamId, WRITE);
+    await this.access.requirePermission(userId, project.teamId, "projects");
     return project;
   }
 
@@ -243,7 +244,7 @@ export class ProjectsService {
       include: { project: true },
     });
     if (!env) throw new NotFoundException("environment not found");
-    await this.access.requireRole(userId, env.project.teamId, WRITE);
+    await this.access.requirePermission(userId, env.project.teamId, "projects");
     return env;
   }
 

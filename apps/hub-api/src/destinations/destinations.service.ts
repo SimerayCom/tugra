@@ -14,8 +14,6 @@ import { buildDestinationTestScript } from "../backups/backup-script";
 import type { S3Config } from "../backups/destination";
 import type { CreateDestinationInput } from "./dto";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
-
 export interface DestinationView {
   id: string;
   name: string;
@@ -71,7 +69,7 @@ export class DestinationsService {
   }
 
   async create(userId: string, dto: CreateDestinationInput): Promise<DestinationView> {
-    await this.access.requireRole(userId, dto.teamId, WRITE);
+    await this.access.requirePermission(userId, dto.teamId, "integrations");
     const dest = await this.prisma.backupDestination.create({
       data: {
         teamId: dto.teamId,
@@ -91,24 +89,33 @@ export class DestinationsService {
     });
     await this.audit.log({ actor: userId, action: "destination.create", target: dest.id });
     const role = (await this.access.teamRole(userId, dto.teamId))!;
-    return this.view(dest, role);
+    // requirePermission("integrations") succeeded above, so the actor can write.
+    return this.view(dest, role, true);
   }
 
   async list(userId: string): Promise<DestinationView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
+    const [roleByTeam, permsByTeam] = await Promise.all([
+      this.access.roleByTeam(userId),
+      this.access.permissionsByTeam(userId),
+    ]);
     const ids = [...roleByTeam.keys()];
     if (!ids.length) return [];
     const dests = await this.prisma.backupDestination.findMany({
       where: { teamId: { in: ids } },
       orderBy: { createdAt: "desc" },
     });
-    return dests.map((d) => this.view(d, roleByTeam.get(d.teamId)!));
+    return dests.map((d) =>
+      this.view(d, roleByTeam.get(d.teamId)!, permsByTeam.get(d.teamId)?.has("integrations") ?? false),
+    );
   }
 
   async get(userId: string, id: string): Promise<DestinationView> {
     const dest = await this.require(userId, id);
-    const role = (await this.access.teamRole(userId, dest.teamId))!;
-    return this.view(dest, role);
+    const [role, permsByTeam] = await Promise.all([
+      this.access.teamRole(userId, dest.teamId),
+      this.access.permissionsByTeam(userId),
+    ]);
+    return this.view(dest, role!, permsByTeam.get(dest.teamId)?.has("integrations") ?? false);
   }
 
   async remove(userId: string, id: string): Promise<void> {
@@ -135,11 +142,11 @@ export class DestinationsService {
   private async requireWrite(userId: string, id: string): Promise<BackupDestination> {
     const dest = await this.prisma.backupDestination.findUnique({ where: { id } });
     if (!dest) throw new NotFoundException("destination not found");
-    await this.access.requireRole(userId, dest.teamId, WRITE);
+    await this.access.requirePermission(userId, dest.teamId, "integrations");
     return dest;
   }
 
-  private view(d: BackupDestination, role: Role): DestinationView {
+  private view(d: BackupDestination, role: Role, canWrite: boolean): DestinationView {
     return {
       id: d.id,
       name: d.name,
@@ -152,7 +159,7 @@ export class DestinationsService {
       encryptionEnabled: d.encryptionEnabled,
       hasCredentials: !!d.s3AccessKey,
       role,
-      canWrite: WRITE.includes(role),
+      canWrite,
       createdAt: d.createdAt,
     };
   }

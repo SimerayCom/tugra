@@ -24,6 +24,28 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /**
+ * Granular resource permissions a team's custom role can grant. Built-in roles resolve to fixed
+ * sets (OWNER/ADMIN → all of these; VIEWER → none). These cover RESOURCE actions only — member /
+ * role / team administration stays reserved for the built-in OWNER/ADMIN roles (a custom role can
+ * never grant the ability to manage members or roles, which would allow privilege escalation).
+ */
+export const TEAM_PERMISSIONS = [
+  "apps:deploy", // deploy / rollback / restart / start / stop / preview / analyze / webhook
+  "apps:config", // create / delete apps + all app config + scheduled tasks
+  "databases", // database lifecycle + config
+  "backups", // database backups + app volume backups
+  "servers:manage", // server create/delete + tags / capabilities / network / enroll
+  "servers:ops", // proxy / log drains / cleanup / patch
+  "terminal", // interactive shell (remote code execution)
+  "bulk", // fleet command execution (remote code execution)
+  "monitors", // uptime / metric monitors
+  "projects", // projects / environments / saved views
+  "integrations", // git sources / registries / backup destinations / notification channels
+  "variables", // team shared variables
+] as const;
+export type TeamPermission = (typeof TEAM_PERMISSIONS)[number];
+
+/**
  * Canonical strings the hub signs (ed25519) and the agent verifies. Fixed,
  * delimited format (NOT JSON) so TS and Go produce byte-identical input.
  * The Go agent mirrors these exactly.

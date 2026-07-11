@@ -1,5 +1,4 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
@@ -7,8 +6,6 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { registryLoginPrelude, registryLogoutSteps, type RegistryAuth } from "../deploy/deploy-script";
 import type { CreateRegistryInput, UpdateRegistryInput } from "./dto";
-
-const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
 
 export interface RegistryView {
   id: string;
@@ -52,18 +49,18 @@ export class RegistriesService {
   }
 
   async list(userId: string): Promise<RegistryView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const teamIds = [...roleByTeam.keys()];
+    const perms = await this.access.permissionsByTeam(userId);
+    const teamIds = [...perms.keys()];
     if (!teamIds.length) return [];
     const rows = await this.prisma.registry.findMany({
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((r) => this.view(r, WRITE_ROLES.includes(roleByTeam.get(r.teamId)!)));
+    return rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
   }
 
   async create(userId: string, dto: CreateRegistryInput): Promise<RegistryView> {
-    await this.access.requireRole(userId, dto.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, dto.teamId, "integrations");
     const r = await this.prisma.registry.create({
       data: {
         teamId: dto.teamId,
@@ -82,7 +79,7 @@ export class RegistriesService {
   async update(userId: string, id: string, dto: UpdateRegistryInput): Promise<RegistryView> {
     const existing = await this.prisma.registry.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException("registry not found");
-    await this.access.requireRole(userId, existing.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, existing.teamId, "integrations");
     const r = await this.prisma.registry.update({
       where: { id },
       data: {
@@ -102,7 +99,7 @@ export class RegistriesService {
   async remove(userId: string, id: string): Promise<void> {
     const r = await this.prisma.registry.findUnique({ where: { id } });
     if (!r) throw new NotFoundException("registry not found");
-    await this.access.requireRole(userId, r.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, r.teamId, "integrations");
     await this.prisma.registry.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "registry.remove", target: id });
   }
