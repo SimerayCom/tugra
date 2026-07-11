@@ -235,7 +235,7 @@ export class TeamsService {
       this.prisma.team.findUnique({ where: { id }, select: { name: true } }),
       this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
     ]);
-    const acceptUrl = `${webBaseUrl(this.config)}/teams?invite=${token}`;
+    const acceptUrl = `${webBaseUrl(this.config)}/invite/${token}`;
     void this.mail
       .send(addr, teamInviteEmail({ inviterName: inviter?.name ?? null, teamName: team?.name ?? "a team", acceptUrl }))
       .then((sent) => this.audit.log({ actor: userId, action: "team.invite.sent", target: id, meta: { email: addr, delivered: sent } }))

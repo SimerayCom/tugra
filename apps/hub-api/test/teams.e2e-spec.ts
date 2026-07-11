@@ -67,7 +67,7 @@ describe("Teams (e2e)", () => {
     // The invitation was ALSO emailed to B, carrying the accept link with the token.
     const emailed = sentInvites.filter((e) => e.to === emailB);
     expect(emailed.length).toBeGreaterThanOrEqual(1);
-    expect(emailed[emailed.length - 1].html).toContain(`/teams?invite=${inv.body.token}`);
+    expect(emailed[emailed.length - 1].html).toContain(`/invite/${inv.body.token}`);
 
     // B sees it
     const mine = await request(app.getHttpServer())
