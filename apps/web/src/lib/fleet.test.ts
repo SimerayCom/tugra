@@ -38,7 +38,6 @@ const s = (
   seal: null,
   tags: [],
   capabilities: [],
-  role: canWrite ? "OWNER" : "VIEWER",
   canWrite,
 });
 

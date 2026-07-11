@@ -33,7 +33,6 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   seal: null,
   tags: [],
   capabilities: [],
-  role: canWrite ? "OWNER" : "VIEWER",
   canWrite,
 });
 

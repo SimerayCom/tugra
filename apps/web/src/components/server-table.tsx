@@ -78,7 +78,7 @@ export function ServerTable({
               <th style={{ ...cell, width: 36 }}></th>
               <th style={cell}>{t("servers.server")}</th>
               <th style={cell}>{t("servers.team")}</th>
-              <th style={cell}>{t("servers.role")}</th>
+              <th style={cell}>{t("servers.access")}</th>
               <th style={cell}>{t("servers.lastSeen")}</th>
               <th style={{ ...cell, width: 70 }}></th>
             </tr>
@@ -107,7 +107,7 @@ export function ServerTable({
                   </span>
                 </td>
                 <td style={cell}>
-                  <Badge tone={s.canWrite ? "gold" : "muted"}>{s.role}</Badge>
+                  {!s.canWrite && <Badge tone="muted">{t("servers.readOnly")}</Badge>}
                 </td>
                 <td style={{ ...cell, color: "var(--c-tx3)" }}>{relativeTime(s.lastSeenAt)}</td>
                 <td style={cell}>

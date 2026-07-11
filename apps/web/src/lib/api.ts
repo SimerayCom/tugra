@@ -35,6 +35,7 @@ import type {
   Team,
   TeamInvitation,
   TeamMember,
+  TeamRole,
   Template,
   TokenPair,
 } from "./types";
@@ -242,11 +243,24 @@ export const api = {
   revokeTeamInvitation(id: string, invId: string) {
     return apiFetch<{ ok: true }>(`/teams/${id}/invitations/${invId}`, { method: "DELETE" });
   },
-  setTeamMemberRole(id: string, userId: string, role: Role) {
+  // Assign a built-in role OR a custom team role (exactly one).
+  setTeamMemberRole(id: string, userId: string, assignment: { role: Role } | { teamRoleId: string }) {
     return apiFetch<{ ok: true }>(`/teams/${id}/members/${userId}`, {
       method: "PUT",
-      body: JSON.stringify({ role }),
+      body: JSON.stringify(assignment),
     });
+  },
+  listTeamRoles(id: string) {
+    return apiFetch<TeamRole[]>(`/teams/${id}/roles`);
+  },
+  createTeamRole(id: string, input: { name: string; permissions: string[] }) {
+    return apiFetch<TeamRole>(`/teams/${id}/roles`, { method: "POST", body: JSON.stringify(input) });
+  },
+  updateTeamRole(id: string, roleId: string, input: { name?: string; permissions?: string[] }) {
+    return apiFetch<TeamRole>(`/teams/${id}/roles/${roleId}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteTeamRole(id: string, roleId: string) {
+    return apiFetch<{ ok: true }>(`/teams/${id}/roles/${roleId}`, { method: "DELETE" });
   },
   removeTeamMember(id: string, userId: string) {
     return apiFetch<{ ok: true }>(`/teams/${id}/members/${userId}`, { method: "DELETE" });

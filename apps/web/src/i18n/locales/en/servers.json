@@ -1,5 +1,7 @@
 {
   "title": "Servers",
+  "readOnly": "Read-only",
+  "access": "Access",
   "tabOverview": "Overview",
   "tabMonitoring": "Monitoring",
   "tabUpdates": "Updates",
