@@ -134,6 +134,26 @@ describe("Teams (e2e)", () => {
       .expect(403);
   });
 
+  it("previews an invitation publicly (no auth) by its token", async () => {
+    const previewEmail = `preview-${stamp}@tugra.test`;
+    const inv = await request(app.getHttpServer())
+      .post(`/teams/${teamId}/members/invite`)
+      .set("Authorization", `Bearer ${tokenA}`)
+      .send({ email: previewEmail, role: "ADMIN" })
+      .expect(201);
+
+    // No Authorization header — the preview is public.
+    const res = await request(app.getHttpServer()).get(`/invitations/${inv.body.token}`).expect(200);
+    expect(res.body.teamName).toBeTruthy();
+    expect(res.body.role).toBe("ADMIN");
+    expect(res.body.email).toBe(previewEmail);
+    expect(res.body.expired).toBe(false);
+    expect("inviterName" in res.body).toBe(true);
+
+    // Unknown token → 404.
+    await request(app.getHttpServer()).get("/invitations/nope-not-a-token").expect(404);
+  });
+
   it("deletes an empty team", async () => {
     await request(app.getHttpServer())
       .delete(`/teams/${teamId}`)

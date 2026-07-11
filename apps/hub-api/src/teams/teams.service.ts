@@ -46,6 +46,14 @@ export interface MyInvitationView {
   role: Role;
   expiresAt: Date;
 }
+export interface InvitationPreviewView {
+  teamName: string;
+  inviterName: string | null;
+  role: Role;
+  email: string;
+  expiresAt: Date;
+  expired: boolean;
+}
 
 @Injectable()
 export class TeamsService {
@@ -256,6 +264,29 @@ export class TeamsService {
       orderBy: { createdAt: "desc" },
     });
     return invs.map((i) => ({ token: i.token, teamName: i.team.name, role: i.role, expiresAt: i.expiresAt }));
+  }
+
+  /**
+   * PUBLIC preview of an invitation by its token — no email match (the viewer isn't logged in yet).
+   * Reveals the team, inviter, role, and the invited address so the /invite page can render and the
+   * signup form can pre-fill the email; the token is the invite secret (emailed only to that address)
+   * and acceptance is still gated by email-match + expiry, so a leaked token can't join.
+   */
+  async previewInvitation(token: string): Promise<InvitationPreviewView> {
+    const inv = await this.prisma.teamInvitation.findUnique({ where: { token } });
+    if (!inv) throw new NotFoundException("invitation not found");
+    const [team, inviter] = await Promise.all([
+      this.prisma.team.findUnique({ where: { id: inv.teamId }, select: { name: true } }),
+      this.prisma.user.findUnique({ where: { id: inv.invitedBy }, select: { name: true } }),
+    ]);
+    return {
+      teamName: team?.name ?? "a team",
+      inviterName: inviter?.name ?? null,
+      role: inv.role,
+      email: inv.email,
+      expiresAt: inv.expiresAt,
+      expired: inv.expiresAt.getTime() < Date.now(),
+    };
   }
 
   async acceptInvitation(userId: string, token: string): Promise<void> {
