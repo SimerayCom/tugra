@@ -22,6 +22,7 @@ import type {
   Monitor,
   LogDrain,
   MyInvitation,
+  InvitationPreview,
   PatchInfo,
   ProxyStatus,
   PublicUser,
@@ -255,6 +256,10 @@ export const api = {
   },
   myInvitations() {
     return apiFetch<MyInvitation[]>("/teams/invitations/mine");
+  },
+  // Public: preview an invitation by its token (no auth) — powers the /invite/[token] page.
+  previewInvitation(token: string) {
+    return apiFetch<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`, {}, false);
   },
   acceptInvitation(token: string) {
     return apiFetch<{ ok: true }>(`/teams/invitations/${token}/accept`, { method: "POST" });

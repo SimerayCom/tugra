@@ -31,12 +31,16 @@ export default function LoginPage() {
   const [step, setStep] = useState<"creds" | "2fa">("creds");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [invite, setInvite] = useState("");
 
-  // Surface an OAuth failure passed back from the callback (?error=…).
+  // Surface an OAuth failure passed back from the callback (?error=…) and capture an invite token
+  // (from /invite/[token]'s "Sign in" link) to auto-accept after login.
   useEffect(() => {
-    const e = new URLSearchParams(window.location.search).get("error");
+    const params = new URLSearchParams(window.location.search);
+    const e = params.get("error");
     if (e === "oauth_unconfigured") setErr(t("auth.oauthUnconfigured"));
     else if (e) setErr(t("auth.oauthError"));
+    setInvite(params.get("invite") ?? "");
   }, [t]);
 
   const submit = async (e: React.FormEvent) => {
@@ -49,7 +53,12 @@ export default function LoginPage() {
         setStep("2fa");
       } else {
         await reload();
-        router.replace("/dashboard");
+        if (invite) {
+          await api.acceptInvitation(invite).catch(() => undefined);
+          router.replace("/teams");
+        } else {
+          router.replace("/dashboard");
+        }
       }
     } catch (e) {
       if (e instanceof ApiError && e.status === 423) setErr(t("auth.locked"));

@@ -77,7 +77,7 @@ export default function TeamDetailPage() {
     );
   }
   const ownerCount = members.filter((m) => m.role === "OWNER").length;
-  const inviteLink = lastToken ? `${typeof location !== "undefined" ? location.origin : ""}/teams?invite=${lastToken}` : "";
+  const inviteLink = lastToken ? `${typeof location !== "undefined" ? location.origin : ""}/invite/${lastToken}` : "";
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>

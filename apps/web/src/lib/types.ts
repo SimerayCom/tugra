@@ -33,6 +33,15 @@ export interface MyInvitation {
   expiresAt: string;
 }
 
+export interface InvitationPreview {
+  teamName: string;
+  inviterName: string | null;
+  role: Role;
+  email: string;
+  expiresAt: string;
+  expired: boolean;
+}
+
 export interface PublicUser {
   id: string;
   email: string;
