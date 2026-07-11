@@ -14,8 +14,33 @@ export interface TeamMember {
   email: string;
   name: string | null;
   role: Role;
+  teamRoleId: string | null;
+  roleName: string | null; // the assigned custom role's name, when one is set
   restrictedAccess: boolean;
   accessedProjects: string[];
+}
+
+// The granular resource permissions a custom role can grant (mirrors @tugra/shared TEAM_PERMISSIONS).
+export const TEAM_PERMISSIONS = [
+  "apps:deploy",
+  "apps:config",
+  "databases",
+  "backups",
+  "servers:manage",
+  "servers:ops",
+  "terminal",
+  "bulk",
+  "monitors",
+  "projects",
+  "integrations",
+  "variables",
+] as const;
+export type TeamPermission = (typeof TEAM_PERMISSIONS)[number];
+
+export interface TeamRole {
+  id: string;
+  name: string;
+  permissions: string[];
 }
 
 export interface TeamInvitation {
@@ -82,7 +107,6 @@ export interface ServerView {
   seal: string | null;
   tags: string[];
   capabilities: string[]; // granted agent capabilities; [] = all
-  role: Role;
   canWrite: boolean;
 }
 
@@ -377,7 +401,6 @@ export interface Application {
   volumeBackupRetention: number;
   volumeBackupDestinationId: string | null;
   envCount: number;
-  role: Role;
   canWrite: boolean;
   createdAt: string;
 }

@@ -80,7 +80,7 @@ export default function ServerDetailPage() {
         breadcrumb={[{ label: t("nav.servers"), href: "/servers" }, { label: server.name }]}
         title={server.name}
         status={{ label: server.status, color: serverColor(server.status) }}
-        badge={<Badge tone={server.canWrite ? "gold" : "muted"}>{server.role}</Badge>}
+        badge={!server.canWrite ? <Badge tone="muted">{t("servers.readOnly")}</Badge> : undefined}
         actions={server.canWrite ? (
           <>
             <Link href={`/resources/new?server=${id}`}><Btn>{t("servers.addResource")}</Btn></Link>

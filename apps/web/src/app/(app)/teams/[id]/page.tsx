@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import type { Role, TeamMember, Project } from "../../../../lib/types";
+import type { Role, TeamMember, Project, TeamRole } from "../../../../lib/types";
+import { TEAM_PERMISSIONS } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
@@ -33,6 +34,7 @@ export default function TeamDetailPage() {
   const isOwner = team?.role === "OWNER";
 
   const { data: members = [] } = useQuery({ queryKey: ["teamMembers", id], queryFn: () => api.listTeamMembers(id) });
+  const { data: teamRoles = [] } = useQuery({ queryKey: ["teamRoles", id], queryFn: () => api.listTeamRoles(id), enabled: canManage });
   const { data: allProjects = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects(), enabled: canManage });
   const teamProjects = allProjects.filter((p) => p.teamId === id);
   const { data: invitations = [] } = useQuery({
@@ -44,6 +46,7 @@ export default function TeamDetailPage() {
   const refetch = () => {
     qc.invalidateQueries({ queryKey: ["teamMembers", id] });
     qc.invalidateQueries({ queryKey: ["teamInvitations", id] });
+    qc.invalidateQueries({ queryKey: ["teamRoles", id] });
     qc.invalidateQueries({ queryKey: ["teams"] });
   };
 
@@ -55,7 +58,8 @@ export default function TeamDetailPage() {
     onSuccess: (inv) => { setEmail(""); setLastToken(inv.token); refetch(); },
   });
   const setRole = useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: Role }) => api.setTeamMemberRole(id, userId, role),
+    mutationFn: ({ userId, assignment }: { userId: string; assignment: { role: Role } | { teamRoleId: string } }) =>
+      api.setTeamMemberRole(id, userId, assignment),
     onSuccess: refetch,
   });
   const removeMember = useMutation({ mutationFn: (userId: string) => api.removeTeamMember(id, userId), onSuccess: refetch });
@@ -111,19 +115,34 @@ export default function TeamDetailPage() {
                     {m.name && <span style={{ fontSize: 11, color: "var(--c-tx3)", marginLeft: 8 }}>{m.name}</span>}
                   </div>
                   {canManage && !lastOwner ? (
-                    <select style={field} value={m.role} onChange={(e) => setRole.mutate({ userId: m.userId, role: e.target.value as Role })}>
+                    <select
+                      style={field}
+                      value={m.teamRoleId ?? m.role}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const builtin = v === "OWNER" || v === "ADMIN" || v === "VIEWER";
+                        setRole.mutate({ userId: m.userId, assignment: builtin ? { role: v as Role } : { teamRoleId: v } });
+                      }}
+                    >
                       <option value="VIEWER">VIEWER</option>
                       <option value="ADMIN">ADMIN</option>
                       {isOwner && <option value="OWNER">OWNER</option>}
+                      {teamRoles.length > 0 && (
+                        <optgroup label={t("teams.customRole")}>
+                          {teamRoles.map((r) => (
+                            <option key={r.id} value={r.id}>{r.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   ) : (
-                    <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.role}</span>
+                    <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{m.roleName ?? m.role}</span>
                   )}
                   {canManage && !lastOwner && (
                     <IconBtn label={t("common.remove")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) removeMember.mutate(m.userId); }}>×</IconBtn>
                   )}
                 </div>
-                {canManage && m.role === "VIEWER" && (
+                {canManage && m.role === "VIEWER" && !m.teamRoleId && (
                   <MemberAccessEditor teamId={id} member={m} projects={teamProjects} onSaved={refetch} />
                 )}
               </div>
@@ -166,7 +185,70 @@ export default function TeamDetailPage() {
           )}
         </Card>
       )}
+
+      {canManage && <RolesCard teamId={id} roles={teamRoles} onChanged={refetch} />}
     </div>
+  );
+}
+
+/** Create / edit / delete a team's custom roles as a checkbox grid of granular permissions. */
+function RolesCard({ teamId, roles, onChanged }: { teamId: string; roles: TeamRole[]; onChanged: () => void }) {
+  const t = useT();
+  const confirm = useConfirm();
+  const [name, setName] = useState("");
+  const [perms, setPerms] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<string | null>(null); // role id being edited, or null (create)
+
+  const reset = () => { setName(""); setPerms(new Set()); setEditing(null); };
+  const startEdit = (r: TeamRole) => { setEditing(r.id); setName(r.name); setPerms(new Set(r.permissions)); };
+  const toggle = (p: string) => setPerms((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
+
+  const save = useMutation({
+    mutationFn: () =>
+      editing
+        ? api.updateTeamRole(teamId, editing, { name: name.trim(), permissions: [...perms] })
+        : api.createTeamRole(teamId, { name: name.trim(), permissions: [...perms] }),
+    onSuccess: () => { reset(); onChanged(); },
+  });
+  const del = useMutation({ mutationFn: (roleId: string) => api.deleteTeamRole(teamId, roleId), onSuccess: onChanged });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("teams.rolesTitle")}</div>
+
+      {roles.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+          {roles.map((r) => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+              <span style={{ flex: 1, fontSize: 11, color: "var(--c-tx3)" }}>
+                {r.permissions.length ? r.permissions.map((p) => t(`teams.perm_${p.replace(":", "_")}`)).join(", ") : t("teams.noPermissions")}
+              </span>
+              <button onClick={() => startEdit(r)} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}>{t("teams.editRole")}</button>
+              <IconBtn label={t("teams.deleteRole")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(r.id); }}>×</IconBtn>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ borderTop: roles.length ? "1px solid var(--c-bd)" : "none", paddingTop: roles.length ? 12 : 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{editing ? t("teams.editRole") : t("teams.addRole")}</div>
+        <input style={{ ...field, width: "100%", marginBottom: 10, boxSizing: "border-box" }} placeholder={t("teams.roleName")} value={name} onChange={(e) => setName(e.target.value)} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6, marginBottom: 12 }}>
+          {TEAM_PERMISSIONS.map((p) => (
+            <label key={p} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)", cursor: "pointer" }}>
+              <input type="checkbox" checked={perms.has(p)} onChange={() => toggle(p)} />
+              {t(`teams.perm_${p.replace(":", "_")}`)}
+            </label>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn onClick={() => save.mutate()} disabled={save.isPending || !name.trim()}>{save.isPending ? "…" : editing ? t("common.save") : t("teams.addRole")}</Btn>
+          {editing && <Btn variant="ghost" onClick={reset}>{t("common.cancel")}</Btn>}
+        </div>
+        {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
+      </div>
+    </Card>
   );
 }
 
