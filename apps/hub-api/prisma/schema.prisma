@@ -296,6 +296,7 @@ model Metric {
   diskWrite BigInt @default(0)
 
   @@index([serverId, ts])
+  @@index([ts]) // for the retention prune (deleteMany where ts < cutoff, across all servers)
 }
 
 // Per-container resource usage from the agent's `docker stats`. containerName is the STABLE key
@@ -383,6 +384,7 @@ model Heartbeat {
   ts        DateTime      @default(now())
 
   @@index([monitorId, ts])
+  @@index([ts]) // for the retention prune (deleteMany where ts < cutoff AND important = false)
 }
 
 model NotificationChannel {

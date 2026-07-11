@@ -34,6 +34,7 @@ import { TeamsModule } from "./teams/teams.module";
 import { ScheduledTasksModule } from "./scheduled-tasks/scheduled-tasks.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 import { ExpiryModule } from "./expiry/expiry.module";
+import { RetentionModule } from "./retention/retention.module";
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
     ScheduledTasksModule,
     WebhooksModule,
     ExpiryModule,
+    RetentionModule,
   ],
   controllers: [HealthController],
   providers: [
