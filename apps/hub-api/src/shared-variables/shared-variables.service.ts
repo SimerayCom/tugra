@@ -3,13 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Role, SharedVariable } from "@prisma/client";
+import { SharedVariable } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CryptoService } from "../crypto/crypto.service";
-
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
 export interface SharedVarView {
   id: string;
@@ -30,9 +28,10 @@ export class SharedVariablesService {
   ) {}
 
   async list(userId: string, teamId: string): Promise<SharedVarView[]> {
-    const role = await this.access.teamRole(userId, teamId);
-    if (!role) throw new ForbiddenException("not a member of this team");
-    const canWrite = WRITE.includes(role);
+    const perms = await this.access.permissionsByTeam(userId);
+    const teamPerms = perms.get(teamId);
+    if (!teamPerms) throw new ForbiddenException("not a member of this team");
+    const canWrite = teamPerms.has("variables");
     const vars = await this.prisma.sharedVariable.findMany({
       where: { teamId },
       orderBy: { key: "asc" },
@@ -48,7 +47,7 @@ export class SharedVariablesService {
   }
 
   async upsert(userId: string, teamId: string, key: string, value: string): Promise<SharedVarView> {
-    await this.access.requireRole(userId, teamId, WRITE);
+    await this.access.requirePermission(userId, teamId, "variables");
     const v = await this.prisma.sharedVariable.upsert({
       where: { teamId_key: { teamId, key } },
       create: { teamId, key, valueEnc: this.crypto.encrypt(value) },
@@ -61,7 +60,7 @@ export class SharedVariablesService {
   async remove(userId: string, id: string): Promise<void> {
     const v = await this.prisma.sharedVariable.findUnique({ where: { id } });
     if (!v) throw new NotFoundException("variable not found");
-    await this.access.requireRole(userId, v.teamId, WRITE);
+    await this.access.requirePermission(userId, v.teamId, "variables");
     await this.prisma.sharedVariable.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "shared_var.remove", target: v.teamId, meta: { key: v.key } });
   }

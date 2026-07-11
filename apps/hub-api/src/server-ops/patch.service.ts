@@ -1,9 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from "@nestjs/common";
-import { Role } from "@prisma/client";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -17,7 +12,6 @@ import {
   type PatchInfo,
 } from "./patch-script";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const CHECK_TIMEOUT_MS = 120_000;
 const UPGRADE_ALL_TIMEOUT_MS = 600_000;
 const UPGRADE_ONE_TIMEOUT_MS = 300_000;
@@ -81,9 +75,6 @@ export class PatchService {
   private async requireWrite(userId: string, serverId: string): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new NotFoundException("server not found");
-    const role = await this.access.teamRole(userId, server.teamId);
-    if (!role || !WRITE.includes(role)) {
-      throw new ForbiddenException("insufficient role for this server");
-    }
+    await this.access.requirePermission(userId, server.teamId, "servers:ops");
   }
 }

@@ -3,15 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Application, Role, ScheduledTask } from "@prisma/client";
+import { Application, ScheduledTask } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx } from "../common/resource-project";
 import { ScheduledTasksSchedulerService } from "./scheduled-tasks.scheduler.service";
 import type { CreateTaskInput, UpdateTaskInput } from "./dto";
-
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
 export interface TaskView {
   id: string;
@@ -102,7 +100,7 @@ export class ScheduledTasksService {
   private async requireWrite(userId: string, appId: string): Promise<Application> {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new NotFoundException("application not found");
-    await this.access.requireRole(userId, app.teamId, WRITE);
+    await this.access.requirePermission(userId, app.teamId, 'apps:config');
     return app;
   }
 }

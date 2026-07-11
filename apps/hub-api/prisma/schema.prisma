@@ -122,7 +122,24 @@ model Team {
   gitSources   GitSource[]
   registries   Registry[]
   savedViews   SavedView[]
+  customRoles  TeamRole[]
   createdAt    DateTime     @default(now())
+}
+
+// A team-defined named role with a granular set of resource permissions (see TEAM_PERMISSIONS in
+// @tugra/shared). Assigned to a member via Membership.teamRoleId; grants ONLY resource permissions
+// — member/role/team administration stays reserved for the built-in OWNER/ADMIN roles.
+model TeamRole {
+  id          String       @id @default(cuid())
+  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  name        String
+  permissions String[]     @default([])
+  memberships Membership[]
+  createdAt   DateTime     @default(now())
+
+  @@unique([teamId, name])
+  @@index([teamId])
 }
 
 model TeamInvitation {
@@ -184,6 +201,12 @@ model Membership {
   userId String
   team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId String
+
+  // Optional custom role: when set, the member's resource permissions come from this TeamRole
+  // instead of the built-in `role` tier. SetNull so deleting a role reverts members to `role`
+  // (VIEWER by default). null → the built-in enum role is authoritative (no regression).
+  teamRole   TeamRole? @relation(fields: [teamRoleId], references: [id], onDelete: SetNull)
+  teamRoleId String?
 
   // Per-resource access scoping (least privilege). Opt-in via `restrictedAccess`: while false
   // (the default, and every existing member) the member has full access at their team role — no

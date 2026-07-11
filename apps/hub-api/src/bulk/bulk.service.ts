@@ -3,13 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const CONCURRENCY = 10;
 
 export interface PlannedTarget {
@@ -17,16 +15,18 @@ export interface PlannedTarget {
   run: boolean; // false → SKIPPED (unknown server or not writable)
 }
 
-/** Decide which selected servers the user may act on (pure → unit-tested). */
+/** Decide which selected targets the user may act on — needs the domain permission the bulk op
+ *  requires (shared across bulk-run, backup/monitor/cleanup bulk config). Pure → unit-tested. */
 export function planTargets(
   serverIds: string[],
   servers: { id: string; teamId: string }[],
-  roleByTeam: Map<string, Role>,
+  permsByTeam: Map<string, Set<string>>,
+  permission: string,
 ): PlannedTarget[] {
   return serverIds.map((id) => {
     const s = servers.find((x) => x.id === id);
-    const role = s ? roleByTeam.get(s.teamId) : undefined;
-    return { serverId: id, run: !!s && !!role && WRITE.includes(role) };
+    const perms = s ? permsByTeam.get(s.teamId) : undefined;
+    return { serverId: id, run: !!s && (perms?.has(permission) ?? false) };
   });
 }
 
@@ -48,8 +48,8 @@ export class BulkService {
       where: { id: { in: serverIds } },
       select: { id: true, teamId: true },
     });
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const targets = planTargets(serverIds, servers, roleByTeam);
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    const targets = planTargets(serverIds, servers, permsByTeam, "bulk");
 
     const op = await this.prisma.bulkOperation.create({
       data: { actorId: userId, command },

@@ -9,6 +9,12 @@ import { MonitorSchedulerService } from "./scheduler.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 
+// OWNER/ADMIN hold every granular permission; VIEWER holds none.
+const ALL_PERMS = new Set<string>([
+  "apps:deploy", "apps:config", "databases", "backups", "servers:manage",
+  "servers:ops", "terminal", "bulk", "monitors", "projects", "integrations", "variables",
+]);
+
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>, scheduler: Partial<MonitorSchedulerService>) {
   return new MonitorsService(
     prisma as PrismaService,
@@ -59,6 +65,7 @@ describe("MonitorsService.list scoping", () => {
     } as unknown as PrismaService;
     const access = {
       accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.VIEWER, restrictedAccess: true, accessedProjects: ["p-ok"], accessedResources: [] }]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set<string>()]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access, {}).list("u1");
     expect(out.map((m) => m.id)).toEqual(["m-ok"]);
@@ -74,6 +81,7 @@ describe("MonitorsService.list scoping", () => {
     } as unknown as PrismaService;
     const access = {
       accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access, {}).list("u1");
     expect(out.map((m) => m.id).sort()).toEqual(["m1", "m2"]);
@@ -83,7 +91,7 @@ describe("MonitorsService.list scoping", () => {
 describe("MonitorsService.update", () => {
   it("forbids a non-writer", async () => {
     const prisma = { monitor: { findUnique: jest.fn().mockResolvedValue(monitor) } } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {}).update("u1", "m1", { intervalSec: 60 })).rejects.toThrow(/nope/);
   });
 
@@ -96,7 +104,7 @@ describe("MonitorsService.update", () => {
         update: jest.fn().mockResolvedValue({ ...monitor, intervalSec: 60 }),
       },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
     await make(prisma, access, { schedule, unschedule }).update("u1", "m1", { intervalSec: 60 });
     expect(unschedule).toHaveBeenCalledWith("m1");
     expect(schedule).toHaveBeenCalledWith("m1", 60);
@@ -109,7 +117,7 @@ describe("MonitorsService.update", () => {
       monitor: { findUnique: jest.fn().mockResolvedValue(monitor), update: jest.fn().mockResolvedValue(monitor) },
       monitorChannel: { deleteMany, createMany },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
     await make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() }).update("u1", "m1", { channelIds: ["c1", "c2"] });
     expect(deleteMany).toHaveBeenCalledWith({ where: { monitorId: "m1" } });
     expect(createMany).toHaveBeenCalledWith(expect.objectContaining({ data: [{ monitorId: "m1", channelId: "c1" }, { monitorId: "m1", channelId: "c2" }] }));
@@ -133,7 +141,11 @@ describe("MonitorsService.setChannelsBulk (fleet alert)", () => {
       $transaction,
     } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["t1", "OWNER"], ["t2", "VIEWER"], ["t3", "OWNER"]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([
+        ["t1", new Set(ALL_PERMS)],
+        ["t2", new Set<string>()],
+        ["t3", new Set(ALL_PERMS)],
+      ])),
     } as unknown as TeamAccessService;
 
     const res = await make(prisma, access, {}).setChannelsBulk("u1", ["m1", "m2", "m3"], ["c1"]);
@@ -152,7 +164,7 @@ describe("MonitorsService.setChannelsBulk (fleet alert)", () => {
       monitorChannel: { deleteMany: jest.fn(), createMany: jest.fn() },
       $transaction,
     } as unknown as PrismaService;
-    const access = { roleByTeam: jest.fn().mockResolvedValue(new Map([["t2", "VIEWER"]])) } as unknown as TeamAccessService;
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t2", new Set<string>()]])) } as unknown as TeamAccessService;
     const res = await make(prisma, access, {}).setChannelsBulk("u1", ["m2"], ["c2"]);
     expect(res.applied).toEqual([]);
     expect(res.skipped).toEqual(["m2"]);

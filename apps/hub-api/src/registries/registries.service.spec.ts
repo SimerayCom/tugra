@@ -1,4 +1,5 @@
 import { Role } from "@prisma/client";
+import { ForbiddenException } from "@nestjs/common";
 import { RegistriesService } from "./registries.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -12,6 +13,11 @@ const crypto = {
   decrypt: (s: string) => s.replace(/^enc\(/, "").replace(/\)$/, ""),
 } as unknown as CryptoService;
 
+const ALL_PERMS = new Set([
+  "apps:deploy", "apps:config", "databases", "backups", "servers:manage", "servers:ops",
+  "terminal", "bulk", "monitors", "projects", "integrations", "variables",
+]);
+
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>, agentWs: Partial<AgentWsServer> = {}) {
   return new RegistriesService(prisma as PrismaService, access as TeamAccessService, audit, crypto, agentWs as AgentWsServer);
 }
@@ -22,7 +28,7 @@ describe("RegistriesService", () => {
       id: "r1", name: "ghcr", teamId: "t1", type: "ghcr", url: "ghcr.io",
       username: "bot", imagePrefix: "org", createdAt: new Date(),
     });
-    const svc = make({ registry: { create } } as unknown as PrismaService, { requireRole: jest.fn().mockResolvedValue(undefined) });
+    const svc = make({ registry: { create } } as unknown as PrismaService, { requirePermission: jest.fn().mockResolvedValue(undefined) });
     const v = await svc.create("u1", { name: "ghcr", teamId: "t1", type: "ghcr", url: "ghcr.io", username: "bot", password: "s3cr3t", imagePrefix: "org" });
     const data = create.mock.calls[0][0].data;
     expect(data.passwordEnc).toBe("enc(s3cr3t)");
@@ -32,11 +38,11 @@ describe("RegistriesService", () => {
     expect(v).toMatchObject({ id: "r1", username: "bot", canWrite: true });
   });
 
-  it("create requires a WRITE role", async () => {
-    const requireRole = jest.fn().mockRejectedValue(new Error("insufficient role for this team"));
-    const svc = make({ registry: { create: jest.fn() } } as unknown as PrismaService, { requireRole });
-    await expect(svc.create("u1", { name: "x", teamId: "t1", type: "generic", username: "u", password: "p" })).rejects.toThrow(/insufficient role/);
-    expect(requireRole).toHaveBeenCalledWith("u1", "t1", [Role.OWNER, Role.ADMIN]);
+  it("create requires the integrations permission", async () => {
+    const requirePermission = jest.fn().mockRejectedValue(new ForbiddenException("insufficient permission for this team"));
+    const svc = make({ registry: { create: jest.fn() } } as unknown as PrismaService, { requirePermission });
+    await expect(svc.create("u1", { name: "x", teamId: "t1", type: "generic", username: "u", password: "p" })).rejects.toThrow(/insufficient permission/);
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "integrations");
   });
 
   it("update only re-encrypts the password when one is supplied", async () => {
@@ -44,7 +50,7 @@ describe("RegistriesService", () => {
     const prisma = {
       registry: { findUnique: jest.fn().mockResolvedValue({ id: "r1", teamId: "t1" }), update },
     } as unknown as PrismaService;
-    const svc = make(prisma, { requireRole: jest.fn().mockResolvedValue(undefined) });
+    const svc = make(prisma, { requirePermission: jest.fn().mockResolvedValue(undefined) });
     // no password → passwordEnc untouched
     await svc.update("u1", "r1", { name: "renamed" });
     expect("passwordEnc" in update.mock.calls[0][0].data).toBe(false);
@@ -53,13 +59,13 @@ describe("RegistriesService", () => {
     expect(update.mock.calls[1][0].data.passwordEnc).toBe("enc(new)");
   });
 
-  it("list() sets canWrite per the caller's role in each registry's team", async () => {
+  it("list() sets canWrite per the caller's permissions in each registry's team", async () => {
     const row = (id: string, teamId: string) => ({ id, name: id, teamId, type: "generic", url: null, username: "u", imagePrefix: null, createdAt: new Date() });
     const prisma = {
       registry: { findMany: jest.fn().mockResolvedValue([row("r1", "tOwner"), row("r2", "tViewer")]) },
     } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", Role.OWNER], ["tViewer", Role.VIEWER]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", new Set(ALL_PERMS)], ["tViewer", new Set()]])),
     } as unknown as TeamAccessService;
     const list = await make(prisma, access).list("u1");
     expect(list.find((r) => r.id === "r1")!.canWrite).toBe(true);

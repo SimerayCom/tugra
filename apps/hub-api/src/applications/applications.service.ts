@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
+import type { TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
@@ -69,7 +70,6 @@ import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import type { CreateAppInput } from "./dto";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
 // Default rolling health-gate timing (Slice 4 will make these per-app configurable).
@@ -139,7 +139,6 @@ export interface AppView {
   volumeBackupRetention: number;
   volumeBackupDestinationId: string | null;
   envCount: number;
-  role: Role;
   canWrite: boolean;
   createdAt: Date;
 }
@@ -287,7 +286,7 @@ export class ApplicationsService {
       where: { id: dto.serverId },
     });
     if (!server) throw new NotFoundException("server not found");
-    await this.access.requireRole(userId, server.teamId, WRITE);
+    await this.access.requirePermission(userId, server.teamId, "apps:config");
     if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
     // Never orphan: fall back to the team's default environment when none is chosen.
     const environmentId =
@@ -345,8 +344,8 @@ export class ApplicationsService {
       // enforced by requireRole(WRITE) above.
       void this.runDeploy(app, userId).catch(() => undefined);
     }
-    const role = (await this.access.teamRole(userId, server.teamId))!;
-    return this.view(app, role, undefined, server.publicIp ?? server.publicIpv6);
+    const perms = await this.access.membershipPermissions(userId, server.teamId);
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, server.publicIp ?? server.publicIpv6);
   }
 
   /** One-click template catalog (gallery metadata only). */
@@ -376,6 +375,7 @@ export class ApplicationsService {
 
   async list(userId: string): Promise<AppView[]> {
     const access = await this.access.accessByTeam(userId);
+    const perms = await this.access.permissionsByTeam(userId);
     const ids = [...access.keys()];
     if (!ids.length) return [];
     const apps = await this.prisma.application.findMany({
@@ -389,19 +389,19 @@ export class ApplicationsService {
     return apps
       .filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null))
       .map((a) =>
-        this.view(a, access.get(a.teamId)!.role, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
+        this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
       );
   }
 
   async get(userId: string, id: string): Promise<AppView> {
     const app = await this.require(userId, id);
-    const role = (await this.access.teamRole(userId, app.teamId))!;
+    const perms = await this.access.membershipPermissions(userId, app.teamId);
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
-    return this.view(app, role, ctx, await this.serverIp(app.serverId));
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId));
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }) {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id, "apps:deploy");
     await this.ensureNoActiveDeploy(id);
     return this.runDeploy(app, userId, opts?.noCache ?? false);
   }
@@ -510,13 +510,15 @@ export class ApplicationsService {
   /** Active previews for a parent app (members only). */
   async listPreviews(userId: string, parentId: string): Promise<AppView[]> {
     const parent = await this.require(userId, parentId);
-    const role = (await this.access.teamRole(userId, parent.teamId))!;
+    const parentPerms = await this.access.membershipPermissions(userId, parent.teamId);
     const previews = await this.prisma.application.findMany({
       where: { parentAppId: parentId, isPreview: true },
       orderBy: { createdAt: "desc" },
     });
     const ipByServer = await this.serverIpMap(previews.map((p) => p.serverId));
-    return previews.map((p) => this.view(p, role, undefined, ipByServer.get(p.serverId) ?? null));
+    return previews.map((p) =>
+      this.view(p, parentPerms?.has("apps:config") ?? false, parentPerms?.has("apps:deploy") ?? false, undefined, ipByServer.get(p.serverId) ?? null),
+    );
   }
 
   /** Toggle per-PR previews on a parent app — requires a domain to build URLs. */
@@ -534,7 +536,7 @@ export class ApplicationsService {
 
   /** Manually remove a single preview (writer on the parent app). */
   async deletePreview(userId: string, parentId: string, previewId: string): Promise<void> {
-    await this.requireWrite(userId, parentId);
+    await this.requireWrite(userId, parentId, "apps:deploy");
     const preview = await this.prisma.application.findFirst({
       where: { id: previewId, parentAppId: parentId, isPreview: true },
     });
@@ -745,7 +747,7 @@ export class ApplicationsService {
 
   /** Re-run a previous successful deployment's image without rebuilding/pulling. */
   async rollback(userId: string, id: string, targetDeploymentId: string) {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.source === "COMPOSE") {
       throw new BadRequestException("rollback not supported for compose apps");
     }
@@ -852,7 +854,8 @@ export class ApplicationsService {
   }
 
   async regenerateWebhook(userId: string, id: string): Promise<AppView> {
-    const app = await this.requireWrite(userId, id);
+    // The webhook secret is a deploy trigger, so rotating it is an apps:deploy action.
+    const app = await this.requireWrite(userId, id, "apps:deploy");
     const updated = await this.prisma.application.update({
       where: { id },
       data: {
@@ -865,14 +868,14 @@ export class ApplicationsService {
       action: "app.webhook.regenerate",
       target: id,
     });
-    const role = (await this.access.teamRole(userId, app.teamId))!;
+    const perms = await this.access.membershipPermissions(userId, app.teamId);
     // Resolve the server IP like the other single-app paths so a domainless,
     // port-publishing app keeps its synthesized url in this response (consistency).
-    return this.view(updated, role, undefined, await this.serverIp(updated.serverId));
+    return this.view(updated, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, await this.serverIp(updated.serverId));
   }
 
   async stop(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id, "apps:deploy");
     const cmd =
       app.source === "COMPOSE"
         ? buildComposeStopScript(this.toSpec(app))
@@ -886,7 +889,7 @@ export class ApplicationsService {
   }
 
   async start(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id, "apps:deploy");
     const cmd =
       app.source === "COMPOSE"
         ? buildComposeStartScript(this.toSpec(app))
@@ -897,7 +900,7 @@ export class ApplicationsService {
   }
 
   async restart(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id, "apps:deploy");
     const cmd =
       app.source === "COMPOSE"
         ? buildComposeRestartScript(this.toSpec(app))
@@ -938,7 +941,7 @@ export class ApplicationsService {
 
   /** AI-powered diagnosis of a deployment's logs (opt-in; writer-only). */
   async analyzeDeployment(userId: string, appId: string, depId: string): Promise<{ analysis: string }> {
-    const app = await this.requireWrite(userId, appId);
+    const app = await this.requireWrite(userId, appId, "apps:deploy");
     const dep = await this.prisma.deployment.findUnique({ where: { id: depId } });
     if (!dep || dep.appId !== appId) throw new NotFoundException("deployment not found");
     if (!dep.logs) throw new BadRequestException("deployment has no logs to analyze");
@@ -1209,9 +1212,9 @@ export class ApplicationsService {
     });
     await this.syncMonitor(id).catch(() => undefined);
     await this.audit.log({ actor: userId, action: "app.expose.update", target: id, meta: { mode: input.mode } });
-    const role = (await this.access.teamRole(userId, app.teamId))!;
+    const perms = await this.access.membershipPermissions(userId, app.teamId);
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
-    return this.view({ ...app, ...e }, role, ctx, server.publicIp ?? server.publicIpv6 ?? null);
+    return this.view({ ...app, ...e }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null);
   }
 
   async setDomainOptions(
@@ -1385,10 +1388,15 @@ export class ApplicationsService {
     return app;
   }
 
-  private async requireWrite(userId: string, id: string): Promise<Application> {
+  // Deploy-family callers pass "apps:deploy"; config/CRUD callers use the default "apps:config".
+  private async requireWrite(
+    userId: string,
+    id: string,
+    permission: TeamPermission = "apps:config",
+  ): Promise<Application> {
     const app = await this.prisma.application.findUnique({ where: { id } });
     if (!app) throw new NotFoundException("application not found");
-    await this.access.requireRole(userId, app.teamId, WRITE);
+    await this.access.requirePermission(userId, app.teamId, permission);
     return app;
   }
 
@@ -1414,11 +1422,11 @@ export class ApplicationsService {
 
   private view(
     app: Application,
-    role: Role,
+    canWrite: boolean, // apps:config — edit config, see compose
+    canDeploy: boolean, // apps:deploy — see/rotate the webhook secret (it triggers a deploy)
     ctx?: ResourceProjectCtx,
     serverIp?: string | null,
   ): AppView {
-    const canWrite = WRITE.includes(role);
     return {
       id: app.id,
       name: app.name,
@@ -1472,10 +1480,11 @@ export class ApplicationsService {
       exposeMode: app.exposeMode,
       certType: app.certType,
       url: appUrl(app, serverIp ?? null),
-      // Webhook credentials are only exposed to members who can deploy.
-      webhookToken: canWrite ? app.webhookToken : null,
+      // Webhook credentials are a deploy trigger → only exposed to members who can deploy (NOT to
+      // apps:config-only members, who could otherwise self-trigger a deploy via the public webhook).
+      webhookToken: canDeploy ? app.webhookToken : null,
       webhookSecret:
-        canWrite && app.webhookSecret ? this.crypto.decrypt(app.webhookSecret) : null,
+        canDeploy && app.webhookSecret ? this.crypto.decrypt(app.webhookSecret) : null,
       isPreview: app.isPreview,
       previewEnabled: app.previewEnabled,
       prNumber: app.prNumber,
@@ -1486,7 +1495,6 @@ export class ApplicationsService {
       volumeBackupRetention: app.volumeBackupRetention,
       volumeBackupDestinationId: app.volumeBackupDestinationId,
       envCount: Object.keys(this.appEnv(app)).length,
-      role,
       canWrite,
       createdAt: app.createdAt,
     };

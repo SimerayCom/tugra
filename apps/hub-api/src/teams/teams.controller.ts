@@ -27,6 +27,10 @@ import {
   SetMemberAccessSchema,
   SetRoleInput,
   SetRoleSchema,
+  TeamRoleInput,
+  TeamRoleSchema,
+  UpdateTeamRoleInput,
+  UpdateTeamRoleSchema,
 } from "./dto";
 
 @Controller("teams")
@@ -124,7 +128,39 @@ export class TeamsController {
     @Param("userId") targetUserId: string,
     @Body(new ZodValidationPipe(SetRoleSchema)) body: SetRoleInput,
   ) {
-    await this.teams.setRole(user.userId, id, targetUserId, body.role as Role);
+    await this.teams.setRole(user.userId, id, targetUserId, { role: body.role as Role | undefined, teamRoleId: body.teamRoleId });
+    return { ok: true };
+  }
+
+  // ---- custom roles ----
+  @Get(":id/roles")
+  listRoles(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.teams.listRoles(user.userId, id);
+  }
+
+  @Post(":id/roles")
+  createRole(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(TeamRoleSchema)) body: TeamRoleInput,
+  ) {
+    return this.teams.createRole(user.userId, id, body);
+  }
+
+  @Put(":id/roles/:roleId")
+  updateRole(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("roleId") roleId: string,
+    @Body(new ZodValidationPipe(UpdateTeamRoleSchema)) body: UpdateTeamRoleInput,
+  ) {
+    return this.teams.updateRole(user.userId, id, roleId, body);
+  }
+
+  @Delete(":id/roles/:roleId")
+  @HttpCode(200)
+  async deleteRole(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("roleId") roleId: string) {
+    await this.teams.deleteRole(user.userId, id, roleId);
     return { ok: true };
   }
 

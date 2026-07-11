@@ -3,7 +3,6 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Role } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -18,7 +17,6 @@ import {
   buildProxyStopScript,
 } from "../deploy/deploy-script";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const PROXY_TIMEOUT_MS = 60_000;
 
 export type ProxyStatus = "running" | "stopped" | "absent";
@@ -108,9 +106,6 @@ export class ProxyOpsService {
   private async requireWrite(userId: string, serverId: string): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new NotFoundException("server not found");
-    const role = await this.access.teamRole(userId, server.teamId);
-    if (!role || !WRITE.includes(role)) {
-      throw new ForbiddenException("insufficient role for this server");
-    }
+    await this.access.requirePermission(userId, server.teamId, "servers:ops");
   }
 }

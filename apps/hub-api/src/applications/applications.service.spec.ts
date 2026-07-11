@@ -14,6 +14,23 @@ jest.mock("./ssl-probe", () => ({
   probeSsl: jest.fn().mockResolvedValue({ state: "ok", daysRemaining: 90, issuer: "Let's Encrypt" }),
 }));
 
+// OWNER/ADMIN hold every granular permission; a fresh Set per call keeps mocks isolated.
+const OWNER_PERMS = () =>
+  new Set([
+    "apps:deploy",
+    "apps:config",
+    "databases",
+    "backups",
+    "servers:manage",
+    "servers:ops",
+    "terminal",
+    "bulk",
+    "monitors",
+    "projects",
+    "integrations",
+    "variables",
+  ]);
+
 const audit = { log: jest.fn() } as unknown as AuditService;
 const crypto = {
   encrypt: (s: string) => `enc(${s})`,
@@ -45,6 +62,11 @@ function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
     grantProjectAccess: jest.fn().mockResolvedValue(undefined),
     membershipAccess: jest.fn().mockResolvedValue(null),
     accessByTeam: jest.fn().mockResolvedValue(new Map()),
+    // require() still uses teamRole for a plain membership check; canWrite/list now derive
+    // from the granular permission sets. Default to a full-access member; tests override.
+    teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
+    permissionsByTeam: jest.fn().mockResolvedValue(new Map()),
     ...access,
   } as unknown as TeamAccessService;
 }
@@ -107,7 +129,7 @@ describe("ApplicationsService", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await expect(
@@ -121,8 +143,8 @@ describe("ApplicationsService", () => {
       application: { create: jest.fn().mockResolvedValue({ ...app, source: "IMAGE" }) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     return { prisma, access };
   }
@@ -171,7 +193,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     // agent streams a chunk, then the command resolves
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s, _c, _cap, _t, onChunk?: (c: string) => void) => {
@@ -222,7 +244,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
@@ -260,7 +282,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 3, output: "" }) } as unknown as AgentWsServer;
     await make(prisma, access, agentWs).deploy("u1", "app1");
     // no previous live version → exit 3 is a real failure, app is FAILED (not falsely RUNNING)
@@ -281,7 +303,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
@@ -311,7 +333,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
@@ -348,7 +370,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
@@ -373,7 +395,7 @@ describe("ApplicationsService", () => {
         ]),
       },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     const list = await svc.deployments("u1", "app1");
 
@@ -390,7 +412,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
       deployment: { findFirst: jest.fn().mockResolvedValue({ id: "running", status: "RUNNING" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).deploy("u1", "app1")).rejects.toThrow(
       /already running/,
     );
@@ -407,7 +429,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
       sendCommand: jest.fn().mockRejectedValue(new Error("agent disconnected")),
     } as unknown as AgentWsServer;
@@ -423,7 +445,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue({ ...app, envEnc: '{"FOO":"bar"}' }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     expect(await svc.getEnv("u1", "app1")).toEqual({ FOO: "bar" });
   });
@@ -433,7 +455,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await expect(svc.getEnv("u1", "app1")).rejects.toThrow(/nope/);
@@ -445,7 +467,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setEnv("u1", "app1", { FOO: "bar" });
     expect(update).toHaveBeenCalledWith(
@@ -458,7 +480,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
     const svc = make(prisma, access, { sendCommand } as unknown as AgentWsServer);
     await svc.start("u1", "app1");
@@ -472,7 +494,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "tugra_app1\trunning\n" });
     const r = await make(prisma, access, { sendCommand } as unknown as AgentWsServer).listContainers("u1", "app1");
     expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("docker ps -a"), "deploy", expect.any(Number));
@@ -483,7 +505,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "log line" });
     const out = await make(prisma, access, { sendCommand } as unknown as AgentWsServer).appLogs("u1", "app1", 50);
     expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("docker logs --tail 50 tugra_app1"), "deploy", expect.any(Number));
@@ -494,7 +516,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).appLogs("u1", "app1")).rejects.toThrow(/nope/);
   });
 
@@ -504,7 +526,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
       deployment: { findUnique: jest.fn().mockResolvedValue(dep) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const ai = { analyze: jest.fn().mockResolvedValue("fix it") };
     const out = await make(prisma, access, {} as AgentWsServer, undefined, undefined, ai).analyzeDeployment("u1", "app1", "d1");
     expect(ai.analyze).toHaveBeenCalledWith("boom", expect.objectContaining({ status: "FAILED", exitCode: 1 }));
@@ -516,14 +538,14 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
       deployment: { findUnique: jest.fn().mockResolvedValue({ id: "d1", appId: "other", logs: "x" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).analyzeDeployment("u1", "app1", "d1")).rejects.toThrow(/not found/);
   });
 
   it("renames an app for a writer", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).rename("u1", "app1", "renamed");
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { name: "renamed" } }));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.name.update" }));
@@ -534,7 +556,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setDockerOptions("u1", "app1", "--dns 1.1.1.1");
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { dockerOptions: "--dns 1.1.1.1" } }));
@@ -547,7 +569,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuildArgs("u1", "app1", { API_URL: "x" });
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { buildArgsEnc: 'enc({"API_URL":"x"})' } }),
@@ -559,7 +581,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(
       make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256 }),
@@ -571,7 +593,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 });
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 } }),
@@ -583,7 +605,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: "HTTP", path: "/healthz", port: 9000, command: null });
     // a non-CMD save leaves an existing healthCmd intact — the update omits it entirely
     expect(update).toHaveBeenCalledWith(
@@ -598,7 +620,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: "CMD", command: "pg_isready" });
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ healthCheckType: "CMD", healthCmd: "pg_isready" }) }),
@@ -610,7 +632,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: null, command: null });
     const data = update.mock.calls[0][0].data;
     expect("healthCmd" in data).toBe(false); // untouched → a pre-existing native check survives
@@ -622,7 +644,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },
       registry: { findUnique: jest.fn().mockResolvedValue({ id: "reg1", teamId: "OTHER" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { registryId: "reg1", pushToRegistry: true })).rejects.toThrow(
       /registry not found in this team/,
     );
@@ -633,7 +655,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setDeploySettings("u1", "app1", { deployStrategy: "RECREATE", rollbackOnFailure: false });
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { deployStrategy: "RECREATE", rollbackOnFailure: false } }),
@@ -646,7 +668,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(noRegApp), update: jest.fn() },
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { buildServerId: "s1" })).rejects.toThrow(
       /build server requires a registry/,
     );
@@ -657,7 +679,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue({ ...app, registryId: "reg1" }), update: jest.fn() },
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s9", teamId: "OTHER" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { buildServerId: "s9" })).rejects.toThrow(
       /build server not found in this team/,
     );
@@ -669,7 +691,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue({ ...app, registryId: "reg1" }), update },
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuildConfig("u1", "app1", { buildServerId: "s1" });
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ buildServerId: "s1", pushToRegistry: true }) }));
   });
@@ -688,7 +710,7 @@ describe("ApplicationsService", () => {
       registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const calls: { server: string; cmd: string }[] = [];
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((server: string, cmd: string, cap: string) => {
@@ -724,7 +746,7 @@ describe("ApplicationsService", () => {
       registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
       // the build server (bs1) fails the build; the deploy server (s1) is never reached
       sendCommand: jest.fn().mockImplementation((server: string) => {
@@ -755,7 +777,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
@@ -777,7 +799,7 @@ describe("ApplicationsService", () => {
         deployment: { create: jest.fn().mockResolvedValue({ id: "d1" }), update: jest.fn().mockResolvedValue({}), findUnique: jest.fn().mockResolvedValue({ id: "d1" }), findFirst: jest.fn().mockResolvedValue(null) },
         sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
       } as unknown as PrismaService;
-      const access = { requireRole: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined), membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
       const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "deployed" });
       return { svc: make(prisma, access, { sendCommand } as unknown as AgentWsServer), sendCommand };
     };
@@ -803,8 +825,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", {
       name: "blog",
@@ -830,8 +852,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).create("u1", { name: "My App", serverId: "s1", image: "nginx" });
     const data = create.mock.calls[0][0].data;
@@ -853,8 +875,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).create("u1", { name: "web", serverId: "s1", image: "nginx" });
     const data = create.mock.calls[0][0].data;
@@ -873,8 +895,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", { name: "blog", serverId: "s1" });
     const data = create.mock.calls[0][0].data;
@@ -894,8 +916,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     // A raw Compose stack with no published port → no web service → no magic.
     await make(prisma, access, {} as AgentWsServer).create("u1", {
@@ -917,8 +939,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).create("u1", {
       name: "web", serverId: "s1", image: "nginx", domain: "app.example.com", https: false,
@@ -943,8 +965,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).create("u1", { name: "api", serverId: "s1", image: "nginx" });
     const data = create.mock.calls[0][0].data;
@@ -964,8 +986,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).create("u1", { name: "api", serverId: "s1", image: "nginx" });
     const data = create.mock.calls[0][0].data;
@@ -1023,8 +1045,8 @@ describe("ApplicationsService", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).expose("u1", "app1", { mode: "magic" });
     const data = update.mock.calls[0][0].data;
@@ -1042,8 +1064,8 @@ describe("ApplicationsService", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).expose("u1", "app1", { mode: "custom", domain: "app.example.com" });
     const data = update.mock.calls[0][0].data;
@@ -1060,8 +1082,8 @@ describe("ApplicationsService", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null }) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).expose("u1", "app1", { mode: "none" });
     const data = update.mock.calls[0][0].data;
@@ -1078,8 +1100,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", {
       name: "blog",
@@ -1098,8 +1120,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "activepieces", {
       name: "flows",
@@ -1119,8 +1141,8 @@ describe("ApplicationsService", () => {
       application: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).create("u1", {
       name: "plain",
@@ -1136,7 +1158,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(
       make(prisma, access, {} as AgentWsServer).setCredentials("u1", "app1", { gitToken: "t" }),
@@ -1148,7 +1170,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setCredentials("u1", "app1", {
       gitToken: "ghp_abc",
@@ -1164,7 +1186,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setCredentials("u1", "app1", { gitToken: null });
     expect(update.mock.calls[0][0].data).toEqual({ gitTokenEnc: null });
   });
@@ -1179,7 +1201,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(withCreds) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
     expect(view.hasGitToken).toBe(true);
     expect(view.registryUrl).toBe("reg.io");
@@ -1194,7 +1216,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(exposed) },
       server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null }) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
     expect(view.url).toBe("http://203.0.113.7:8080");
   });
@@ -1205,7 +1227,7 @@ describe("ApplicationsService", () => {
       // server.findUnique defaults to null (no public IP yet) via make()
       application: { findUnique: jest.fn().mockResolvedValue(exposed) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
     expect(view.url).toBeNull();
   });
@@ -1216,7 +1238,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(domained) },
       server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null }) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
     expect(view.url).toBe("https://app.example.com");
   });
@@ -1226,7 +1248,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setDomainOptions("u1", "app1", {
       domainRedirect: "root",
       securityHeaders: true,
@@ -1241,7 +1263,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setDomainOptions("u1", "app1", { forwardAuth: "https://auth.x/verify" });
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { forwardAuth: "https://auth.x/verify" } }));
@@ -1254,7 +1276,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setDomain("u1", "app1", "app.example.com");
     // A user-set domain becomes "custom" and pins certType to le-http (stays on HTTPS).
@@ -1271,7 +1293,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn() },
       environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { teamId: "OTHER" } }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(
       make(prisma, access, {} as AgentWsServer).setEnvironment("u1", "app1", "e1"),
     ).rejects.toThrow(/not found in this team/);
@@ -1283,7 +1305,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
       environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { teamId: "t1" } }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setEnvironment("u1", "app1", "e1");
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { environmentId: "e1" } }));
@@ -1300,7 +1322,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(
       make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/data" }]),
@@ -1312,7 +1334,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/app/data" }]);
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { volumes: [{ name: "data", path: "/app/data" }] } }),
@@ -1324,7 +1346,7 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
       deployment: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/rollbackable/);
   });
@@ -1342,7 +1364,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let cmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, c: string) => { cmd = c; return Promise.resolve({ exitCode: 0, output: "ok" }); }),
@@ -1360,7 +1382,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" }) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/compose/);
   });
@@ -1482,7 +1504,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue({ ...parentApp, domain: null }), update: jest.fn() },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(
       make(prisma, access, {} as AgentWsServer).setPreviewEnabled("u1", "parent1", true),
     ).rejects.toThrow(/domain/);
@@ -1496,8 +1518,8 @@ describe("ApplicationsService", () => {
       application: { create: jest.fn().mockResolvedValue(created) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
-      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
     } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer, makeDeployLogs(), monitors).create("u1", {
       name: "web", serverId: "s1", image: "nginx", domain: "x.com",
@@ -1510,7 +1532,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), delete: jest.fn().mockResolvedValue({}) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer;
     await make(prisma, access, agentWs, makeDeployLogs(), monitors).remove("u1", "app1");
     expect(monitors.removeForApp).toHaveBeenCalledWith("app1");
@@ -1521,7 +1543,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setTags("u1", "app1", ["PROD", " staging ", "prod"]);
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { tags: ["prod", "staging"] } }),
@@ -1578,7 +1600,7 @@ describe("ApplicationsService", () => {
   it("get() propagates a per-resource scoping denial", async () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
     const access = {
-      teamRole: jest.fn().mockResolvedValue(Role.VIEWER),
+      membershipPermissions: jest.fn().mockResolvedValue(new Set()),
       requireResourceAccess: jest.fn().mockRejectedValue(new ForbiddenException("no access to this resource")),
     } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).get("u1", "app1")).rejects.toThrow(/no access/);
@@ -1596,7 +1618,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
@@ -1632,7 +1654,7 @@ describe("ApplicationsService", () => {
       registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
@@ -1663,7 +1685,7 @@ describe("ApplicationsService", () => {
       registry: { findFirst: jest.fn() },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let sentCmd = "";
     const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sentCmd = cmd; return Promise.resolve({ exitCode: 0, output: "Up" }); }) } as unknown as AgentWsServer;
     await make(prisma, access, agentWs).rollback("u1", "app1", "dep1");
@@ -1684,7 +1706,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).rollback("u1", "app1", "dep1")).rejects.toThrow(/no longer available/);
     // no RUNNING rollback row created, and the still-running app was never flipped to FAILED
     expect(create).not.toHaveBeenCalled();
@@ -1699,7 +1721,7 @@ describe("ApplicationsService", () => {
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).rollback("u1", "app1", "dep1")).rejects.toThrow(/rollbackable/);
   });
 });

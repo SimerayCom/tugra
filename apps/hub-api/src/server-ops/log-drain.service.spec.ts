@@ -1,5 +1,4 @@
 import { ForbiddenException } from "@nestjs/common";
-import { Role } from "@prisma/client";
 import { LogDrainService } from "./log-drain.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -22,8 +21,8 @@ const server = { id: "s1", teamId: "t1" };
 describe("LogDrainService", () => {
   it("forbids a viewer from creating a drain", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.VIEWER) } as unknown as TeamAccessService;
-    await expect(make(prisma, access, {}).create("u1", "s1", { name: "x", endpoint: "https://x" })).rejects.toThrow(/insufficient role/);
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("insufficient permission")) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {}).create("u1", "s1", { name: "x", endpoint: "https://x" })).rejects.toThrow(/insufficient permission/);
   });
 
   it("encrypts the token on create and pushes config to the agent", async () => {
@@ -33,7 +32,7 @@ describe("LogDrainService", () => {
       server: { findUnique: jest.fn().mockResolvedValue(server) },
       logDrain: { create, findMany: jest.fn().mockResolvedValue([{ id: "d1", endpoint: "https://x", authTokenEnc: "enc:tok", enabled: true }]) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const view = await make(prisma, access, { sendToAgent }).create("u1", "s1", { name: "axiom", endpoint: "https://x", token: "tok" });
     expect(create.mock.calls[0][0].data.authTokenEnc).toBe("enc:tok");
     expect(view.hasToken).toBe(true);
@@ -61,7 +60,7 @@ describe("LogDrainService", () => {
       },
       server: { findUnique: jest.fn().mockResolvedValue(server) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, { sendToAgent }).remove("u1", "d1");
     expect(del).toHaveBeenCalledWith({ where: { id: "d1" } });
     expect(sendToAgent).toHaveBeenCalledWith("s1", { type: "log_drains", drains: [] });

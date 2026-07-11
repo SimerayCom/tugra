@@ -7,6 +7,12 @@ import { AuditService } from "../audit/audit.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 
+// OWNER/ADMIN hold every granular permission; VIEWER holds none.
+const ALL_PERMS = [
+  "apps:deploy", "apps:config", "databases", "backups", "servers:manage",
+  "servers:ops", "terminal", "bulk", "monitors", "projects", "integrations", "variables",
+];
+
 // Permissive per-resource-scoping defaults so non-scoping tests stay green; overridden per test.
 function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
   return {
@@ -35,8 +41,9 @@ describe("ProjectsService", () => {
       server: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
       teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])),
     } as unknown as TeamAccessService;
     const view = await make(prisma, access).create("u1", "t1", "web");
     expect(create).toHaveBeenCalledWith(
@@ -64,7 +71,7 @@ describe("ProjectsService", () => {
       application: { count: jest.fn().mockResolvedValue(0) },
       database: { count: jest.fn().mockResolvedValue(0) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access).removeEnvironment("u1", "e1");
     expect(del).toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({ where: { id: "e2" }, data: { isDefault: true } });
@@ -82,14 +89,14 @@ describe("ProjectsService", () => {
       application: { count: jest.fn().mockResolvedValue(0) },
       database: { count: jest.fn().mockResolvedValue(0) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access).removeEnvironment("u1", "e2");
     expect(findFirst).not.toHaveBeenCalled();
   });
 
   it("forbids creating a project for a team the user can't write to", async () => {
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(make({} as PrismaService, access).create("u1", "t1", "web")).rejects.toThrow(/nope/);
   });
@@ -115,7 +122,10 @@ describe("ProjectsService", () => {
       },
       server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", name: "web-1", publicIp: "203.0.113.7", publicIpv6: null }]) },
     } as unknown as PrismaService;
-    const access = { teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])),
+    } as unknown as TeamAccessService;
     const out = await make(prisma, access).get("u1", "p1");
     const res = out.environments[0].resources!;
     const app = res.find((r) => r.id === "a1")!;
@@ -145,6 +155,7 @@ describe("ProjectsService", () => {
     } as unknown as PrismaService;
     const access = {
       accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.ADMIN, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access).list("u1");
     expect(out[0].environments[0].appCount).toBe(1);
@@ -158,7 +169,7 @@ describe("ProjectsService", () => {
       application: { count: jest.fn().mockResolvedValue(1) },
       database: { count: jest.fn().mockResolvedValue(0) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access).remove("u1", "p1")).rejects.toThrow(ConflictException);
   });
 
@@ -168,7 +179,7 @@ describe("ProjectsService", () => {
       application: { count: jest.fn().mockResolvedValue(0) },
       database: { count: jest.fn().mockResolvedValue(2) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access).removeEnvironment("u1", "e1")).rejects.toThrow(ConflictException);
   });
 });

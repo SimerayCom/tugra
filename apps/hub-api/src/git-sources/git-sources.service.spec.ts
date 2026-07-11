@@ -6,6 +6,8 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 
+const ALL_PERMS = ["apps:deploy", "apps:config", "databases", "backups", "servers:manage", "servers:ops", "terminal", "bulk", "monitors", "projects", "integrations", "variables"];
+
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const PEM = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
 
@@ -25,7 +27,7 @@ describe("GitSourcesService", () => {
       id: "s1", name: "gh", teamId: "t1", provider: "github", appId: "123",
       appSlug: null, installationId: "9", htmlUrl: null, createdAt: new Date(),
     });
-    const svc = make({ gitSource: { create } } as unknown as PrismaService, { requireRole: jest.fn().mockResolvedValue(undefined) });
+    const svc = make({ gitSource: { create } } as unknown as PrismaService, { requirePermission: jest.fn().mockResolvedValue(undefined) });
     const v = await svc.create("u1", { name: "gh", teamId: "t1", appId: "123", privateKey: PEM, installationId: "9", webhookSecret: "wh" });
     const data = create.mock.calls[0][0].data;
     expect(data.privateKeyEnc).toBe(`enc(${PEM})`);
@@ -78,7 +80,7 @@ describe("GitSourcesService", () => {
       gitSource: { findMany: jest.fn().mockResolvedValue([row("s1", "tOwner"), row("s2", "tViewer")]) },
     } as unknown as PrismaService;
     const access = {
-      roleByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", Role.ADMIN], ["tViewer", Role.VIEWER]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["tOwner", new Set(ALL_PERMS)], ["tViewer", new Set()]])),
     } as unknown as TeamAccessService;
     const list = await make(prisma as unknown as PrismaService, access).list("u1");
     expect(list.find((s) => s.id === "s1")!.canWrite).toBe(true);

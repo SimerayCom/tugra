@@ -2,6 +2,7 @@ import { Role, ServerStatus } from "@prisma/client";
 import { ServersService } from "./servers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { TeamAccessService } from "../common/team-access.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 const notifications = { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService;
@@ -16,7 +17,16 @@ const crypto = {
 } as unknown as import("../crypto/crypto.service").CryptoService;
 
 function svcWith(prisma: Partial<PrismaService>): ServersService {
-  return new ServersService(prisma as PrismaService, audit, notifications, moduleRef, crypto);
+  // A real TeamAccessService over the same prisma mock — the membership rows drive resolvePermissions
+  // (OWNER/ADMIN → all permissions, VIEWER → none), so the existing role-based mocks still work.
+  return new ServersService(
+    prisma as PrismaService,
+    audit,
+    notifications,
+    moduleRef,
+    crypto,
+    new TeamAccessService(prisma as PrismaService),
+  );
 }
 
 describe("ServersService.listForUser (cross-team, role-aware)", () => {
@@ -61,7 +71,7 @@ describe("ServersService.createServer (team role enforced)", () => {
     } as unknown as PrismaService;
     await expect(
       svcWith(prisma).createServer("u1", "web", "teamA"),
-    ).rejects.toThrow(/insufficient role/);
+    ).rejects.toThrow(/insufficient (role|permission)/);
   });
 
   it("lets an OWNER create a server and returns an enroll token", async () => {
@@ -282,7 +292,7 @@ describe("ServersService.setTags", () => {
       server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
       membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.VIEWER }) },
     } as unknown as PrismaService;
-    await expect(svcWith(prisma).setTags("u1", "s1", ["prod"])).rejects.toThrow(/insufficient role/);
+    await expect(svcWith(prisma).setTags("u1", "s1", ["prod"])).rejects.toThrow(/insufficient (role|permission)/);
   });
 
   it("normalizes and stores tags for a writer", async () => {
@@ -304,7 +314,7 @@ describe("ServersService capabilities", () => {
       server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
       ...owner(Role.VIEWER),
     } as unknown as PrismaService;
-    await expect(svcWith(prisma).setCapabilities("u1", "s1", ["deploy"])).rejects.toThrow(/insufficient role/);
+    await expect(svcWith(prisma).setCapabilities("u1", "s1", ["deploy"])).rejects.toThrow(/insufficient (role|permission)/);
   });
 
   it("stores a restricted (deduped, validated) capability set", async () => {
@@ -367,7 +377,7 @@ describe("ServersService.setNetwork", () => {
       ...owner(Role.VIEWER),
     } as unknown as PrismaService;
     await expect(svcWith(prisma).setNetwork("u1", "s1", { wildcardDomain: "apps.example.com" })).rejects.toThrow(
-      /insufficient role/,
+      /insufficient (role|permission)/,
     );
   });
 
@@ -537,7 +547,7 @@ describe("ServersService.getInstall", () => {
       ...owner(Role.VIEWER),
       server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")) },
     } as unknown as PrismaService;
-    await expect(svcWith(prisma).getInstall("u1", "s1")).rejects.toThrow(/insufficient role/);
+    await expect(svcWith(prisma).getInstall("u1", "s1")).rejects.toThrow(/insufficient (role|permission)/);
   });
 });
 

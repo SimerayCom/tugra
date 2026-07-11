@@ -12,6 +12,22 @@ const crypto = {
   decrypt: (s: string) => s.replace(/^enc:/, ""),
 } as unknown as CryptoService;
 
+// OWNER/ADMIN hold every granular permission; VIEWER holds none.
+const ALL_PERMS = [
+  "apps:deploy",
+  "apps:config",
+  "databases",
+  "backups",
+  "servers:manage",
+  "servers:ops",
+  "terminal",
+  "bulk",
+  "monitors",
+  "projects",
+  "integrations",
+  "variables",
+];
+
 // Permissive per-resource-scoping defaults so non-scoping tests stay green; overridden per test.
 function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
   return {
@@ -67,6 +83,7 @@ describe("DatabasesService", () => {
     } as unknown as PrismaService;
     const access = {
       accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: "OWNER", restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])),
     } as unknown as TeamAccessService;
     const out = await make(prisma, access).list("u1");
     expect(envFindMany).toHaveBeenCalledTimes(1);
@@ -79,7 +96,7 @@ describe("DatabasesService", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     const svc = make(prisma, access);
     await expect(
@@ -94,7 +111,7 @@ describe("DatabasesService", () => {
       database: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
       teamRole: jest.fn().mockResolvedValue("OWNER"),
     } as unknown as TeamAccessService;
     const teamDefaults = { resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default") };
@@ -111,7 +128,7 @@ describe("DatabasesService", () => {
       database: { create },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
       teamRole: jest.fn().mockResolvedValue("OWNER"),
     } as unknown as TeamAccessService;
     const teamDefaults = { resolveDefaultEnvironmentId: jest.fn() };
@@ -131,7 +148,7 @@ describe("DatabasesService", () => {
       database: { findUnique: jest.fn().mockResolvedValue(db), update },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockResolvedValue(undefined),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
       teamRole: jest.fn().mockResolvedValue("OWNER"),
     } as unknown as TeamAccessService;
     const agentWs = {
@@ -155,7 +172,7 @@ describe("DatabasesService", () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access).setTags("u1", "db1", ["Prod", "prod", " cache "]);
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { tags: ["cache", "prod"] } }),
@@ -167,7 +184,7 @@ describe("DatabasesService", () => {
       database: { findUnique: jest.fn().mockResolvedValue(db) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(make(prisma, access).setLimits("u1", "db1", { memoryMb: 512 })).rejects.toThrow(/nope/);
   });
@@ -177,7 +194,7 @@ describe("DatabasesService", () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access).setLimits("u1", "db1", { healthCmd: "pg_isready", memoryMb: 512, cpus: 1 });
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { healthCmd: "pg_isready", memoryMb: 512, cpus: 1 } }),
@@ -187,7 +204,7 @@ describe("DatabasesService", () => {
   it("renames a database for a writer", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access).rename("u1", "db1", "renamed");
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { name: "renamed" } }));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.name.update" }));
@@ -198,7 +215,7 @@ describe("DatabasesService", () => {
       database: { findUnique: jest.fn().mockResolvedValue(db) },
     } as unknown as PrismaService;
     const access = {
-      requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
+      requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")),
     } as unknown as TeamAccessService;
     await expect(make(prisma, access).setPort("u1", "db1", 15432)).rejects.toThrow(/nope/);
   });
@@ -208,7 +225,7 @@ describe("DatabasesService", () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db), update },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access);
     await svc.setPort("u1", "db1", 15432);
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { hostPort: 15432 } }));
@@ -219,6 +236,8 @@ describe("DatabasesService", () => {
   it("hides connection details from non-write (viewer) members", async () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db) },
+      // canWrite derives from the member's effective 'databases' permission (a VIEWER holds none).
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: "VIEWER", teamRole: null }) },
     } as unknown as PrismaService;
     const access = {
       teamRole: jest.fn().mockResolvedValue("VIEWER"),

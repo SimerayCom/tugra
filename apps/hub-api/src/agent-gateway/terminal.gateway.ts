@@ -7,7 +7,6 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
-import { Role } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
@@ -24,7 +23,6 @@ import { containerName } from "../deploy/deploy-script";
 import { dbContainerName } from "../databases/database-script";
 import { AgentWsServer, type TerminalDelegate } from "./agent-ws.server";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const SUBPROTOCOL = "tugra.bearer";
 
 interface Session {
@@ -109,7 +107,7 @@ export class TerminalGateway
       if (appId) {
         const app = await this.prisma.application.findUnique({ where: { id: appId } });
         if (!app) return ws.close(1008, "not found");
-        await this.access.requireRole(userId, app.teamId, WRITE);
+        await this.access.requirePermission(userId, app.teamId, 'terminal');
         serverId = app.serverId;
         if (app.source === "COMPOSE") {
           // Compose stacks have multiple containers — the caller picks one.
@@ -129,7 +127,7 @@ export class TerminalGateway
         const dbId = url.searchParams.get("database")!;
         const db = await this.prisma.database.findUnique({ where: { id: dbId } });
         if (!db) return ws.close(1008, "not found");
-        await this.access.requireRole(userId, db.teamId, WRITE);
+        await this.access.requirePermission(userId, db.teamId, 'terminal');
         serverId = db.serverId;
         target = dbContainerName(db);
         auditTarget = db.id;
@@ -137,7 +135,7 @@ export class TerminalGateway
       } else if (serverParam) {
         const server = await this.prisma.server.findUnique({ where: { id: serverParam } });
         if (!server) return ws.close(1008, "not found");
-        await this.access.requireRole(userId, server.teamId, WRITE);
+        await this.access.requirePermission(userId, server.teamId, 'terminal');
         serverId = server.id;
         target = "";
         auditTarget = server.id;

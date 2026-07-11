@@ -1,13 +1,11 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { createSign } from "node:crypto";
-import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import type { CreateGitSourceInput } from "./dto";
 
-const WRITE_ROLES: Role[] = [Role.OWNER, Role.ADMIN];
 const GH_API = "https://api.github.com";
 const GH_HEADERS = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
 
@@ -57,18 +55,18 @@ export class GitSourcesService {
   }
 
   async list(userId: string): Promise<GitSourceView[]> {
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const teamIds = [...roleByTeam.keys()];
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    const teamIds = [...permsByTeam.keys()];
     if (!teamIds.length) return [];
     const rows = await this.prisma.gitSource.findMany({
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((s) => this.view(s, WRITE_ROLES.includes(roleByTeam.get(s.teamId)!)));
+    return rows.map((s) => this.view(s, permsByTeam.get(s.teamId)?.has("integrations") ?? false));
   }
 
   async create(userId: string, dto: CreateGitSourceInput): Promise<GitSourceView> {
-    await this.access.requireRole(userId, dto.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, dto.teamId, "integrations");
     const s = await this.prisma.gitSource.create({
       data: {
         teamId: dto.teamId,
@@ -85,13 +83,13 @@ export class GitSourcesService {
       },
     });
     await this.audit.log({ actor: userId, action: "git_source.create", target: s.id });
-    return this.view(s, true); // only writers reach here (requireRole above)
+    return this.view(s, true); // only writers reach here (requirePermission above)
   }
 
   async remove(userId: string, id: string): Promise<void> {
     const s = await this.prisma.gitSource.findUnique({ where: { id } });
     if (!s) throw new NotFoundException("git source not found");
-    await this.access.requireRole(userId, s.teamId, WRITE_ROLES);
+    await this.access.requirePermission(userId, s.teamId, "integrations");
     this.tokenCache.delete(id);
     await this.prisma.gitSource.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "git_source.remove", target: id });

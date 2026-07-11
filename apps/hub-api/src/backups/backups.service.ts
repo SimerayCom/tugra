@@ -6,7 +6,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { Backup, Database, Role, RestoreKind, RestoreStatus } from "@prisma/client";
+import { Backup, Database, RestoreKind, RestoreStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -20,7 +20,6 @@ import { BackupSchedulerService } from "./backups.scheduler.service";
 import { planTargets } from "../bulk/bulk.service";
 import type { BackupConfigInput, ImportFromUrlInput } from "./dto";
 
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 const RESTORE_TIMEOUT_MS = 300_000;
 
 export interface BackupView {
@@ -257,8 +256,8 @@ export class BackupsService {
       where: { id: { in: dbIds } },
       select: { id: true, teamId: true },
     });
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const plan = planTargets(dbIds, dbs, roleByTeam);
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    const plan = planTargets(dbIds, dbs, permsByTeam, "backups");
     const applied: string[] = [];
     for (const target of plan) {
       if (!target.run) continue;
@@ -326,7 +325,7 @@ export class BackupsService {
   private async requireWrite(userId: string, dbId: string): Promise<Database> {
     const db = await this.prisma.database.findUnique({ where: { id: dbId } });
     if (!db) throw new NotFoundException("database not found");
-    await this.access.requireRole(userId, db.teamId, WRITE);
+    await this.access.requirePermission(userId, db.teamId, 'backups');
     return db;
   }
 }

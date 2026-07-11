@@ -1,9 +1,7 @@
 import {
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -11,8 +9,6 @@ import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { planTargets } from "../bulk/bulk.service";
 import type { CleanupConfigInput } from "./dto";
-
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
 @Injectable()
 export class CleanupService {
@@ -50,8 +46,8 @@ export class CleanupService {
       where: { id: { in: serverIds } },
       select: { id: true, teamId: true },
     });
-    const roleByTeam = await this.access.roleByTeam(userId);
-    const plan = planTargets(serverIds, servers, roleByTeam);
+    const permsByTeam = await this.access.permissionsByTeam(userId);
+    const plan = planTargets(serverIds, servers, permsByTeam, "servers:ops");
     const applied: string[] = [];
     for (const target of plan) {
       if (!target.run) continue;
@@ -90,9 +86,6 @@ export class CleanupService {
   private async requireWrite(userId: string, serverId: string): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new NotFoundException("server not found");
-    const role = await this.access.teamRole(userId, server.teamId);
-    if (!role || !WRITE.includes(role)) {
-      throw new ForbiddenException("insufficient role for this server");
-    }
+    await this.access.requirePermission(userId, server.teamId, "servers:ops");
   }
 }

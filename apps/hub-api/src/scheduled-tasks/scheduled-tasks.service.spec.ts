@@ -22,7 +22,7 @@ const app = { id: "app1", teamId: "t1" };
 describe("ScheduledTasksService", () => {
   it("forbids a non-writer from creating a task", async () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
     await expect(
       make(prisma, access, {}).create("u1", "app1", { name: "x", schedule: "0 2 * * *", command: "echo" }),
     ).rejects.toThrow(/nope/);
@@ -43,7 +43,7 @@ describe("ScheduledTasksService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
       scheduledTask: { create: jest.fn().mockResolvedValue(created) },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
     const v = await make(prisma, access, scheduler).create("u1", "app1", { name: "x", schedule: "0 2 * * *", command: "echo" });
     expect(scheduler.schedule).toHaveBeenCalledWith("tk1", "0 2 * * *");
@@ -59,7 +59,7 @@ describe("ScheduledTasksService", () => {
         update: jest.fn().mockResolvedValue(updated),
       },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
     await make(prisma, access, scheduler).update("u1", "app1", "tk1", { enabled: false });
     expect(scheduler.unschedule).toHaveBeenCalledWith("tk1");
@@ -73,7 +73,7 @@ describe("ScheduledTasksService", () => {
         delete: jest.fn().mockResolvedValue({}),
       },
     } as unknown as PrismaService;
-    const access = { requireRole: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
     await make(prisma, access, scheduler).remove("u1", "app1", "tk1");
     expect(scheduler.unschedule).toHaveBeenCalledWith("tk1");

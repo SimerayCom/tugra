@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { Application, Role, VolumeBackup } from "@prisma/client";
+import { Application, VolumeBackup } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -10,8 +10,6 @@ import { buildVolumeDeleteScript, buildVolumeRestoreScript } from "./volume-back
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 import { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
 import type { VolumeBackupConfigInput } from "./dto";
-
-const WRITE: Role[] = [Role.OWNER, Role.ADMIN];
 
 export interface VolumeBackupView {
   id: string;
@@ -127,7 +125,7 @@ export class VolumeBackupsService {
   private async requireWrite(userId: string, appId: string): Promise<Application> {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new NotFoundException("app not found");
-    await this.access.requireRole(userId, app.teamId, WRITE);
+    await this.access.requirePermission(userId, app.teamId, "backups");
     return app;
   }
 }
