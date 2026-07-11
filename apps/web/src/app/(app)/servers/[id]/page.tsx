@@ -415,7 +415,7 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
   );
 }
 
-const CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
+const CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
 
 function CapabilitiesCard({ id, server }: { id: string; server: ServerView }) {
   const t = useT();

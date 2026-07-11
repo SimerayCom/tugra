@@ -18,6 +18,7 @@ import (
 	"github.com/mrcandev/tugra/agent/internal/exec"
 	"github.com/mrcandev/tugra/agent/internal/hostinfo"
 	"github.com/mrcandev/tugra/agent/internal/keys"
+	"github.com/mrcandev/tugra/agent/internal/logs"
 	"github.com/mrcandev/tugra/agent/internal/metrics"
 	"github.com/mrcandev/tugra/agent/internal/protocol"
 	"github.com/mrcandev/tugra/agent/internal/terminal"
@@ -130,14 +131,18 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	fwd := drains.New(store.ServerID)
 	defer fwd.Stop()
 
-	// Reader: handle commands + terminal sessions from the hub.
+	// Reader: handle commands + terminal + log-follow sessions from the hub.
 	sessions := map[string]*terminal.Session{}
+	logStreams := map[string]*logs.Session{}
 	var sessMu sync.Mutex
 	go func() {
-		// On disconnect, tear down every live terminal (no zombie shells).
+		// On disconnect, tear down every live terminal + log stream (no zombie shells / `docker logs -f`).
 		defer func() {
 			sessMu.Lock()
 			for _, s := range sessions {
+				s.Close()
+			}
+			for _, s := range logStreams {
 				s.Close()
 			}
 			sessMu.Unlock()
@@ -230,6 +235,42 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 				sessMu.Unlock()
 				if sess != nil {
 					sess.Close()
+				}
+			case "log_start":
+				// Same fail-closed order as term_start: verify the hub signature, then the capability.
+				if !protocol.VerifySig(hubPub, protocol.CanonicalLogStart(m.StreamID, m.Target, m.Tail, m.Follow, m.Capability), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected log_start: invalid or missing hub signature")
+					continue
+				}
+				if !cs.allows(m.Capability) {
+					fmt.Fprintln(os.Stderr, "rejected log_start: capability not allowed:", m.Capability)
+					continue
+				}
+				sid := m.StreamID
+				stream, err := logs.Start(m.Target, m.Tail, m.Follow,
+					func(line string) {
+						_ = send(protocol.LogChunk{Type: "log_chunk", StreamID: sid, Chunk: line})
+					},
+					func(code int) {
+						sessMu.Lock()
+						delete(logStreams, sid)
+						sessMu.Unlock()
+						_ = send(protocol.LogExit{Type: "log_exit", StreamID: sid, ExitCode: code})
+					},
+				)
+				if err != nil {
+					_ = send(protocol.LogExit{Type: "log_exit", StreamID: sid, ExitCode: -1})
+					continue
+				}
+				sessMu.Lock()
+				logStreams[sid] = stream
+				sessMu.Unlock()
+			case "log_stop":
+				sessMu.Lock()
+				stream := logStreams[m.StreamID]
+				sessMu.Unlock()
+				if stream != nil {
+					stream.Close()
 				}
 			case "log_drains":
 				fwd.SetDrains(ctx, m.Drains)

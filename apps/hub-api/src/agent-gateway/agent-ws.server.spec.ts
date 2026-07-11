@@ -10,7 +10,7 @@ const hubSign = { sign: jest.fn().mockReturnValue("SIG"), publicKeySpkiBase64: "
 // so flush the microtask/macrotask queue before asserting on the outbound message.
 const flush = () => new Promise((r) => setImmediate(r));
 
-const ALL_CAPS = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
+const ALL_CAPS = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
 
 function harness() {
   const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(ALL_CAPS), touch: jest.fn() } as any;
@@ -132,6 +132,73 @@ describe("AgentWsServer terminal relay", () => {
     const { server } = harness();
     expect(server.isOnline("s1")).toBe(true);
     expect(server.isOnline("ghost")).toBe(false);
+  });
+});
+
+describe("AgentWsServer live container-log streams", () => {
+  it("signs log_start (canonicalLogStart) and sends it after the capability check", async () => {
+    const { server, lastSent } = harness();
+    const listener = { onChunk: jest.fn(), onExit: jest.fn() };
+    const streamId = await server.startLogStream("s1", { target: "tugra_app1", tail: 200, follow: true }, listener);
+    const sent = lastSent();
+    expect(sent.type).toBe("log_start");
+    expect(sent.streamId).toBe(streamId);
+    expect(sent.target).toBe("tugra_app1");
+    expect(sent.tail).toBe(200);
+    expect(sent.follow).toBe(true);
+    expect(sent.capability).toBe("logs");
+    expect(sent.sig).toBe("SIG"); // signOutbound stamped the log_start signature
+  });
+
+  it("refuses to start a log stream when the 'logs' capability is not granted", async () => {
+    // A server whose granted set excludes "logs".
+    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]) } as any;
+    const s2 = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (s2 as any).sockets.set("s1", socket);
+    await expect(
+      s2.startLogStream("s1", { target: "c", tail: 1, follow: true }, { onChunk: jest.fn(), onExit: jest.fn() }),
+    ).rejects.toThrow(/logs/);
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
+  it("routes log_chunk/log_exit to the matching streamId listener (isolation)", async () => {
+    const { server, deliver } = harness();
+    const a = { onChunk: jest.fn(), onExit: jest.fn() };
+    const b = { onChunk: jest.fn(), onExit: jest.fn() };
+    const idA = await server.startLogStream("s1", { target: "a", tail: 1, follow: true }, a);
+    const idB = await server.startLogStream("s1", { target: "b", tail: 1, follow: true }, b);
+    await deliver({ type: "log_chunk", streamId: idA, chunk: "for-a" });
+    expect(a.onChunk).toHaveBeenCalledWith("for-a");
+    expect(b.onChunk).not.toHaveBeenCalled();
+    await deliver({ type: "log_exit", streamId: idB, exitCode: 0 });
+    expect(b.onExit).toHaveBeenCalledWith(0);
+    expect(a.onExit).not.toHaveBeenCalled();
+  });
+
+  it("ends live log streams for a server on disconnect (onExit -1) and drops the listener", async () => {
+    const { server } = harness();
+    const listener = { onChunk: jest.fn(), onExit: jest.fn() };
+    const id = await server.startLogStream("s1", { target: "c", tail: 1, follow: true }, listener);
+    (server as any).failLogStreamsFor("s1");
+    expect(listener.onExit).toHaveBeenCalledWith(-1);
+    expect((server as any).logListeners.has(id)).toBe(false);
+  });
+
+  it("ends the stream at once if the agent drops during the capability await (no 30-min listener leak)", async () => {
+    let resolveCaps!: (v: string[]) => void;
+    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn(() => new Promise<string[]>((r) => (resolveCaps = r))) } as any;
+    const s = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (s as any).sockets.set("s1", socket);
+    const listener = { onChunk: jest.fn(), onExit: jest.fn() };
+    const p = s.startLogStream("s1", { target: "c", tail: 1, follow: true }, listener);
+    (s as any).sockets.delete("s1"); // agent flaps offline mid-await
+    resolveCaps(["logs"]);
+    await p;
+    expect(socket.send).not.toHaveBeenCalled(); // delivery failed
+    expect(listener.onExit).toHaveBeenCalledWith(-1); // stream ended immediately, not after 30 min
+    expect((s as any).logListeners.size).toBe(0);
   });
 });
 

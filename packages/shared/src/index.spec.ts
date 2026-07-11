@@ -1,5 +1,14 @@
-import { PROTOCOL_VERSION } from "./index";
-import type { MetricsSample, EnrollMsg, ContainerMetricsMsg, AgentMessage } from "./index";
+import { PROTOCOL_VERSION, canonicalLogStart } from "./index";
+import type {
+  MetricsSample,
+  EnrollMsg,
+  ContainerMetricsMsg,
+  AgentMessage,
+  HubMessage,
+  LogStartMsg,
+  LogChunkMsg,
+  AgentCapability,
+} from "./index";
 
 describe("shared protocol", () => {
   it("pins the protocol version to 2", () => {
@@ -32,6 +41,26 @@ describe("shared protocol", () => {
     };
     expect(msg.type).toBe("enroll");
     expect(msg.protocol).toBe(2);
+  });
+
+  it("builds a byte-stable canonicalLogStart (must match the Go agent)", () => {
+    // Fixed newline-delimited format; the Go agent's CanonicalLogStart must be byte-identical.
+    expect(canonicalLogStart("sid1", "tugra_app1", 200, true, "logs")).toBe(
+      "logs\nsid1\ntugra_app1\n200\n1\nlogs",
+    );
+    expect(canonicalLogStart("sid1", "c", 50, false, "logs")).toBe("logs\nsid1\nc\n50\n0\nlogs");
+  });
+
+  it("shapes the live-log messages and unions (additive, no version bump)", () => {
+    const start: LogStartMsg = { type: "log_start", streamId: "s", target: "c", tail: 200, follow: true, capability: "logs", sig: "SIG" };
+    const chunk: LogChunkMsg = { type: "log_chunk", streamId: "s", chunk: "hello\n" };
+    const asHub: HubMessage = start; // hub -> agent
+    const asAgent: AgentMessage = chunk; // agent -> hub
+    const cap: AgentCapability = "logs"; // new read-only capability
+    expect(asHub.type).toBe("log_start");
+    expect(asAgent.type).toBe("log_chunk");
+    expect(cap).toBe("logs");
+    expect(PROTOCOL_VERSION).toBe(2); // additive: no bump
   });
 
   it("shapes a container_metrics message (additive, no version bump)", () => {

@@ -4,7 +4,9 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
+import { Observable } from "rxjs";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import type { TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,6 +15,7 @@ import { TeamAccessService, canAccessResource } from "../common/team-access.serv
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
+import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { MonitorsService } from "../monitors/monitors.service";
@@ -32,6 +35,7 @@ import {
   buildStopScript,
   runTag,
   registryImageRef,
+  containerName,
   type AppSpec,
   type AppVolume,
   type RegistryAuth,
@@ -49,6 +53,7 @@ import {
   buildComposeUpScript,
   buildContainersScript,
   buildLogsScript,
+  composeProject,
   parseContainers,
 } from "../deploy/compose-script";
 import {
@@ -165,6 +170,7 @@ export class ApplicationsService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly deployLogs: DeployLogHub,
+    private readonly logStream: LogStreamService,
     private readonly proxy: ProxyService,
     private readonly crypto: CryptoService,
     private readonly monitors: MonitorsService,
@@ -971,6 +977,39 @@ export class ApplicationsService {
       60_000,
     );
     return { output: r.output.slice(0, 65536) };
+  }
+
+  /**
+   * Live `docker logs --follow` stream over the signed "logs" capability. Writer-only (logs can
+   * contain secrets, like appLogs). The container name is derived/validated server-side — for a
+   * compose app the caller picks a container that MUST belong to this app's `tugra_<id>` project;
+   * for a single-container app the client value is ignored entirely.
+   */
+  async streamContainerLogs(
+    userId: string,
+    id: string,
+    opts: { container?: string; tail?: number; follow?: boolean },
+  ): Promise<Observable<LogStreamEvent>> {
+    const app = await this.requireWrite(userId, id);
+    let target: string;
+    if (app.source === "COMPOSE") {
+      const prefix = composeProject(app); // `tugra_${app.id}`
+      const container = opts.container ?? "";
+      if (container !== prefix && !container.startsWith(`${prefix}-`)) {
+        throw new BadRequestException("invalid container for this app");
+      }
+      target = container;
+    } else {
+      target = containerName(app);
+    }
+    if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
+    // tail is a SIGNED field (canonicalLogStart). A non-finite value (e.g. ?tail=abc → NaN) would be
+    // signed as "NaN" but wire-serialized to null → the agent decodes 0 and the signature never
+    // verifies, hanging the stream. `?? 200` only guards null/undefined, so filter NaN explicitly.
+    const rawTail = Number.isFinite(opts.tail) ? (opts.tail as number) : 200;
+    const tail = Math.max(1, Math.min(2000, Math.floor(rawTail)));
+    await this.audit.log({ actor: userId, action: "app.logs.stream", target: id });
+    return this.logStream.stream(app.serverId, target, { tail, follow: opts.follow ?? true });
   }
 
   /**

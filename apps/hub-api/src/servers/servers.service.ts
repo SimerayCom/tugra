@@ -32,8 +32,8 @@ const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 // The capabilities a NEW server is granted by default — everything except `terminal`
 // (interactive shell), which is opt-in (least privilege). Legacy servers were backfilled
 // to the full set by the migration, so an empty grant now safely means "deny all" (fail-safe).
-const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch"];
-const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"];
+const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"];
+const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
 
 export interface ServerView {
   id: string;

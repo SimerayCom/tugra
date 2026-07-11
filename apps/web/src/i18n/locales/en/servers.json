@@ -80,6 +80,7 @@
   "cap_terminal": "Terminal (shell)",
   "cap_schedule": "Scheduled tasks",
   "cap_patch": "OS patching",
+  "cap_logs": "Container logs (live)",
   "cleanup": "Docker cleanup",
   "cleanupDesc": "Removes unused images, containers, networks and build cache.",
   "cleanNow": "Clean now",

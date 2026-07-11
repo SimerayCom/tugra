@@ -67,6 +67,15 @@ export function canonicalTermStart(
 ): string {
   return `term\n${sessionId}\n${target}\n${cols}\n${rows}\n${capability}`;
 }
+export function canonicalLogStart(
+  streamId: string,
+  target: string,
+  tail: number,
+  follow: boolean,
+  capability: string,
+): string {
+  return `logs\n${streamId}\n${target}\n${tail}\n${follow ? "1" : "0"}\n${capability}`;
+}
 
 /** What a command is for — the agent can locally allowlist these. */
 export type AgentCapability =
@@ -77,7 +86,8 @@ export type AgentCapability =
   | "bulk"
   | "terminal"
   | "schedule"
-  | "patch";
+  | "patch"
+  | "logs";
 
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
@@ -277,6 +287,43 @@ export interface TermExitMsg {
   exitCode: number;
 }
 
+// ── Live container-log follow (read-only, "logs" capability) ──
+// A one-way stream: the hub starts a signed `docker logs --follow` session on the agent, the agent
+// streams stdout/stderr lines back, and the hub relays them to an SSE client. Cancelable via log_stop
+// (or agent disconnect). Narrower than "terminal" (no RCE) — only reads container logs.
+
+/** Hub -> Agent: start following a container's logs. target is a resolved container name. */
+export interface LogStartMsg {
+  type: "log_start";
+  streamId: string;
+  target: string;
+  tail: number;
+  follow: boolean;
+  capability?: "logs";
+  /** base64(ed25519 signature over canonicalLogStart) — agent rejects if invalid. */
+  sig?: string;
+}
+
+/** Hub -> Agent: stop a log stream (client SSE closed). */
+export interface LogStopMsg {
+  type: "log_stop";
+  streamId: string;
+}
+
+/** Agent -> Hub: a line (or block) of a log stream's output. */
+export interface LogChunkMsg {
+  type: "log_chunk";
+  streamId: string;
+  chunk: string;
+}
+
+/** Agent -> Hub: a log stream ended (process exited or was cancelled). */
+export interface LogExitMsg {
+  type: "log_exit";
+  streamId: string;
+  exitCode: number;
+}
+
 /** Hub -> Agent: the server's active log drains (container logs are forwarded here). */
 export interface LogDrainCfg {
   id: string;
@@ -305,7 +352,9 @@ export type AgentMessage =
   | CommandLogMsg
   | CommandResultMsg
   | TermOutputMsg
-  | TermExitMsg;
+  | TermExitMsg
+  | LogChunkMsg
+  | LogExitMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
@@ -316,5 +365,7 @@ export type HubMessage =
   | TermInputMsg
   | TermResizeMsg
   | TermCloseMsg
+  | LogStartMsg
+  | LogStopMsg
   | LogDrainsMsg
   | CapabilitiesMsg;

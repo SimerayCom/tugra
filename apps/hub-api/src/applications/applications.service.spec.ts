@@ -100,6 +100,7 @@ function make(
     audit,
     agentWs as AgentWsServer,
     deployLogs,
+    { stream: jest.fn() } as unknown as import("../agent-gateway/log-stream.service").LogStreamService,
     { ensureProxy: jest.fn() } as unknown as import("./proxy.service").ProxyService,
     crypto,
     monitors as unknown as import("../monitors/monitors.service").MonitorsService,
