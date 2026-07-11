@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
+import { MetricsModule } from "../metrics/metrics.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { MonitorsModule } from "../monitors/monitors.module";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -12,7 +13,7 @@ import { AiService } from "./ai.service";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
-  imports: [AgentGatewayModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule],
   controllers: [ApplicationsController],
   providers: [
     ApplicationsService,

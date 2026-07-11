@@ -920,6 +920,48 @@ describe("Applications / deploy (e2e)", () => {
     await prisma.user.deleteMany({ where: { email: email2 } }).catch(() => undefined);
   });
 
+  it("serves per-container metrics for the app (own containers only) and 403s a non-member", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "metricsapp", serverId, image: "nginx:alpine", hostPort: 8145 })
+      .expect(201);
+    const appId = appRes.body.id;
+    const now = Date.now();
+    const base = { serverId, containerId: "abc", cpu: 1, memUsed: 1n, memTotal: 2n, memPct: 50, netRx: 0n, netTx: 0n, blkRead: 0n, blkWrite: 0n };
+    await prisma.containerMetric.createMany({
+      data: [
+        { ...base, containerName: `tugra_${appId}`, ts: new Date(now - 1000) },
+        { ...base, containerName: `tugra_${appId}`, ts: new Date(now) },
+        // a DIFFERENT app's container on the same server must NOT leak into this app's metrics.
+        { ...base, containerName: "tugra_someotherapp", ts: new Date(now) },
+      ],
+    });
+    const res = await request(app.getHttpServer())
+      .get(`/apps/${appId}/metrics/containers?range=1h`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(res.body.containers).toHaveLength(1);
+    expect(res.body.containers[0].name).toBe(`tugra_${appId}`);
+    expect(res.body.containers[0].samples.length).toBe(2);
+    expect(typeof res.body.containers[0].samples[0].netRx).toBe("number");
+
+    // A non-member gets a clean 403 (read-authz still enforces team membership).
+    const email3 = `app-m-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg3 = await request(app.getHttpServer())
+      .post("/auth/register")
+      .send({ email: email3, password, name: "Mout" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/apps/${appId}/metrics/containers?range=1h`)
+      .set("Authorization", `Bearer ${reg3.body.tokens.accessToken}`)
+      .expect(403);
+    const m3 = await prisma.membership.findFirst({ where: { userId: reg3.body.user.id } });
+    await prisma.membership.deleteMany({ where: { userId: reg3.body.user.id } }).catch(() => undefined);
+    if (m3) await prisma.team.deleteMany({ where: { id: m3.teamId } }).catch(() => undefined);
+    await prisma.user.deleteMany({ where: { email: email3 } }).catch(() => undefined);
+  });
+
   it("returns 503 for container-log streaming when the agent is offline", async () => {
     const srv = await request(app.getHttpServer())
       .post("/servers")

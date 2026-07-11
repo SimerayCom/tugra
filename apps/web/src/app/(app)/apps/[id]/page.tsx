@@ -9,6 +9,7 @@ import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../.
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { useContainerLogStream } from "../../../../hooks/useContainerLogStream";
+import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
@@ -95,6 +96,7 @@ export default function AppDetailPage() {
     { key: "overview", label: t("apps.tabOverview") },
     ...(appData?.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration") }] : []),
     { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length },
+    { key: "metrics", label: t("apps.tabMetrics") },
     { key: "logs", label: t("apps.tabLogs") },
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
@@ -373,6 +375,8 @@ export default function AppDetailPage() {
           </div>
         </Card>
       )}
+
+      {tab === "metrics" && <AppMetricsCard id={id} />}
 
       {tab === "logs" && (
         <>
