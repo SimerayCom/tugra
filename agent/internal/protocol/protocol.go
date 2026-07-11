@@ -46,6 +46,27 @@ type Metrics struct {
 	Sample MetricsSample `json:"sample"`
 }
 
+// ContainerStat is one container's resource usage. Net/block fields are RATES (B/s) the agent
+// derives from cumulative deltas; name is the stable key (id changes on restart).
+type ContainerStat struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	CPU      float64 `json:"cpu"`      // %
+	MemUsed  float64 `json:"memUsed"`  // bytes
+	MemTotal float64 `json:"memTotal"` // bytes
+	MemPct   float64 `json:"memPct"`   // %
+	NetRx    float64 `json:"netRx"`    // B/s
+	NetTx    float64 `json:"netTx"`    // B/s
+	BlkRead  float64 `json:"blkRead"`  // B/s
+	BlkWrite float64 `json:"blkWrite"` // B/s
+}
+
+type ContainerMetrics struct {
+	Type    string          `json:"type"`
+	Ts      int64           `json:"ts"`
+	Samples []ContainerStat `json:"samples"`
+}
+
 type Heartbeat struct {
 	Type string `json:"type"`
 	Ts   int64  `json:"ts"`

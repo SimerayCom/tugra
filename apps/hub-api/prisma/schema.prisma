@@ -261,6 +261,7 @@ model Server {
   // to all-except-terminal (least privilege — the interactive shell is opt-in).
   capabilities         String[]     @default([])
   metrics              Metric[]
+  containerMetrics     ContainerMetric[]
   logDrains            LogDrain[]
   createdAt            DateTime     @default(now())
 }
@@ -293,6 +294,29 @@ model Metric {
   netTx     BigInt
 
   @@index([serverId, ts])
+}
+
+// Per-container resource usage from the agent's `docker stats`. containerName is the STABLE key
+// (containerId changes on restart); net/block are rates (B/s) the agent derives from cumulative
+// deltas. Unbounded until the retention slice adds a prune scheduler (@@index([ts]) is for that).
+model ContainerMetric {
+  id            String   @id @default(cuid())
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId      String
+  containerName String
+  containerId   String
+  ts            DateTime @default(now())
+  cpu           Float
+  memUsed       BigInt
+  memTotal      BigInt
+  memPct        Float
+  netRx         BigInt
+  netTx         BigInt
+  blkRead       BigInt
+  blkWrite      BigInt
+
+  @@index([serverId, containerName, ts])
+  @@index([ts])
 }
 
 model AuditLog {

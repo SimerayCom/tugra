@@ -26,6 +26,7 @@ export interface TerminalDelegate {
   handleServerDisconnect(serverId: string): void;
 }
 import { MetricsService } from "../metrics/metrics.service";
+import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { ServersService } from "../servers/servers.service";
 import { observedIp } from "../common/observed-ip";
 
@@ -68,6 +69,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly httpAdapterHost: HttpAdapterHost,
     private readonly servers: ServersService,
     private readonly metrics: MetricsService,
+    private readonly containerMetrics: ContainerMetricsService,
     private readonly hubSign: HubSigningService,
   ) {}
 
@@ -182,6 +184,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
         case "metrics": {
           if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
           await this.metrics.ingest(st.serverId, msg.sample);
+          return;
+        }
+        case "container_metrics": {
+          if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
+          await this.containerMetrics.ingest(st.serverId, msg);
           return;
         }
         case "heartbeat": {

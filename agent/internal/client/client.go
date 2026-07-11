@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/mrcandev/tugra/agent/internal/config"
+	"github.com/mrcandev/tugra/agent/internal/dockerstats"
 	"github.com/mrcandev/tugra/agent/internal/drains"
 	"github.com/mrcandev/tugra/agent/internal/exec"
 	"github.com/mrcandev/tugra/agent/internal/hostinfo"
@@ -23,9 +24,10 @@ import (
 )
 
 const (
-	metricsInterval  = 5 * time.Second
-	commandTimeout   = 20 * time.Second
-	hostInfoInterval = 12 * time.Hour // refresh hardware/OS inventory periodically
+	metricsInterval        = 5 * time.Second
+	containerStatsInterval = 15 * time.Second // per-container `docker stats` — slower than host metrics
+	commandTimeout         = 20 * time.Second
+	hostInfoInterval       = 12 * time.Hour // refresh hardware/OS inventory periodically
 )
 
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics
@@ -234,6 +236,30 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			case "capabilities":
 				// Hub pushed an updated granted set → refresh the fail-closed allowlist live.
 				cs.set(m.Capabilities)
+			}
+		}
+	}()
+
+	// Per-container `docker stats` runs on its OWN goroutine. Collection can block for up to
+	// statsTimeout on a slow/hung docker daemon, and it must never stall the host-metric/heartbeat
+	// cadence below (a stalled heartbeat makes the server look stale). send() is mutex-guarded so
+	// concurrent writes are safe; a failed send here is ignored — it's best-effort telemetry, and
+	// the heartbeat loop is what detects a dead connection and tears it down. loopCtx (cancelled on
+	// Run's return) stops this goroutine so it can't outlive the connection.
+	loopCtx, cancelLoops := context.WithCancel(ctx)
+	defer cancelLoops()
+	go func() {
+		csTicker := time.NewTicker(containerStatsInterval)
+		defer csTicker.Stop()
+		csColl := dockerstats.NewCollector() // owned solely by this goroutine → rate-delta state has no races
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-csTicker.C:
+				if samples, err := csColl.Sample(loopCtx); err == nil && len(samples) > 0 {
+					_ = send(protocol.ContainerMetrics{Type: "container_metrics", Ts: time.Now().UnixMilli(), Samples: samples})
+				}
 			}
 		}
 	}()
