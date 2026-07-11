@@ -147,10 +147,32 @@ export interface AuthMsg {
   signature: string; // base64(ed25519 signature over the challenge nonce)
 }
 
-/** Periodic metrics. */
+/** Periodic host metrics. */
 export interface MetricsMsg {
   type: "metrics";
   sample: MetricsSample;
+}
+
+/** Per-container resource usage from `docker stats`. netRx/netTx/blkRead/blkWrite are RATES (B/s)
+ *  the agent derives from cumulative deltas; cpu/memPct are percentages, memUsed/memTotal bytes. */
+export interface ContainerStat {
+  id: string; // container id (changes on restart)
+  name: string; // container name (stable key)
+  cpu: number; // %
+  memUsed: number; // bytes
+  memTotal: number; // bytes
+  memPct: number; // %
+  netRx: number; // B/s
+  netTx: number; // B/s
+  blkRead: number; // B/s
+  blkWrite: number; // B/s
+}
+
+/** Agent -> Hub: per-container metrics for every container on the host. */
+export interface ContainerMetricsMsg {
+  type: "container_metrics";
+  ts: number; // unix ms the agent sampled
+  samples: ContainerStat[];
 }
 
 /** Liveness ping. */
@@ -277,6 +299,7 @@ export type AgentMessage =
   | EnrollMsg
   | AuthMsg
   | MetricsMsg
+  | ContainerMetricsMsg
   | HeartbeatMsg
   | HostInfoMsg
   | CommandLogMsg
