@@ -34,6 +34,23 @@ describe("validateEnv — HUB_SIGNING_KEY fail-closed", () => {
   });
 });
 
+describe("validateEnv — retention", () => {
+  it("defaults raw metric retention to 48h and heartbeat to 30d", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development" });
+    expect(env.METRICS_RAW_RETENTION_HOURS).toBe(48);
+    expect(env.HEARTBEAT_RETENTION_DAYS).toBe(30);
+  });
+  it("coerces string overrides to positive integers", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development", METRICS_RAW_RETENTION_HOURS: "72", HEARTBEAT_RETENTION_DAYS: "7" });
+    expect(env.METRICS_RAW_RETENTION_HOURS).toBe(72);
+    expect(env.HEARTBEAT_RETENTION_DAYS).toBe(7);
+  });
+  it("rejects a non-positive retention", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", METRICS_RAW_RETENTION_HOURS: "0" })).toThrow();
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", HEARTBEAT_RETENTION_DAYS: "-5" })).toThrow();
+  });
+});
+
 describe("validateEnv — MAGIC_DOMAIN_SUFFIX", () => {
   it("defaults to sslip.io when unset", () => {
     expect(validateEnv({ ...base, NODE_ENV: "development" }).MAGIC_DOMAIN_SUFFIX).toBe("sslip.io");
