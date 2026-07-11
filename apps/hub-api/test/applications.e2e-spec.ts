@@ -20,6 +20,7 @@ describe("Applications / deploy (e2e)", () => {
   let agent: WebSocket;
   let serverId = "";
   const commands: string[] = [];
+  const logStarts: { streamId: string; target: string; tail: number; follow: boolean; sig?: string }[] = [];
   let nextExit = 0; // mock-agent exit code for the next command (reset per use)
 
   beforeAll(async () => {
@@ -70,6 +71,12 @@ describe("Applications / deploy (e2e)", () => {
           commands.push(msg.command);
           agent.send(JSON.stringify({ type: "command_log", reqId: msg.reqId, chunk: "live-build-line\n" }));
           agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: nextExit, output: "Up 2 seconds" }));
+        } else if (msg.type === "log_start") {
+          // Simulate `docker logs`: stream one line then exit (exercises the full
+          // log_start → log_chunk → log_exit → SSE round-trip).
+          logStarts.push(msg);
+          agent.send(JSON.stringify({ type: "log_chunk", streamId: msg.streamId, chunk: "live-log-line-1" }));
+          agent.send(JSON.stringify({ type: "log_exit", streamId: msg.streamId, exitCode: 0 }));
         }
       });
     });
@@ -846,6 +853,88 @@ describe("Applications / deploy (e2e)", () => {
     expect(stream.text).toContain("live-build-line");
     expect(stream.text).toContain('"type":"done"');
     expect(stream.text).toContain('"status":"SUCCESS"');
+  });
+
+  it("streams live container logs over SSE (signed log_start → log_chunk → log_exit)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logstream", serverId, image: "nginx:alpine", hostPort: 8141 })
+      .expect(201);
+    const appId = appRes.body.id;
+
+    logStarts.length = 0;
+    // follow=0 → the mock agent emits one line then exits, so the SSE completes and buffers cleanly.
+    const stream = await request(app.getHttpServer())
+      .get(`/apps/${appId}/logs/stream?follow=0&tail=100`)
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .expect(200);
+
+    expect(stream.text).toContain("live-log-line-1");
+    // The hub derived + signed the log_start for THIS app's container over the "logs" capability.
+    expect(logStarts).toHaveLength(1);
+    expect(logStarts[0].target).toBe(`tugra_${appId}`);
+    expect(logStarts[0].tail).toBe(100);
+    expect(logStarts[0].follow).toBe(false);
+    expect(typeof logStarts[0].sig).toBe("string"); // ed25519 signature attached
+  });
+
+  it("normalizes a non-numeric ?tail to a signed default (no NaN → no signature mismatch / hung stream)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logtail", serverId, image: "nginx:alpine", hostPort: 8144 })
+      .expect(201);
+    logStarts.length = 0;
+    const stream = await request(app.getHttpServer())
+      .get(`/apps/${appRes.body.id}/logs/stream?follow=0&tail=abc`)
+      .set("Authorization", `Bearer ${token}`)
+      .buffer(true)
+      .expect(200);
+    // tail=abc → NaN would be signed as "NaN" but wired as null → agent would reject; the guard
+    // normalizes it to 200 so the signature verifies and the stream actually emits + completes.
+    expect(logStarts).toHaveLength(1);
+    expect(logStarts[0].tail).toBe(200);
+    expect(stream.text).toContain("live-log-line-1");
+  });
+
+  it("forbids container-log streaming for a non-member (403, awaited authz → real status)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logsecure", serverId, image: "nginx:alpine", hostPort: 8142 })
+      .expect(201);
+    const email2 = `app-out-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg2 = await request(app.getHttpServer())
+      .post("/auth/register")
+      .send({ email: email2, password, name: "Outsider" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/apps/${appRes.body.id}/logs/stream?follow=0`)
+      .set("Authorization", `Bearer ${reg2.body.tokens.accessToken}`)
+      .expect(403);
+    const m2 = await prisma.membership.findFirst({ where: { userId: reg2.body.user.id } });
+    await prisma.membership.deleteMany({ where: { userId: reg2.body.user.id } }).catch(() => undefined);
+    if (m2) await prisma.team.deleteMany({ where: { id: m2.teamId } }).catch(() => undefined);
+    await prisma.user.deleteMany({ where: { email: email2 } }).catch(() => undefined);
+  });
+
+  it("returns 503 for container-log streaming when the agent is offline", async () => {
+    const srv = await request(app.getHttpServer())
+      .post("/servers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "no-agent", teamId })
+      .expect(201);
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logoffline", serverId: srv.body.server.id, image: "nginx:alpine", hostPort: 8143 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/apps/${appRes.body.id}/logs/stream?follow=0`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(503);
   });
 
   it("rejects rollback for a compose app", async () => {

@@ -144,6 +144,27 @@ export class ApplicationsController {
     );
   }
 
+  /**
+   * Live container-log follow (SSE). Writer-only; `container` picks a compose service. The handler
+   * is async and AWAITS the authz/resolution so a rejection surfaces as a real HTTP status (403/400/
+   * 503) — NestJS only starts the SSE stream after the handler promise resolves.
+   */
+  @Sse(":id/logs/stream")
+  async streamContainerLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("container") container?: string,
+    @Query("tail") tail?: string,
+    @Query("follow") follow?: string,
+  ): Promise<Observable<MessageEvent>> {
+    const stream = await this.apps.streamContainerLogs(user.userId, id, {
+      container,
+      tail: tail ? Number(tail) : undefined,
+      follow: follow !== "0",
+    });
+    return stream.pipe(map((event) => ({ data: JSON.stringify(event) }) as MessageEvent));
+  }
+
   @Post(":id/deploy")
   @HttpCode(200)
   deploy(

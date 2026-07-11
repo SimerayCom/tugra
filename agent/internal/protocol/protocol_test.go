@@ -14,6 +14,13 @@ func TestCanonicalStrings(t *testing.T) {
 	if got := CanonicalTermStart("s1", "tugra_app1", 80, 24, "terminal"); got != "term\ns1\ntugra_app1\n80\n24\nterminal" {
 		t.Fatalf("CanonicalTermStart mismatch: %q", got)
 	}
+	// Must be byte-identical to @tugra/shared canonicalLogStart.
+	if got := CanonicalLogStart("st1", "tugra_app1", 200, true, "logs"); got != "logs\nst1\ntugra_app1\n200\n1\nlogs" {
+		t.Fatalf("CanonicalLogStart(follow) mismatch: %q", got)
+	}
+	if got := CanonicalLogStart("st1", "c", 50, false, "logs"); got != "logs\nst1\nc\n50\n0\nlogs" {
+		t.Fatalf("CanonicalLogStart(no-follow) mismatch: %q", got)
+	}
 }
 
 func hubKeyB64(t *testing.T, pub ed25519.PublicKey) string {

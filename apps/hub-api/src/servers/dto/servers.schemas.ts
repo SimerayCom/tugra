@@ -9,7 +9,7 @@ export type CreateServerInput = z.infer<typeof CreateServerSchema>;
 
 // Granted agent capabilities the hub will sign commands for on this server.
 export const SetCapabilitiesSchema = z.object({
-  capabilities: z.array(z.enum(["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch"])),
+  capabilities: z.array(z.enum(["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"])),
 });
 export type SetCapabilitiesInput = z.infer<typeof SetCapabilitiesSchema>;
 

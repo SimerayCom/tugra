@@ -14,8 +14,14 @@ import type {
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart } from "@tugra/shared";
+import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart, canonicalLogStart } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
+
+/** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
+export interface LogListener {
+  onChunk(chunk: string): void;
+  onExit(exitCode: number): void;
+}
 
 /**
  * The terminal gateway registers a delegate so the agent socket can relay
@@ -61,6 +67,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
+  private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
+  private readonly logStreamsByServer = new Map<string, Set<string>>(); // serverId → streamIds (disconnect teardown)
   private terminalDelegate?: TerminalDelegate;
   // Called when a server comes online so log-drain config can be (re)pushed.
   private logDrainProvider?: (serverId: string) => void;
@@ -120,6 +128,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           this.sockets.delete(st.serverId);
         }
         this.rejectPendingFor(st.serverId);
+        this.failLogStreamsFor(st.serverId);
         this.terminalDelegate?.handleServerDisconnect(st.serverId);
         void this.servers.markOffline(st.serverId);
       }
@@ -211,6 +220,14 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           }
           return;
         }
+        case "log_chunk": {
+          if (st.authed && st.serverId) this.logListeners.get(msg.streamId)?.onChunk(msg.chunk);
+          return;
+        }
+        case "log_exit": {
+          if (st.authed && st.serverId) this.logListeners.get(msg.streamId)?.onExit(msg.exitCode);
+          return;
+        }
         case "command_result": {
           const p = this.pending.get(msg.reqId);
           if (p) {
@@ -286,8 +303,76 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.capability as string,
         ),
       );
+    } else if (msg.type === "log_start") {
+      msg.sig = this.hubSign.sign(
+        canonicalLogStart(
+          msg.streamId as string,
+          msg.target as string,
+          msg.tail as number,
+          msg.follow as boolean,
+          msg.capability as string,
+        ),
+      );
     }
     return msg;
+  }
+
+  // ── Live container-log follow ──
+
+  /**
+   * Start a signed `docker logs --follow` session on an agent and route its chunks/exit to a
+   * listener. Throws (ForbiddenException / "agent offline") if the "logs" capability isn't granted
+   * or the agent is down — same fail-closed gate as sendCommand. Returns the minted streamId.
+   */
+  async startLogStream(
+    serverId: string,
+    params: { target: string; tail: number; follow: boolean },
+    listener: LogListener,
+  ): Promise<string> {
+    if (!this.isOnline(serverId)) throw new Error("agent offline");
+    if (!(await this.isCapabilityGranted(serverId, "logs"))) {
+      throw new ForbiddenException(`capability "logs" is not granted for this server`);
+    }
+    const streamId = randomUUID();
+    this.logListeners.set(streamId, listener);
+    (this.logStreamsByServer.get(serverId) ?? this.addLogStreamSet(serverId)).add(streamId);
+    // signOutbound signs log_start with canonicalLogStart automatically. The agent may have dropped
+    // during the await above (its disconnect teardown ran before this stream was registered), so if
+    // delivery fails, end the stream now instead of leaking the listener + slot until max-duration.
+    const delivered = this.sendToAgent(serverId, {
+      type: "log_start",
+      streamId,
+      target: params.target,
+      tail: params.tail,
+      follow: params.follow,
+      capability: "logs",
+    });
+    if (!delivered) {
+      this.removeLogStream(serverId, streamId);
+      listener.onExit(-1);
+    }
+    return streamId;
+  }
+
+  /** Stop a log stream: tell the agent to kill the process and drop the listener. */
+  stopLogStream(serverId: string, streamId: string): void {
+    this.sendToAgent(serverId, { type: "log_stop", streamId });
+    this.removeLogStream(serverId, streamId);
+  }
+
+  private removeLogStream(serverId: string, streamId: string): void {
+    this.logListeners.delete(streamId);
+    const set = this.logStreamsByServer.get(serverId);
+    if (set) {
+      set.delete(streamId);
+      if (set.size === 0) this.logStreamsByServer.delete(serverId);
+    }
+  }
+
+  private addLogStreamSet(serverId: string): Set<string> {
+    const set = new Set<string>();
+    this.logStreamsByServer.set(serverId, set);
+    return set;
   }
 
   /** Register the terminal gateway as the relay for interactive-shell traffic. */
@@ -330,6 +415,18 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       this.pending.delete(reqId);
       this.chunkListeners.delete(reqId);
       p.reject(new Error("agent disconnected"));
+    }
+  }
+
+  /** On agent disconnect, end every live log stream for that server so its SSE client closes
+   *  (the agent's process is already gone — there's nothing left to stop). */
+  private failLogStreamsFor(serverId: string): void {
+    const set = this.logStreamsByServer.get(serverId);
+    if (!set) return;
+    for (const streamId of [...set]) {
+      const listener = this.logListeners.get(streamId);
+      this.removeLogStream(serverId, streamId);
+      listener?.onExit(-1);
     }
   }
 

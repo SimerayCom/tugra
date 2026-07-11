@@ -8,6 +8,7 @@ import type { AppVolume } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
+import { useContainerLogStream } from "../../../../hooks/useContainerLogStream";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
@@ -375,7 +376,7 @@ export default function AppDetailPage() {
 
       {tab === "logs" && (
         <>
-          {appData.canWrite && <ContainerLogsCard id={id} />}
+          {appData.canWrite && <LiveContainerLogsCard id={id} isCompose={appData.source === "COMPOSE"} />}
           {deployActive && live.lines ? (
             <LiveLogCard lines={live.lines} />
           ) : deployments[0]?.logs ? (
@@ -421,24 +422,62 @@ function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: ()
   );
 }
 
-function ContainerLogsCard({ id }: { id: string }) {
+function LiveContainerLogsCard({ id, isCompose }: { id: string; isCompose: boolean }) {
   const t = useT();
-  const logs = useQuery({ queryKey: ["appLogs", id], queryFn: () => api.getAppLogs(id, 200) });
+  const [following, setFollowing] = useState(true);
+  const [container, setContainer] = useState<string | undefined>(undefined);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const ref = useRef<HTMLPreElement>(null);
+  // A compose app has many containers → the user must pick one before we can follow it.
+  const active = !isCompose || !!container;
+  const { lines, connected, ended } = useContainerLogStream(id, { container, follow: following, active });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (el && following) el.scrollTop = el.scrollHeight;
+  }, [lines, following]);
+
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ fontWeight: 600, flex: 1 }}>{t("apps.containerLogs")}</div>
-        <Btn variant="ghost" onClick={() => logs.refetch()} disabled={logs.isFetching}>
-          {logs.isFetching ? "…" : t("apps.refresh")}
-        </Btn>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>{t("apps.liveLogs")}</div>
+        {isCompose && (
+          <Btn variant="ghost" onClick={() => setPickerOpen(true)}>
+            {container ?? t("apps.selectContainer")}
+          </Btn>
+        )}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={following} onChange={(e) => setFollowing(e.target.checked)} />
+          {t("apps.follow")}
+        </label>
       </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.containerLogsDesc")}</p>
-      {logs.isError ? (
-        <div style={{ fontSize: 12, color: "var(--c-r)" }}>{(logs.error as Error).message}</div>
-      ) : logs.data?.output ? (
-        <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs.data.output}</pre>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.liveLogsDesc")}</p>
+      {isCompose && !container ? (
+        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.pickContainerToStream")}</div>
       ) : (
-        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.logsEmpty")}</div>
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12, color: "var(--c-tx3)" }}>
+            {connected && <Spinner />}
+            <span>{connected ? t("apps.streamingLogs") : ended ? t("apps.logStreamEnded") : t("apps.logStreamConnecting")}</span>
+          </div>
+          <pre
+            ref={ref}
+            className="mono"
+            style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre", maxHeight: 360, overflowY: "auto", overflowX: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}
+          >
+            {lines.length ? lines.join("\n") : t("apps.logsEmpty")}
+          </pre>
+        </>
+      )}
+      {pickerOpen && (
+        <ContainerPickerModal
+          id={id}
+          onClose={() => setPickerOpen(false)}
+          onPick={(name) => {
+            setContainer(name);
+            setPickerOpen(false);
+          }}
+        />
       )}
     </Card>
   );

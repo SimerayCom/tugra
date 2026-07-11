@@ -118,6 +118,20 @@ type TermExit struct {
 	ExitCode  int    `json:"exitCode"`
 }
 
+// LogChunk: Agent -> Hub, a line of a container-log follow stream.
+type LogChunk struct {
+	Type     string `json:"type"`
+	StreamID string `json:"streamId"`
+	Chunk    string `json:"chunk"`
+}
+
+// LogExit: Agent -> Hub, a log stream ended (process exited or was cancelled).
+type LogExit struct {
+	Type     string `json:"type"`
+	StreamID string `json:"streamId"`
+	ExitCode int    `json:"exitCode"`
+}
+
 // Hub -> Agent (one struct covers all; unused fields stay empty)
 type ServerMsg struct {
 	Type      string `json:"type"`
@@ -134,10 +148,14 @@ type ServerMsg struct {
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
 	Data      string `json:"data"`
-	// Hub signing: hubKey on enrolled/auth_ok; sig on command/term_start.
+	// Hub signing: hubKey on enrolled/auth_ok; sig on command/term_start/log_start.
 	HubKey     string `json:"hubKey"`
 	Sig        string `json:"sig"`
 	Capability string `json:"capability"`
+	// Live container-log follow (log_start / log_stop): StreamID + Target (container) reuse Target above.
+	StreamID string `json:"streamId"`
+	Tail     int    `json:"tail"`
+	Follow   bool   `json:"follow"`
 	// Granted capabilities pushed by the hub (on enrolled/auth_ok and the "capabilities" message);
 	// the agent enforces them fail-closed (empty = deny all).
 	Capabilities []string `json:"capabilities"`
@@ -160,6 +178,15 @@ func CanonicalCommand(reqID, command string, timeoutMs int, capability string) s
 // CanonicalTermStart mirrors @tugra/shared canonicalTermStart.
 func CanonicalTermStart(sessionID, target string, cols, rows int, capability string) string {
 	return "term\n" + sessionID + "\n" + target + "\n" + strconv.Itoa(cols) + "\n" + strconv.Itoa(rows) + "\n" + capability
+}
+
+// CanonicalLogStart mirrors @tugra/shared canonicalLogStart (byte-identical input).
+func CanonicalLogStart(streamID, target string, tail int, follow bool, capability string) string {
+	f := "0"
+	if follow {
+		f = "1"
+	}
+	return "logs\n" + streamID + "\n" + target + "\n" + strconv.Itoa(tail) + "\n" + f + "\n" + capability
 }
 
 // ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).
