@@ -132,6 +132,16 @@ export class ApplicationsController {
     return this.apps.appLogs(user.userId, id, tail ? Number(tail) : undefined);
   }
 
+  /** Per-container metrics history for the app's Metrics tab (read-level). */
+  @Get(":id/metrics/containers")
+  containerMetrics(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("range") range?: string,
+  ) {
+    return this.apps.containerMetrics(user.userId, id, range);
+  }
+
   /** Live build-log stream (SSE). Completes when no deploy is active. */
   @Sse(":id/deployments/stream")
   streamLogs(

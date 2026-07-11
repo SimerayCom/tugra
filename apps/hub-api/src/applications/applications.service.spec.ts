@@ -108,6 +108,7 @@ function make(
     { installationToken: jest.fn().mockResolvedValue("ghs_inst") } as unknown as import("../git-sources/git-sources.service").GitSourcesService,
     ai as unknown as import("./ai.service").AiService,
     teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
+    { forApp: jest.fn().mockResolvedValue({ containers: [] }) } as unknown as import("../metrics/container-metrics.service").ContainerMetricsService,
   );
 }
 

@@ -144,6 +144,24 @@ export interface MetricsSample {
   netTx: number;
 }
 
+export type MetricsRange = "1h" | "6h" | "24h";
+
+export interface ContainerMetricSample {
+  ts: number;
+  cpu: number;
+  memUsed: number;
+  memTotal: number;
+  memPct: number;
+  netRx: number;
+  netTx: number;
+  blkRead: number;
+  blkWrite: number;
+}
+
+export interface AppContainerMetrics {
+  containers: { name: string; samples: ContainerMetricSample[] }[];
+}
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;

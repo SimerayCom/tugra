@@ -16,6 +16,7 @@ import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
+import { ContainerMetricsService, rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { MonitorsService } from "../monitors/monitors.service";
@@ -178,6 +179,7 @@ export class ApplicationsService {
     private readonly gitSources: GitSourcesService,
     private readonly ai: AiService,
     private readonly teamDefaults: TeamDefaultsService,
+    private readonly containerMetricsSvc: ContainerMetricsService,
   ) {}
 
   /**
@@ -1010,6 +1012,17 @@ export class ApplicationsService {
     const tail = Math.max(1, Math.min(2000, Math.floor(rawTail)));
     await this.audit.log({ actor: userId, action: "app.logs.stream", target: id });
     return this.logStream.stream(app.serverId, target, { tail, follow: opts.follow ?? true });
+  }
+
+  /**
+   * Per-container resource history (CPU/RAM/Net/Block) for the app's charts. Read-level (`require`)
+   * — metrics carry no secrets, so any team member (incl. READER) may view them. The container set
+   * is derived server-side from the app's `tugra_<id>` project prefix; the range is clamped.
+   */
+  async containerMetrics(userId: string, id: string, range?: string): Promise<AppContainerMetrics> {
+    const app = await this.require(userId, id);
+    const { sinceMs } = rangeToMs(range);
+    return this.containerMetricsSvc.forApp(app.serverId, composeProject(app), sinceMs);
   }
 
   /**

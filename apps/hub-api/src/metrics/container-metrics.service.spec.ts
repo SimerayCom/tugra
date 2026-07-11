@@ -1,12 +1,93 @@
-import { ContainerMetricsService } from "./container-metrics.service";
+import { ContainerMetricsService, rangeToMs, sampleEvenly } from "./container-metrics.service";
 import type { ContainerMetricsMsg } from "@tugra/shared";
 
+describe("rangeToMs", () => {
+  it("maps known ranges to a lookback window", () => {
+    const base = Date.now();
+    expect(base - rangeToMs("1h").sinceMs).toBeGreaterThanOrEqual(3600_000 - 50);
+    expect(base - rangeToMs("6h").sinceMs).toBeGreaterThanOrEqual(6 * 3600_000 - 50);
+    expect(rangeToMs("24h").range).toBe("24h");
+  });
+  it("falls back to 1h for an unknown/missing range (no injection of arbitrary windows)", () => {
+    expect(rangeToMs("7d").range).toBe("1h"); // 7d deferred to the rollup slice
+    expect(rangeToMs(undefined).range).toBe("1h");
+    expect(rangeToMs("'; DROP" as string).range).toBe("1h");
+  });
+  it("rejects Object.prototype keys (own-property check, not `in`) → never a NaN window", () => {
+    for (const k of ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"]) {
+      const r = rangeToMs(k);
+      expect(r.range).toBe("1h");
+      expect(Number.isFinite(r.sinceMs)).toBe(true); // not NaN → no `new Date(NaN)` → no Prisma 500
+    }
+  });
+});
+
+describe("sampleEvenly", () => {
+  it("returns the series unchanged when at or below the cap", () => {
+    const a = [1, 2, 3];
+    expect(sampleEvenly(a, 5)).toBe(a);
+  });
+  it("down-samples above the cap, keeping first and last", () => {
+    const a = Array.from({ length: 1000 }, (_, i) => i);
+    const out = sampleEvenly(a, 100);
+    expect(out).toHaveLength(100);
+    expect(out[0]).toBe(0);
+    expect(out[out.length - 1]).toBe(999);
+    // monotonic (evenly spaced, non-decreasing)
+    for (let i = 1; i < out.length; i++) expect(out[i]).toBeGreaterThan(out[i - 1]);
+  });
+});
+
 describe("ContainerMetricsService", () => {
-  function make() {
+  function make(findMany?: jest.Mock) {
     const createMany = jest.fn().mockResolvedValue({ count: 0 });
-    const prisma = { containerMetric: { createMany } } as any;
-    return { svc: new ContainerMetricsService(prisma), createMany };
+    const prisma = { containerMetric: { createMany, findMany: findMany ?? jest.fn().mockResolvedValue([]) } } as any;
+    return { svc: new ContainerMetricsService(prisma), createMany, findMany: prisma.containerMetric.findMany };
   }
+
+  function row(over: Partial<Record<string, unknown>> = {}) {
+    return {
+      containerName: "tugra_app1",
+      ts: new Date(1_700_000_000_000),
+      cpu: 1.5,
+      memUsed: 100n,
+      memTotal: 200n,
+      memPct: 50,
+      netRx: 10n,
+      netTx: 20n,
+      blkRead: 0n,
+      blkWrite: 5n,
+      ...over,
+    };
+  }
+
+  it("forApp: prefix-matches (exact OR startsWith '-'), groups by container, widens BigInt→Number + ts", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      row({ containerName: "tugra_app1", netRx: 10n }),
+      row({ containerName: "tugra_app1-web-1", netRx: 999n }),
+      row({ containerName: "tugra_app1", netRx: 11n }),
+    ]);
+    const { svc } = make(findMany);
+    const out = await svc.forApp("s1", "tugra_app1", 1_699_000_000_000);
+    // where clause: exact OR startsWith `${prefix}-`
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.serverId).toBe("s1");
+    expect(where.OR).toEqual([{ containerName: "tugra_app1" }, { containerName: { startsWith: "tugra_app1-" } }]);
+    // grouped by name, sorted
+    expect(out.containers.map((c) => c.name)).toEqual(["tugra_app1", "tugra_app1-web-1"]);
+    const main = out.containers[0];
+    expect(main.samples).toHaveLength(2);
+    expect(main.samples[0].netRx).toBe(10); // BigInt → Number
+    expect(main.samples[0].ts).toBe(1_700_000_000_000); // Date → unix ms
+    expect(typeof main.samples[0].memUsed).toBe("number");
+  });
+
+  it("forApp: down-samples a huge per-container series to the cap", async () => {
+    const rows = Array.from({ length: 1200 }, (_, i) => row({ ts: new Date(1_700_000_000_000 + i * 1000) }));
+    const { svc } = make(jest.fn().mockResolvedValue(rows));
+    const out = await svc.forApp("s1", "tugra_app1", 0);
+    expect(out.containers[0].samples.length).toBeLessThanOrEqual(500);
+  });
 
   it("maps samples to rows (name→containerName, id→containerId, BigInt-rounded byte fields)", async () => {
     const { svc, createMany } = make();

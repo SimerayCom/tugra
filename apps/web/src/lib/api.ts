@@ -19,6 +19,8 @@ import type {
   DomainView,
   Heartbeat,
   MetricsSample,
+  MetricsRange,
+  AppContainerMetrics,
   Monitor,
   LogDrain,
   MyInvitation,
@@ -296,6 +298,9 @@ export const api = {
 
   getMetrics(id: string, limit = 60) {
     return apiFetch<MetricsSample[]>(`/servers/${id}/metrics?limit=${limit}`);
+  },
+  getAppContainerMetrics(id: string, range: MetricsRange) {
+    return apiFetch<AppContainerMetrics>(`/apps/${id}/metrics/containers?range=${range}`);
   },
 
   cleanupServer(id: string) {
