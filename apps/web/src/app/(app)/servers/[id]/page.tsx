@@ -16,6 +16,7 @@ import { humanizeRateSeries } from "../../../../lib/metrics";
 import type { ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
+import { ServerContainersCard } from "../../../../components/server-containers-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
@@ -51,6 +52,7 @@ export default function ServerDetailPage() {
   const tabDefs = [
     { key: "overview", label: t("servers.tabOverview") },
     { key: "monitoring", label: t("servers.tabMonitoring") },
+    { key: "containers", label: t("servers.tabContainers") },
     ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates") }, { key: "drains", label: t("servers.tabDrains") }] : []),
     { key: "maintenance", label: t("servers.tabMaintenance") },
   ];
@@ -152,6 +154,8 @@ export default function ServerDetailPage() {
           </div>
         )
       )}
+
+      {tab === "containers" && <ServerContainersCard id={id} />}
 
       {tab === "updates" && server.canWrite && <PatchCard id={id} />}
 

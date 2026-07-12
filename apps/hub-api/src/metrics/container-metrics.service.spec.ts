@@ -89,6 +89,32 @@ describe("ContainerMetricsService", () => {
     expect(out.containers[0].samples.length).toBeLessThanOrEqual(500);
   });
 
+  it("forServer: latest sample per container (all containers, live 90s window), sorted by name", async () => {
+    const now = 1_700_000_000_000;
+    const findMany = jest.fn().mockResolvedValue([
+      row({ containerName: "web", containerId: "old", cpu: 1, ts: new Date(now) }),
+      row({ containerName: "db", containerId: "db1", cpu: 9, ts: new Date(now + 500) }),
+      row({ containerName: "web", containerId: "new", cpu: 5, ts: new Date(now + 1000) }), // newer web
+    ]);
+    const { svc } = make(findMany);
+    const out = await svc.forServer("s1");
+    // window: ts >= now - 90s, scoped to this server
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.serverId).toBe("s1");
+    expect(where.ts.gte).toBeInstanceOf(Date);
+    // one row per container, sorted by name; web is the NEWER sample
+    expect(out.containers.map((c) => c.name)).toEqual(["db", "web"]);
+    const web = out.containers.find((c) => c.name === "web")!;
+    expect(web.cpu).toBe(5);
+    expect(web.containerId).toBe("new");
+    expect(typeof web.netRx).toBe("number"); // BigInt → Number
+  });
+
+  it("forServer: empty server → no containers", async () => {
+    const { svc } = make(jest.fn().mockResolvedValue([]));
+    expect(await svc.forServer("s1")).toEqual({ containers: [] });
+  });
+
   it("maps samples to rows (name→containerName, id→containerId, BigInt-rounded byte fields)", async () => {
     const { svc, createMany } = make();
     const msg: ContainerMetricsMsg = {

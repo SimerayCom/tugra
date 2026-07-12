@@ -19,6 +19,20 @@ export interface AppContainerMetrics {
   containers: { name: string; samples: ContainerMetricSample[] }[];
 }
 
+/** Latest sample for one container in the server-level inventory (adds name + docker short id). */
+export interface ContainerInventoryRow extends ContainerMetricSample {
+  name: string;
+  containerId: string;
+}
+
+export interface ServerContainers {
+  containers: ContainerInventoryRow[];
+}
+
+// A container counts as "live" if it reported within this window (the agent samples every 15s, so
+// 6 intervals covers a missed tick while dropping containers that have been removed).
+const LIVE_WINDOW_MS = 90_000;
+
 const MAX_POINTS = 500; // per-container chart density cap (rollup/LTTB is a later slice)
 const RANGES: Record<string, number> = {
   "1h": 3600_000,
@@ -107,6 +121,38 @@ export class ContainerMetricsService {
     const containers = [...byName.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, samples]) => ({ name, samples: sampleEvenly(samples) }));
+    return { containers };
+  }
+
+  /**
+   * Server-level inventory: the LATEST sample per container currently running on the host (any
+   * container the agent's `docker stats` sees — Tugra apps AND anything else). Read-level (no
+   * secrets). Only containers that reported within LIVE_WINDOW_MS appear, so removed containers drop
+   * off. Rows are ordered by name; BigInt byte fields widen to Number.
+   */
+  async forServer(serverId: string): Promise<ServerContainers> {
+    const rows = await this.prisma.containerMetric.findMany({
+      where: { serverId, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
+      orderBy: { ts: "asc" },
+    });
+    // ts asc → the last row seen per name is its most recent sample.
+    const latest = new Map<string, ContainerInventoryRow>();
+    for (const r of rows) {
+      latest.set(r.containerName, {
+        name: r.containerName,
+        containerId: r.containerId,
+        ts: r.ts.getTime(),
+        cpu: r.cpu,
+        memUsed: Number(r.memUsed),
+        memTotal: Number(r.memTotal),
+        memPct: r.memPct,
+        netRx: Number(r.netRx),
+        netTx: Number(r.netTx),
+        blkRead: Number(r.blkRead),
+        blkWrite: Number(r.blkWrite),
+      });
+    }
+    const containers = [...latest.values()].sort((a, b) => a.name.localeCompare(b.name));
     return { containers };
   }
 }

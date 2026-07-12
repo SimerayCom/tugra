@@ -21,6 +21,7 @@ import type {
   MetricsSample,
   MetricsRange,
   AppContainerMetrics,
+  ServerContainers,
   Monitor,
   LogDrain,
   MyInvitation,
@@ -301,6 +302,9 @@ export const api = {
   },
   getAppContainerMetrics(id: string, range: MetricsRange) {
     return apiFetch<AppContainerMetrics>(`/apps/${id}/metrics/containers?range=${range}`);
+  },
+  getServerContainers(id: string) {
+    return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);
   },
 
   cleanupServer(id: string) {

@@ -164,6 +164,15 @@ export interface AppContainerMetrics {
   containers: { name: string; samples: ContainerMetricSample[] }[];
 }
 
+export interface ContainerInventoryRow extends ContainerMetricSample {
+  name: string;
+  containerId: string;
+}
+
+export interface ServerContainers {
+  containers: ContainerInventoryRow[];
+}
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;

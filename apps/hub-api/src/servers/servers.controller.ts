@@ -26,6 +26,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { MetricsLiveService } from "../metrics/metrics-live.service";
+import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { ServersService } from "./servers.service";
 import {
   CreateServerInput,
@@ -53,6 +54,7 @@ export class ServersController {
     private readonly servers: ServersService,
     private readonly metrics: MetricsService,
     private readonly metricsLive: MetricsLiveService,
+    private readonly containerMetrics: ContainerMetricsService,
   ) {}
 
   @Get()
@@ -77,6 +79,13 @@ export class ServersController {
   ) {
     await this.servers.getForUser(user.userId, id); // authz: membership check
     return this.metrics.recent(id, limit ? Number(limit) : 60);
+  }
+
+  /** Live inventory of every container on this host (Tugra + others) with its latest stats. */
+  @Get(":id/metrics/containers")
+  async serverContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.servers.getForUser(user.userId, id); // authz: membership check (read-level)
+    return this.containerMetrics.forServer(id);
   }
 
   /**
