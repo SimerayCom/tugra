@@ -146,7 +146,7 @@ export interface MetricsSample {
   diskWrite: number;
 }
 
-export type MetricsRange = "1h" | "6h" | "24h";
+export type MetricsRange = "1h" | "6h" | "24h" | "7d";
 
 export interface ContainerMetricSample {
   ts: number;

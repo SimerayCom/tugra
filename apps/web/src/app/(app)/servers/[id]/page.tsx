@@ -13,7 +13,7 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { humanizeRateSeries } from "../../../../lib/metrics";
-import type { ServerStatus, ServerView } from "../../../../lib/types";
+import type { MetricsRange, ServerStatus, ServerView } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
@@ -43,10 +43,14 @@ export default function ServerDetailPage() {
     mutationFn: (next: string[]) => api.setServerTags(id, next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
   });
+  // Monitoring range: "live" = last-60 + SSE append; 1h/6h/24h/7d = server-side history (raw ≤2h,
+  // 1-minute rollups beyond) with no live append.
+  const [range, setRange] = useState<"live" | MetricsRange>("live");
+  const live = range === "live";
   const { data: metrics = [] } = useQuery({
-    queryKey: ["metrics", id],
-    queryFn: () => api.getMetrics(id, 60),
-    refetchInterval: 30000, // slow heal/fallback; live updates arrive via SSE below
+    queryKey: live ? ["metrics", id] : ["metrics", id, range],
+    queryFn: () => (live ? api.getMetrics(id, 60) : api.getServerMetricsRange(id, range as MetricsRange)),
+    refetchInterval: live ? 30000 : false, // live: slow heal/fallback (SSE below); history: static
   });
   const [shellOpen, setShellOpen] = useState(false);
   const tabDefs = [
@@ -57,8 +61,9 @@ export default function ServerDetailPage() {
     { key: "maintenance", label: t("servers.tabMaintenance") },
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
-  // Push live samples into the metrics cache while the monitoring tab is open.
-  useMetricsStream(id, tab === "monitoring");
+  // Push live samples into the metrics cache while the monitoring tab is open in live mode only
+  // (appending SSE to a historical range would corrupt it). Matches the live queryKey ["metrics", id].
+  useMetricsStream(id, tab === "monitoring" && live);
 
   // Celebrate the PENDING → ONLINE moment with a forward CTA (no dead-end).
   const prevStatus = useRef<ServerStatus | null>(null);
@@ -141,18 +146,27 @@ export default function ServerDetailPage() {
       )}
 
       {tab === "monitoring" && (
-        metrics.length === 0 ? (
-          <Card style={{ padding: 16 }}><EmptyState>{t("servers.noMetrics")}</EmptyState></Card>
-        ) : (
-          <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-            <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
-            <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
-            <MetricChart data={netIn.data} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
-            <MetricChart data={netOut.data} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
-            <MetricChart data={diskRead.data} label={t("servers.diskRead")} unit={" " + diskRead.unit} color="var(--c-lapis)" decimals={1} />
-            <MetricChart data={diskWrite.data} label={t("servers.diskWrite")} unit={" " + diskWrite.unit} color="var(--c-am)" decimals={1} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(["live", "1h", "6h", "24h", "7d"] as const).map((r) => (
+              <Btn key={r} variant={r === range ? "primary" : "ghost"} onClick={() => setRange(r)}>
+                {t(`servers.range${r === "live" ? "Live" : r}`)}
+              </Btn>
+            ))}
           </div>
-        )
+          {metrics.length === 0 ? (
+            <Card style={{ padding: 16 }}><EmptyState>{t("servers.noMetrics")}</EmptyState></Card>
+          ) : (
+            <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+              <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
+              <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
+              <MetricChart data={netIn.data} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
+              <MetricChart data={netOut.data} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
+              <MetricChart data={diskRead.data} label={t("servers.diskRead")} unit={" " + diskRead.unit} color="var(--c-lapis)" decimals={1} />
+              <MetricChart data={diskWrite.data} label={t("servers.diskWrite")} unit={" " + diskWrite.unit} color="var(--c-am)" decimals={1} />
+            </div>
+          )}
+        </div>
       )}
 
       {tab === "containers" && <ServerContainersCard id={id} />}

@@ -3,12 +3,24 @@ import { RetentionRunnerService } from "./retention-runner.service";
 describe("RetentionRunnerService", () => {
   function make(cfg: Record<string, unknown> = {}) {
     // Each model: findMany returns queued pages (one array per call), then [] to end the loop.
-    const pages: Record<string, { id: string }[][]> = { metric: [[]], containerMetric: [[]], heartbeat: [[]] };
+    const pages: Record<string, { id: string }[][]> = {
+      metric: [[]],
+      containerMetric: [[]],
+      heartbeat: [[]],
+      metricRollup: [[]],
+      containerMetricRollup: [[]],
+    };
     const model = (name: string) => ({
       findMany: jest.fn().mockImplementation(() => Promise.resolve(pages[name].shift() ?? [])),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     });
-    const prisma = { metric: model("metric"), containerMetric: model("containerMetric"), heartbeat: model("heartbeat") } as any;
+    const prisma = {
+      metric: model("metric"),
+      containerMetric: model("containerMetric"),
+      heartbeat: model("heartbeat"),
+      metricRollup: model("metricRollup"),
+      containerMetricRollup: model("containerMetricRollup"),
+    } as any;
     const config = { get: jest.fn((k: string) => cfg[k]) } as any;
     return { svc: new RetentionRunnerService(prisma, config), prisma, pages };
   }
@@ -49,6 +61,21 @@ describe("RetentionRunnerService", () => {
     const { svc, prisma } = make();
     const res = await svc.prune();
     expect(prisma.metric.deleteMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0 });
+    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0 });
+  });
+
+  it("prunes rollups by bucket < cutoff (own retention window, not ts)", async () => {
+    const { svc, prisma, pages } = make({ METRICS_ROLLUP_RETENTION_DAYS: 30 });
+    pages.metricRollup = [[{ id: "r1" }, { id: "r2" }]]; // one short page → deleted then stop
+    pages.containerMetricRollup = [[{ id: "cr1" }]];
+    const res = await svc.prune();
+    // rollups filter on `bucket`, never `ts`
+    const mrWhere = prisma.metricRollup.findMany.mock.calls[0][0].where;
+    expect(mrWhere.bucket.lt).toBeInstanceOf(Date);
+    expect(mrWhere.ts).toBeUndefined();
+    expect(prisma.containerMetricRollup.findMany.mock.calls[0][0].where.bucket.lt).toBeInstanceOf(Date);
+    expect(prisma.metricRollup.deleteMany.mock.calls[0][0].where.id.in).toEqual(["r1", "r2"]);
+    expect(res.metricRollup).toBe(2);
+    expect(res.containerMetricRollup).toBe(1);
   });
 });

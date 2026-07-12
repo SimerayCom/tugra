@@ -16,7 +16,7 @@ import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
-import { ContainerMetricsService, rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
+import { ContainerMetricsService, type AppContainerMetrics } from "../metrics/container-metrics.service";
 import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
@@ -1050,8 +1050,7 @@ export class ApplicationsService {
    */
   async containerMetrics(userId: string, id: string, range?: string): Promise<AppContainerMetrics> {
     const app = await this.require(userId, id);
-    const { sinceMs } = rangeToMs(range);
-    return this.containerMetricsSvc.forApp(app.serverId, composeProject(app), sinceMs);
+    return this.containerMetricsSvc.forApp(app.serverId, composeProject(app), range);
   }
 
   /**

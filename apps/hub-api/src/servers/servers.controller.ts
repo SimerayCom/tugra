@@ -76,9 +76,11 @@ export class ServersController {
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Query("limit") limit?: string,
+    @Query("range") range?: string,
   ) {
     await this.servers.getForUser(user.userId, id); // authz: membership check
-    return this.metrics.recent(id, limit ? Number(limit) : 60);
+    // range → history (raw ≤24h / rollup 7d, LTTB); no range → live last-N (SSE-backed tab).
+    return range ? this.metrics.history(id, range) : this.metrics.recent(id, limit ? Number(limit) : 60);
   }
 
   /** Live inventory of every container on this host (Tugra + others) with its latest stats. */

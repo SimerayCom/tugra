@@ -1,7 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import type { MetricsSample } from "@tugra/shared";
+import { downsampleLTTB } from "../common/lttb";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { rangeToMs } from "./container-metrics.service";
+
+const MAX_POINTS = 1000; // LTTB density cap for the host range charts
 
 @Injectable()
 export class MetricsService {
@@ -53,5 +57,52 @@ export class MetricsService {
       diskRead: Number(r.diskRead),
       diskWrite: Number(r.diskWrite),
     }));
+  }
+
+  /**
+   * Host metrics over a `range` (asc by time). Ranges within raw retention (≤24h) read raw rows at
+   * full fidelity; longer ranges (7d) read the 1-minute rollups so history survives past raw
+   * retention (48h). The result is LTTB down-sampled to keep the visual shape under MAX_POINTS.
+   * `recent()` stays the live/last-N reader; this is the range-aware reader for the monitoring tab.
+   */
+  async history(serverId: string, range?: string): Promise<MetricsSample[]> {
+    const { sinceMs, useRollup } = rangeToMs(range);
+    let samples: MetricsSample[];
+    if (useRollup) {
+      const rows = await this.prisma.metricRollup.findMany({
+        where: { serverId, bucket: { gte: new Date(sinceMs) } },
+        orderBy: { bucket: "asc" },
+      });
+      samples = rows.map((r) => ({
+        ts: r.bucket.getTime(),
+        cpu: r.avgCpu,
+        memUsed: Number(r.avgMemUsed),
+        memTotal: Number(r.avgMemTotal),
+        diskUsed: Number(r.avgDiskUsed),
+        diskTotal: Number(r.avgDiskTotal),
+        netRx: Number(r.avgNetRx),
+        netTx: Number(r.avgNetTx),
+        diskRead: Number(r.avgDiskRead),
+        diskWrite: Number(r.avgDiskWrite),
+      }));
+    } else {
+      const rows = await this.prisma.metric.findMany({
+        where: { serverId, ts: { gte: new Date(sinceMs) } },
+        orderBy: { ts: "asc" },
+      });
+      samples = rows.map((r) => ({
+        ts: r.ts.getTime(),
+        cpu: r.cpu,
+        memUsed: Number(r.memUsed),
+        memTotal: Number(r.memTotal),
+        diskUsed: Number(r.diskUsed),
+        diskTotal: Number(r.diskTotal),
+        netRx: Number(r.netRx),
+        netTx: Number(r.netTx),
+        diskRead: Number(r.diskRead),
+        diskWrite: Number(r.diskWrite),
+      }));
+    }
+    return downsampleLTTB(samples, MAX_POINTS, (s) => s.cpu);
   }
 }
