@@ -54,6 +54,21 @@ describe("validateEnv — retention", () => {
   });
 });
 
+describe("validateEnv — host-port range", () => {
+  it("defaults the allocator range to 20000-45000 and coerces overrides", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development" });
+    expect(env.TUGRA_HOSTPORT_MIN).toBe(20000);
+    expect(env.TUGRA_HOSTPORT_MAX).toBe(45000);
+    const over = validateEnv({ ...base, NODE_ENV: "development", TUGRA_HOSTPORT_MIN: "30000", TUGRA_HOSTPORT_MAX: "40000" });
+    expect(over.TUGRA_HOSTPORT_MIN).toBe(30000);
+    expect(over.TUGRA_HOSTPORT_MAX).toBe(40000);
+  });
+  it("rejects a range where MIN is not below MAX", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", TUGRA_HOSTPORT_MIN: "40000", TUGRA_HOSTPORT_MAX: "30000" })).toThrow();
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", TUGRA_HOSTPORT_MIN: "20000", TUGRA_HOSTPORT_MAX: "20000" })).toThrow();
+  });
+});
+
 describe("validateEnv — MAGIC_DOMAIN_SUFFIX", () => {
   it("defaults to sslip.io when unset", () => {
     expect(validateEnv({ ...base, NODE_ENV: "development" }).MAGIC_DOMAIN_SUFFIX).toBe("sslip.io");

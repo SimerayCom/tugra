@@ -10,6 +10,7 @@ import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { ProxyService } from "./proxy.service";
 import { AiService } from "./ai.service";
+import { PortAllocatorService } from "./port-allocator.service";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
@@ -19,10 +20,11 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     ApplicationsService,
     ProxyService,
     AiService,
+    PortAllocatorService,
     // String-token alias so ServersService can resolve this lazily via ModuleRef
     // without a static module import (which would form a dependency cycle).
     { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },
   ],
-  exports: [ApplicationsService, APPLICATIONS_SERVICE],
+  exports: [ApplicationsService, APPLICATIONS_SERVICE, PortAllocatorService],
 })
 export class ApplicationsModule {}
