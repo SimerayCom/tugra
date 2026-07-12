@@ -17,6 +17,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
 import { ContainerMetricsService, rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
+import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { MonitorsService } from "../monitors/monitors.service";
@@ -990,28 +991,56 @@ export class ApplicationsService {
   async streamContainerLogs(
     userId: string,
     id: string,
-    opts: { container?: string; tail?: number; follow?: boolean },
+    opts: { container?: string; tail?: number; follow?: boolean; since?: string; search?: string },
   ): Promise<Observable<LogStreamEvent>> {
     const app = await this.requireWrite(userId, id);
-    let target: string;
-    if (app.source === "COMPOSE") {
-      const prefix = composeProject(app); // `tugra_${app.id}`
-      const container = opts.container ?? "";
-      if (container !== prefix && !container.startsWith(`${prefix}-`)) {
-        throw new BadRequestException("invalid container for this app");
-      }
-      target = container;
-    } else {
-      target = containerName(app);
-    }
+    const target = this.resolveLogTarget(app, opts.container);
     if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-    // tail is a SIGNED field (canonicalLogStart). A non-finite value (e.g. ?tail=abc → NaN) would be
-    // signed as "NaN" but wire-serialized to null → the agent decodes 0 and the signature never
-    // verifies, hanging the stream. `?? 200` only guards null/undefined, so filter NaN explicitly.
-    const rawTail = Number.isFinite(opts.tail) ? (opts.tail as number) : 200;
-    const tail = Math.max(1, Math.min(2000, Math.floor(rawTail)));
+    // tail/since/search are SIGNED fields (canonicalLogStart) that also reach docker/grep on the
+    // agent — normalize a malformed value to a safe default here so the signature verifies and no
+    // bad value hits the shell-less docker/grep argv.
+    const tail = clampTail(opts.tail);
+    const since = normalizeSince(opts.since);
+    const search = normalizeSearch(opts.search);
     await this.audit.log({ actor: userId, action: "app.logs.stream", target: id });
-    return this.logStream.stream(app.serverId, target, { tail, follow: opts.follow ?? true });
+    return this.logStream.stream(app.serverId, target, { tail, follow: opts.follow ?? true, since, search });
+  }
+
+  /**
+   * One-shot log export for download (writer-only). Not a stream — collects `docker logs` output in
+   * a single request/response so the browser can save it as a file. No `search` (that's a live-view
+   * filter); `since` + a larger tail cap are supported.
+   */
+  async downloadLogs(
+    userId: string,
+    id: string,
+    opts: { container?: string; tail?: number; since?: string },
+  ): Promise<string> {
+    const app = await this.requireWrite(userId, id);
+    const target = this.resolveLogTarget(app, opts.container);
+    if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
+    const tail = clampTail(opts.tail, 10000);
+    const since = normalizeSince(opts.since);
+    // Fixed command; target is prefix-validated + since is normalized (no shell metacharacters).
+    const cmd = `docker logs --timestamps --tail ${tail}${since ? ` --since ${since}` : ""} ${target} 2>&1`;
+    const r = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", 60_000);
+    await this.audit.log({ actor: userId, action: "app.logs.download", target: id });
+    return r.output.slice(0, 5_000_000); // hard cap the response size
+  }
+
+  /** Resolve + validate the target container for a log op (writer already checked by requireWrite).
+   *  Compose: the client-picked container MUST belong to this app's `tugra_<id>` project AND be a
+   *  plain docker name — the download path interpolates this into a shell command, so the charset
+   *  check (no shell metacharacters, spaces, `;`, `|`, `$`…) prevents command injection there. */
+  private resolveLogTarget(app: Application, container?: string): string {
+    if (app.source !== "COMPOSE") return containerName(app);
+    const prefix = composeProject(app); // `tugra_${app.id}`
+    const picked = container ?? "";
+    const membership = picked === prefix || picked.startsWith(`${prefix}-`);
+    if (!membership || !/^[a-zA-Z0-9._-]+$/.test(picked)) {
+      throw new BadRequestException("invalid container for this app");
+    }
+    return picked;
   }
 
   /**

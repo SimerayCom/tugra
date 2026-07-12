@@ -15,10 +15,10 @@ func TestCanonicalStrings(t *testing.T) {
 		t.Fatalf("CanonicalTermStart mismatch: %q", got)
 	}
 	// Must be byte-identical to @tugra/shared canonicalLogStart.
-	if got := CanonicalLogStart("st1", "tugra_app1", 200, true, "logs"); got != "logs\nst1\ntugra_app1\n200\n1\nlogs" {
+	if got := CanonicalLogStart("st1", "tugra_app1", 200, true, "1h", "err", "logs"); got != "logs\nst1\ntugra_app1\n200\n1\n1h\nerr\nlogs" {
 		t.Fatalf("CanonicalLogStart(follow) mismatch: %q", got)
 	}
-	if got := CanonicalLogStart("st1", "c", 50, false, "logs"); got != "logs\nst1\nc\n50\n0\nlogs" {
+	if got := CanonicalLogStart("st1", "c", 50, false, "", "", "logs"); got != "logs\nst1\nc\n50\n0\n\n\nlogs" {
 		t.Fatalf("CanonicalLogStart(no-follow) mismatch: %q", got)
 	}
 }

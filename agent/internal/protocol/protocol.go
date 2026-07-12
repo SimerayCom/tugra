@@ -158,6 +158,8 @@ type ServerMsg struct {
 	StreamID string `json:"streamId"`
 	Tail     int    `json:"tail"`
 	Follow   bool   `json:"follow"`
+	Since    string `json:"since"`  // docker --since window ("5m"/"1h"); "" = none
+	Search   string `json:"search"` // server-side grep -iF filter; "" = none
 	// Granted capabilities pushed by the hub (on enrolled/auth_ok and the "capabilities" message);
 	// the agent enforces them fail-closed (empty = deny all).
 	Capabilities []string `json:"capabilities"`
@@ -183,12 +185,12 @@ func CanonicalTermStart(sessionID, target string, cols, rows int, capability str
 }
 
 // CanonicalLogStart mirrors @tugra/shared canonicalLogStart (byte-identical input).
-func CanonicalLogStart(streamID, target string, tail int, follow bool, capability string) string {
+func CanonicalLogStart(streamID, target string, tail int, follow bool, since, search, capability string) string {
 	f := "0"
 	if follow {
 		f = "1"
 	}
-	return "logs\n" + streamID + "\n" + target + "\n" + strconv.Itoa(tail) + "\n" + f + "\n" + capability
+	return "logs\n" + streamID + "\n" + target + "\n" + strconv.Itoa(tail) + "\n" + f + "\n" + since + "\n" + search + "\n" + capability
 }
 
 // ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).
