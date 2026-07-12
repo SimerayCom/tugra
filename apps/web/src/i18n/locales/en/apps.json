@@ -20,6 +20,7 @@
   "metricsRange1h": "1h",
   "metricsRange6h": "6h",
   "metricsRange24h": "24h",
+  "metricsRange7d": "7d",
   "noMetrics": "No metrics yet — they appear a few seconds after the container starts.",
   "delete": "Delete",
   "deleteConfirm": "Delete this app and its container/volumes? This cannot be undone.",

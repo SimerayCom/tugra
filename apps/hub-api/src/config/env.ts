@@ -62,10 +62,12 @@ export const envSchema = z
   // (self-host convenience); wired by the email-verification slice.
   REQUIRE_EMAIL_VERIFICATION: z.enum(["true", "false"]).default("false"),
   // Retention: the hourly prune deletes raw metric/container-metric rows older than this many hours
-  // (UI charts range up to 24h; long-range history comes from rollups later), and non-important
-  // heartbeats older than this many days.
+  // (UI charts range up to 24h; long-range history comes from 1-minute rollups), and non-important
+  // heartbeats older than this many days. Rollups (the source for >2h ranges up to 7d) are kept for
+  // METRICS_ROLLUP_RETENTION_DAYS.
   METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(48),
   HEARTBEAT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  METRICS_ROLLUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live

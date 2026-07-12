@@ -9,7 +9,7 @@ import { useT } from "../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "./ui";
 import { MetricChart } from "./charts";
 
-const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h"];
+const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d"];
 
 /** App "Metrics" tab: per-container CPU/RAM/Net/Disk charts, range-switchable, auto-refreshing.
  *  Read-level (metrics carry no secrets) — visible to every team member. */

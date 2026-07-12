@@ -49,6 +49,14 @@ describe("AppMetricsCard", () => {
     await waitFor(() => expect(spy).toHaveBeenCalledWith("app1", "24h"));
   });
 
+  it("offers a 7d range (served from rollups) and refetches with it", async () => {
+    const spy = vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({ containers: [] });
+    wrap(<AppMetricsCard id="app1" />);
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("app1", "1h"));
+    fireEvent.click(screen.getByText("7d"));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("app1", "7d"));
+  });
+
   it("shows an empty state when there are no containers", async () => {
     vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({ containers: [] });
     wrap(<AppMetricsCard id="app1" />);

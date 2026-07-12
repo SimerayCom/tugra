@@ -9,15 +9,23 @@ describe("rangeToMs", () => {
     expect(rangeToMs("24h").range).toBe("24h");
   });
   it("falls back to 1h for an unknown/missing range (no injection of arbitrary windows)", () => {
-    expect(rangeToMs("7d").range).toBe("1h"); // 7d deferred to the rollup slice
     expect(rangeToMs(undefined).range).toBe("1h");
     expect(rangeToMs("'; DROP" as string).range).toBe("1h");
+    expect(rangeToMs("30d").range).toBe("1h"); // beyond rollup retention → clamped
+  });
+  it("maps useRollup by window: within raw retention (≤24h) reads raw, only 7d reads rollups", () => {
+    expect(rangeToMs("1h").useRollup).toBe(false);
+    expect(rangeToMs("6h").useRollup).toBe(false); // still within 48h raw retention → full fidelity
+    expect(rangeToMs("24h").useRollup).toBe(false); // ditto — spikes preserved from raw
+    expect(rangeToMs("7d").range).toBe("7d");
+    expect(rangeToMs("7d").useRollup).toBe(true); // exceeds raw retention → rollup
   });
   it("rejects Object.prototype keys (own-property check, not `in`) → never a NaN window", () => {
     for (const k of ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"]) {
       const r = rangeToMs(k);
       expect(r.range).toBe("1h");
       expect(Number.isFinite(r.sinceMs)).toBe(true); // not NaN → no `new Date(NaN)` → no Prisma 500
+      expect(r.useRollup).toBe(false);
     }
   });
 });
@@ -39,10 +47,18 @@ describe("sampleEvenly", () => {
 });
 
 describe("ContainerMetricsService", () => {
-  function make(findMany?: jest.Mock) {
+  function make(findMany?: jest.Mock, rollupFindMany?: jest.Mock) {
     const createMany = jest.fn().mockResolvedValue({ count: 0 });
-    const prisma = { containerMetric: { createMany, findMany: findMany ?? jest.fn().mockResolvedValue([]) } } as any;
-    return { svc: new ContainerMetricsService(prisma), createMany, findMany: prisma.containerMetric.findMany };
+    const prisma = {
+      containerMetric: { createMany, findMany: findMany ?? jest.fn().mockResolvedValue([]) },
+      containerMetricRollup: { findMany: rollupFindMany ?? jest.fn().mockResolvedValue([]) },
+    } as any;
+    return {
+      svc: new ContainerMetricsService(prisma),
+      createMany,
+      findMany: prisma.containerMetric.findMany,
+      rollupFindMany: prisma.containerMetricRollup.findMany,
+    };
   }
 
   function row(over: Partial<Record<string, unknown>> = {}) {
@@ -61,14 +77,34 @@ describe("ContainerMetricsService", () => {
     };
   }
 
-  it("forApp: prefix-matches (exact OR startsWith '-'), groups by container, widens BigInt→Number + ts", async () => {
+  function rollupRow(over: Partial<Record<string, unknown>> = {}) {
+    return {
+      containerName: "tugra_app1",
+      bucket: new Date(1_700_000_000_000),
+      avgCpu: 2.5,
+      maxCpu: 9,
+      avgMemUsed: 100n,
+      avgMemTotal: 200n,
+      avgMemPct: 40,
+      avgNetRx: 10n,
+      avgNetTx: 20n,
+      avgBlkRead: 1n,
+      avgBlkWrite: 5n,
+      ...over,
+    };
+  }
+
+  it("forApp: within-retention range (≤24h) reads RAW rows — prefix match, groups by container, widens BigInt→Number + ts", async () => {
     const findMany = jest.fn().mockResolvedValue([
       row({ containerName: "tugra_app1", netRx: 10n }),
       row({ containerName: "tugra_app1-web-1", netRx: 999n }),
       row({ containerName: "tugra_app1", netRx: 11n }),
     ]);
-    const { svc } = make(findMany);
-    const out = await svc.forApp("s1", "tugra_app1", 1_699_000_000_000);
+    const { svc, rollupFindMany } = make(findMany);
+    const out = await svc.forApp("s1", "tugra_app1", "1h");
+    // raw path used, rollup NOT touched
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(rollupFindMany).not.toHaveBeenCalled();
     // where clause: exact OR startsWith `${prefix}-`
     const where = findMany.mock.calls[0][0].where;
     expect(where.serverId).toBe("s1");
@@ -82,11 +118,36 @@ describe("ContainerMetricsService", () => {
     expect(typeof main.samples[0].memUsed).toBe("number");
   });
 
-  it("forApp: down-samples a huge per-container series to the cap", async () => {
+  it("forApp: beyond-retention range (7d) reads ROLLUPS — maps avg*→field, bucket→ts, prefix match", async () => {
+    const rollupFindMany = jest.fn().mockResolvedValue([
+      rollupRow({ containerName: "tugra_app1", avgCpu: 2.5, avgNetRx: 10n }),
+      rollupRow({ containerName: "tugra_app1-web-1", avgCpu: 7 }),
+    ]);
+    const { svc, findMany } = make(undefined, rollupFindMany);
+    const out = await svc.forApp("s1", "tugra_app1", "7d");
+    // rollup path used, raw NOT touched
+    expect(rollupFindMany).toHaveBeenCalledTimes(1);
+    expect(findMany).not.toHaveBeenCalled();
+    const where = rollupFindMany.mock.calls[0][0].where;
+    expect(where.serverId).toBe("s1");
+    expect(where.bucket.gte).toBeInstanceOf(Date);
+    expect(where.OR).toEqual([{ containerName: "tugra_app1" }, { containerName: { startsWith: "tugra_app1-" } }]);
+    expect(out.containers.map((c) => c.name)).toEqual(["tugra_app1", "tugra_app1-web-1"]);
+    const main = out.containers[0];
+    expect(main.samples[0].cpu).toBe(2.5); // avgCpu → cpu
+    expect(main.samples[0].memPct).toBe(40); // avgMemPct → memPct
+    expect(main.samples[0].netRx).toBe(10); // BigInt → Number
+    expect(main.samples[0].ts).toBe(1_700_000_000_000); // bucket → unix ms
+  });
+
+  it("forApp: down-samples a huge per-container series to the LTTB cap (1000)", async () => {
     const rows = Array.from({ length: 1200 }, (_, i) => row({ ts: new Date(1_700_000_000_000 + i * 1000) }));
     const { svc } = make(jest.fn().mockResolvedValue(rows));
-    const out = await svc.forApp("s1", "tugra_app1", 0);
-    expect(out.containers[0].samples.length).toBeLessThanOrEqual(500);
+    const out = await svc.forApp("s1", "tugra_app1", "1h");
+    expect(out.containers[0].samples).toHaveLength(1000);
+    // LTTB keeps the endpoints
+    expect(out.containers[0].samples[0].ts).toBe(1_700_000_000_000);
+    expect(out.containers[0].samples[999].ts).toBe(1_700_000_000_000 + 1199 * 1000);
   });
 
   it("forServer: latest sample per container (all containers, live 90s window), sorted by name", async () => {

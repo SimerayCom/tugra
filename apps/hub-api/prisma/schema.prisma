@@ -262,6 +262,8 @@ model Server {
   capabilities         String[]     @default([])
   metrics              Metric[]
   containerMetrics     ContainerMetric[]
+  metricRollups        MetricRollup[]
+  containerMetricRollups ContainerMetricRollup[]
   logDrains            LogDrain[]
   createdAt            DateTime     @default(now())
 }
@@ -320,6 +322,49 @@ model ContainerMetric {
 
   @@index([serverId, containerName, ts])
   @@index([ts])
+}
+
+// 1-minute rollup of host Metric rows (avg/max per bucket) — lets long-range charts survive past the
+// raw retention window. Populated by the rollup scheduler; one row per (serverId, minute bucket).
+model MetricRollup {
+  id           String   @id @default(cuid())
+  server       Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String
+  bucket       DateTime // minute-truncated
+  avgCpu       Float
+  maxCpu       Float
+  avgMemUsed   BigInt
+  avgMemTotal  BigInt
+  avgDiskUsed  BigInt
+  avgDiskTotal BigInt
+  avgNetRx     BigInt
+  avgNetTx     BigInt
+  avgDiskRead  BigInt
+  avgDiskWrite BigInt
+
+  @@unique([serverId, bucket])
+  @@index([bucket]) // for the rollup retention prune (deleteMany where bucket < cutoff)
+}
+
+// 1-minute rollup of ContainerMetric rows, one row per (serverId, containerName, minute bucket).
+model ContainerMetricRollup {
+  id            String   @id @default(cuid())
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId      String
+  containerName String
+  bucket        DateTime
+  avgCpu        Float
+  maxCpu        Float
+  avgMemUsed    BigInt
+  avgMemTotal   BigInt
+  avgMemPct     Float
+  avgNetRx      BigInt
+  avgNetTx      BigInt
+  avgBlkRead    BigInt
+  avgBlkWrite   BigInt
+
+  @@unique([serverId, containerName, bucket])
+  @@index([bucket])
 }
 
 model AuditLog {

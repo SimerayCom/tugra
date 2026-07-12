@@ -300,6 +300,9 @@ export const api = {
   getMetrics(id: string, limit = 60) {
     return apiFetch<MetricsSample[]>(`/servers/${id}/metrics?limit=${limit}`);
   },
+  getServerMetricsRange(id: string, range: MetricsRange) {
+    return apiFetch<MetricsSample[]>(`/servers/${id}/metrics?range=${range}`);
+  },
   getAppContainerMetrics(id: string, range: MetricsRange) {
     return apiFetch<AppContainerMetrics>(`/apps/${id}/metrics/containers?range=${range}`);
   },
