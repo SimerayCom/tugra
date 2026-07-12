@@ -68,6 +68,9 @@ export const envSchema = z
   METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(48),
   HEARTBEAT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   METRICS_ROLLUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  // Host-port range the install-time allocator draws from when a template needs a published port.
+  TUGRA_HOSTPORT_MIN: z.coerce.number().int().positive().default(20000),
+  TUGRA_HOSTPORT_MAX: z.coerce.number().int().positive().default(45000),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live
@@ -79,6 +82,13 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ["HUB_SIGNING_KEY"],
         message: "HUB_SIGNING_KEY is required unless NODE_ENV is development or test (fail-closed)",
+      });
+    }
+    if (v.TUGRA_HOSTPORT_MIN >= v.TUGRA_HOSTPORT_MAX) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["TUGRA_HOSTPORT_MAX"],
+        message: "TUGRA_HOSTPORT_MAX must be greater than TUGRA_HOSTPORT_MIN",
       });
     }
   });
