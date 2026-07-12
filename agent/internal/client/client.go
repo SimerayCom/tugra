@@ -238,7 +238,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 				}
 			case "log_start":
 				// Same fail-closed order as term_start: verify the hub signature, then the capability.
-				if !protocol.VerifySig(hubPub, protocol.CanonicalLogStart(m.StreamID, m.Target, m.Tail, m.Follow, m.Capability), m.Sig) {
+				if !protocol.VerifySig(hubPub, protocol.CanonicalLogStart(m.StreamID, m.Target, m.Tail, m.Follow, m.Since, m.Search, m.Capability), m.Sig) {
 					fmt.Fprintln(os.Stderr, "rejected log_start: invalid or missing hub signature")
 					continue
 				}
@@ -247,7 +247,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 					continue
 				}
 				sid := m.StreamID
-				stream, err := logs.Start(m.Target, m.Tail, m.Follow,
+				stream, err := logs.Start(m.Target, m.Tail, m.Since, m.Follow, m.Search,
 					func(line string) {
 						_ = send(protocol.LogChunk{Type: "log_chunk", StreamID: sid, Chunk: line})
 					},

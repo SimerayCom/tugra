@@ -72,9 +72,11 @@ export function canonicalLogStart(
   target: string,
   tail: number,
   follow: boolean,
+  since: string,
+  search: string,
   capability: string,
 ): string {
-  return `logs\n${streamId}\n${target}\n${tail}\n${follow ? "1" : "0"}\n${capability}`;
+  return `logs\n${streamId}\n${target}\n${tail}\n${follow ? "1" : "0"}\n${since}\n${search}\n${capability}`;
 }
 
 /** What a command is for — the agent can locally allowlist these. */
@@ -301,6 +303,8 @@ export interface LogStartMsg {
   target: string;
   tail: number;
   follow: boolean;
+  since?: string; // docker --since window (e.g. "5m", "1h"); "" = from the tail
+  search?: string; // server-side grep -iF filter; "" = no filter
   capability?: "logs";
   /** base64(ed25519 signature over canonicalLogStart) — agent rejects if invalid. */
   sig?: string;

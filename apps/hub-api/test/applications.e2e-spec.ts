@@ -899,6 +899,41 @@ describe("Applications / deploy (e2e)", () => {
     expect(stream.text).toContain("live-log-line-1");
   });
 
+  it("exports logs as a downloadable text file (one-shot docker logs with --since, attachment header)", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logdl", serverId, image: "nginx:alpine", hostPort: 8146 })
+      .expect(201);
+    const appId = appRes.body.id;
+    commands.length = 0;
+    const res = await request(app.getHttpServer())
+      .get(`/apps/${appId}/logs/download?tail=500&since=1h`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(res.headers["content-disposition"]).toContain("attachment");
+    expect(res.headers["content-type"]).toContain("text/plain");
+    // One-shot sendCommand ran a fixed docker-logs command with the normalized since + clamped tail.
+    expect(commands.join("\n")).toContain(`docker logs --timestamps --tail 500 --since 1h tugra_${appId} 2>&1`);
+    expect(res.text).toContain("Up"); // the mock agent's command output
+  });
+
+  it("rejects a compose container name with shell metacharacters on download (no command injection)", async () => {
+    const composeApp = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "logstack", serverId, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx" })
+      .expect(201);
+    const cid = composeApp.body.id;
+    commands.length = 0;
+    // Belongs to the tugra_<id> project by prefix, but carries shell metacharacters → must 400.
+    await request(app.getHttpServer())
+      .get(`/apps/${cid}/logs/download?container=${encodeURIComponent(`tugra_${cid}-web; rm -rf /`)}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
+    expect(commands.join("\n")).not.toContain("rm -rf"); // nothing reached the agent
+  });
+
   it("forbids container-log streaming for a non-member (403, awaited authz → real status)", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

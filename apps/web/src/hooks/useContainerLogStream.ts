@@ -32,9 +32,9 @@ const EMPTY: ContainerLogState = { lines: [], connected: false, ended: false };
  */
 export function useContainerLogStream(
   appId: string,
-  opts: { container?: string; follow: boolean; active: boolean },
+  opts: { container?: string; follow: boolean; active: boolean; since?: string; search?: string; tail?: number },
 ): ContainerLogState {
-  const { container, follow, active } = opts;
+  const { container, follow, active, since, search, tail } = opts;
   const [state, setState] = useState<ContainerLogState>(EMPTY);
 
   useEffect(() => {
@@ -53,6 +53,9 @@ export function useContainerLogStream(
       const params = new URLSearchParams();
       if (container) params.set("container", container);
       params.set("follow", follow ? "1" : "0");
+      if (since) params.set("since", since);
+      if (search) params.set("search", search);
+      if (tail) params.set("tail", String(tail));
       const url = `${API_BASE}/apps/${appId}/logs/stream?${params.toString()}`;
 
       while (!controller.signal.aborted) {
@@ -101,7 +104,7 @@ export function useContainerLogStream(
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, container, follow, active]);
+  }, [appId, container, follow, active, since, search, tail]);
 
   return state;
 }

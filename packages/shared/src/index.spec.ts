@@ -47,10 +47,11 @@ describe("shared protocol", () => {
 
   it("builds a byte-stable canonicalLogStart (must match the Go agent)", () => {
     // Fixed newline-delimited format; the Go agent's CanonicalLogStart must be byte-identical.
-    expect(canonicalLogStart("sid1", "tugra_app1", 200, true, "logs")).toBe(
-      "logs\nsid1\ntugra_app1\n200\n1\nlogs",
+    expect(canonicalLogStart("sid1", "tugra_app1", 200, true, "1h", "err", "logs")).toBe(
+      "logs\nsid1\ntugra_app1\n200\n1\n1h\nerr\nlogs",
     );
-    expect(canonicalLogStart("sid1", "c", 50, false, "logs")).toBe("logs\nsid1\nc\n50\n0\nlogs");
+    // empty since/search still occupy their delimited slots
+    expect(canonicalLogStart("sid1", "c", 50, false, "", "", "logs")).toBe("logs\nsid1\nc\n50\n0\n\n\nlogs");
   });
 
   it("shapes the live-log messages and unions (additive, no version bump)", () => {

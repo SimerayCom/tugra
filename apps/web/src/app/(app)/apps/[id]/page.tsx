@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../../lib/api";
+import { api, API_BASE } from "../../../../lib/api";
+import { TextInput, Select } from "../../../../components/form";
+import { useDebounce } from "../../../../hooks/useDebounce";
+import { parseAnsi } from "../../../../lib/ansi";
 import type { AppVolume } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
 import { backupColor, formatSize } from "../../../../lib/backups";
@@ -429,48 +432,107 @@ function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: ()
 function LiveContainerLogsCard({ id, isCompose }: { id: string; isCompose: boolean }) {
   const t = useT();
   const [following, setFollowing] = useState(true);
+  const [paused, setPaused] = useState(false);
   const [container, setContainer] = useState<string | undefined>(undefined);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const ref = useRef<HTMLPreElement>(null);
+  const [since, setSince] = useState("all"); // "all" | "5m" | "1h" — the hub maps "all" → no --since
+  const [tail, setTail] = useState(200);
+  const [searchInput, setSearchInput] = useState("");
+  const search = useDebounce(searchInput, 400); // each keystroke shouldn't restart the SSE stream
+  const ref = useRef<HTMLDivElement>(null);
   // A compose app has many containers → the user must pick one before we can follow it.
   const active = !isCompose || !!container;
-  const { lines, connected, ended } = useContainerLogStream(id, { container, follow: following, active });
+  const { lines, connected, ended } = useContainerLogStream(id, { container, follow: following, active, since, search, tail });
 
+  // Auto-scroll to the newest line unless the user paused or turned off follow.
   useEffect(() => {
     const el = ref.current;
-    if (el && following) el.scrollTop = el.scrollHeight;
-  }, [lines, following]);
+    if (el && following && !paused) el.scrollTop = el.scrollHeight;
+  }, [lines, following, paused]);
+
+  const download = async () => {
+    const params = new URLSearchParams({ tail: "2000" });
+    if (container) params.set("container", container);
+    if (since) params.set("since", since);
+    const res = await fetch(`${API_BASE}/apps/${id}/logs/download?${params.toString()}`, { credentials: "include" });
+    if (!res.ok) return;
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "container.log";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <div style={{ fontWeight: 600, flex: 1 }}>{t("apps.liveLogs")}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 600 }}>{t("apps.liveLogs")}</div>
         {isCompose && (
           <Btn variant="ghost" onClick={() => setPickerOpen(true)}>
             {container ?? t("apps.selectContainer")}
           </Btn>
         )}
+        <div style={{ flex: 1 }} />
+        <TextInput
+          placeholder={t("apps.logSearch")}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          style={{ width: 160, fontSize: 12 }}
+        />
+        <Select
+          value={since}
+          onChange={setSince}
+          style={{ fontSize: 12 }}
+          options={[
+            { value: "all", label: t("apps.sinceAll") },
+            { value: "5m", label: t("apps.since5m") },
+            { value: "1h", label: t("apps.since1h") },
+          ]}
+        />
+        <Select
+          value={String(tail)}
+          onChange={(v) => setTail(Number(v))}
+          style={{ fontSize: 12 }}
+          options={[
+            { value: "100", label: "100" },
+            { value: "200", label: "200" },
+            { value: "500", label: "500" },
+            { value: "2000", label: "2000" },
+          ]}
+        />
+        <Btn variant="ghost" onClick={() => setPaused((p) => !p)}>{paused ? t("apps.resume") : t("apps.pause")}</Btn>
+        <Btn variant="ghost" onClick={() => void download()}>{t("apps.download")}</Btn>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
           <input type="checkbox" checked={following} onChange={(e) => setFollowing(e.target.checked)} />
           {t("apps.follow")}
         </label>
       </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.liveLogsDesc")}</p>
       {isCompose && !container ? (
         <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.pickContainerToStream")}</div>
       ) : (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12, color: "var(--c-tx3)" }}>
             {connected && <Spinner />}
-            <span>{connected ? t("apps.streamingLogs") : ended ? t("apps.logStreamEnded") : t("apps.logStreamConnecting")}</span>
+            <span>{connected ? (paused ? t("apps.logStreamPaused") : t("apps.streamingLogs")) : ended ? t("apps.logStreamEnded") : t("apps.logStreamConnecting")}</span>
           </div>
-          <pre
+          <div
             ref={ref}
             className="mono"
             style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre", maxHeight: 360, overflowY: "auto", overflowX: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}
           >
-            {lines.length ? lines.join("\n") : t("apps.logsEmpty")}
-          </pre>
+            {lines.length
+              ? lines.map((line, i) => (
+                  <div key={i}>
+                    {parseAnsi(line).map((seg, j) => (
+                      <span key={j} style={seg.color || seg.bold ? { color: seg.color, fontWeight: seg.bold ? 600 : undefined } : undefined}>
+                        {seg.text}
+                      </span>
+                    ))}
+                  </div>
+                ))
+              : t("apps.logsEmpty")}
+          </div>
         </>
       )}
       {pickerOpen && (

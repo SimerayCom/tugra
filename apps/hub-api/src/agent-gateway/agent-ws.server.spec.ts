@@ -139,15 +139,25 @@ describe("AgentWsServer live container-log streams", () => {
   it("signs log_start (canonicalLogStart) and sends it after the capability check", async () => {
     const { server, lastSent } = harness();
     const listener = { onChunk: jest.fn(), onExit: jest.fn() };
-    const streamId = await server.startLogStream("s1", { target: "tugra_app1", tail: 200, follow: true }, listener);
+    const streamId = await server.startLogStream("s1", { target: "tugra_app1", tail: 200, follow: true, since: "1h", search: "err" }, listener);
     const sent = lastSent();
     expect(sent.type).toBe("log_start");
     expect(sent.streamId).toBe(streamId);
     expect(sent.target).toBe("tugra_app1");
     expect(sent.tail).toBe(200);
     expect(sent.follow).toBe(true);
+    expect(sent.since).toBe("1h"); // threaded into the outbound message
+    expect(sent.search).toBe("err");
     expect(sent.capability).toBe("logs");
     expect(sent.sig).toBe("SIG"); // signOutbound stamped the log_start signature
+  });
+
+  it("defaults omitted since/search to '' in the outbound message", async () => {
+    const { server, lastSent } = harness();
+    await server.startLogStream("s1", { target: "c", tail: 50, follow: false }, { onChunk: jest.fn(), onExit: jest.fn() });
+    const sent = lastSent();
+    expect(sent.since).toBe("");
+    expect(sent.search).toBe("");
   });
 
   it("refuses to start a log stream when the 'logs' capability is not granted", async () => {

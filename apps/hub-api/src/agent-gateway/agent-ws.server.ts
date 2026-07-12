@@ -310,6 +310,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.target as string,
           msg.tail as number,
           msg.follow as boolean,
+          (msg.since as string) ?? "",
+          (msg.search as string) ?? "",
           msg.capability as string,
         ),
       );
@@ -326,7 +328,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
    */
   async startLogStream(
     serverId: string,
-    params: { target: string; tail: number; follow: boolean },
+    params: { target: string; tail: number; follow: boolean; since?: string; search?: string },
     listener: LogListener,
   ): Promise<string> {
     if (!this.isOnline(serverId)) throw new Error("agent offline");
@@ -345,6 +347,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       target: params.target,
       tail: params.tail,
       follow: params.follow,
+      since: params.since ?? "",
+      search: params.search ?? "",
       capability: "logs",
     });
     if (!delivered) {

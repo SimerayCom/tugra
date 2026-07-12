@@ -65,6 +65,25 @@ describe("useContainerLogStream", () => {
     unmount();
   });
 
+  it("threads since/search/tail into the stream URL", async () => {
+    let url = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string) => {
+        url = u;
+        return { ok: true, body: streamFrom([frame({ exitCode: 0 })]) } as Response;
+      }),
+    );
+    const { unmount } = renderHook(() =>
+      useContainerLogStream("app1", { follow: true, active: true, since: "1h", search: "error", tail: 500 }),
+    );
+    await waitFor(() => expect(url).toContain("/apps/app1/logs/stream"));
+    expect(url).toContain("since=1h");
+    expect(url).toContain("search=error");
+    expect(url).toContain("tail=500");
+    unmount();
+  });
+
   it("does not fetch when inactive", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   type MessageEvent,
   Param,
@@ -166,13 +167,35 @@ export class ApplicationsController {
     @Query("container") container?: string,
     @Query("tail") tail?: string,
     @Query("follow") follow?: string,
+    @Query("since") since?: string,
+    @Query("search") search?: string,
   ): Promise<Observable<MessageEvent>> {
     const stream = await this.apps.streamContainerLogs(user.userId, id, {
       container,
       tail: tail ? Number(tail) : undefined,
       follow: follow !== "0",
+      since,
+      search,
     });
     return stream.pipe(map((event) => ({ data: JSON.stringify(event) }) as MessageEvent));
+  }
+
+  /** One-shot log export (writer-only) — returns the collected logs as a downloadable text file. */
+  @Get(":id/logs/download")
+  @Header("Content-Type", "text/plain; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="container.log"')
+  downloadLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("container") container?: string,
+    @Query("tail") tail?: string,
+    @Query("since") since?: string,
+  ): Promise<string> {
+    return this.apps.downloadLogs(user.userId, id, {
+      container,
+      tail: tail ? Number(tail) : undefined,
+      since,
+    });
   }
 
   @Post(":id/deploy")
