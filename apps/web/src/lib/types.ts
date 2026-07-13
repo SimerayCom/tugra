@@ -369,6 +369,44 @@ export interface Template {
   documentation?: string;
 }
 
+// Mirrors the hub's PublicManifest / FormField (apps/hub-api/src/templates/template-manifest.ts) —
+// the typed install form is driven by these field definitions. It never carries resolved secret
+// VALUES (resolution happens server-side at install); composeFile is present only when the caller can
+// write to the ?serverId= team.
+export type FieldType =
+  | "text" | "password" | "number" | "boolean" | "email"
+  | "url" | "fqdn" | "port" | "select" | "random" | "hidden";
+
+export interface FormField {
+  key: string;
+  type: FieldType;
+  label: string;
+  hint?: string;
+  required?: boolean;
+  default?: string;
+  min?: number;
+  max?: number;
+  regex?: string;
+  options?: { value: string; label: string }[];
+  generate?: string; // blank ⇒ the server generates it
+  secret?: boolean;
+}
+
+export interface ExposePort {
+  serviceName: string;
+  containerPort: number;
+  defaultMode: "domain" | "hostPort";
+  public?: boolean;
+}
+
+export interface TemplateManifest extends Template {
+  fields?: FormField[];
+  exposure?: ExposePort[];
+  variables?: Record<string, string>;
+  mounts?: { serviceName: string; target: string; mode?: string }[];
+  composeFile?: string; // only when the caller can write to the server's team
+}
+
 export interface Application {
   id: string;
   name: string;
