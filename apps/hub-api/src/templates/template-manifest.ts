@@ -119,14 +119,21 @@ export function toManifest(tpl: TemplateDef): TemplateManifest {
   const fields = (tpl.secrets ?? []).map(secretToField);
   const fieldKeys = new Set(fields.map((f) => f.key));
 
+  // Static env defaults + any importer-emitted resolver variables (a field owns its own key).
   const variables: Record<string, string> = {};
-  for (const [k, v] of Object.entries(tpl.env ?? {})) {
-    if (!fieldKeys.has(k)) variables[k] = v; // a secret field owns this key → don't duplicate it
+  for (const [k, v] of Object.entries({ ...(tpl.variables ?? {}), ...(tpl.env ?? {}) })) {
+    if (!fieldKeys.has(k)) variables[k] = v;
   }
 
-  const exposure: ExposePort[] = tpl.web
-    ? [{ serviceName: tpl.web.service, containerPort: tpl.web.port, defaultMode: "domain", public: true }]
-    : [];
+  // Prefer the importer's explicit exposure metadata (v2); fall back to the `web` hint.
+  const exposure: ExposePort[] =
+    tpl.exposure && tpl.exposure.length > 0
+      ? tpl.exposure
+      : tpl.web
+        ? [{ serviceName: tpl.web.service, containerPort: tpl.web.port, defaultMode: "domain", public: true }]
+        : [];
+
+  const mounts: ConfigMount[] = tpl.mounts ?? [];
 
   return {
     slug: tpl.slug,
@@ -140,5 +147,6 @@ export function toManifest(tpl: TemplateDef): TemplateManifest {
     ...(fields.length ? { fields } : {}),
     ...(Object.keys(variables).length ? { variables } : {}),
     ...(exposure.length ? { exposure } : {}),
+    ...(mounts.length ? { mounts } : {}),
   };
 }

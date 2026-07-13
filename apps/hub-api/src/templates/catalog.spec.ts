@@ -27,8 +27,10 @@ describe("template catalog", () => {
   });
 
   it("no unresolved Coolify magic tokens survive the import", () => {
+    // A boundary-delimited SERVICE_ token is unresolved; a legit env var NAME that merely contains
+    // "SERVICE_" (e.g. PDS_REPORT_SERVICE_FQDN, WEBSERVICE_PASSWORD) is fine.
     for (const [slug, tpl] of Object.entries(TEMPLATES)) {
-      expect(`${slug}:${tpl.composeFile.includes("SERVICE_")}`).toBe(`${slug}:false`);
+      expect(`${slug}:${/(?<![A-Za-z0-9_])SERVICE_[A-Z0-9_]+/.test(tpl.composeFile)}`).toBe(`${slug}:false`);
     }
   });
 
@@ -67,8 +69,28 @@ describe("template catalog", () => {
     expect(new Set(ports).size).toBe(ports.length);
   });
 
-  it("ships a large catalog (bulk import + curated)", () => {
-    expect(Object.keys(TEMPLATES).length).toBeGreaterThanOrEqual(100);
+  it("ships a large catalog (bulk import + curated) including v2-recovered templates", () => {
+    expect(Object.keys(TEMPLATES).length).toBeGreaterThanOrEqual(260); // importer v2 recovered ~31 more
+  });
+
+  it("every generated template carries exposure metadata pointing at a real service + container port", () => {
+    for (const [slug, tpl] of Object.entries(TEMPLATES)) {
+      for (const e of tpl.exposure ?? []) {
+        // the exposed service exists in the compose and the container port is a positive integer
+        expect(`${slug}:${new RegExp(`^\\s+${e.serviceName}:`, "m").test(tpl.composeFile)}`).toBe(`${slug}:true`);
+        expect(Number.isInteger(e.containerPort) && e.containerPort > 0).toBe(true);
+      }
+    }
+  });
+
+  it("never leaves an inline content mount in the compose (recovered into mounts[] metadata)", () => {
+    for (const [slug, tpl] of Object.entries(TEMPLATES)) {
+      // any recovered mount is metadata, never a raw `content:` line in the compose
+      expect(`${slug}:${/^\s*content:/m.test(tpl.composeFile)}`).toBe(`${slug}:false`);
+      for (const m of tpl.mounts ?? []) {
+        expect(m.serviceName && m.target && typeof m.content === "string").toBeTruthy();
+      }
+    }
   });
 
   it("most templates carry a documentation URL", () => {
