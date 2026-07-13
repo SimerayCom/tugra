@@ -75,6 +75,18 @@ export class ApplicationsController {
     return this.apps.listTemplates();
   }
 
+  // Install-form manifest for one template (typed fields + exposure; secret values / raw compose never
+  // leak — pass ?serverId= to get the compose when you can write to that server's team). Also precedes
+  // `@Get(":id")` (its first segment is the literal "templates").
+  @Get("templates/:slug")
+  templateManifest(
+    @CurrentUser() user: AuthUser,
+    @Param("slug") slug: string,
+    @Query("serverId") serverId?: string,
+  ) {
+    return this.apps.getTemplateManifest(user.userId, slug, serverId);
+  }
+
   // Likewise precedes `@Get(":id")` — central domain + live SSL overview.
   @Get("domains")
   listDomains(@CurrentUser() user: AuthUser) {

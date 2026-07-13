@@ -928,6 +928,57 @@ describe("ApplicationsService", () => {
     expect(create.mock.calls[0][0].data.environmentId).toBe("env-default");
   });
 
+  it("getTemplateManifest returns field defs but no composeFile (no serverId) and no secret values", async () => {
+    const svc = make({} as PrismaService, {} as TeamAccessService, {} as AgentWsServer);
+    const m = await svc.getTemplateManifest("u1", "wordpress");
+    expect(m.slug).toBe("wordpress");
+    expect(Array.isArray(m.fields)).toBe(true); // typed field definitions
+    expect(m.composeFile).toBeUndefined(); // no serverId → no compose
+    // fields are DEFINITIONS (key/type/label/generate), never a resolved `value`
+    for (const f of m.fields ?? []) expect(f).not.toHaveProperty("value");
+    expect(m).not.toHaveProperty("secrets");
+    await expect(svc.getTemplateManifest("u1", "nope")).rejects.toThrow(/not found/);
+  });
+
+  it("getTemplateManifest includes the composeFile when the caller can write to the server's team", async () => {
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue({ teamId: "t1" }) } } as unknown as PrismaService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    const m = await make(prisma, access, {} as AgentWsServer).getTemplateManifest("u1", "wordpress", "s1");
+    expect(m.composeFile).toContain("services:");
+  });
+
+  it("v2: rejects a compose override that would escape the container (privileged)", async () => {
+    const { prisma, access } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500]) };
+    await expect(
+      svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "activepieces", {
+        name: "ap",
+        serverId: "s1",
+        composeOverride: "services:\n  app:\n    image: nginx\n    privileged: true\n    ports:\n      - \"20001:80\"\n",
+      }),
+    ).rejects.toThrow(/disallowed directive/);
+  });
+
+  it("v2: uses a safe compose override + layers envOverride last, and audits the override", async () => {
+    const { prisma, access, create } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500]) };
+    (audit.log as jest.Mock).mockClear();
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "activepieces", {
+      name: "ap",
+      serverId: "s1",
+      composeOverride: 'services:\n  custom:\n    image: myimage\n    ports:\n      - "20001:80"\n',
+      envOverride: { CUSTOM_KEY: "custom-value" },
+    });
+    const data = create.mock.calls[0][0].data;
+    expect(data.composeFile).toContain("myimage"); // the override was used, not the template compose
+    expect(data.composeFile).toContain("20500:80"); // ports still allocated/rewritten
+    expect(data.envEnc).toContain("custom-value"); // envOverride layered into the encrypted env
+    // the override is audited (that it happened + which env keys, never their values)
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.template.override" }));
+    const overrideCall = (audit.log as jest.Mock).mock.calls.find((c) => c[0].action === "app.template.override");
+    expect(JSON.stringify(overrideCall?.[0].meta)).not.toContain("custom-value"); // no secret values logged
+  });
+
   it("generates a magic sslip.io domain when the server has a public IP", async () => {
     const create = jest.fn().mockResolvedValue({ ...app, source: "IMAGE" });
     const prisma = {

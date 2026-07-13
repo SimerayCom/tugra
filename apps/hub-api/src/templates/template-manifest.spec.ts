@@ -1,5 +1,5 @@
 import { TEMPLATES, type TemplateDef } from "./catalog";
-import { toManifest, type FormField } from "./template-manifest";
+import { publicManifest, toManifest, validateInstallFields, type FormField, type TemplateManifest } from "./template-manifest";
 
 /** A minimal synthetic TemplateDef so the mapping tests don't depend on which real templates
  *  happen to carry a given shape. */
@@ -103,5 +103,55 @@ describe("template-manifest", () => {
     );
     expect(m).toMatchObject({ slug: "meta", name: "Meta", description: "desc", category: "cms", icon: "🧩", logo: "meta", documentation: "https://x" });
     expect((m as { secrets?: unknown }).secrets).toBeUndefined(); // secrets folded into fields, not re-emitted
+  });
+});
+
+describe("publicManifest", () => {
+  const manifest: TemplateManifest = {
+    slug: "s", name: "S", description: "d", category: "tools",
+    composeFile: "services:\n  app:\n    image: x\n",
+    fields: [{ key: "DB_PASSWORD", type: "password", label: "Db Password", secret: true, generate: "password:32" }],
+    exposure: [{ serviceName: "app", containerPort: 80, defaultMode: "domain", public: true }],
+    variables: { TZ: "UTC" },
+    mounts: [{ serviceName: "app", target: "/etc/app.conf", content: "secret-config-body", mode: "ro" }],
+  };
+
+  it("returns field defs / exposure / mount META but never the compose (no write) or mount content", () => {
+    const p = publicManifest(manifest, false);
+    expect(p.fields).toEqual(manifest.fields); // definitions (no resolved values)
+    expect(p.exposure).toEqual(manifest.exposure);
+    expect(p.mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", mode: "ro" }]); // content DROPPED
+    expect(p.composeFile).toBeUndefined(); // not write → no compose
+    expect(JSON.stringify(p)).not.toContain("secret-config-body"); // mount content never leaks
+  });
+
+  it("includes the raw composeFile only for a writer", () => {
+    expect(publicManifest(manifest, true).composeFile).toContain("services:");
+  });
+});
+
+describe("validateInstallFields", () => {
+  const defs: FormField[] = [
+    { key: "PORT", type: "number", label: "Port", min: 1, max: 65535 },
+    { key: "MODE", type: "select", label: "Mode", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] },
+    { key: "NAME", type: "text", label: "Name", regex: "^[a-z]+$", required: true },
+    { key: "SECRET", type: "password", label: "Secret", secret: true, generate: "password:32" },
+  ];
+  const ok = (f: Record<string, string>) => expect(() => validateInstallFields(f, defs)).not.toThrow();
+  const bad = (f: Record<string, string>) => expect(() => validateInstallFields(f, defs)).toThrow(/invalid value/);
+
+  it("accepts valid values and lets a blank generate-backed field through", () => {
+    ok({ PORT: "8080", MODE: "a", NAME: "abc", SECRET: "" });
+    ok({}); // nothing supplied
+  });
+  it("rejects out-of-range numbers, bad options, regex mismatch, and blank-required", () => {
+    bad({ PORT: "99999" });
+    bad({ PORT: "abc" });
+    bad({ MODE: "c" });
+    bad({ NAME: "ABC" }); // regex ^[a-z]+$
+    bad({ NAME: "" }); // required, no generate
+  });
+  it("allows unknown keys (forward-compat)", () => {
+    ok({ SOME_UNKNOWN_ENV: "whatever" });
   });
 });

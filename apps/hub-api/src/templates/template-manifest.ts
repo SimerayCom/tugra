@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import type { SecretKind, SecretSpec, TemplateDef, TemplateMeta } from "./catalog";
 
 // A rich, install-time template model. Today's `TemplateDef` bakes host ports and localhost URLs at
@@ -149,4 +150,66 @@ export function toManifest(tpl: TemplateDef): TemplateManifest {
     ...(exposure.length ? { exposure } : {}),
     ...(mounts.length ? { mounts } : {}),
   };
+}
+
+/** The client-facing manifest for the install form: field DEFINITIONS (never resolved secret
+ *  values), exposure + variables + mount META (never the mount `content`). The raw `composeFile` is
+ *  included only when the caller has write access (it can carry author intent worth editing but is
+ *  otherwise gated like AppView.composeFile). */
+export interface PublicManifest extends TemplateMeta {
+  fields?: FormField[];
+  exposure?: ExposePort[];
+  variables?: Record<string, string>;
+  mounts?: { serviceName: string; target: string; mode?: string }[];
+  composeFile?: string;
+}
+
+export function publicManifest(m: TemplateManifest, canWrite: boolean): PublicManifest {
+  return {
+    slug: m.slug,
+    name: m.name,
+    description: m.description,
+    category: m.category,
+    icon: m.icon,
+    logo: m.logo,
+    documentation: m.documentation,
+    ...(m.fields ? { fields: m.fields } : {}),
+    ...(m.exposure ? { exposure: m.exposure } : {}),
+    ...(m.variables ? { variables: m.variables } : {}),
+    // Drop mount `content` — it is config-file data materialized at deploy, not needed by the form.
+    ...(m.mounts ? { mounts: m.mounts.map(({ serviceName, target, mode }) => ({ serviceName, target, mode })) } : {}),
+    ...(canWrite ? { composeFile: m.composeFile } : {}),
+  };
+}
+
+/** Validate a user's install field values against the manifest's typed field definitions (required,
+ *  number min/max, boolean, select options, regex). Unknown keys are allowed (forward-compat). The
+ *  `regex`/`min`/`max` come from the manifest (author/importer-controlled, not the user) so they are
+ *  ReDoS-safe. Throws BadRequestException on the first violation. */
+export function validateInstallFields(
+  fields: Record<string, string> | undefined,
+  defs: FormField[] | undefined,
+): void {
+  if (!fields) return;
+  const byKey = new Map((defs ?? []).map((f) => [f.key, f]));
+  for (const [key, value] of Object.entries(fields)) {
+    const def = byKey.get(key);
+    if (!def) continue; // unknown key → allowed (may be an env override the resolver ignores)
+    const bad = (msg: string): never => {
+      throw new BadRequestException(`invalid value for "${key}": ${msg}`);
+    };
+    if (value === "") {
+      if (def.required && !def.generate) bad("required");
+      continue; // empty + generate/optional → the server fills it
+    }
+    if (def.type === "number" || def.type === "port") {
+      const n = Number(value);
+      if (!Number.isFinite(n)) bad("must be a number");
+      if (def.min != null && n < def.min) bad(`must be >= ${def.min}`);
+      if (def.max != null && n > def.max) bad(`must be <= ${def.max}`);
+    }
+    if (def.type === "boolean" && value !== "true" && value !== "false") bad("must be true or false");
+    if (def.options && !def.options.some((o) => o.value === value)) bad("not an allowed option");
+    if (def.regex && !new RegExp(def.regex).test(value)) bad("does not match the required format");
+  }
 }
