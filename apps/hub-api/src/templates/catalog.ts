@@ -6,6 +6,7 @@
  */
 import { randomBytes } from "node:crypto";
 import generated from "./catalog.generated.json";
+import type { ConfigMount, ExposePort } from "./template-manifest";
 
 export type TemplateCategory =
   | "cms"
@@ -44,6 +45,12 @@ export interface TemplateDef {
   // override — when unset it is inferred from the compose file (first service with a
   // published port). Set it only when inference would pick the wrong service.
   web?: { service: string; port: number };
+  // Rich install-time metadata emitted by the importer (v2). `exposure` lists the service ports the
+  // install-time resolver should publish/route; `mounts` are config files to materialize; `variables`
+  // are resolver-token env defaults. All optional/additive — the baked compose still works as-is.
+  exposure?: ExposePort[];
+  mounts?: ConfigMount[];
+  variables?: Record<string, string>;
 }
 
 /** Public metadata for the gallery — never exposes composeFile or secrets. */
