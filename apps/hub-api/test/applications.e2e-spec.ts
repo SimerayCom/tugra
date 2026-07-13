@@ -627,6 +627,36 @@ describe("Applications / deploy (e2e)", () => {
       .expect(404);
   });
 
+  it("serves a secret-safe template manifest (typed fields, no compose without write context)", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/apps/templates/wordpress")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(res.body.slug).toBe("wordpress");
+    expect(Array.isArray(res.body.fields)).toBe(true); // typed field definitions
+    expect(res.body).not.toHaveProperty("secrets");
+    expect(res.body.composeFile).toBeUndefined(); // no ?serverId → compose withheld
+    // with a server the caller can write to, the compose is included
+    const withCompose = await request(app.getHttpServer())
+      .get(`/apps/templates/wordpress?serverId=${serverId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(withCompose.body.composeFile).toContain("services:");
+
+    await request(app.getHttpServer())
+      .get("/apps/templates/does-not-exist")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
+  });
+
+  it("rejects a template install whose compose override would escape the container", async () => {
+    await request(app.getHttpServer())
+      .post("/apps/templates/wordpress")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "evil", serverId, composeOverride: "services:\n  x:\n    image: nginx\n    privileged: true\n" })
+      .expect(400);
+  });
+
   it("stores private registry credentials without exposing the token", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

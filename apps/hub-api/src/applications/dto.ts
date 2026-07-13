@@ -183,6 +183,8 @@ export const FromTemplateSchema = z.object({
   environmentId: z.string().min(1).optional(),
   deploy: z.boolean().optional(), // one-call install: create + best-effort deploy
   fields: z.record(z.string()).optional(), // user-entered install values (override generated defaults)
+  composeOverride: z.string().min(1).optional(), // fork-free compose edit (validated for host-escape)
+  envOverride: z.record(z.string()).optional(), // extra/override env entries (encrypted, layered last)
 });
 export type FromTemplateInput = z.infer<typeof FromTemplateSchema>;
 

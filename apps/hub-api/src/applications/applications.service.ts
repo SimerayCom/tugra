@@ -67,9 +67,10 @@ import {
   templateMetaList,
   type TemplateMeta,
 } from "../templates/catalog";
-import { toManifest, type FormField } from "../templates/template-manifest";
+import { publicManifest, toManifest, validateInstallFields, type FormField, type PublicManifest } from "../templates/template-manifest";
 import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts } from "../templates/install-compose";
+import { assertSafeCompose } from "../deploy/compose-safety";
 import { PortAllocatorService } from "./port-allocator.service";
 import { probeSsl, type SslStatus } from "./ssl-probe";
 import { AiService } from "./ai.service";
@@ -404,7 +405,15 @@ export class ApplicationsService {
   async createFromTemplate(
     userId: string,
     slug: string,
-    input: { name: string; serverId: string; environmentId?: string; deploy?: boolean; fields?: Record<string, string> },
+    input: {
+      name: string;
+      serverId: string;
+      environmentId?: string;
+      deploy?: boolean;
+      fields?: Record<string, string>;
+      composeOverride?: string;
+      envOverride?: Record<string, string>;
+    },
   ): Promise<AppView> {
     const tpl = TEMPLATES[slug];
     if (!tpl) throw new NotFoundException("template not found");
@@ -419,6 +428,13 @@ export class ApplicationsService {
     const exposures = manifest.exposure ?? [];
     const magicSuffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
 
+    // Validate user field values against the typed field defs (regex/min/max/required).
+    validateInstallFields(input.fields, manifest.fields);
+    // A fork-free compose override is user-authored → reject any host-escaping directive before it is
+    // ever written to a host and run (privileged / docker.sock / host binds / dangerous caps / …).
+    if (input.composeOverride) assertSafeCompose(input.composeOverride);
+    const baseCompose = input.composeOverride ?? manifest.composeFile;
+
     // Probe listening host ports OUTSIDE the transaction — it is an agent network round-trip and must
     // not run inside the DB transaction (would hold the connection idle-in-tx and risk the tx timeout).
     const probed = exposures.length ? await this.portAlloc.probeUsedPorts(server.id) : new Set<number>();
@@ -427,11 +443,13 @@ export class ApplicationsService {
       // Allocate inside the tx (fast DB-only ops): the advisory lock is held until this transaction
       // commits, so a concurrent install cannot pick the same port between our allocation and our insert.
       const allocated = exposures.length ? await this.portAlloc.allocate(server.id, exposures.length, tx, probed) : [];
-      const { compose, portMappings } = rewriteHostPorts(manifest.composeFile, exposures, allocated);
+      // Rewrite ports on whichever compose we install (override or template). When the override's
+      // ports don't match the exposure metadata, rewriteHostPorts is a no-op — the user owns them.
+      const { compose, portMappings } = rewriteHostPorts(baseCompose, exposures, allocated);
       const allocatedPorts = Object.fromEntries(
         exposures.map((e, i) => [`${e.serviceName}:${e.containerPort}`, allocated[i]]),
       );
-      const env = resolveVariables(manifest, {
+      const resolved = resolveVariables(manifest, {
         appName: input.name,
         publicIp: server.publicIp,
         publicIpv6: server.publicIpv6,
@@ -440,6 +458,8 @@ export class ApplicationsService {
         allocatedPorts,
         userFields: input.fields,
       });
+      // envOverride layers last (user wins), mirroring the deploy-time shared-vars < app-env order.
+      const env = { ...resolved, ...(input.envOverride ?? {}) };
       const installConfig = redactInstallConfig(input.fields, manifest.fields);
       const composeWebService = this.composeWeb({ templateSlug: slug, composeFile: compose })?.service ?? null;
       const expose = this.resolveExpose({ name: input.name }, server, "COMPOSE", composeWebService);
@@ -470,7 +490,32 @@ export class ApplicationsService {
       });
     });
 
+    if (input.composeOverride || input.envOverride) {
+      // Audit a fork-free override — record THAT one happened + which env keys, never their values.
+      await this.audit.log({
+        actor: userId,
+        action: "app.template.override",
+        target: app.id,
+        meta: { slug, composeOverride: !!input.composeOverride, envKeys: Object.keys(input.envOverride ?? {}) },
+      });
+    }
     return this.finishCreate(app, userId, server.teamId, input.deploy, server.publicIp ?? server.publicIpv6);
+  }
+
+  /**
+   * The install-form manifest for a template: typed field DEFINITIONS + exposure + mount META, never
+   * resolved secret values (they don't exist until install). The raw composeFile is returned only when
+   * `serverId` is given and the caller can write to that server's team (advanced compose edit).
+   */
+  async getTemplateManifest(userId: string, slug: string, serverId?: string): Promise<PublicManifest> {
+    const tpl = TEMPLATES[slug];
+    if (!tpl) throw new NotFoundException("template not found");
+    let canWrite = false;
+    if (serverId) {
+      const server = await this.prisma.server.findUnique({ where: { id: serverId }, select: { teamId: true } });
+      if (server) canWrite = (await this.access.membershipPermissions(userId, server.teamId))?.has("apps:config") ?? false;
+    }
+    return publicManifest(toManifest(tpl), canWrite);
   }
 
   async list(userId: string): Promise<AppView[]> {
