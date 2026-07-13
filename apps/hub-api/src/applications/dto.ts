@@ -182,6 +182,7 @@ export const FromTemplateSchema = z.object({
   serverId: z.string().min(1),
   environmentId: z.string().min(1).optional(),
   deploy: z.boolean().optional(), // one-call install: create + best-effort deploy
+  fields: z.record(z.string()).optional(), // user-entered install values (override generated defaults)
 });
 export type FromTemplateInput = z.infer<typeof FromTemplateSchema>;
 

@@ -81,7 +81,10 @@ function make(
   teamDefaults: { resolveDefaultEnvironmentId: jest.Mock } = {
     resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
   },
+  portAlloc: { allocate: jest.Mock; probeUsedPorts?: jest.Mock } = { allocate: jest.fn().mockResolvedValue([]) },
 ) {
+  // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
+  portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
   // view() now resolves a server's public IP to synthesize a domainless app's
   // http://<ip>:<hostPort> URL; every test path through get()/list()/listPreviews()
   // hits server.findUnique/findMany. Default to "no IP" so unrelated tests stay
@@ -94,6 +97,11 @@ function make(
       ...(prisma as { server?: object }).server,
     },
   } as unknown as Partial<PrismaService>;
+  // createFromTemplate v2 runs allocate+insert in a $transaction; default it to run the callback
+  // against the same stub (tx === prisma) unless a test supplies its own.
+  (withServerDefaults as { $transaction?: unknown }).$transaction =
+    (prisma as { $transaction?: unknown }).$transaction ??
+    ((cb: (tx: unknown) => unknown) => cb(withServerDefaults));
   return new ApplicationsService(
     withServerDefaults as PrismaService,
     accessWith(access),
@@ -109,6 +117,7 @@ function make(
     ai as unknown as import("./ai.service").AiService,
     teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
     { forApp: jest.fn().mockResolvedValue({ containers: [] }) } as unknown as import("../metrics/container-metrics.service").ContainerMetricsService,
+    portAlloc as unknown as import("./port-allocator.service").PortAllocatorService,
   );
 }
 
@@ -841,6 +850,82 @@ describe("ApplicationsService", () => {
     expect(data.envEnc).toContain("DB_PASSWORD");
     // No environment chosen -> resolved to the team default, never null.
     expect(data.environmentId).toBe("env-default");
+  });
+
+  function templatePrisma() {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...app, ...data, id: "tpl1" }));
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
+    } as unknown as TeamAccessService;
+    return { prisma, access, create };
+  }
+  const svcWithAlloc = (prisma: PrismaService, access: TeamAccessService, portAlloc: { allocate: jest.Mock; probeUsedPorts?: jest.Mock }) =>
+    make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, portAlloc);
+
+  it("v2: allocates a fresh host port, rewrites the baked compose, and persists portMappings", async () => {
+    const { prisma, access, create } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500]), probeUsedPorts: jest.fn().mockResolvedValue(new Set([21000])) };
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "activepieces", { name: "ap", serverId: "s1" });
+    // The probe runs OUTSIDE the tx and its result is passed into allocate (4th arg) — allocate never
+    // does a network round-trip inside the transaction.
+    expect(portAlloc.probeUsedPorts).toHaveBeenCalledWith("s1");
+    expect(portAlloc.allocate).toHaveBeenCalledWith("s1", 1, expect.anything(), expect.any(Set));
+    const data = create.mock.calls[0][0].data;
+    expect(data.composeFile).toContain("20500:80"); // baked host port rewritten to the allocated one
+    expect(data.portMappings).toEqual([{ serviceName: "activepieces", containerPort: 80, hostPort: 20500, mode: "domain" }]);
+  });
+
+  it("v2: installing the same template twice yields DISTINCT published ports (no collision)", async () => {
+    const first = templatePrisma();
+    const second = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValueOnce([20500]).mockResolvedValueOnce([20501]) };
+    await svcWithAlloc(first.prisma, first.access, portAlloc).createFromTemplate("u1", "activepieces", { name: "ap-a", serverId: "s1" });
+    await svcWithAlloc(second.prisma, second.access, portAlloc).createFromTemplate("u1", "activepieces", { name: "ap-b", serverId: "s1" });
+    expect(first.create.mock.calls[0][0].data.composeFile).toContain("20500:80");
+    expect(second.create.mock.calls[0][0].data.composeFile).toContain("20501:80");
+    expect(first.create.mock.calls[0][0].data.portMappings[0].hostPort).not.toBe(
+      second.create.mock.calls[0][0].data.portMappings[0].hostPort,
+    );
+  });
+
+  it("v2: a user field value overrides the generated secret and lands (encrypted) in env", async () => {
+    const { prisma, access, create } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500, 20501]) };
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "wordpress", {
+      name: "blog",
+      serverId: "s1",
+      fields: { DB_PASSWORD: "topsecret-user-value" },
+    });
+    const data = create.mock.calls[0][0].data;
+    // env is encrypted via the crypto stub (enc(<json>)); the user's override is in it.
+    expect(data.envEnc).toContain("topsecret-user-value");
+  });
+
+  it("v2: installConfig never stores a secret field's value (SPEC §8 redaction)", async () => {
+    const { prisma, access, create } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500, 20501]) };
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "wordpress", {
+      name: "blog",
+      serverId: "s1",
+      fields: { DB_PASSWORD: "topsecret-user-value" },
+    });
+    const data = create.mock.calls[0][0].data;
+    // DB_PASSWORD is a secret field → dropped from installConfig entirely (never the plaintext value).
+    const ic = JSON.stringify(data.installConfig ?? null);
+    expect(ic).not.toContain("topsecret-user-value");
+  });
+
+  it("v2: still resolves the team-default environment and enforces RBAC", async () => {
+    const { prisma, access, create } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500]) };
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "activepieces", { name: "ap", serverId: "s1" });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(create.mock.calls[0][0].data.environmentId).toBe("env-default");
   });
 
   it("generates a magic sslip.io domain when the server has a public IP", async () => {
