@@ -64,10 +64,13 @@ import {
 } from "../webhooks/webhook-verify";
 import {
   TEMPLATES,
-  buildTemplateEnv,
   templateMetaList,
   type TemplateMeta,
 } from "../templates/catalog";
+import { toManifest, type FormField } from "../templates/template-manifest";
+import { resolveVariables } from "../templates/template-resolver";
+import { rewriteHostPorts } from "../templates/install-compose";
+import { PortAllocatorService } from "./port-allocator.service";
 import { probeSsl, type SslStatus } from "./ssl-probe";
 import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
@@ -164,6 +167,21 @@ export interface DomainView {
   ssl: SslStatus;
 }
 
+/** Capture the user's non-secret install choices (timezone, username, ...) for the record, but never
+ *  persist a secret field's value — installConfig is bookkeeping, not a secret store (SPEC §8). */
+function redactInstallConfig(
+  fields: Record<string, string> | undefined,
+  defs: FormField[] | undefined,
+): Record<string, string> | null {
+  if (!fields) return null;
+  const secretKeys = new Set((defs ?? []).filter((f) => f.secret).map((f) => f.key));
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (!secretKeys.has(k)) out[k] = v; // secret field values are dropped, not stored
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 @Injectable()
 export class ApplicationsService {
   constructor(
@@ -181,6 +199,7 @@ export class ApplicationsService {
     private readonly ai: AiService,
     private readonly teamDefaults: TeamDefaultsService,
     private readonly containerMetricsSvc: ContainerMetricsService,
+    private readonly portAlloc: PortAllocatorService,
   ) {}
 
   /**
@@ -341,20 +360,32 @@ export class ApplicationsService {
         webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
       },
     });
+    return this.finishCreate(app, userId, server.teamId, dto.deploy, server.publicIp ?? server.publicIpv6);
+  }
+
+  /** Shared post-insert tail for both create() and createFromTemplate(): grant-on-create access,
+   *  audit, uptime monitor, best-effort first deploy, and the AppView projection. Kept out of any
+   *  enclosing transaction — a fire-and-forget deploy or monitor must never run inside the tx. */
+  private async finishCreate(
+    app: Application,
+    userId: string,
+    teamId: string,
+    deploy: boolean | undefined,
+    serverIp: string | null | undefined,
+  ): Promise<AppView> {
     // Grant-on-create: the creator keeps access to what they made even if later restricted.
-    await this.access.grantResourceAccess(userId, server.teamId, app.id);
+    await this.access.grantResourceAccess(userId, teamId, app.id);
     await this.audit.log({ actor: userId, action: "app.create", target: app.id });
     // Auto-track uptime for a domained app (best-effort; never blocks creation).
     await this.monitors.createForApp(app).catch(() => undefined);
-    if (dto.deploy) {
-      // Best-effort: kick off the first deploy so a one-click install actually
-      // runs. Fire-and-forget — the build can take minutes, and a missing/offline
-      // agent must not fail creation (mirrors deployFromWebhook). RBAC is already
-      // enforced by requireRole(WRITE) above.
+    if (deploy) {
+      // Best-effort: kick off the first deploy so a one-click install actually runs. Fire-and-forget
+      // — the build can take minutes, and a missing/offline agent must not fail creation. RBAC is
+      // already enforced by requirePermission("apps:config") at the create site.
       void this.runDeploy(app, userId).catch(() => undefined);
     }
-    const perms = await this.access.membershipPermissions(userId, server.teamId);
-    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, server.publicIp ?? server.publicIpv6);
+    const perms = await this.access.membershipPermissions(userId, teamId);
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, serverIp);
   }
 
   /** One-click template catalog (gallery metadata only). */
@@ -362,24 +393,84 @@ export class ApplicationsService {
     return templateMetaList();
   }
 
-  /** Instantiate a curated template as a COMPOSE app (secrets generated here). */
+  /**
+   * Instantiate a curated template as a COMPOSE app, RESOLVED at install time: fresh host ports are
+   * allocated and the baked compose is rewritten to them (so installing the same template twice never
+   * collides on a host port), env is resolved from the manifest (typed fields + variables + user
+   * overrides), and portMappings/installConfig are persisted. The port allocation + the app insert run
+   * in ONE transaction (the allocator's advisory lock is held until commit) so two concurrent installs
+   * serialize and get distinct ports.
+   */
   async createFromTemplate(
     userId: string,
     slug: string,
-    input: { name: string; serverId: string; environmentId?: string; deploy?: boolean },
+    input: { name: string; serverId: string; environmentId?: string; deploy?: boolean; fields?: Record<string, string> },
   ): Promise<AppView> {
     const tpl = TEMPLATES[slug];
     if (!tpl) throw new NotFoundException("template not found");
-    return this.create(userId, {
-      name: input.name,
-      serverId: input.serverId,
-      templateSlug: slug,
-      source: "COMPOSE",
-      composeFile: tpl.composeFile,
-      env: buildTemplateEnv(tpl),
-      environmentId: input.environmentId,
-      deploy: input.deploy,
+    const server = await this.prisma.server.findUnique({ where: { id: input.serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "apps:config");
+    if (input.environmentId) await this.assertEnvInTeam(input.environmentId, server.teamId);
+    const environmentId =
+      input.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
+
+    const manifest = toManifest(tpl);
+    const exposures = manifest.exposure ?? [];
+    const magicSuffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
+
+    // Probe listening host ports OUTSIDE the transaction — it is an agent network round-trip and must
+    // not run inside the DB transaction (would hold the connection idle-in-tx and risk the tx timeout).
+    const probed = exposures.length ? await this.portAlloc.probeUsedPorts(server.id) : new Set<number>();
+
+    const app = await this.prisma.$transaction(async (tx) => {
+      // Allocate inside the tx (fast DB-only ops): the advisory lock is held until this transaction
+      // commits, so a concurrent install cannot pick the same port between our allocation and our insert.
+      const allocated = exposures.length ? await this.portAlloc.allocate(server.id, exposures.length, tx, probed) : [];
+      const { compose, portMappings } = rewriteHostPorts(manifest.composeFile, exposures, allocated);
+      const allocatedPorts = Object.fromEntries(
+        exposures.map((e, i) => [`${e.serviceName}:${e.containerPort}`, allocated[i]]),
+      );
+      const env = resolveVariables(manifest, {
+        appName: input.name,
+        publicIp: server.publicIp,
+        publicIpv6: server.publicIpv6,
+        wildcardDomain: server.wildcardDomain,
+        magicSuffix,
+        allocatedPorts,
+        userFields: input.fields,
+      });
+      const installConfig = redactInstallConfig(input.fields, manifest.fields);
+      const composeWebService = this.composeWeb({ templateSlug: slug, composeFile: compose })?.service ?? null;
+      const expose = this.resolveExpose({ name: input.name }, server, "COMPOSE", composeWebService);
+      return tx.application.create({
+        data: {
+          name: input.name,
+          templateSlug: slug,
+          environmentId,
+          source: "COMPOSE",
+          composeFile: compose,
+          serverId: server.id,
+          teamId: server.teamId,
+          env: {} as Prisma.InputJsonValue,
+          envEnc: this.crypto.encrypt(JSON.stringify(env)),
+          hostPort: null,
+          containerPort: 80,
+          domain: expose.domain,
+          https: expose.https,
+          exposeMode: expose.exposeMode,
+          domainKind: expose.domainKind,
+          certType: expose.certType,
+          tags: [],
+          webhookToken: generateWebhookToken(),
+          webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
+          portMappings: portMappings as unknown as Prisma.InputJsonValue,
+          installConfig: (installConfig as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+        },
+      });
     });
+
+    return this.finishCreate(app, userId, server.teamId, input.deploy, server.publicIp ?? server.publicIpv6);
   }
 
   async list(userId: string): Promise<AppView[]> {

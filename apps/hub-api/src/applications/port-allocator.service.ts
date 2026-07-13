@@ -51,24 +51,33 @@ export class PortAllocatorService {
     private readonly config: ConfigService,
   ) {}
 
-  async allocate(serverId: string, count: number, tx?: Prisma.TransactionClient): Promise<number[]> {
-    // Probe OUTSIDE the transaction — it's a network round-trip and non-Tugra ports don't race with
-    // our reservation, so they need no lock.
-    const probed = await this.probeUsedPorts(serverId);
+  async allocate(
+    serverId: string,
+    count: number,
+    tx?: Prisma.TransactionClient,
+    probed?: Set<number>,
+  ): Promise<number[]> {
+    // The probe is a network round-trip and MUST NOT run inside a transaction (it would hold the
+    // pooled connection idle-in-transaction and can outlast Prisma's default 5s tx timeout). Standalone
+    // (no tx): probe here, before our own tx opens. Composed into a caller's tx: the caller pre-probes
+    // OUTSIDE its transaction and passes `probed` in; we never probe inside their open transaction.
+    const seen = probed ?? (tx ? new Set<number>() : await this.probeUsedPorts(serverId));
 
     const run = async (client: Prisma.TransactionClient): Promise<number[]> => {
       // Serialize concurrent allocations for this server; xact-scoped → released on commit/rollback.
       await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${serverId}))`;
       const used = await this.gatherUsed(client, serverId);
-      for (const p of probed) used.add(p);
+      for (const p of seen) used.add(p);
       return this.pickFree(used, count);
     };
 
     return tx ? run(tx) : this.prisma.$transaction(run);
   }
 
-  /** Best-effort probe of listening host ports; empty when the agent is offline or the probe fails. */
-  private async probeUsedPorts(serverId: string): Promise<Set<number>> {
+  /** Best-effort probe of listening host ports; empty when the agent is offline or the probe fails.
+   *  Public so a tx-composing caller (e.g. template install) can run it OUTSIDE its transaction and
+   *  pass the result into allocate(). */
+  async probeUsedPorts(serverId: string): Promise<Set<number>> {
     if (!this.agentWs.isOnline(serverId)) return new Set();
     try {
       const { output } = await this.agentWs.sendCommand(serverId, PROBE_CMD, "deploy", PROBE_TIMEOUT_MS);
