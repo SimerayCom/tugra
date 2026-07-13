@@ -40,6 +40,7 @@ import type {
   TeamMember,
   TeamRole,
   Template,
+  TemplateManifest,
   TokenPair,
 } from "./types";
 
@@ -597,7 +598,22 @@ export const api = {
   listTemplates() {
     return apiFetch<Template[]>("/apps/templates");
   },
-  createFromTemplate(slug: string, input: { name: string; serverId: string; environmentId?: string; deploy?: boolean }) {
+  getTemplateManifest(slug: string, serverId?: string) {
+    const qs = serverId ? `?serverId=${encodeURIComponent(serverId)}` : "";
+    return apiFetch<TemplateManifest>(`/apps/templates/${slug}${qs}`);
+  },
+  createFromTemplate(
+    slug: string,
+    input: {
+      name: string;
+      serverId: string;
+      environmentId?: string;
+      deploy?: boolean;
+      fields?: Record<string, string>;
+      composeOverride?: string;
+      envOverride?: Record<string, string>;
+    },
+  ) {
     return apiFetch<Application>(`/apps/templates/${slug}`, {
       method: "POST",
       body: JSON.stringify(input),
