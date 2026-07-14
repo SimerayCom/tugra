@@ -40,6 +40,7 @@ import {
   containerName,
   type AppSpec,
   type AppVolume,
+  type AppConfigMount,
   type RegistryAuth,
 } from "../deploy/deploy-script";
 import {
@@ -67,7 +68,7 @@ import {
   templateMetaList,
   type TemplateMeta,
 } from "../templates/catalog";
-import { publicManifest, toManifest, validateInstallFields, type FormField, type PublicManifest } from "../templates/template-manifest";
+import { publicManifest, toManifest, validateConfigMountServiceName, validateConfigMountTarget, validateInstallFields, type FormField, type PublicManifest } from "../templates/template-manifest";
 import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts } from "../templates/install-compose";
 import { assertSafeCompose } from "../deploy/compose-safety";
@@ -426,10 +427,17 @@ export class ApplicationsService {
 
     const manifest = toManifest(tpl);
     const exposures = manifest.exposure ?? [];
+    const mounts = manifest.mounts ?? [];
     const magicSuffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
 
     // Validate user field values against the typed field defs (regex/min/max/required).
     validateInstallFields(input.fields, manifest.fields);
+    // Validate each config mount before it becomes a host bind in the (assertSafeCompose-bypassed)
+    // Tugra override: the serviceName is a raw YAML key and the target is the bind's container path.
+    for (const m of mounts) {
+      validateConfigMountServiceName(m.serviceName);
+      validateConfigMountTarget(m.target);
+    }
     // A fork-free compose override is user-authored → reject any host-escaping directive before it is
     // ever written to a host and run (privileged / docker.sock / host binds / dangerous caps / …).
     if (input.composeOverride) assertSafeCompose(input.composeOverride);
@@ -445,7 +453,7 @@ export class ApplicationsService {
       const allocated = exposures.length ? await this.portAlloc.allocate(server.id, exposures.length, tx, probed) : [];
       // Rewrite ports on whichever compose we install (override or template). When the override's
       // ports don't match the exposure metadata, rewriteHostPorts is a no-op — the user owns them.
-      const { compose, portMappings } = rewriteHostPorts(baseCompose, exposures, allocated);
+      const { compose, portMappings, mounts: rewrittenMounts } = rewriteHostPorts(baseCompose, exposures, allocated, mounts);
       const allocatedPorts = Object.fromEntries(
         exposures.map((e, i) => [`${e.serviceName}:${e.containerPort}`, allocated[i]]),
       );
@@ -486,6 +494,10 @@ export class ApplicationsService {
           webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
           portMappings: portMappings as unknown as Prisma.InputJsonValue,
           installConfig: (installConfig as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+          // Persist config-mount bodies with ${KEY} placeholders intact (secrets resolve at deploy).
+          configMounts: rewrittenMounts?.length
+            ? (rewrittenMounts as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         },
       });
     });
@@ -1483,6 +1495,10 @@ export class ApplicationsService {
     return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
   }
 
+  private appConfigMounts(app: Application): AppConfigMount[] {
+    return Array.isArray(app.configMounts) ? (app.configMounts as unknown as AppConfigMount[]) : [];
+  }
+
   private appGitToken(app: Application): string | null {
     if (!app.gitTokenEnc) return null;
     try {
@@ -1587,6 +1603,8 @@ export class ApplicationsService {
       forwardAuth: app.forwardAuth,
       certType: app.certType,
       composeWebService: web?.service ?? null,
+      // Config mounts are a template (COMPOSE) feature only — never for a docker-run app.
+      configMounts: app.source === "COMPOSE" ? this.appConfigMounts(app) : null,
     };
   }
 

@@ -42,6 +42,19 @@ describe("buildConfigSnapshot", () => {
     expect(snap.memoryMb).toBe(512);
     expect(snap.containerPort).toBe(80);
   });
+
+  it("fingerprints config-mount content (never stored verbatim)", () => {
+    const snap = buildConfigSnapshot(
+      spec({
+        source: "COMPOSE",
+        configMounts: [{ serviceName: "redis", target: "/etc/redis.conf", content: "requirepass hunter2\n", mode: "0644" }],
+      }),
+    );
+    expect(snap.configMounts).toEqual([
+      { target: "/etc/redis.conf", mode: "0644", fp: expect.stringMatching(/^[0-9a-f]{12}$/) },
+    ]);
+    expect(JSON.stringify(snap)).not.toContain("hunter2");
+  });
 });
 
 describe("diffSnapshots", () => {
@@ -74,5 +87,15 @@ describe("diffSnapshots", () => {
     const changes = diffSnapshots(prev, next);
     expect(changes).toContainEqual({ field: "volume.data", kind: "changed", before: "/d", after: "/data" });
     expect(changes).toContainEqual({ field: "gitToken", kind: "added" });
+  });
+
+  it("reports a config-mount content change (keyed by target) without revealing content", () => {
+    const mk = (content: string) =>
+      buildConfigSnapshot(spec({ source: "COMPOSE", configMounts: [{ serviceName: "r", target: "/etc/r.conf", content, mode: "0644" }] }));
+    const changes = diffSnapshots(mk("x=1"), mk("x=2"));
+    expect(changes).toContainEqual({ field: "configMount./etc/r.conf", kind: "changed" });
+    expect(JSON.stringify(changes)).not.toContain("x=2");
+    // unchanged content → no entry
+    expect(diffSnapshots(mk("x=1"), mk("x=1"))).toEqual([]);
   });
 });

@@ -26,6 +26,8 @@ export interface ConfigSnapshot {
   domainRedirect?: "www" | "root" | null;
   securityHeaders?: boolean;
   volumes: { name: string; path: string }[];
+  /** config mount target → 12-hex fingerprint of its (placeholder) content — never stored verbatim. */
+  configMounts?: { target: string; mode?: string; fp: string }[];
   /** env var name → 12-hex fingerprint of its value (value itself is never stored). */
   env: Record<string, string>;
   hasGitToken: boolean;
@@ -90,6 +92,9 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     domainRedirect: spec.domainRedirect ?? null,
     securityHeaders: spec.securityHeaders,
     volumes: (spec.volumes ?? []).map((v) => ({ name: v.name, path: v.path })),
+    ...(spec.configMounts && spec.configMounts.length
+      ? { configMounts: spec.configMounts.map((m) => ({ target: m.target, mode: m.mode, fp: fingerprint(m.content) })) }
+      : {}),
     env,
     hasGitToken: !!spec.gitToken,
     hasRegistryAuth: !!spec.registryAuth,
@@ -131,6 +136,19 @@ export function diffSnapshots(
   }
   for (const [name] of pv) {
     if (!nv.has(name)) changes.push({ field: `volume.${name}`, kind: "removed" });
+  }
+
+  // config mounts: compare by target → content fingerprint (+ mode); content is never revealed.
+  const pm = new Map((prev.configMounts ?? []).map((m) => [m.target, m]));
+  const nm = new Map((next.configMounts ?? []).map((m) => [m.target, m]));
+  for (const [target, m] of nm) {
+    const p = pm.get(target);
+    if (!p) changes.push({ field: `configMount.${target}`, kind: "added" });
+    else if (p.fp !== m.fp || p.mode !== m.mode)
+      changes.push({ field: `configMount.${target}`, kind: "changed" });
+  }
+  for (const [target] of pm) {
+    if (!nm.has(target)) changes.push({ field: `configMount.${target}`, kind: "removed" });
   }
 
   // env: presence + fingerprint changes, never revealing values

@@ -7,8 +7,10 @@ import {
   buildContainersScript,
   buildLogsScript,
   composeProject,
+  interpolateMountContent,
   parseContainers,
 } from "./compose-script";
+import { parse as parseYaml } from "yaml";
 import type { AppSpec } from "./deploy-script";
 
 const base: AppSpec = {
@@ -81,6 +83,76 @@ describe("compose-script", () => {
     expect(yaml).not.toContain("certresolver");
   });
 
+  it("materializes config mounts (interpolated) + a read-only bind override without a domain", () => {
+    const spec: AppSpec = {
+      ...base,
+      env: { REDIS_PASSWORD: "s3cret" },
+      configMounts: [
+        { serviceName: "redis", target: "/usr/local/etc/redis/redis.conf", content: "requirepass ${REDIS_PASSWORD}\n", mode: "0644" },
+      ],
+    };
+    const s = buildComposeUpScript(spec);
+    expect(s).toContain("mkdir -p /etc/tugra/compose/abc/mounts");
+    expect(s).toContain("chmod 0644 /etc/tugra/compose/abc/mounts/0");
+    // the written file decodes to the INTERPOLATED content (secret resolved, not the ${KEY} placeholder)
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/mounts\/0/);
+    expect(m).toBeTruthy();
+    expect(Buffer.from(m![1], "base64").toString()).toBe("requirepass s3cret\n");
+    // override written + layered even without a domain, targeting the mount's service with a :ro bind
+    expect(s).toContain("base64 -d > /etc/tugra/compose/abc/docker-compose.tugra.yml");
+    expect(s).toContain("-f /etc/tugra/compose/abc/docker-compose.tugra.yml");
+    const o = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
+    const yaml = Buffer.from(o![1], "base64").toString();
+    expect(yaml).toContain("services:\n  redis:");
+    expect(yaml).toContain('"/etc/tugra/compose/abc/mounts/0:/usr/local/etc/redis/redis.conf:ro"');
+    expect(yaml).not.toContain("tugra-proxy"); // no proxy block without magic
+  });
+
+  it("combines proxy labels/networks and a config bind on the same web service (magic + mount)", () => {
+    const spec: AppSpec = {
+      ...base,
+      domain: "web-x.1-2-3-4.sslip.io",
+      composeWebService: "web",
+      containerPort: 3000,
+      certType: "http",
+      configMounts: [{ serviceName: "web", target: "/etc/app.conf", content: "a=1\n" }],
+    };
+    const s = buildComposeUpScript(spec);
+    const o = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
+    const yaml = Buffer.from(o![1], "base64").toString();
+    expect(yaml).toContain("services:\n  web:");
+    expect(yaml).toContain("- tugra-proxy"); // networks
+    expect(yaml).toContain("traefik.enable=true"); // labels
+    expect(yaml).toContain('"/etc/tugra/compose/abc/mounts/0:/etc/app.conf:ro"'); // bind
+    expect(yaml).toContain("tugra-proxy:\n    external: true"); // top-level networks (magic)
+  });
+
+  it("merges multiple mounts on one service into a SINGLE volumes: block (valid YAML)", () => {
+    const spec: AppSpec = {
+      ...base,
+      configMounts: [
+        { serviceName: "web", target: "/etc/a.conf", content: "a\n" },
+        { serviceName: "web", target: "/etc/b.conf", content: "b\n" },
+      ],
+    };
+    const s = buildComposeUpScript(spec);
+    const o = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
+    const yaml = Buffer.from(o![1], "base64").toString();
+    // exactly one `volumes:` key under the service (duplicate mapping keys are invalid YAML)
+    expect((yaml.match(/volumes:/g) ?? []).length).toBe(1);
+    // the override parses (yaml throws on duplicate keys) and carries BOTH binds
+    const doc = parseYaml(yaml) as { services: { web: { volumes: string[] } } };
+    expect(doc.services.web.volumes).toEqual([
+      "/etc/tugra/compose/abc/mounts/0:/etc/a.conf:ro",
+      "/etc/tugra/compose/abc/mounts/1:/etc/b.conf:ro",
+    ]);
+  });
+
+  it("writes no mounts dir/override when there are no config mounts (regression)", () => {
+    expect(buildComposeUpScript(base)).not.toContain("/mounts");
+    expect(buildComposeUpScript(base)).not.toContain("docker-compose.tugra.yml");
+  });
+
   it("writes a .env and passes --env-file when the app has env vars", () => {
     const s = buildComposeUpScript({ ...base, env: { FOO: "bar" } });
     expect(s).toContain("base64 -d > /etc/tugra/compose/abc/.env");
@@ -141,5 +213,22 @@ describe("compose-script", () => {
     expect(buildLogsScript(img, 50)).toBe("docker logs --tail 50 tugra_abc 2>&1");
     expect(buildLogsScript(img, 0)).toContain("--tail 1");
     expect(buildLogsScript(img, 99999)).toContain("--tail 2000");
+  });
+});
+
+describe("interpolateMountContent", () => {
+  const env = { REDIS_PASSWORD: "s3cret", PORT: "80" };
+
+  it("substitutes known env keys and leaves $uri / ${UNKNOWN} / literal $$ untouched", () => {
+    expect(interpolateMountContent("requirepass ${REDIS_PASSWORD}\nport ${PORT}\n", env)).toBe(
+      "requirepass s3cret\nport 80\n",
+    );
+    expect(interpolateMountContent("a $uri b", env)).toBe("a $uri b"); // no braces → untouched
+    expect(interpolateMountContent("x ${UNKNOWN} y", env)).toBe("x ${UNKNOWN} y"); // not in env → untouched
+    expect(interpolateMountContent("cost $$5", env)).toBe("cost $$5"); // literal $$
+  });
+
+  it("does not substitute a partial key match", () => {
+    expect(interpolateMountContent("${PASS}", { PASSWORD: "x" })).toBe("${PASS}"); // PASS ≠ PASSWORD
   });
 });

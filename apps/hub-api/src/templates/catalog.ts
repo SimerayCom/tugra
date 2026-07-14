@@ -103,6 +103,34 @@ volumes:
   db_data:
 `,
   },
+  redis: {
+    slug: "redis",
+    name: "Redis",
+    description: "Redis in-memory data store, password-protected via a mounted redis.conf.",
+    category: "database",
+    icon: "🧠",
+    secrets: ["REDIS_PASSWORD"],
+    // A config file materialized + bind-mounted read-only at deploy. `${REDIS_PASSWORD}` stays a
+    // placeholder at rest (in configMounts) and is resolved from the app's env when the file is written.
+    mounts: [
+      {
+        serviceName: "redis",
+        target: "/usr/local/etc/redis/redis.conf",
+        content: "appendonly yes\nrequirepass ${REDIS_PASSWORD}\n",
+        mode: "0644",
+      },
+    ],
+    composeFile: `services:
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+      - redis_data:/data
+volumes:
+  redis_data:
+`,
+  },
   ghost: {
     slug: "ghost",
     name: "Ghost",

@@ -920,6 +920,30 @@ describe("ApplicationsService", () => {
     expect(ic).not.toContain("topsecret-user-value");
   });
 
+  it("v2: persists a template's config mounts with the ${KEY} placeholder (resolved secret stays in envEnc only)", async () => {
+    const { prisma, access, create } = templatePrisma();
+    // redis is portless → no exposures → allocate is never called.
+    const portAlloc = { allocate: jest.fn() };
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "redis", { name: "cache", serverId: "s1" });
+    const data = create.mock.calls[0][0].data;
+    expect(portAlloc.allocate).not.toHaveBeenCalled();
+    // The mount body is persisted with the ${REDIS_PASSWORD} placeholder, NOT the resolved secret.
+    expect(data.configMounts).toEqual([
+      { serviceName: "redis", target: "/usr/local/etc/redis/redis.conf", content: "appendonly yes\nrequirepass ${REDIS_PASSWORD}\n", mode: "0644" },
+    ]);
+    // The resolved secret exists only in the encrypted env, never in configMounts (secret-at-rest).
+    expect(data.envEnc).toContain("REDIS_PASSWORD");
+    expect(JSON.stringify(data.configMounts)).not.toContain("REDIS_PASSWORD=");
+  });
+
+  it("v2: persists no config mounts for a template that has none (regression)", async () => {
+    const { prisma, access, create } = templatePrisma();
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500, 20501]) };
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "wordpress", { name: "blog", serverId: "s1" });
+    // no mounts → configMounts set to Prisma.JsonNull (not an array of mount objects).
+    expect(Array.isArray(create.mock.calls[0][0].data.configMounts)).toBe(false);
+  });
+
   it("v2: still resolves the team-default environment and enforces RBAC", async () => {
     const { prisma, access, create } = templatePrisma();
     const portAlloc = { allocate: jest.fn().mockResolvedValue([20500]) };

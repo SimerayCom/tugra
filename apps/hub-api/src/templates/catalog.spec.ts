@@ -5,6 +5,7 @@ import {
   buildTemplateEnv,
   type SecretSpec,
 } from "./catalog";
+import { publicManifest, toManifest, validateConfigMountTarget } from "./template-manifest";
 
 const secretKey = (s: SecretSpec): string => (typeof s === "string" ? s : s.key);
 
@@ -19,9 +20,12 @@ describe("template catalog", () => {
       expect(tpl.slug).toBe(key);
       expect(tpl.name).toBeTruthy();
       expect(tpl.composeFile).toContain("services:");
-      // every declared secret must be referenced in the compose file
+      // every declared secret must be referenced in the compose file OR in a config-mount body
       for (const s of tpl.secrets ?? []) {
-        expect(`${key}:${referencesSecret(tpl.composeFile, secretKey(s))}`).toBe(`${key}:true`);
+        const sk = secretKey(s);
+        const referenced =
+          referencesSecret(tpl.composeFile, sk) || (tpl.mounts ?? []).some((m) => referencesSecret(m.content, sk));
+        expect(`${key}:${sk}:${referenced}`).toBe(`${key}:${sk}:true`);
       }
     }
   });
@@ -41,9 +45,13 @@ describe("template catalog", () => {
     }
   });
 
-  it("every template publishes at least one host port", () => {
+  it("every template publishes a host port, unless it is a portless config-mount building block", () => {
     for (const [slug, tpl] of Object.entries(TEMPLATES)) {
-      expect(`${slug}:${/"\d+:\d+"/.test(tpl.composeFile)}`).toBe(`${slug}:true`);
+      const publishes = /"\d+:\d+"/.test(tpl.composeFile);
+      // A data-store like redis may legitimately publish no port (consumed over the compose network or
+      // exposed manually); such a template must at least carry config mounts to justify the install.
+      const portlessMountOnly = !publishes && !!(tpl.mounts && tpl.mounts.length);
+      expect(`${slug}:${publishes || portlessMountOnly}`).toBe(`${slug}:true`);
     }
   });
 
@@ -91,6 +99,25 @@ describe("template catalog", () => {
         expect(m.serviceName && m.target && typeof m.content === "string").toBeTruthy();
       }
     }
+  });
+
+  it("every curated mount target is a safe absolute path", () => {
+    for (const tpl of Object.values(TEMPLATES)) {
+      for (const m of tpl.mounts ?? []) {
+        expect(() => validateConfigMountTarget(m.target)).not.toThrow();
+      }
+    }
+  });
+
+  it("ships the redis proof template with a config mount whose content is never exposed to the form", () => {
+    const redis = TEMPLATES["redis"];
+    expect(redis).toBeTruthy();
+    expect(redis.mounts?.[0]).toMatchObject({ serviceName: "redis", target: "/usr/local/etc/redis/redis.conf" });
+    expect(redis.mounts?.[0].content).toContain("${REDIS_PASSWORD}"); // placeholder, resolved at deploy
+    // the public (form) manifest drops the mount content — no config body leaks to the client
+    const p = publicManifest(toManifest(redis), false);
+    expect(p.mounts).toEqual([{ serviceName: "redis", target: "/usr/local/etc/redis/redis.conf", mode: "0644" }]);
+    expect(JSON.stringify(p)).not.toContain("requirepass");
   });
 
   it("most templates carry a documentation URL", () => {

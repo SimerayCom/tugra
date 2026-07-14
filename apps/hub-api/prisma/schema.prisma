@@ -626,6 +626,7 @@ model Application {
   volumes        Json?
   portMappings   Json?        // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
   installConfig  Json?        // redacted user field selections captured at template install (never secret values)
+  configMounts   Json?        // [{serviceName, target, content, mode}] — template config files materialized + bound at deploy (${KEY} placeholders, never resolved secrets)
   gitTokenEnc     String?
   gitSource       GitSource?   @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
   gitSourceId     String?

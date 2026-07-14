@@ -3,8 +3,9 @@
 // Coolify service compose into Tugra's baked catalog shape AND derives the rich install-time metadata
 // (exposure[] for host-port publishing, later mounts[]/variables[]). No I/O — the importer handles
 // fetch/base64/write; this file is string surgery only, so it stays type-checked + unit-tested.
+import { parse, stringify } from "yaml";
 import type { SecretKind } from "./catalog";
-import type { ExposePort } from "./template-manifest";
+import type { ConfigMount, ExposePort } from "./template-manifest";
 
 export const HOST_PORT_BASE = 20000; // synthesized host ports start here (curated use < 20000)
 
@@ -227,49 +228,97 @@ function declareNamedVolumes(text: string): string {
   return lines.join("\n");
 }
 
-export interface TransformedTemplate {
-  compose: string;
-  secrets: { key: string; kind?: SecretKind; len?: number }[];
-  exposure: ExposePort[];
-}
-
 /**
- * Transform a raw Coolify compose into Tugra's baked catalog shape + exposure metadata, or throw
- * `{ skip }`. The host port stays baked (backward-compatible — the old install path is unchanged; the
- * install-time resolver rewrites it later). v2 recovers templates that carry their own `ports:`
- * (their published host ports are stripped and a single web port is re-published on the sequence,
- * keeping catalog-wide host-port uniqueness) but still skips inline `content:` mounts (recovered with
- * their materialization in a later slice).
+ * Recover inline config-file mounts — Coolify's long-form service `volumes:` entry
+ * `{ type: bind, target, content }` and the top-level `configs: { name: { content } }` referenced by a
+ * service `configs:` — into `mounts[]` metadata, removing the content-bearing constructs from the
+ * compose. Returns the ORIGINAL text byte-for-byte when there is nothing to recover, so non-mount
+ * templates stay identical (parse+re-stringify only happens for templates we actually change). Any
+ * construct we cannot recover is left in place → transformCompose's final `content:` guard skips it.
  */
-export function transformCompose(rawCompose: string, hostPort: number, containerPort: number): TransformedTemplate {
-  let text = rawCompose;
+export function extractConfigMounts(compose: string): { compose: string; mounts: ConfigMount[] } {
+  // Fast path: no inline content and no top-level configs → nothing to do, keep the text verbatim.
+  if (!/^\s*content:/m.test(compose) && !/^configs:\s*$/m.test(compose)) return { compose, mounts: [] };
 
-  if (/^\s*content:/m.test(text)) throw { skip: "inline-content-mount" };
-  if (/^\s*build:/m.test(text)) throw { skip: "build-context" };
-  if (/^\s*(include|extends):/m.test(text)) throw { skip: "include/extends" };
-  if (/source:\s*\.\.?\//.test(text) || /-\s*\.\.?\/[^\s:]+:/.test(text)) throw { skip: "relative-bind-mount" };
+  let doc: unknown;
+  try {
+    doc = parse(compose);
+  } catch {
+    return { compose, mounts: [] }; // unparseable → leave it for the downstream guard to skip
+  }
+  if (!doc || typeof doc !== "object") return { compose, mounts: [] };
+  const root = doc as Record<string, any>;
+  const services =
+    root.services && typeof root.services === "object" ? (root.services as Record<string, any>) : {};
+  const topConfigs =
+    root.configs && typeof root.configs === "object" ? (root.configs as Record<string, any>) : {};
+  const mounts: ConfigMount[] = [];
 
-  // Recover own-ports: drop every published host port (incl. DB publishes — a DB must never publish
-  // to the host) and re-publish a single web port on the assigned sequence port below. Handles both
-  // block style (`ports:\n  - "x:y"`) and inline flow style (`ports: ["x:y"]` / `ports: "x:y"`).
-  text = stripBlock(text, /^(\s+)ports:\s*$/m);
-  text = text.split("\n").filter((l) => !/^\s+ports:\s*[[{"']/.test(l)).join("\n");
-
-  text = stripBlock(text, /^(\s*)labels:\s*$/m); // proxy labels — unused
-
-  // Boundary lookbehind: `SERVICE_` must NOT be preceded by an identifier char, so a token is never
-  // spuriously extracted from inside a larger env var NAME (e.g. `DUPLICATI__WEBSERVICE_PASSWORD`
-  // must not yield a phantom `SERVICE_PASSWORD`).
-  const tokens = [...new Set(text.match(/(?<![A-Z0-9_])SERVICE_[A-Z0-9_]+/g) ?? [])];
-  const secrets = new Map<string, Classified & { type: "secret" }>();
-  const urls = new Map<string, Classified & { type: "fqdn" | "url" }>();
-  for (const tok of tokens) {
-    const c = classifyToken(tok);
-    if (!c) throw { skip: `unknown-magic:${tok}` };
-    if (c.type === "secret") secrets.set(tok, c);
-    else urls.set(tok, c);
+  for (const [svcName, svc] of Object.entries(services)) {
+    if (!svc || typeof svc !== "object") continue;
+    // A service key must be a real compose identifier; anything else (a crafted multi-line YAML key)
+    // is left unrecovered so its content survives → the caller's final `content:` guard skips it,
+    // rather than emitting an injectable serviceName into the override.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(svcName)) continue;
+    // Shape A: a service `volumes:` long-form entry carrying inline `content`.
+    if (Array.isArray((svc as any).volumes)) {
+      (svc as any).volumes = (svc as any).volumes.filter((v: any) => {
+        if (v && typeof v === "object" && typeof v.content === "string" && typeof v.target === "string") {
+          mounts.push({ serviceName: svcName, target: v.target, content: v.content });
+          return false; // strip the recovered entry
+        }
+        return true;
+      });
+      if ((svc as any).volumes.length === 0) delete (svc as any).volumes;
+    }
+    // Shape B: a service `configs:` reference to a top-level config with inline content.
+    if ((svc as any).configs != null) {
+      const refs = Array.isArray((svc as any).configs) ? (svc as any).configs : [];
+      const kept: any[] = [];
+      for (const ref of refs) {
+        const source = typeof ref === "string" ? ref : ref?.source;
+        const target =
+          typeof ref === "string"
+            ? `/${ref}`
+            : typeof ref?.target === "string"
+              ? ref.target
+              : source
+                ? `/${source}`
+                : undefined;
+        const conf = source ? topConfigs[source] : undefined;
+        if (conf && typeof conf === "object" && typeof conf.content === "string" && typeof target === "string") {
+          mounts.push({ serviceName: svcName, target, content: conf.content });
+        } else {
+          kept.push(ref); // unrecoverable reference → leave it (downstream guard skips)
+        }
+      }
+      if (kept.length) (svc as any).configs = kept;
+      else delete (svc as any).configs;
+    }
   }
 
+  // Drop any top-level config we materialized (those carrying inline content).
+  if (root.configs && typeof root.configs === "object") {
+    for (const [name, conf] of Object.entries(root.configs as Record<string, any>)) {
+      if (conf && typeof conf === "object" && typeof (conf as any).content === "string") {
+        delete (root.configs as Record<string, any>)[name];
+      }
+    }
+    if (Object.keys(root.configs).length === 0) delete root.configs;
+  }
+
+  if (mounts.length === 0) return { compose, mounts: [] }; // recovered nothing → keep original text
+  return { compose: stringify(root), mounts };
+}
+
+type SecretMap = Map<string, Classified & { type: "secret" }>;
+type UrlMap = Map<string, Classified & { type: "fqdn" | "url" }>;
+
+/** Resolve every SERVICE_* magic token in `text`: an environment-list entry `- SERVICE_X` becomes
+ *  `- KEY=${KEY}` (secret) or `- KEY=<literal>` (url/fqdn), and every remaining bare/`${...}` token is
+ *  replaced by its key (secret → leaves a `${KEY}` placeholder) or literal (url). Shared verbatim by
+ *  the compose AND each recovered mount's content so both resolve identically. */
+function resolveTokensInText(text: string, secrets: SecretMap, urls: UrlMap, hostPort: number): string {
   text = text
     .split("\n")
     .map((line) => {
@@ -281,8 +330,7 @@ export function transformCompose(rawCompose: string, hostPort: number, container
       return line;
     })
     .join("\n");
-
-  for (const tok of [...tokens].sort((a, b) => b.length - a.length)) {
+  for (const tok of [...secrets.keys(), ...urls.keys()].sort((a, b) => b.length - a.length)) {
     if (secrets.has(tok)) {
       text = text.split(tok).join(secrets.get(tok)!.key);
     } else {
@@ -290,10 +338,75 @@ export function transformCompose(rawCompose: string, hostPort: number, container
       text = text.split(`\${${tok}}`).join(lit).split(tok).join(lit);
     }
   }
+  return text;
+}
+
+export interface TransformedTemplate {
+  compose: string;
+  secrets: { key: string; kind?: SecretKind; len?: number }[];
+  exposure: ExposePort[];
+  mounts: ConfigMount[];
+}
+
+/**
+ * Transform a raw Coolify compose into Tugra's baked catalog shape + exposure metadata, or throw
+ * `{ skip }`. The host port stays baked (backward-compatible — the old install path is unchanged; the
+ * install-time resolver rewrites it later). v2 recovers templates that carry their own `ports:`
+ * (their published host ports are stripped and a single web port is re-published on the sequence,
+ * keeping catalog-wide host-port uniqueness) AND recovers inline `content:` mounts into `mounts[]`
+ * metadata (materialized + bound read-only at deploy); an unrecoverable `content:` shape still skips.
+ */
+export function transformCompose(rawCompose: string, hostPort: number, containerPort: number): TransformedTemplate {
+  let text = rawCompose;
+
+  if (/^\s*build:/m.test(text)) throw { skip: "build-context" };
+  if (/^\s*(include|extends):/m.test(text)) throw { skip: "include/extends" };
+  if (/source:\s*\.\.?\//.test(text) || /-\s*\.\.?\/[^\s:]+:/.test(text)) throw { skip: "relative-bind-mount" };
+
+  // Recover inline config-file mounts (content:) into mounts[] metadata BEFORE any line surgery, so a
+  // config body carrying its own `ports:`/`labels:`/tokens is never touched by the surgery below.
+  const extracted = extractConfigMounts(text);
+  text = extracted.compose;
+  const recovered = extracted.mounts;
+
+  // Recover own-ports: drop every published host port (incl. DB publishes — a DB must never publish
+  // to the host) and re-publish a single web port on the assigned sequence port below. Handles both
+  // block style (`ports:\n  - "x:y"`) and inline flow style (`ports: ["x:y"]` / `ports: "x:y"`).
+  text = stripBlock(text, /^(\s+)ports:\s*$/m);
+  text = text.split("\n").filter((l) => !/^\s+ports:\s*[[{"']/.test(l)).join("\n");
+
+  text = stripBlock(text, /^(\s*)labels:\s*$/m); // proxy labels — unused
+
+  // Boundary lookbehind: `SERVICE_` must NOT be preceded by an identifier char, so a token is never
+  // spuriously extracted from inside a larger env var NAME (e.g. `DUPLICATI__WEBSERVICE_PASSWORD`
+  // must not yield a phantom `SERVICE_PASSWORD`). Content bodies are scanned too — a config file may
+  // reference a `${SERVICE_PASSWORD}`/URL token that must resolve to the same key/literal.
+  const tokens = [
+    ...new Set(
+      [text, ...recovered.map((m) => m.content)]
+        .join("\n")
+        .match(/(?<![A-Z0-9_])SERVICE_[A-Z0-9_]+/g) ?? [],
+    ),
+  ];
+  const secrets = new Map<string, Classified & { type: "secret" }>();
+  const urls = new Map<string, Classified & { type: "fqdn" | "url" }>();
+  for (const tok of tokens) {
+    const c = classifyToken(tok);
+    if (!c) throw { skip: `unknown-magic:${tok}` };
+    if (c.type === "secret") secrets.set(tok, c);
+    else urls.set(tok, c);
+  }
+
+  text = resolveTokensInText(text, secrets, urls, hostPort);
+  const mounts: ConfigMount[] = recovered.map((m) => ({
+    ...m,
+    content: resolveTokensInText(m.content, secrets, urls, hostPort),
+  }));
 
   // Only a boundary-delimited SERVICE_ token counts as unresolved — a legit env var name that merely
-  // contains "SERVICE_" (e.g. WEBSERVICE_PASSWORD) is fine.
+  // contains "SERVICE_" (e.g. WEBSERVICE_PASSWORD) is fine. Check the compose AND every mount body.
   if (/(?<![A-Z0-9_])SERVICE_[A-Z0-9_]+/.test(text)) throw { skip: "unresolved-magic" };
+  if (mounts.some((m) => /(?<![A-Z0-9_])SERVICE_[A-Z0-9_]+/.test(m.content))) throw { skip: "unresolved-magic" };
 
   const injected = injectPorts(text, hostPort, containerPort);
   text = injected.text;
@@ -301,11 +414,15 @@ export function transformCompose(rawCompose: string, hostPort: number, container
 
   text = declareNamedVolumes(text);
 
+  // Safety net: any inline content we could not recover into mounts[] → skip (never bake a `content:`).
+  if (/^\s*content:/m.test(text)) throw { skip: "inline-content-mount" };
+
   return {
     compose: text.endsWith("\n") ? text : text + "\n",
     secrets: [...secrets.values()].map(({ key, kind, len }) => ({ key, kind, len })),
     exposure: injected.service
       ? [{ serviceName: injected.service, containerPort, defaultMode: "domain", public: true }]
       : [],
+    mounts,
   };
 }
