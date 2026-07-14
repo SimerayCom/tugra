@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { apiFetch } from "./api";
+import { apiFetch, api } from "./api";
 
 function jsonRes(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -57,5 +57,20 @@ describe("apiFetch 401 → cookie refresh → retry", () => {
     const fetchMock = vi.fn(async () => jsonRes(409, { message: "conflict" }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(apiFetch("/x", {}, false)).rejects.toThrow(/conflict/);
+  });
+});
+
+describe("api.listChannelEvents (single-source event list)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("GETs the canonical event list from /channels/events", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      seen.push(String(url));
+      return jsonRes(200, { events: ["deploy_failed", "backup_failed"] });
+    }));
+    const out = await api.listChannelEvents();
+    expect(out.events).toContain("backup_failed");
+    expect(seen[0]).toBe("/api/channels/events");
   });
 });

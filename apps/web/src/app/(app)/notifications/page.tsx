@@ -26,7 +26,8 @@ const FIELDS: Record<string, string[]> = {
   gotify: ["server", "token"],
 };
 const SECRET_FIELDS = new Set(["pass", "token", "botToken"]);
-const EVENTS = ["deploy_success", "deploy_failed", "deploy_rolled_back", "server_offline", "ssl_expiring", "token_expiring", "backup_failed", "backup_restore_failed"];
+// The subscribable event ids come from the backend (GET /channels/events) so the UI never drifts from
+// the enum. EVENT_LABEL maps each id → an i18n key (unknown ids fall back to the raw id).
 const EVENT_LABEL: Record<string, string> = {
   deploy_success: "eventDeploySuccess",
   deploy_failed: "eventDeployFailed",
@@ -45,6 +46,9 @@ export default function NotificationsPage() {
   const { teamId: scope } = useTeamScope();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: channels = [], isLoading, isError, refetch } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
+  // Single source of truth for the event list — the backend enum, so the UI can't drift.
+  const { data: eventsData } = useQuery({ queryKey: ["channelEvents"], queryFn: () => api.listChannelEvents() });
+  const EVENTS = eventsData?.events ?? [];
 
   // List follows the global scope (filter); create needs a concrete target team.
   const visible = scopeByTeam(channels, scope);
@@ -160,7 +164,7 @@ export default function NotificationsPage() {
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
               {EVENTS.map((e) => (
                 <label key={e} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
-                  <input type="checkbox" checked={events.includes(e)} onChange={() => toggleEvent(e)} /> {t(`notifications.${EVENT_LABEL[e]}`)}
+                  <input type="checkbox" checked={events.includes(e)} onChange={() => toggleEvent(e)} /> {t(`notifications.${EVENT_LABEL[e] ?? e}`)}
                 </label>
               ))}
             </div>

@@ -6,16 +6,19 @@
 export const PROTOCOL_VERSION = 2;
 
 /**
- * Notification event types — single source of truth for the hub (Zod enum) and
- * the web UI. Add new events here so backend validation and the UI never drift.
+ * Notification event types — single source of truth for the hub (Zod enum) and the web UI (served via
+ * GET /channels/events). Every value here is subscribable AND reachable through `fireForEvent`. Add new
+ * events here so backend validation and the UI never drift.
+ *
+ * NOTE: monitor up/down are intentionally NOT here — they fire via the MonitorChannel link
+ * (`fireForMonitor`), not general channel subscription, so subscribing to them via `eventTypes` would
+ * do nothing. A later slice routes them through `fireForEvent`; they will be re-added then.
  */
 export const EVENT_TYPES = [
   "deploy_success",
   "deploy_failed",
   "deploy_rolled_back",
   "server_offline",
-  "monitor_down",
-  "monitor_up",
   "ssl_expiring",
   "token_expiring",
   "backup_failed",

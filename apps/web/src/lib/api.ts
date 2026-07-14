@@ -479,6 +479,10 @@ export const api = {
   listChannels() {
     return apiFetch<Channel[]>("/channels");
   },
+  /** The canonical subscribable event ids — the single source the UI renders from (no drift). */
+  listChannelEvents() {
+    return apiFetch<{ events: string[] }>("/channels/events");
+  },
   createChannel(input: {
     name: string;
     type: string;
