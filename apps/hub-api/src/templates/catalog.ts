@@ -607,12 +607,22 @@ volumes:
 const GENERATED = (generated as unknown as { templates: Record<string, TemplateDef> })
   .templates;
 
-/** Full catalog: generated bulk + curated overrides (curated wins on slug clash). */
-export const TEMPLATES: Record<string, TemplateDef> = { ...GENERATED, ...CURATED };
+/**
+ * Assemble the full catalog: bundled generated bulk, overlaid by a (signed, verified) `remote` set,
+ * with the curated overrides ALWAYS winning. Precedence (last wins): generated < remote < curated —
+ * so a remote catalog can override a generated template or add new ones, but can never shadow a
+ * hand-curated slug. The DB-backed catalog service passes the verified remote templates here.
+ */
+export function buildCatalog(remote: Record<string, TemplateDef> = {}): Record<string, TemplateDef> {
+  return { ...GENERATED, ...remote, ...CURATED };
+}
 
-/** Gallery metadata for every template (no composeFile / secrets). */
-export function templateMetaList(): TemplateMeta[] {
-  return Object.values(TEMPLATES).map(({ slug, name, description, category, icon, logo, documentation }) => ({
+/** Full BUNDLED catalog (no remote overlay) — the always-present offline base. */
+export const TEMPLATES: Record<string, TemplateDef> = buildCatalog();
+
+/** Gallery metadata for a set of templates (no composeFile / secrets). Defaults to the bundled set. */
+export function templateMetaList(catalog: Record<string, TemplateDef> = TEMPLATES): TemplateMeta[] {
+  return Object.values(catalog).map(({ slug, name, description, category, icon, logo, documentation }) => ({
     slug,
     name,
     description,

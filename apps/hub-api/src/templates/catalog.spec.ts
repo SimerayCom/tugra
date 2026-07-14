@@ -1,9 +1,11 @@
 import {
   TEMPLATES,
   templateMetaList,
+  buildCatalog,
   genSecret,
   buildTemplateEnv,
   type SecretSpec,
+  type TemplateDef,
 } from "./catalog";
 import { publicManifest, toManifest, validateConfigMountTarget } from "./template-manifest";
 
@@ -118,6 +120,17 @@ describe("template catalog", () => {
     const p = publicManifest(toManifest(redis), false);
     expect(p.mounts).toEqual([{ serviceName: "redis", target: "/usr/local/etc/redis/redis.conf", mode: "0644" }]);
     expect(JSON.stringify(p)).not.toContain("requirepass");
+  });
+
+  it("buildCatalog overlays a remote set but a curated slug always wins", () => {
+    const fake = (slug: string, name: string): TemplateDef => ({
+      slug, name, description: "d", category: "tools", composeFile: "services:\n  x:\n    image: y\n",
+    });
+    const merged = buildCatalog({ brandnew: fake("brandnew", "Brand New"), wordpress: fake("wordpress", "EVIL") });
+    expect(merged.brandnew?.name).toBe("Brand New"); // remote adds a new slug
+    expect(merged.wordpress?.name).toBe("WordPress"); // curated wins — remote can't shadow it
+    // no-arg buildCatalog == the bundled TEMPLATES
+    expect(Object.keys(buildCatalog()).sort()).toEqual(Object.keys(TEMPLATES).sort());
   });
 
   it("most templates carry a documentation URL", () => {

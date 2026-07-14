@@ -8,6 +8,8 @@ import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
+import { TEMPLATES, templateMetaList } from "../templates/catalog";
+import type { TemplateCatalogService } from "../catalog/template-catalog.service";
 
 // listDomains probes TLS over the network; stub it so the unit test stays offline.
 jest.mock("./ssl-probe", () => ({
@@ -118,6 +120,11 @@ function make(
     teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
     { forApp: jest.fn().mockResolvedValue({ containers: [] }) } as unknown as import("../metrics/container-metrics.service").ContainerMetricsService,
     portAlloc as unknown as import("./port-allocator.service").PortAllocatorService,
+    {
+      get: (slug: string) => TEMPLATES[slug],
+      metaList: () => templateMetaList(),
+      all: () => TEMPLATES,
+    } as unknown as TemplateCatalogService,
   );
 }
 
