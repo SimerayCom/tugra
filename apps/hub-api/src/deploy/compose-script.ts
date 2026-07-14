@@ -15,6 +15,30 @@ import {
   type AppSpec,
 } from "./deploy-script";
 
+/** Host dir + file path for a materialized config mount (sibling of the compose file, so the app's
+ *  `down` `rm -rf` cleans it up). Keyed by mount INDEX to keep the host path Tugra-controlled. */
+export function mountsDir(app: { id: string }): string {
+  return `${composeDir(app)}/mounts`;
+}
+export function mountFilePath(app: { id: string }, i: number): string {
+  return `${mountsDir(app)}/${i}`;
+}
+
+/** An octal file-mode string (3–4 digits), else the default 0644. Guards the value that goes into a
+ *  `chmod <mode> <path>` command (so it can never inject a second shell token). */
+export function mountMode(mode?: string | null): string {
+  return mode && /^0?[0-7]{3,4}$/.test(mode) ? mode : "0644";
+}
+
+/** Substitute `${KEY}` in config-file content with the app env value for KEY — closed allowlist (only
+ *  keys present in env). `$uri`, `${UNKNOWN}` (no env key), and `$$` are left untouched. Linear scan,
+ *  ReDoS-free. This resolves the `${KEY}` placeholders persisted at rest to concrete values at write. */
+export function interpolateMountContent(content: string, env: Record<string, string>): string {
+  return content.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, key) =>
+    Object.prototype.hasOwnProperty.call(env, key) ? env[key] : whole,
+  );
+}
+
 export const COMPOSE_DIR = "/etc/tugra/compose";
 
 export function composeDir(app: { id: string }): string {
@@ -42,22 +66,46 @@ export function composeOverridePath(app: { id: string }): string {
  * sibling services (e.g. WordPress → its mariadb).
  */
 export function composeOverride(app: AppSpec): string {
-  const labels = traefikLabels(app)
-    .map((l) => `      - ${JSON.stringify(l)}`)
-    .join("\n");
-  return [
-    "services:",
-    `  ${app.composeWebService}:`,
-    "    networks:",
-    "      - default",
-    `      - ${PROXY_NETWORK}`,
-    "    labels:",
-    labels,
-    "networks:",
-    `  ${PROXY_NETWORK}:`,
-    "    external: true",
-    "",
-  ].join("\n");
+  const magic = !!(app.domain && app.composeWebService);
+  const mounts = app.configMounts ?? [];
+  // Accumulate per-service: the head fragments (networks/labels for the web service) and a LIST of
+  // bind items. A service may need BOTH (web service + a config mount) and a single override file can
+  // name it only once — and multiple mounts on one service must share ONE `volumes:` key (duplicate
+  // mapping keys are invalid YAML → `docker compose up` would fail).
+  const head = new Map<string, string[]>();
+  const binds = new Map<string, string[]>();
+  const touch = (name: string) => {
+    if (!head.has(name)) head.set(name, []);
+  };
+
+  if (magic && app.composeWebService) {
+    // The web service is kept on `default` AND joined to the proxy (declaring `networks:` drops the
+    // implicit default membership → it would lose reach to its DB/siblings). Values JSON-quoted.
+    touch(app.composeWebService);
+    head.get(app.composeWebService)!.push(
+      "    networks:",
+      "      - default",
+      `      - ${PROXY_NETWORK}`,
+      "    labels:",
+      ...traefikLabels(app).map((l) => `      - ${JSON.stringify(l)}`),
+    );
+  }
+  mounts.forEach((m, i) => {
+    touch(m.serviceName);
+    (binds.get(m.serviceName) ?? binds.set(m.serviceName, []).get(m.serviceName)!).push(
+      `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`,
+    );
+  });
+
+  const lines: string[] = ["services:"];
+  for (const name of head.keys()) {
+    lines.push(`  ${name}:`, ...(head.get(name) ?? []));
+    const b = binds.get(name);
+    if (b && b.length) lines.push("    volumes:", ...b); // one volumes: key, all binds appended
+  }
+  if (magic) lines.push("networks:", `  ${PROXY_NETWORK}:`, "    external: true");
+  lines.push("");
+  return lines.join("\n");
 }
 
 /** Compose project name — namespaces all services of this app. */
@@ -82,14 +130,29 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const envPath = `${dir}/.env`;
   // Route the web service through Traefik (magic/custom domain) via a label override.
   const magic = !!(app.domain && app.composeWebService);
+  const mounts = app.configMounts ?? [];
   const overridePath = composeOverridePath(app);
+  // The Tugra override carries the proxy labels AND/OR the config-mount binds — write it for either.
+  const writeOverride = magic || mounts.length > 0;
 
   const lines = [
     "set -e",
     `mkdir -p ${dir}`,
     `printf %s ${shq(b64(app.composeFile ?? ""))} | base64 -d > ${file}`,
   ];
-  if (magic) {
+  // Materialize each config file (interpolating ${KEY} from the resolved env) next to the compose, so
+  // the override's read-only bind resolves and `down`'s `rm -rf` of the compose dir cleans it up.
+  if (mounts.length > 0) {
+    lines.push(`mkdir -p ${mountsDir(app)}`);
+    mounts.forEach((m, i) => {
+      const path = mountFilePath(app, i);
+      lines.push(
+        `printf %s ${shq(b64(interpolateMountContent(m.content, env)))} | base64 -d > ${path}`,
+        `chmod ${mountMode(m.mode)} ${path}`,
+      );
+    });
+  }
+  if (writeOverride) {
     lines.push(`printf %s ${shq(b64(composeOverride(app)))} | base64 -d > ${overridePath}`);
   }
   if (hasEnv) {
@@ -101,7 +164,7 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   // Private registry: log in (isolated config) before pulling, log out after.
   lines.push(...registryLoginPrelude(app.registryAuth));
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
-  const overrideArg = magic ? `-f ${overridePath} ` : "";
+  const overrideArg = writeOverride ? `-f ${overridePath} ` : "";
   lines.push(
     `docker compose -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),

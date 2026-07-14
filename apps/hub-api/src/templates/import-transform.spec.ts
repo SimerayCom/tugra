@@ -1,4 +1,4 @@
-import { classifyToken, deriveContainerPort, mapCategory, titleize, transformCompose } from "./import-transform";
+import { classifyToken, deriveContainerPort, extractConfigMounts, mapCategory, titleize, transformCompose } from "./import-transform";
 
 describe("classifyToken (v2 widened table)", () => {
   it("maps the classic prefixes with length + kind", () => {
@@ -85,9 +85,44 @@ describe("transformCompose", () => {
     expect(r.compose).toContain("http://localhost:20010");
   });
 
-  it("still skips inline content mounts (recovered with materialization in a later slice)", () => {
-    const raw = "services:\n  app:\n    image: x\n    volumes:\n      -\n        type: bind\n        target: /etc/app.conf\n        content: \"a=1\"\n";
-    expect(() => transformCompose(raw, 20011, 80)).toThrow();
+  it("recovers an inline content mount into mounts[] and bakes a clean compose", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    ports:\n      - '8080:80'\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: \"a=1\"\n";
+    const r = transformCompose(raw, 20011, 80);
+    expect(r.mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", content: "a=1" }]);
+    expect(r.compose).not.toContain("content:"); // never baked into the compose
+    expect(r.compose).toContain('"20011:80"');
+  });
+
+  it("resolves a SERVICE_* secret token inside a mount's content to a ${KEY} placeholder", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    ports:\n      - '8080:80'\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: \"pass=${SERVICE_PASSWORD_APP}\"\n";
+    const r = transformCompose(raw, 20020, 80);
+    expect(r.mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", content: "pass=${PASSWORD_APP}" }]);
+    expect(r.secrets.map((s) => s.key)).toContain("PASSWORD_APP");
+  });
+
+  it("bakes localhost into a URL token inside a mount's content", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    ports:\n      - '8080:80'\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: \"url=${SERVICE_URL_APP}\"\n";
+    const r = transformCompose(raw, 20021, 80);
+    expect(r.mounts[0].content).toBe("url=http://localhost:20021");
+  });
+
+  it("skips a template whose mount content carries an unknown SERVICE_* token", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    ports:\n      - '8080:80'\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: \"x=${SERVICE_DISABLE_FOO}\"\n";
+    expect(() => transformCompose(raw, 20023, 80)).toThrow();
+  });
+
+  it("still skips an inline content it cannot recover into a mount", () => {
+    // `content:` under an unrecognized key (not a volumes/configs mount) → the final guard skips.
+    const raw = "services:\n  app:\n    image: x\n    weird:\n      content: \"x\"\n";
+    expect(() => transformCompose(raw, 20022, 80)).toThrow();
+  });
+
+  it("returns an empty mounts[] for a template with no config mounts (regression)", () => {
+    expect(transformCompose(simple, 20024, 80).mounts).toEqual([]);
   });
 
   it("skips a template whose magic token is a genuine unknown", () => {
@@ -101,6 +136,52 @@ describe("transformCompose", () => {
     const r = transformCompose(raw, 20013, 80);
     expect(r.secrets.map((s) => s.key)).toEqual(["PASSWORD_WEB"]); // no phantom "PASSWORD"
     expect(r.compose).toContain("DUPLICATI__WEBSERVICE_PASSWORD=${PASSWORD_WEB}"); // name intact, value resolved
+  });
+});
+
+describe("extractConfigMounts", () => {
+  it("recovers a service long-form bind with inline content and removes it", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: \"a=1\"\n";
+    const { compose, mounts } = extractConfigMounts(raw);
+    expect(mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", content: "a=1" }]);
+    expect(compose).not.toContain("content:");
+  });
+
+  it("recovers a multi-line `content: |` block scalar verbatim", () => {
+    const raw =
+      "services:\n  db:\n    image: mysql\n    volumes:\n      - type: bind\n        target: /etc/my.cnf\n        content: |\n          [mysqld]\n          max_connections=100\n";
+    const { mounts } = extractConfigMounts(raw);
+    expect(mounts).toEqual([{ serviceName: "db", target: "/etc/my.cnf", content: "[mysqld]\nmax_connections=100\n" }]);
+  });
+
+  it("recovers a top-level config referenced by a service (long form) and drops both blocks", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    configs:\n      - source: my_conf\n        target: /etc/app.conf\nconfigs:\n  my_conf:\n    content: \"a=1\"\n";
+    const { compose, mounts } = extractConfigMounts(raw);
+    expect(mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", content: "a=1" }]);
+    expect(compose).not.toContain("content:");
+    expect(compose).not.toContain("my_conf");
+  });
+
+  it("recovers a short-form service config reference with the default `/<name>` target", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    configs:\n      - my_conf\nconfigs:\n  my_conf:\n    content: \"b=2\"\n";
+    const { mounts } = extractConfigMounts(raw);
+    expect(mounts).toEqual([{ serviceName: "app", target: "/my_conf", content: "b=2" }]);
+  });
+
+  it("leaves a real host bind untouched and returns the text byte-identical", () => {
+    const raw = "services:\n  app:\n    image: x\n    volumes:\n      - /host/path:/etc/app.conf\n";
+    const { compose, mounts } = extractConfigMounts(raw);
+    expect(mounts).toEqual([]);
+    expect(compose).toBe(raw); // no content/configs → fast path keeps the text exactly
+  });
+
+  it("does not recover a mount from a service whose key is not a plain identifier", () => {
+    // A crafted, non-identifier service key must never become an injectable serviceName.
+    const raw = 'services:\n  "we b":\n    image: x\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: "a=1"\n';
+    expect(extractConfigMounts(raw).mounts).toEqual([]);
   });
 });
 

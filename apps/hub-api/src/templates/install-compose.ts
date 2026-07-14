@@ -1,5 +1,5 @@
 import type { PortMapping } from "../applications/port-allocator.service";
-import type { ExposePort } from "./template-manifest";
+import type { ConfigMount, ExposePort } from "./template-manifest";
 
 /**
  * Rewrite a template's BAKED published host ports to freshly allocated ones at install time, so
@@ -9,13 +9,17 @@ import type { ExposePort } from "./template-manifest";
  * surgery — the host port number never substring-collides (importer guarantees one exposure + one
  * ports line per template). The `localhost` HOST is intentionally left as-is; a later slice swaps it
  * for the real server IP / magic domain. Returns the rewritten compose + the portMappings to persist.
+ * When `mounts` are given, the same `localhost:<oldHost>` → `localhost:<newHost>` rewrite is applied to
+ * each config-file body (a mount may reference the app's own baked port); returned rewritten.
  */
 export function rewriteHostPorts(
   compose: string,
   exposures: ExposePort[],
   allocated: number[],
-): { compose: string; portMappings: PortMapping[] } {
+  mounts?: ConfigMount[],
+): { compose: string; portMappings: PortMapping[]; mounts?: ConfigMount[] } {
   let text = compose;
+  const contents = mounts ? mounts.map((m) => m.content) : null;
   const portMappings: PortMapping[] = [];
   exposures.forEach((e, i) => {
     const newHost = allocated[i];
@@ -27,7 +31,13 @@ export function rewriteHostPorts(
     const oldHost = m[1];
     text = text.split(`"${oldHost}:${e.containerPort}"`).join(`"${newHost}:${e.containerPort}"`);
     // Boundary lookahead so 20084 does not corrupt a `localhost:200849`.
-    text = text.replace(new RegExp(`localhost:${oldHost}(?!\\d)`, "g"), `localhost:${newHost}`);
+    const localhostRe = new RegExp(`localhost:${oldHost}(?!\\d)`, "g");
+    text = text.replace(localhostRe, `localhost:${newHost}`);
+    if (contents) {
+      for (let j = 0; j < contents.length; j++) {
+        contents[j] = contents[j].replace(localhostRe, `localhost:${newHost}`);
+      }
+    }
     portMappings.push({
       serviceName: e.serviceName,
       containerPort: e.containerPort,
@@ -35,5 +45,9 @@ export function rewriteHostPorts(
       mode: e.defaultMode === "hostPort" ? "hostPort" : "domain",
     });
   });
-  return { compose: text, portMappings };
+  return {
+    compose: text,
+    portMappings,
+    ...(mounts ? { mounts: mounts.map((m, j) => ({ ...m, content: contents![j] })) } : {}),
+  };
 }

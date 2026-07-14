@@ -64,4 +64,24 @@ describe("rewriteHostPorts", () => {
     const { portMappings } = rewriteHostPorts(compose, [exposure({ serviceName: "app", containerPort: 80, defaultMode: "hostPort" })], [20500]);
     expect(portMappings[0].mode).toBe("hostPort");
   });
+
+  it("rewrites a baked localhost port inside a mount's content and returns the rewritten mounts", () => {
+    const compose = 'services:\n  app:\n    ports:\n      - "20001:80"\n';
+    const mounts = [{ serviceName: "app", target: "/etc/app.conf", content: "endpoint=localhost:20001\n" }];
+    const out = rewriteHostPorts(compose, [exposure({ serviceName: "app", containerPort: 80 })], [20500], mounts);
+    expect(out.mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", content: "endpoint=localhost:20500\n" }]);
+  });
+
+  it("returns mounts unchanged when their content has no baked port reference", () => {
+    const compose = 'services:\n  app:\n    ports:\n      - "20001:80"\n';
+    const mounts = [{ serviceName: "app", target: "/etc/app.conf", content: "appendonly yes\n" }];
+    const out = rewriteHostPorts(compose, [exposure({ serviceName: "app", containerPort: 80 })], [20500], mounts);
+    expect(out.mounts).toEqual(mounts);
+  });
+
+  it("omits the mounts key from the result when none are passed (backward compatible)", () => {
+    const compose = 'services:\n  app:\n    ports:\n      - "20001:80"\n';
+    const out = rewriteHostPorts(compose, [exposure({ serviceName: "app", containerPort: 80 })], [20500]);
+    expect(out).not.toHaveProperty("mounts");
+  });
 });

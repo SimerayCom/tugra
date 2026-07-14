@@ -1,5 +1,5 @@
 import { TEMPLATES, type TemplateDef } from "./catalog";
-import { publicManifest, toManifest, validateInstallFields, type FormField, type TemplateManifest } from "./template-manifest";
+import { publicManifest, toManifest, validateConfigMountServiceName, validateConfigMountTarget, validateInstallFields, type FormField, type TemplateManifest } from "./template-manifest";
 
 /** A minimal synthetic TemplateDef so the mapping tests don't depend on which real templates
  *  happen to carry a given shape. */
@@ -97,6 +97,11 @@ describe("template-manifest", () => {
     expect(m.mounts).toBeUndefined();
   });
 
+  it("passes a template's config mounts through to the manifest", () => {
+    const m = toManifest(def({ mounts: [{ serviceName: "app", target: "/etc/app.conf", content: "x=1" }] }));
+    expect(m.mounts).toEqual([{ serviceName: "app", target: "/etc/app.conf", content: "x=1" }]);
+  });
+
   it("preserves gallery metadata and never emits raw secrets", () => {
     const m = toManifest(
       def({ slug: "meta", name: "Meta", description: "desc", category: "cms", icon: "🧩", logo: "meta", documentation: "https://x", secrets: [{ key: "P", kind: "alnum", len: 8 }] }),
@@ -127,6 +132,33 @@ describe("publicManifest", () => {
 
   it("includes the raw composeFile only for a writer", () => {
     expect(publicManifest(manifest, true).composeFile).toContain("services:");
+  });
+});
+
+describe("validateConfigMountTarget", () => {
+  it("accepts a normalized absolute in-container path", () => {
+    expect(() => validateConfigMountTarget("/usr/local/etc/redis/redis.conf")).not.toThrow();
+    expect(() => validateConfigMountTarget("/etc/app.conf")).not.toThrow();
+  });
+
+  it("rejects relative, traversal, non-normalized, empty, and quote/control-char targets", () => {
+    for (const badTarget of ["etc/app.conf", "../x", "/a/../b", "/a//b", "/a/./b", "/etc/foo/", "", '/a/"b', "/a\nb", "/a`b"]) {
+      expect(() => validateConfigMountTarget(badTarget)).toThrow();
+    }
+  });
+});
+
+describe("validateConfigMountServiceName", () => {
+  it("accepts a compose service identifier", () => {
+    for (const ok of ["redis", "web-1", "my_svc", "a.b", "APP"]) {
+      expect(() => validateConfigMountServiceName(ok)).not.toThrow();
+    }
+  });
+
+  it("rejects a name that could inject YAML when used as a mapping key in the override", () => {
+    for (const bad of ["", " ", "-x", ".x", "a b", 'a"b', "a:b", "a/b", "a\n    privileged: true"]) {
+      expect(() => validateConfigMountServiceName(bad)).toThrow();
+    }
   });
 });
 

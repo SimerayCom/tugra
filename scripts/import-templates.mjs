@@ -109,7 +109,7 @@ async function main() {
       if (!containerPort) { skipped.push([slug, "no-port"]); continue; }
 
       const hostPort = port + 1;
-      const { compose, secrets, exposure } = transformCompose(raw, hostPort, containerPort);
+      const { compose, secrets, exposure, mounts } = transformCompose(raw, hostPort, containerPort);
       port = hostPort;
 
       const hasIcon = await downloadIcon(slug, meta.logo);
@@ -127,6 +127,7 @@ async function main() {
         secrets,
         composeFile: compose,
         ...(exposure && exposure.length ? { exposure } : {}),
+        ...(mounts && mounts.length ? { mounts } : {}),
       };
     } catch (e) {
       if (e && e.skip) skipped.push([slug, e.skip]);

@@ -66,6 +66,10 @@ export interface AppSpec {
   /** For a COMPOSE app: the service to attach the Traefik router to (magic domain).
    *  When set, buildComposeUpScript writes a label-only override joining it to the proxy. */
   composeWebService?: string | null;
+  /** For a COMPOSE app: template config files to materialize on the host and bind-mount read-only
+   *  into their service. buildComposeUpScript writes each under the app's compose dir + adds the bind
+   *  to the Tugra override. */
+  configMounts?: AppConfigMount[] | null;
 }
 
 /** Credentials for pulling from a private container registry. */
@@ -79,6 +83,16 @@ export interface RegistryAuth {
 export interface AppVolume {
   name: string;
   path: string;
+}
+
+/** A template config file materialized on the host and bind-mounted read-only into a service at
+ *  deploy. `content` may carry `${KEY}` placeholders resolved from the app env at write time. Mirrors
+ *  templates/ConfigMount but kept local so the deploy layer stays decoupled from templates/. */
+export interface AppConfigMount {
+  serviceName: string;
+  target: string; // absolute in-container path
+  content: string;
+  mode?: string; // octal file mode, default 0644
 }
 
 export function containerName(app: { id: string }): string {

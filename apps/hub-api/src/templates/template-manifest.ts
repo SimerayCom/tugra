@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { BadRequestException } from "@nestjs/common";
 import type { SecretKind, SecretSpec, TemplateDef, TemplateMeta } from "./catalog";
 
@@ -211,5 +212,37 @@ export function validateInstallFields(
     if (def.type === "boolean" && value !== "true" && value !== "false") bad("must be true or false");
     if (def.options && !def.options.some((o) => o.value === value)) bad("not an allowed option");
     if (def.regex && !new RegExp(def.regex).test(value)) bad("does not match the required format");
+  }
+}
+
+/**
+ * Validate a config-mount's IN-CONTAINER target path before it becomes a bind-mount target in the
+ * Tugra deploy override. The host SOURCE is always Tugra-controlled (`/etc/tugra/compose/<appId>/
+ * mounts/<i>`), so the only attacker-influenced surface is this `target`. Reject anything that could
+ * traverse or break out of the JSON-quoted YAML bind string. Throws BadRequestException.
+ */
+export function validateConfigMountTarget(target: string): void {
+  const bad = (msg: string): never => {
+    throw new BadRequestException(`invalid config mount target "${target}": ${msg}`);
+  };
+  if (typeof target !== "string" || target.trim() === "") bad("empty");
+  // No control/quote chars — the target is JSON-quoted into the YAML bind (`"<host>:<target>:ro"`).
+  if (/[\0\n\r"'`]/.test(target)) bad("must not contain control or quote characters");
+  if (!posix.isAbsolute(target)) bad("must be an absolute path");
+  if (target.split("/").some((seg) => seg === "..")) bad("must not contain '..'");
+  if (target.endsWith("/")) bad("must be a file path, not a directory"); // normalize keeps trailing '/'
+  // Reject any other non-canonical form (`//`, `/./`) so the host bind target is unambiguous.
+  if (posix.normalize(target) !== target) bad("must be a normalized path");
+}
+
+/**
+ * Validate a config-mount's `serviceName`. It becomes a raw YAML mapping key in the Tugra deploy
+ * override (which is deliberately NOT run through assertSafeCompose), so an unconstrained value could
+ * inject arbitrary compose directives (privileged, host binds, …) → host escape. Restrict it to the
+ * compose service-name charset. Throws BadRequestException.
+ */
+export function validateConfigMountServiceName(serviceName: string): void {
+  if (typeof serviceName !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceName)) {
+    throw new BadRequestException(`invalid config mount service name "${serviceName}"`);
   }
 }
