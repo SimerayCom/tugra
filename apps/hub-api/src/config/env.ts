@@ -12,6 +12,15 @@ function isBase64Seed32(s: string): boolean {
   }
 }
 
+/** A base64-encoded ed25519 SPKI DER public key is exactly 44 bytes. */
+function isBase64Ed25519Spki(s: string): boolean {
+  try {
+    return Buffer.from(s, "base64").length === 44;
+  } catch {
+    return false;
+  }
+}
+
 export const envSchema = z
   .object({
   // No default: an UNSET NODE_ENV is treated as production below (fail closed),
@@ -71,6 +80,15 @@ export const envSchema = z
   // Host-port range the install-time allocator draws from when a template needs a published port.
   TUGRA_HOSTPORT_MIN: z.coerce.number().int().positive().default(20000),
   TUGRA_HOSTPORT_MAX: z.coerce.number().int().positive().default(45000),
+  // Optional, opt-in: a signed remote template catalog. When CATALOG_SOURCE_URL is set the hub
+  // periodically fetches it, verifies the ed25519 signature against CATALOG_PUBLISHER_KEY, and
+  // overlays it onto the bundled catalog (offline-fallback to bundled when unset/unreachable/invalid).
+  CATALOG_SOURCE_URL: z.string().url().optional(),
+  CATALOG_PUBLISHER_KEY: z
+    .string()
+    .refine(isBase64Ed25519Spki, "CATALOG_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
+    .optional(),
+  CATALOG_SYNC_INTERVAL_MIN: z.coerce.number().int().positive().default(60),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live
@@ -89,6 +107,14 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ["TUGRA_HOSTPORT_MAX"],
         message: "TUGRA_HOSTPORT_MAX must be greater than TUGRA_HOSTPORT_MIN",
+      });
+    }
+    // Fail closed: never sync an UNSIGNED remote catalog — a source URL requires a publisher key.
+    if (v.CATALOG_SOURCE_URL && !v.CATALOG_PUBLISHER_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["CATALOG_PUBLISHER_KEY"],
+        message: "CATALOG_PUBLISHER_KEY is required when CATALOG_SOURCE_URL is set (never sync an unsigned catalog)",
       });
     }
   });

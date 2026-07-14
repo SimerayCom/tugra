@@ -6,6 +6,7 @@ import { MonitorsModule } from "../monitors/monitors.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { TeamDefaultsModule } from "../teams/team-defaults.module";
+import { CatalogModule } from "../catalog/catalog.module";
 import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { ProxyService } from "./proxy.service";
@@ -14,7 +15,7 @@ import { PortAllocatorService } from "./port-allocator.service";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule],
   controllers: [ApplicationsController],
   providers: [
     ApplicationsService,

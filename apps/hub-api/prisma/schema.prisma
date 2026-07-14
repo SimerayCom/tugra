@@ -804,3 +804,18 @@ model Backup {
 
   @@index([databaseId])
 }
+
+// The last-good SIGNED remote template catalog (single row, fixed PK). Persisted only AFTER the
+// ed25519 signature + shape validation pass, so it is a durable trusted snapshot for boot/offline.
+// The bundled catalog is always the base; this overlays it. See src/catalog/.
+model CatalogSnapshot {
+  id                  String   @id @default("singleton")
+  version             String
+  sourceUrl           String
+  payload             Json // the verified { version, templates } blob
+  templateCount       Int
+  etag                String?
+  signatureVerifiedAt DateTime
+  fetchedAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}

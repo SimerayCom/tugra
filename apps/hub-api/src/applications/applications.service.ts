@@ -63,11 +63,8 @@ import {
   generateWebhookSecret,
   generateWebhookToken,
 } from "../webhooks/webhook-verify";
-import {
-  TEMPLATES,
-  templateMetaList,
-  type TemplateMeta,
-} from "../templates/catalog";
+import { type TemplateMeta } from "../templates/catalog";
+import { TemplateCatalogService } from "../catalog/template-catalog.service";
 import { publicManifest, toManifest, validateConfigMountServiceName, validateConfigMountTarget, validateInstallFields, type FormField, type PublicManifest } from "../templates/template-manifest";
 import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts, substituteSelfUrls } from "../templates/install-compose";
@@ -202,6 +199,7 @@ export class ApplicationsService {
     private readonly teamDefaults: TeamDefaultsService,
     private readonly containerMetricsSvc: ContainerMetricsService,
     private readonly portAlloc: PortAllocatorService,
+    private readonly catalog: TemplateCatalogService,
   ) {}
 
   /**
@@ -218,7 +216,7 @@ export class ApplicationsService {
     templateSlug?: string | null;
     composeFile?: string | null;
   }): { service: string; port: number } | null {
-    const override = app.templateSlug ? TEMPLATES[app.templateSlug]?.web : undefined;
+    const override = app.templateSlug ? this.catalog.get(app.templateSlug)?.web : undefined;
     return override ?? inferComposeWeb(app.composeFile ?? null);
   }
 
@@ -408,7 +406,7 @@ export class ApplicationsService {
 
   /** One-click template catalog (gallery metadata only). */
   listTemplates(): TemplateMeta[] {
-    return templateMetaList();
+    return this.catalog.metaList();
   }
 
   /**
@@ -432,7 +430,7 @@ export class ApplicationsService {
       envOverride?: Record<string, string>;
     },
   ): Promise<AppView> {
-    const tpl = TEMPLATES[slug];
+    const tpl = this.catalog.get(slug);
     if (!tpl) throw new NotFoundException("template not found");
     const server = await this.prisma.server.findUnique({ where: { id: input.serverId } });
     if (!server) throw new NotFoundException("server not found");
@@ -546,7 +544,7 @@ export class ApplicationsService {
    * `serverId` is given and the caller can write to that server's team (advanced compose edit).
    */
   async getTemplateManifest(userId: string, slug: string, serverId?: string): Promise<PublicManifest> {
-    const tpl = TEMPLATES[slug];
+    const tpl = this.catalog.get(slug);
     if (!tpl) throw new NotFoundException("template not found");
     let canWrite = false;
     if (serverId) {
@@ -1721,7 +1719,7 @@ export class ApplicationsService {
       // deploys via its own up/down, never rolling.
       zeroDowntime: app.source !== "COMPOSE" && this.rollingEligible(app),
       templateSlug: app.templateSlug,
-      templateLogo: app.templateSlug ? (TEMPLATES[app.templateSlug]?.logo ?? app.templateSlug) : null,
+      templateLogo: app.templateSlug ? (this.catalog.get(app.templateSlug)?.logo ?? app.templateSlug) : null,
       environmentId: app.environmentId,
       projectId: ctx?.projectId ?? null,
       projectName: ctx?.projectName ?? null,

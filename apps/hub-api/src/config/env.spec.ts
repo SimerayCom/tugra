@@ -69,6 +69,30 @@ describe("validateEnv — host-port range", () => {
   });
 });
 
+describe("validateEnv — remote catalog", () => {
+  const pubKey = Buffer.alloc(44, 3).toString("base64"); // 44-byte ed25519 SPKI DER
+
+  it("is unconfigured by default and interval defaults to 60m", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development" });
+    expect(env.CATALOG_SOURCE_URL).toBeUndefined();
+    expect(env.CATALOG_SYNC_INTERVAL_MIN).toBe(60);
+  });
+
+  it("rejects a source URL without a publisher key (fail-closed — never sync unsigned)", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", CATALOG_SOURCE_URL: "https://c.example/catalog" })).toThrow(/CATALOG_PUBLISHER_KEY/);
+  });
+
+  it("accepts a source URL with a valid publisher key + interval override", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development", CATALOG_SOURCE_URL: "https://c.example/catalog", CATALOG_PUBLISHER_KEY: pubKey, CATALOG_SYNC_INTERVAL_MIN: "30" });
+    expect(env.CATALOG_SOURCE_URL).toBe("https://c.example/catalog");
+    expect(env.CATALOG_SYNC_INTERVAL_MIN).toBe(30);
+  });
+
+  it("rejects a publisher key of the wrong length", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", CATALOG_SOURCE_URL: "https://c", CATALOG_PUBLISHER_KEY: Buffer.alloc(32).toString("base64") })).toThrow(/CATALOG_PUBLISHER_KEY/);
+  });
+});
+
 describe("validateEnv — MAGIC_DOMAIN_SUFFIX", () => {
   it("defaults to sslip.io when unset", () => {
     expect(validateEnv({ ...base, NODE_ENV: "development" }).MAGIC_DOMAIN_SUFFIX).toBe("sslip.io");
