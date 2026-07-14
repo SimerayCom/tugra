@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 /** A normalized IP address is IPv6 when it contains a colon. */
 export function isIpv6(ip: string): boolean {
   return ip.includes(":");
@@ -35,6 +37,10 @@ export function normalizeIp(ip: string): string {
 export function isPublicIp(ip: string): boolean {
   if (!ip) return false;
   const v = normalizeIp(ip);
+  // Reject anything that is not a well-formed IP literal (isIP → 0). Without this, a range-based
+  // exclusion alone accepts a garbage/multi-line string (e.g. one embedding a newline), which callers
+  // then trust as a real address — and it could be baked into config/compose downstream.
+  if (isIP(v) === 0) return false;
   if (isLoopbackIp(v)) return false;
   if (isIpv6(v)) {
     if (v === "::") return false; // unspecified
@@ -49,7 +55,7 @@ export function isPublicIp(ip: string): boolean {
 export function bestReportedIp(reportedIps: string[]): string | null {
   // Normalize first so an IPv4-mapped address is treated (and stored) as its IPv4,
   // not misclassified as an "IPv6" and dropped into publicIpv6 unstripped.
-  const usable = reportedIps.map(normalizeIp).filter((ip) => ip && !isLoopbackIp(ip));
+  const usable = reportedIps.map(normalizeIp).filter((ip) => ip && isIP(ip) !== 0 && !isLoopbackIp(ip));
   return (
     usable.find((ip) => !isIpv6(ip) && !isPrivateV4(ip)) ??
     usable.find((ip) => !isIpv6(ip)) ??

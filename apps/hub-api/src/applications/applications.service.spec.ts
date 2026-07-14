@@ -1067,6 +1067,25 @@ describe("ApplicationsService", () => {
     expect(data.domainKind).toBe("magic");
   });
 
+  it("createFromTemplate swaps the baked localhost self-URLs for the magic domain", async () => {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...app, ...data, id: "tpl1" }));
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
+    } as unknown as TeamAccessService;
+    const portAlloc = { allocate: jest.fn().mockResolvedValue([20500]) };
+    // activepieces is a generated template WITH exposure + baked `localhost:<port>` self-URLs.
+    await svcWithAlloc(prisma, access, portAlloc).createFromTemplate("u1", "activepieces", { name: "ap", serverId: "s1" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.domain).toMatch(/^ap-[0-9a-f]{6}\.203-0-113-7\.sslip\.io$/);
+    expect(data.composeFile).not.toContain("localhost:20500"); // baked self-URL host swapped
+    expect(data.composeFile).toContain(data.domain); // → the magic domain
+  });
+
   it("leaves a Compose app domainless when no web service can be resolved", async () => {
     const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
     const prisma = {
@@ -1171,6 +1190,31 @@ describe("ApplicationsService", () => {
     await make(prisma, {} as TeamAccessService, {} as AgentWsServer).regenerateMagicForServer("s1");
     expect(findMany).toHaveBeenCalledWith({ where: { serverId: "s1", domainKind: "magic", isPreview: false } });
     expect(update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { domain: "web-a1b2c3.apps.example.com" } });
+  });
+
+  it("regenerateMagicForServer rebakes the old domain in composeFile + configMounts to the new one", async () => {
+    const oldD = "web-a1b2c3.203-0-113-7.sslip.io";
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null, wildcardDomain: "apps.example.com", magicSuffix: null }) },
+      application: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            ...app, id: "a1", name: "web", domain: oldD, domainKind: "magic",
+            composeFile: `services:\n  web:\n    environment:\n      - APP_URL=https://${oldD}\n`,
+            configMounts: [{ serviceName: "web", target: "/etc/c", content: `base=https://${oldD}\n` }],
+          },
+        ]),
+        update, findUnique: jest.fn().mockResolvedValue(null),
+      },
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, {} as AgentWsServer).regenerateMagicForServer("s1");
+    const newD = "web-a1b2c3.apps.example.com";
+    const data = update.mock.calls[0][0].data;
+    expect(data.domain).toBe(newD);
+    expect(data.composeFile).toContain(`APP_URL=https://${newD}`);
+    expect(data.composeFile).not.toContain(oldD);
+    expect(data.configMounts).toEqual([{ serviceName: "web", target: "/etc/c", content: `base=https://${newD}\n` }]);
   });
 
   it("regenerateMagicForServer is a no-op when the recomputed domain is unchanged", async () => {
@@ -1392,6 +1436,25 @@ describe("ApplicationsService", () => {
     const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
     const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
     expect(view.url).toBeNull();
+  });
+
+  it("synthesizes a URL for a domainless COMPOSE app from its portMappings (never null)", async () => {
+    const exposed = {
+      ...app,
+      source: "COMPOSE",
+      templateSlug: null,
+      domain: null,
+      hostPort: null, // COMPOSE apps always store hostPort null — the real port is in portMappings
+      composeFile: 'services:\n  web:\n    image: x\n    ports:\n      - "20500:80"\n',
+      portMappings: [{ serviceName: "web", containerPort: 80, hostPort: 20500, mode: "hostPort" }],
+    };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(exposed) },
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: "203.0.113.7", publicIpv6: null }) },
+    } as unknown as PrismaService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+    expect(view.url).toBe("http://203.0.113.7:20500");
   });
 
   it("uses the domain for a domained app regardless of the server IP", async () => {

@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { PortMapping } from "../applications/port-allocator.service";
 import type { ConfigMount, ExposePort } from "./template-manifest";
 
@@ -48,6 +49,71 @@ export function rewriteHostPorts(
   return {
     compose: text,
     portMappings,
+    ...(mounts ? { mounts: mounts.map((m, j) => ({ ...m, content: contents![j] })) } : {}),
+  };
+}
+
+/** The real reachable address a self-URL should point at. */
+export interface UrlTarget {
+  domain: string | null; // the app's magic/custom domain (expose.domain)
+  https: boolean; // expose.https — scheme for a domain-mode URL
+  serverIp: string | null; // server.publicIp ?? publicIpv6 ?? null
+  web?: { service: string; port: number } | null; // the primary service the domain routes to (composeWeb)
+}
+
+/**
+ * Swap the importer's baked `http://localhost:<hostPort>` / `localhost:<hostPort>` self-URLs for the
+ * app's REAL reachable address. The importer bakes SERVICE_URL / SERVICE_FQDN tokens as localhost
+ * (import-transform `urlLiteral`) and `rewriteHostPorts` only renumbers the port — this swaps the HOST.
+ * Keyed on the ALLOCATED host port, so an internal `localhost:<containerPort>` healthcheck and the
+ * published `"<hostPort>:<containerPort>"` ports line are never touched.
+ *
+ * Per exposure (via `portMappings`):
+ *  - the PRIMARY service (composeWeb match) in `domain` mode WITH a real domain → the magic/custom
+ *    domain via Traefik, PORT DROPPED: `http://localhost:<hp>` → `<scheme>://<domain>`, `localhost:<hp>` → `<domain>`.
+ *  - otherwise, WITH a server IP → `serverIp:hostPort` (port KEPT, IPv6 bracketed).
+ *  - with neither → left as localhost (best-effort; no fabricated public URL — SSRF-safe).
+ * Applies to the compose AND each mount body. Idempotent: after one pass no `localhost:<hp>` remains.
+ */
+export function substituteSelfUrls(
+  compose: string,
+  portMappings: PortMapping[],
+  target: UrlTarget,
+  mounts?: ConfigMount[],
+): { compose: string; mounts?: ConfigMount[] } {
+  const contents = mounts ? mounts.map((m) => m.content) : null;
+  let text = compose;
+  // The serverIp is baked verbatim into the compose (which is later run WITHOUT re-running
+  // assertSafeCompose) — a malformed value could inject a YAML line. Only bake a well-formed IP
+  // literal; `isIP` returns 0 for anything else. (4 = IPv4, 6 = IPv6.)
+  const ipFam = target.serverIp ? isIP(target.serverIp) : 0;
+
+  for (const pm of portMappings) {
+    const isPrimary =
+      !!target.web && pm.serviceName === target.web.service && pm.containerPort === target.web.port;
+    let host: string; // replacement host (with :port for hostPort mode, bare for domain mode)
+    let scheme: string; // scheme used for the url-form (http://…) replacement
+    if (target.domain && pm.mode === "domain" && isPrimary) {
+      host = target.domain; // no port — Traefik terminates on 80/443
+      scheme = target.https ? "https" : "http";
+    } else if (ipFam !== 0) {
+      const ipHost = ipFam === 6 ? `[${target.serverIp}]` : target.serverIp!;
+      host = `${ipHost}:${pm.hostPort}`; // keep the published port
+      scheme = "http";
+    } else {
+      continue; // no real (well-formed) address for this exposure → leave localhost
+    }
+    // url form first (consumes `http://localhost:<hp>`), then the remaining bare fqdn form. `(?!\d)`
+    // so 20055 never eats 200559; `(?<!/)` on the fqdn pass so a stray scheme-prefixed host is skipped.
+    const urlFrom = new RegExp(`http://localhost:${pm.hostPort}(?!\\d)`, "g");
+    const fqdnFrom = new RegExp(`(?<!/)localhost:${pm.hostPort}(?!\\d)`, "g");
+    const swap = (s: string) => s.replace(urlFrom, `${scheme}://${host}`).replace(fqdnFrom, host);
+    text = swap(text);
+    if (contents) for (let j = 0; j < contents.length; j++) contents[j] = swap(contents[j]);
+  }
+
+  return {
+    compose: text,
     ...(mounts ? { mounts: mounts.map((m, j) => ({ ...m, content: contents![j] })) } : {}),
   };
 }
