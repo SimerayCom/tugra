@@ -9,6 +9,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { getProvider, PROVIDER_TYPES } from "./providers";
+import { plainToRendered, type RenderedMessage } from "./rendered-message";
 
 export interface ChannelView {
   id: string;
@@ -118,7 +119,16 @@ export class NotificationsService {
     if (!(await this.access.teamRole(userId, c.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
-    await getProvider(c.type).send(this.decodeConfig(c.configEnc), "🏛️ Tugra test bildirimi — kanal çalışıyor.");
+    const msg: RenderedMessage = {
+      level: "info",
+      event: "test",
+      title: "Tugra test notification",
+      summary: "This channel is working.",
+      fields: [],
+      links: [],
+      timestamp: new Date().toISOString(),
+    };
+    await getProvider(c.type).send(this.decodeConfig(c.configEnc), msg);
   }
 
   /** Fire all enabled channels attached to a monitor (called by the runner). */
@@ -127,9 +137,10 @@ export class NotificationsService {
       where: { monitorId },
       include: { channel: true },
     });
+    const msg = plainToRendered(message); // SHIM until Dilim 3's typed templates
     for (const link of links) {
       if (!link.channel.enabled) continue;
-      await this.dispatch(link.channel.type, link.channel.configEnc, message, link.channelId);
+      await this.dispatch(link.channel.type, link.channel.configEnc, msg, link.channelId);
     }
   }
 
@@ -138,15 +149,17 @@ export class NotificationsService {
     const channels = await this.prisma.notificationChannel.findMany({
       where: { teamId, enabled: true, eventTypes: { has: eventType } },
     });
+    const msg = plainToRendered(message); // SHIM until Dilim 3's typed templates
     for (const ch of channels) {
-      await this.dispatch(ch.type, ch.configEnc, message, ch.id);
+      await this.dispatch(ch.type, ch.configEnc, msg, ch.id);
     }
   }
 
-  private async dispatch(type: string, configEnc: string, message: string, channelId: string): Promise<void> {
+  private async dispatch(type: string, configEnc: string, msg: RenderedMessage, channelId: string): Promise<void> {
     try {
-      await getProvider(type).send(this.decodeConfig(configEnc), message);
+      await getProvider(type).send(this.decodeConfig(configEnc), msg);
     } catch {
+      // Log ONLY the channel id — never the error (which could carry config/secret detail).
       await this.audit.log({ actor: "system", action: "notification.failed", target: channelId });
     }
   }
