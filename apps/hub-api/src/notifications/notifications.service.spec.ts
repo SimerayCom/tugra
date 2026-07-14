@@ -57,6 +57,19 @@ describe("NotificationsService", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "notification.failed", target: "c1" }));
   });
 
+  it("fireForEvent wraps the plain message via the shim (level inferred → structured body)", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` },
+    ]);
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
+    await svc.fireForEvent("t1", "deploy_failed", "🔴 boom");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.level).toBe("failure"); // 🔴 leading emoji → failure via plainToRendered
+    expect(body.summary).toBe("🔴 boom");
+  });
+
   it("update can change eventTypes without re-encrypting when no config given", async () => {
     const existing = { id: "c1", teamId: "t1", name: "n", type: "webhook", enabled: true, eventTypes: [], configEnc: "enc({})" };
     const update = jest.fn().mockResolvedValue({ ...existing, eventTypes: ["server_offline"] });
