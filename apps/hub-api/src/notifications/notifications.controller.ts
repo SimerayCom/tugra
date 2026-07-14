@@ -14,7 +14,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
-import { CreateChannelInput, CreateChannelSchema, UpdateChannelInput, UpdateChannelSchema } from "./dto";
+import { CreateChannelInput, CreateChannelSchema, EVENT_TYPES, UpdateChannelInput, UpdateChannelSchema } from "./dto";
 
 @Controller("channels")
 @UseGuards(JwtAuthGuard)
@@ -24,6 +24,13 @@ export class NotificationsController {
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.svc.list(user.userId);
+  }
+
+  /** The canonical, subscribable notification event ids — the single source the web UI renders from
+   *  (so its event list never drifts from the backend enum). */
+  @Get("events")
+  events() {
+    return { events: EVENT_TYPES };
   }
 
   @Post()

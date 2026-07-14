@@ -12,4 +12,11 @@ describe("notification channel schemas — event types", () => {
   it("still rejects an unknown event type", () => {
     expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["not_a_real_event"] })).toThrow();
   });
+
+  it("rejects the orphan monitor events (they fire via the monitor→channel link, not eventTypes)", () => {
+    expect(EVENT_TYPES).not.toContain("monitor_down");
+    expect(EVENT_TYPES).not.toContain("monitor_up");
+    expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["monitor_down"] })).toThrow();
+    expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["monitor_up"] })).toThrow();
+  });
 });
