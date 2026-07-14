@@ -70,14 +70,14 @@ import {
 } from "../templates/catalog";
 import { publicManifest, toManifest, validateConfigMountServiceName, validateConfigMountTarget, validateInstallFields, type FormField, type PublicManifest } from "../templates/template-manifest";
 import { resolveVariables } from "../templates/template-resolver";
-import { rewriteHostPorts } from "../templates/install-compose";
+import { rewriteHostPorts, substituteSelfUrls } from "../templates/install-compose";
 import { assertSafeCompose } from "../deploy/compose-safety";
 import { PortAllocatorService } from "./port-allocator.service";
 import { probeSsl, type SslStatus } from "./ssl-probe";
 import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
-import { appUrl } from "../common/app-url";
+import { appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import type { CreateAppInput } from "./dto";
@@ -294,7 +294,23 @@ export class ApplicationsService {
         suffix,
       });
       if (next && next !== app.domain) {
-        await this.prisma.application.update({ where: { id: app.id }, data: { domain: next } }).catch(() => undefined);
+        const data: Prisma.ApplicationUpdateInput = { domain: next };
+        // The old domain is baked into the app's compose + mount self-URLs (real-url-substitution);
+        // rewrite them to the new domain so the container's own links stay correct after an IP change.
+        if (app.domain) {
+          if (app.composeFile?.includes(app.domain)) {
+            data.composeFile = app.composeFile.split(app.domain).join(next);
+          }
+          if (Array.isArray(app.configMounts)) {
+            const mounts = app.configMounts as { content?: unknown }[];
+            if (mounts.some((m) => typeof m.content === "string" && m.content.includes(app.domain!))) {
+              data.configMounts = mounts.map((m) =>
+                typeof m.content === "string" ? { ...m, content: m.content.split(app.domain!).join(next) } : m,
+              ) as unknown as Prisma.InputJsonValue;
+            }
+          }
+        }
+        await this.prisma.application.update({ where: { id: app.id }, data }).catch(() => undefined);
         await this.syncMonitor(app.id).catch(() => undefined);
       }
     }
@@ -469,15 +485,24 @@ export class ApplicationsService {
       // envOverride layers last (user wins), mirroring the deploy-time shared-vars < app-env order.
       const env = { ...resolved, ...(input.envOverride ?? {}) };
       const installConfig = redactInstallConfig(input.fields, manifest.fields);
-      const composeWebService = this.composeWeb({ templateSlug: slug, composeFile: compose })?.service ?? null;
+      const web = this.composeWeb({ templateSlug: slug, composeFile: compose });
+      const composeWebService = web?.service ?? null;
       const expose = this.resolveExpose({ name: input.name }, server, "COMPOSE", composeWebService);
+      // Swap the importer's baked `localhost` self-URLs for the app's real magic domain / server IP
+      // (the container reads these as its own base/redirect URLs). Pure/sync — safe inside the tx.
+      const { compose: finalCompose, mounts: finalMounts } = substituteSelfUrls(
+        compose,
+        portMappings,
+        { domain: expose.domain, https: expose.https, serverIp: server.publicIp ?? server.publicIpv6 ?? null, web },
+        rewrittenMounts,
+      );
       return tx.application.create({
         data: {
           name: input.name,
           templateSlug: slug,
           environmentId,
           source: "COMPOSE",
-          composeFile: compose,
+          composeFile: finalCompose,
           serverId: server.id,
           teamId: server.teamId,
           env: {} as Prisma.InputJsonValue,
@@ -494,9 +519,10 @@ export class ApplicationsService {
           webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
           portMappings: portMappings as unknown as Prisma.InputJsonValue,
           installConfig: (installConfig as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-          // Persist config-mount bodies with ${KEY} placeholders intact (secrets resolve at deploy).
-          configMounts: rewrittenMounts?.length
-            ? (rewrittenMounts as unknown as Prisma.InputJsonValue)
+          // Persist config-mount bodies with ${KEY} placeholders intact (secrets resolve at deploy);
+          // their baked localhost self-URLs are swapped for the real address too.
+          configMounts: finalMounts?.length
+            ? (finalMounts as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
         },
       });
@@ -1713,7 +1739,18 @@ export class ApplicationsService {
       domainKind: app.domainKind,
       exposeMode: app.exposeMode,
       certType: app.certType,
-      url: appUrl(app, serverIp ?? null),
+      // A domainless COMPOSE app is reachable via its portMappings, not the always-null scalar
+      // hostPort — derive the effective port (only when needed) so the URL is never null.
+      url: appUrl(
+        {
+          domain: app.domain,
+          https: app.https,
+          hostPort:
+            app.hostPort ??
+            (app.domain == null && app.source === "COMPOSE" ? primaryHostPort(app, this.composeWeb(app)) : null),
+        },
+        serverIp ?? null,
+      ),
       // Webhook credentials are a deploy trigger → only exposed to members who can deploy (NOT to
       // apps:config-only members, who could otherwise self-trigger a deploy via the public webhook).
       webhookToken: canDeploy ? app.webhookToken : null,

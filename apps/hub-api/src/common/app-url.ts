@@ -22,3 +22,23 @@ export function appUrl(
   }
   return null;
 }
+
+/**
+ * The effective host port to build a domainless app's URL from. A COMPOSE/template app always stores
+ * `hostPort: null` — its real published ports live in `portMappings` — so `appUrl` would call it
+ * unreachable even though the stack listens on an allocated host port. Prefer the scalar `hostPort`
+ * (docker-run apps); else, for a COMPOSE app, the PRIMARY web service's published port (the one the
+ * domain would route to), falling back to the first published mapping. Null when nothing is published.
+ */
+export function primaryHostPort(
+  app: { hostPort: number | null; source?: string | null; portMappings?: unknown },
+  web: { service: string; port: number } | null,
+): number | null {
+  if (app.hostPort != null) return app.hostPort;
+  if (app.source !== "COMPOSE" || !Array.isArray(app.portMappings)) return null; // Prisma JsonValue guard
+  const maps = app.portMappings as { serviceName?: string; containerPort?: number; hostPort?: number }[];
+  if (maps.length === 0) return null;
+  const match = web ? maps.find((m) => m.serviceName === web.service && m.containerPort === web.port) : undefined;
+  const hp = (match ?? maps[0])?.hostPort;
+  return typeof hp === "number" ? hp : null;
+}

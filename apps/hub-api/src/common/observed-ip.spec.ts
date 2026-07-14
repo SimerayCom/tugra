@@ -80,9 +80,19 @@ describe("isPublicIp", () => {
     expect(isPublicIp("100.128.0.1")).toBe(true); // just outside CGNAT
     expect(isPublicIp("172.32.0.1")).toBe(true); // just outside RFC1918
   });
+  it("rejects a malformed / non-IP string (not just out-of-range) so it is never trusted as an address", () => {
+    for (const bad of ["", "not-an-ip", "203.0.113.7\n      - EXTRA=pwned", "203.0.113.7 8080", "203.0.113.256", "1.2.3", "::ffff:garbage", "http://203.0.113.7"]) {
+      expect(isPublicIp(bad)).toBe(false);
+    }
+  });
 });
 
 describe("bestReportedIp", () => {
+  it("ignores a malformed (non-IP) reported candidate", () => {
+    expect(bestReportedIp(["not-an-ip", "203.0.113.7\nx", "8.8.8.8"])).toBe("8.8.8.8");
+    expect(bestReportedIp(["garbage"])).toBeNull();
+  });
+
   it("prefers a public IPv4 over a private one", () => {
     expect(bestReportedIp(["10.0.0.5", "203.0.113.7"])).toBe("203.0.113.7");
   });
