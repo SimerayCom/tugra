@@ -4,6 +4,7 @@
  * provider (or a config field) needs zero DB migration. Most providers are fetch-based; SMTP uses
  * nodemailer.
  */
+import { createHmac } from "node:crypto";
 import nodemailer from "nodemailer";
 import {
   escapeHtml,
@@ -18,28 +19,57 @@ import {
   toPlain,
   type RenderedMessage,
 } from "./rendered-message";
+import { allowPrivateTargets, safeSend } from "./safe-url";
 
 export type ChannelConfig = Record<string, unknown>;
+
+/**
+ * Headers a user's custom-header map may never set: the ones we control (content-type + signature) and
+ * the request-framing / hop-by-hop headers (content-length, transfer-encoding, connection, host) — a
+ * user-supplied Content-Length/Transfer-Encoding would desync the body and enable request smuggling.
+ */
+const RESERVED_HEADERS = new Set([
+  "content-type",
+  "x-tugra-signature",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "host",
+]);
+/** RFC 7230 header field-name token. */
+const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * Merge user-supplied `config.headers` into `base`, defensively: skip non-string values, invalid
+ * names, reserved names, and any value containing CR/LF (header injection). A second line of defense
+ * even if create-time DTO validation was somehow bypassed.
+ */
+function mergeCustomHeaders(base: Record<string, string>, raw: unknown): void {
+  if (!raw || typeof raw !== "object") return;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v !== "string") continue;
+    if (!HEADER_NAME.test(k)) continue;
+    if (RESERVED_HEADERS.has(k.toLowerCase())) continue;
+    if (/[\r\n]/.test(v)) continue;
+    base[k] = v;
+  }
+}
 
 export abstract class NotificationProvider {
   abstract readonly type: string;
   abstract send(config: ChannelConfig, msg: RenderedMessage): Promise<void>;
 
   protected async postJson(url: string, body: unknown): Promise<void> {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`${this.type}: HTTP ${res.status}`);
+    // Route through the SSRF-guarded, IP-pinned transport (no redirect follow) instead of raw fetch.
+    await safeSend(url, JSON.stringify(body), { "content-type": "application/json" }, { allowPrivate: allowPrivateTargets() });
   }
 }
 
 class WebhookProvider extends NotificationProvider {
   readonly type = "webhook";
   async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
-    // Structured payload. HMAC signature + custom headers + SSRF guard land in a later slice.
-    await this.postJson(String(config.url), {
+    // Serialize ONCE: the HMAC must be over the exact bytes on the wire (postJson would re-stringify).
+    const body = JSON.stringify({
       version: 1,
       event: msg.event,
       level: msg.level,
@@ -49,6 +79,14 @@ class WebhookProvider extends NotificationProvider {
       links: msg.links,
       timestamp: msg.timestamp,
     });
+    const headers: Record<string, string> = {};
+    mergeCustomHeaders(headers, config.headers); // user headers first...
+    headers["content-type"] = "application/json"; // ...reserved headers set LAST so they always win
+    const secret = typeof config.signingSecret === "string" ? config.signingSecret : "";
+    if (secret) {
+      headers["X-Tugra-Signature"] = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+    }
+    await safeSend(String(config.url), body, headers, { allowPrivate: allowPrivateTargets() });
   }
 }
 
@@ -90,8 +128,7 @@ class NtfyProvider extends NotificationProvider {
     // Lossless: if the ASCII header couldn't carry the full (unicode) title, put it in the body.
     const bodyTitle = asciiTitle === msg.title ? "" : msg.title;
     const body = [bodyTitle, msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n\n");
-    const res = await fetch(`${server}/${String(config.topic)}`, { method: "POST", headers, body });
-    if (!res.ok) throw new Error(`ntfy: HTTP ${res.status}`);
+    await safeSend(`${server}/${String(config.topic)}`, body, headers, { allowPrivate: allowPrivateTargets() });
   }
 }
 
@@ -138,16 +175,17 @@ class GotifyProvider extends NotificationProvider {
   readonly type = "gotify";
   async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
     const server = String(config.server).replace(/\/$/, "");
-    const res = await fetch(`${server}/message?token=${String(config.token)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title: msg.title,
-        message: [msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n\n"),
-        priority: Number(config.priority ?? levelPriorityGotify(msg.level)),
-      }),
+    const body = JSON.stringify({
+      title: msg.title,
+      message: [msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n\n"),
+      priority: Number(config.priority ?? levelPriorityGotify(msg.level)),
     });
-    if (!res.ok) throw new Error(`gotify: HTTP ${res.status}`);
+    await safeSend(
+      `${server}/message?token=${String(config.token)}`,
+      body,
+      { "content-type": "application/json" },
+      { allowPrivate: allowPrivateTargets() },
+    );
   }
 }
 

@@ -56,6 +56,10 @@ export const envSchema = z
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
   HUB_TRUSTED_PROXY: z.enum(["true", "false"]).optional(),
+  // Allow notification channels (webhook/ntfy/gotify/smtp) to target private LAN addresses
+  // (RFC1918/CGNAT/ULA). Off by default — a self-hoster running an internal ntfy/gotify/SMTP sets
+  // this to "true". Cloud-metadata (169.254.169.254), loopback and link-local stay blocked regardless.
+  NOTIFY_ALLOW_PRIVATE_TARGETS: z.enum(["true", "false"]).default("false"),
   // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),
