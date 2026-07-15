@@ -9,6 +9,18 @@ describe("notification channel schemas — event types", () => {
     expect(() => UpdateChannelSchema.parse({ eventTypes: ["backup_failed"] })).not.toThrow();
   });
 
+  it("accepts the operation-coverage events (backup/server-online/volume-backup/scheduled-task/cleanup)", () => {
+    const events = [
+      "backup_success", "server_online", "volume_backup_success", "volume_backup_failed",
+      "scheduled_task_success", "scheduled_task_failed", "docker_cleanup_success", "docker_cleanup_failed",
+    ];
+    for (const e of events) {
+      expect(EVENT_TYPES).toContain(e);
+      expect(() => CreateChannelSchema.parse({ ...base, eventTypes: [e] })).not.toThrow();
+    }
+    expect(() => CreateChannelSchema.parse({ ...base, eventTypes: events })).not.toThrow();
+  });
+
   it("defaults locale to en on create and accepts an explicit locale", () => {
     expect(CreateChannelSchema.parse(base).locale).toBe("en");
     expect(CreateChannelSchema.parse({ ...base, locale: "tr" }).locale).toBe("tr");

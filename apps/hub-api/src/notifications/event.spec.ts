@@ -154,6 +154,101 @@ describe("renderEvent — typed per-event templates", () => {
     expect(fieldVal(m, "Response")).toBeUndefined(); // no responseMs → dropped
   });
 
+  it("backup_success: success, not critical, size formatted, no error field", () => {
+    const m = render("backup_success", {
+      dbId: "db1", dbName: "shop", engine: "postgres", version: "16",
+      destType: "S3", bucket: "my-bucket", region: "eu", sizeBytes: "1610612736",
+    });
+    expect(m.level).toBe("success");
+    expect(m.title).toBe("Backup succeeded — shop");
+    expect(m.critical).toBe(false);
+    expect(fieldVal(m, "Engine")).toBe("postgres 16");
+    expect(fieldVal(m, "Size")).toBe("1.5 GB");
+    expect(fieldVal(m, "Error")).toBeUndefined();
+    expect(linkUrl(m, "Open database")).toBe("https://web.test/databases/db1");
+  });
+
+  it("server_online: success, not critical, server link", () => {
+    const m = render("server_online", { serverId: "srv1", serverName: "node-1", hostname: "10.0.0.5", publicIp: "1.2.3.4" });
+    expect(m.level).toBe("success");
+    expect(m.title).toBe("Server online — node-1");
+    expect(m.critical).toBe(false);
+    expect(fieldVal(m, "Hostname")).toBe("10.0.0.5");
+    expect(fieldVal(m, "IP")).toBe("1.2.3.4");
+    expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/srv1");
+  });
+
+  it("volume_backup_success: success, aggregate size, failed-volumes field dropped", () => {
+    const m = render("volume_backup_success", {
+      appId: "app1", appName: "blog", volumes: "2", destType: "S3", bucket: "b", sizeBytes: "1048576", failedVolumes: "",
+    });
+    expect(m.level).toBe("success");
+    expect(m.title).toBe("Volume backup succeeded — blog");
+    expect(m.critical).toBe(false);
+    expect(fieldVal(m, "Volumes")).toBe("2");
+    expect(fieldVal(m, "Size")).toBe("1 MB");
+    expect(fieldVal(m, "Failed volumes")).toBeUndefined();
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+  });
+
+  it("volume_backup_failed: failure + critical, size dropped, failed-volumes listed", () => {
+    const m = render("volume_backup_failed", {
+      appId: "app1", appName: "blog", volumes: "2", destType: "LOCAL", bucket: "", sizeBytes: "", failedVolumes: "data",
+    });
+    expect(m.level).toBe("failure");
+    expect(m.critical).toBe(true);
+    expect(fieldVal(m, "Size")).toBeUndefined();
+    expect(fieldVal(m, "Failed volumes")).toBe("data");
+  });
+
+  it("scheduled_task_success: success, exit code 0, output dropped", () => {
+    const m = render("scheduled_task_success", { taskName: "migrate", appId: "app1", appName: "blog", exitCode: 0, outputTail: "" });
+    expect(m.level).toBe("success");
+    expect(m.title).toBe("Scheduled task succeeded — migrate");
+    expect(m.summary).toBe("Scheduled task migrate on blog completed.");
+    expect(m.critical).toBe(false);
+    expect(fieldVal(m, "App")).toBe("blog");
+    expect(fieldVal(m, "Exit code")).toBe("0");
+    expect(fieldVal(m, "Output")).toBeUndefined();
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+  });
+
+  it("scheduled_task_failed: failure + critical, exit code shown, raw output NEVER rendered", () => {
+    const m = render("scheduled_task_failed", { taskName: "migrate", appId: "app1", appName: "blog", exitCode: 1, outputTail: "boom" });
+    expect(m.level).toBe("failure");
+    expect(m.critical).toBe(true);
+    expect(fieldVal(m, "Exit code")).toBe("1");
+    expect(fieldVal(m, "Output")).toBeUndefined(); // template drops output — arbitrary command may print secrets
+  });
+
+  it("scheduled_task NEVER leaks raw command output (secrets stay in-app; inspect via the deep-link)", () => {
+    const secret = "DATABASE_URL=postgres://u:S3cret@db/app";
+    for (const type of ["scheduled_task_success", "scheduled_task_failed"]) {
+      const m = render(type, { taskName: "t", appId: "app1", appName: "blog", exitCode: 1, outputTail: secret });
+      expect(JSON.stringify(m)).not.toContain("S3cret");
+      expect(fieldVal(m, "Output")).toBeUndefined();
+      expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+    }
+  });
+
+  it("docker_cleanup_success: success, reclaimed shown, never critical", () => {
+    const m = render("docker_cleanup_success", { serverId: "srv1", serverName: "node-1", reclaimed: "1.2GB", errorTail: "" });
+    expect(m.level).toBe("success");
+    expect(m.title).toBe("Cleanup succeeded — node-1");
+    expect(m.critical).toBe(false);
+    expect(fieldVal(m, "Reclaimed")).toBe("1.2GB");
+    expect(fieldVal(m, "Error")).toBeUndefined();
+    expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/srv1");
+  });
+
+  it("docker_cleanup_failed: failure level but NOT critical (maintenance), error shown", () => {
+    const m = render("docker_cleanup_failed", { serverId: "srv1", serverName: "node-1", reclaimed: "", errorTail: "disk error" });
+    expect(m.level).toBe("failure");
+    expect(m.critical).toBe(false);
+    expect(fieldVal(m, "Reclaimed")).toBeUndefined();
+    expect(fieldVal(m, "Error")).toBe("disk error");
+  });
+
   it("unknown event id → generic template (info fallback, title = event id)", () => {
     const m = render("totally_unknown", {});
     expect(m.event).toBe("totally_unknown");
@@ -179,9 +274,10 @@ describe("renderEvent — typed per-event templates", () => {
 
   it("empty ctx never yields the string 'undefined' and drops empty fields", () => {
     for (const type of [
-      "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed",
-      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline",
-      "monitor_up", "monitor_down",
+      "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
+      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online",
+      "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
+      "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
     ]) {
       const m = render(type, {});
       const blob = JSON.stringify(m);
@@ -200,10 +296,17 @@ describe("renderEvent — typed per-event templates", () => {
   });
 
   it("critical matrix: exactly the outage events are critical", () => {
-    const critical = new Set(["deploy_failed", "backup_failed", "backup_restore_failed", "server_offline", "monitor_down"]);
+    // docker_cleanup_failed is deliberately NOT critical (maintenance, self-heals next cycle); the two new
+    // critical events are volume_backup_failed and scheduled_task_failed (real failed operations).
+    const critical = new Set([
+      "deploy_failed", "backup_failed", "backup_restore_failed", "server_offline", "monitor_down",
+      "volume_backup_failed", "scheduled_task_failed",
+    ]);
     const all = [
-      "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_restore_failed",
-      "ssl_expiring", "token_expiring", "server_offline", "monitor_up", "monitor_down",
+      "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
+      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online",
+      "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
+      "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
     ];
     for (const type of all) {
       expect(!!render(type, {}).critical).toBe(critical.has(type));

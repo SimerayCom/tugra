@@ -7,10 +7,13 @@
  */
 import type { MsgField, MsgLevel, RenderedMessage } from "./rendered-message";
 import { deployTemplate } from "./templates/deploy";
-import { backupFailedTemplate, restoreFailedTemplate } from "./templates/backup";
-import { serverOfflineTemplate } from "./templates/server";
+import { backupFailedTemplate, backupSucceededTemplate, restoreFailedTemplate } from "./templates/backup";
+import { serverOfflineTemplate, serverOnlineTemplate } from "./templates/server";
 import { sslExpiringTemplate, tokenExpiringTemplate } from "./templates/expiry";
 import { monitorTemplate } from "./templates/monitor";
+import { volumeBackupTemplate } from "./templates/volume-backup";
+import { scheduledTaskTemplate } from "./templates/scheduled-task";
+import { dockerCleanupTemplate } from "./templates/docker-cleanup";
 import { genericTemplate, testTemplate } from "./templates/generic";
 
 /** A locale-bound translator: resolves a dotted key with `{param}` interpolation (NotifI18nService). */
@@ -69,6 +72,16 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
 }
 
+/** Human byte size ("1.5 GB" / "820 MB" / "12 KB" / "512 B"); ≤0 or non-finite → "" so fields() drops it.
+ *  Mirrors `web/lib/fleet.ts:fmtBytes` (same thresholds/precision) with a guard for the empty case. */
+export function fmtBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(0)} MB`;
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
 /** Format an ISO timestamp as "YYYY-MM-DD HH:mm UTC"; invalid/empty → "". */
 export function fmtDate(iso: string): string {
   if (!iso) return "";
@@ -87,10 +100,18 @@ const REGISTRY: Record<string, EventTemplate> = {
   deploy_failed: deployTemplate,
   deploy_rolled_back: deployTemplate,
   backup_failed: backupFailedTemplate,
+  backup_success: backupSucceededTemplate,
   backup_restore_failed: restoreFailedTemplate,
   ssl_expiring: sslExpiringTemplate,
   token_expiring: tokenExpiringTemplate,
   server_offline: serverOfflineTemplate,
+  server_online: serverOnlineTemplate,
+  volume_backup_success: volumeBackupTemplate,
+  volume_backup_failed: volumeBackupTemplate,
+  scheduled_task_success: scheduledTaskTemplate,
+  scheduled_task_failed: scheduledTaskTemplate,
+  docker_cleanup_success: dockerCleanupTemplate,
+  docker_cleanup_failed: dockerCleanupTemplate,
   monitor_up: monitorTemplate,
   monitor_down: monitorTemplate,
   test: testTemplate,

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { NotificationsService } from "../notifications/notifications.service";
 import { appVolumeName, type AppVolume } from "../deploy/deploy-script";
 import { LOCAL_DEST, objectKey, type DestinationSpec } from "../backups/destination";
 import {
@@ -22,6 +23,7 @@ export class VolumeBackupRunnerService {
     private readonly audit: AuditService,
     private readonly crypto: CryptoService,
     private readonly agentWs: AgentWsServer,
+    private readonly notifications: NotificationsService,
   ) {}
 
   volumesOf(app: Application): AppVolume[] {
@@ -57,6 +59,11 @@ export class VolumeBackupRunnerService {
     const vols = this.volumesOf(app);
     const dest = await this.destinationSpec(app);
     const out: VolumeBackup[] = [];
+    // Aggregate the run so a single notification reports the whole app's backup (one fire per runBackup,
+    // not one per volume). Any per-volume failure downgrades the run to failed (conservative).
+    let anyFail = false;
+    const failedVols: string[] = [];
+    let totalSize = 0n;
 
     for (const v of vols) {
       const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -83,11 +90,20 @@ export class VolumeBackupRunnerService {
           BACKUP_TIMEOUT_MS,
         );
         const ok = r.exitCode === 0;
+        const sz = ok ? parseSize(r.output) : null;
+        if (ok) {
+          if (sz != null) totalSize += sz;
+        } else {
+          anyFail = true;
+          failedVols.push(v.name);
+        }
         await this.prisma.volumeBackup.update({
           where: { id: row.id },
-          data: { status: ok ? "SUCCESS" : "FAILED", sizeBytes: ok ? parseSize(r.output) : null, completedAt: new Date() },
+          data: { status: ok ? "SUCCESS" : "FAILED", sizeBytes: sz, completedAt: new Date() },
         });
       } catch {
+        anyFail = true;
+        failedVols.push(v.name);
         await this.prisma.volumeBackup.update({ where: { id: row.id }, data: { status: "FAILED", completedAt: new Date() } });
       }
       out.push((await this.prisma.volumeBackup.findUnique({ where: { id: row.id } }))!);
@@ -95,6 +111,22 @@ export class VolumeBackupRunnerService {
 
     await this.prune(app);
     await this.audit.log({ actor, action: "app.volume_backup", target: app.id });
+    if (vols.length) {
+      // BigInt totalSize → string before the queue's JSON payload (JSON.stringify throws on a raw BigInt).
+      // Size is dropped from a failed run (a partial sum would misrepresent it); failedVolumes is empty on
+      // success (the template drops empty fields).
+      await this.notifications
+        .fireForEvent(app.teamId, anyFail ? "volume_backup_failed" : "volume_backup_success", {
+          appId: app.id,
+          appName: app.name,
+          volumes: String(vols.length),
+          destType: dest.type,
+          bucket: dest.type === "S3" && dest.s3 ? dest.s3.bucket : "",
+          sizeBytes: anyFail ? "" : totalSize.toString(),
+          failedVolumes: failedVols.join(", "),
+        })
+        .catch(() => undefined);
+    }
     return out;
   }
 
