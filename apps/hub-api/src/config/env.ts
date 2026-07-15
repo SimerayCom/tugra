@@ -60,6 +60,12 @@ export const envSchema = z
   // (RFC1918/CGNAT/ULA). Off by default — a self-hoster running an internal ntfy/gotify/SMTP sets
   // this to "true". Cloud-metadata (169.254.169.254), loopback and link-local stay blocked regardless.
   NOTIFY_ALLOW_PRIVATE_TARGETS: z.enum(["true", "false"]).default("false"),
+  // Collapse duplicate notifications: within this many seconds, a repeat of the SAME (channel, event,
+  // entity) GENERAL alert is suppressed — throttles a resource that fails repeatedly (a deploy/backup
+  // failing every run). 0 disables it. Monitor up/down are EXEMPT (the monitor runner's state machine +
+  // resendEvery are their authoritative throttle, and a time window would drop real re-alerts / a re-DOWN
+  // after recovery); events without a unique entity id are never deduped.
+  NOTIFY_DEDUPE_WINDOW_SEC: z.coerce.number().int().nonnegative().default(60),
   // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),

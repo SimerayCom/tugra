@@ -57,6 +57,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.redis.smembers(key);
   }
 
+  /**
+   * Atomic fixed-window "first seen" gate: SET key NX EX ttl. Returns true only for the FIRST caller
+   * within the window (the key was set), false for every repeat until the window lapses. Used to
+   * dedupe/throttle notifications (one alert per (channel,event,entity) per window).
+   */
+  async firstInWindow(key: string, ttlSeconds: number): Promise<boolean> {
+    const r = await this.redis.set(key, "1", "EX", ttlSeconds, "NX");
+    return r === "OK";
+  }
+
   async expire(key: string, ttlSeconds: number): Promise<void> {
     await this.redis.expire(key, ttlSeconds);
   }
