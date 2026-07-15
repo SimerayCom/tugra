@@ -108,9 +108,16 @@ export class BackupsService {
       // Scrub customer row data (pg/mysql echo values in errors) before storing.
       data: { status: RestoreStatus.FAILED, exitCode, errorTail: scrubRestoreOutput(output), completedAt: new Date() },
     });
-    // Best-effort: a notification failure must not mask the restore error.
+    // Best-effort: a notification failure must not mask the restore error. Scrub the raw output for
+    // the ctx too (pg/mysql echo customer row values).
     await this.notifications
-      .fireForEvent(db.teamId, "backup_restore_failed", `Restore failed for "${db.name}"`)
+      .fireForEvent(db.teamId, "backup_restore_failed", {
+        dbId: db.id,
+        dbName: db.name,
+        engine: db.engine,
+        exitCode,
+        errorTail: scrubRestoreOutput(output),
+      })
       .catch(() => undefined);
   }
 

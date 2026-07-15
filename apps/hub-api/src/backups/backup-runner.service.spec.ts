@@ -33,13 +33,13 @@ describe("BackupRunnerService backup-failure notification", () => {
   it("fires backup_failed when the dump command exits non-zero", async () => {
     const { svc, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 1, output: "" }));
     await svc.runBackup("db1", "u1");
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.stringContaining("shop"));
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.objectContaining({ dbName: expect.stringContaining("shop") }));
   });
 
   it("fires backup_failed when the agent command throws", async () => {
     const { svc, fireForEvent } = make(jest.fn().mockRejectedValue(new Error("agent offline")));
     await svc.runBackup("db1", "u1");
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.any(String));
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.objectContaining({ dbName: expect.stringContaining("shop"), errorTail: expect.stringContaining("agent offline") }));
   });
 
   it("does NOT notify on a successful backup", async () => {

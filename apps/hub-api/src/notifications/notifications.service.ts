@@ -4,12 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { webBaseUrl } from "../common/web-url";
 import { getProvider, PROVIDER_TYPES } from "./providers";
-import { plainToRendered, type RenderedMessage } from "./rendered-message";
+import { renderEvent, type RenderEnv } from "./event";
+import { type RenderedMessage } from "./rendered-message";
 
 export interface ChannelView {
   id: string;
@@ -28,7 +31,13 @@ export class NotificationsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly crypto: CryptoService,
+    private readonly config: ConfigService,
   ) {}
+
+  /** Environment threaded into pure templates for building web deep-links. */
+  private renderEnv(): RenderEnv {
+    return { webBaseUrl: webBaseUrl(this.config) };
+  }
 
   private view(
     c: {
@@ -131,25 +140,33 @@ export class NotificationsService {
     await getProvider(c.type).send(this.decodeConfig(c.configEnc), msg);
   }
 
-  /** Fire all enabled channels attached to a monitor (called by the runner). */
-  async fireForMonitor(monitorId: string, message: string): Promise<void> {
+  /**
+   * Fire all enabled channels attached to a monitor (called by the runner). Recipients come from the
+   * MonitorChannel link table (not the eventTypes filter); the event id (monitor_up/down) is derived
+   * from ctx.status purely to select the template.
+   */
+  async fireForMonitor(monitorId: string, ctx: Record<string, unknown> = {}): Promise<void> {
     const links = await this.prisma.monitorChannel.findMany({
       where: { monitorId },
       include: { channel: true },
     });
-    const msg = plainToRendered(message); // SHIM until Dilim 3's typed templates
-    for (const link of links) {
-      if (!link.channel.enabled) continue;
-      await this.dispatch(link.channel.type, link.channel.configEnc, msg, link.channelId);
+    const enabled = links.filter((l) => l.channel.enabled);
+    if (!enabled.length) return;
+    const type = String(ctx.status).toUpperCase() === "UP" ? "monitor_up" : "monitor_down";
+    // teamId is unused by English templates but threaded (real m.teamId) for Dilim 7 team-scoped i18n.
+    const msg = renderEvent({ type, teamId: String(ctx.teamId ?? ""), ctx }, this.renderEnv());
+    for (const l of enabled) {
+      await this.dispatch(l.channel.type, l.channel.configEnc, msg, l.channelId);
     }
   }
 
-  /** Fire all enabled team channels subscribed to a global event (deploy/server). */
-  async fireForEvent(teamId: string, eventType: string, message: string): Promise<void> {
+  /** Fire all enabled team channels subscribed to a global event (deploy/server/backup/ssl). */
+  async fireForEvent(teamId: string, eventType: string, ctx: Record<string, unknown> = {}): Promise<void> {
     const channels = await this.prisma.notificationChannel.findMany({
       where: { teamId, enabled: true, eventTypes: { has: eventType } },
     });
-    const msg = plainToRendered(message); // SHIM until Dilim 3's typed templates
+    if (!channels.length) return;
+    const msg = renderEvent({ type: eventType, teamId, ctx }, this.renderEnv());
     for (const ch of channels) {
       await this.dispatch(ch.type, ch.configEnc, msg, ch.id);
     }

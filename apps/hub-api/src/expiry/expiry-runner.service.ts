@@ -45,7 +45,14 @@ export class ExpiryRunnerService {
       const days = ssl.daysRemaining;
       if (days == null || !this.shouldNotify(days)) continue;
       await this.notifications
-        .fireForEvent(app.teamId, "ssl_expiring", `⚠️ SSL for ${app.domain} expires in ${days} day(s)`)
+        .fireForEvent(app.teamId, "ssl_expiring", {
+          appId: app.id,
+          appName: app.name,
+          domain: app.domain,
+          days,
+          validTo: ssl.validTo ?? "",
+          issuer: ssl.issuer ?? "",
+        })
         .catch(() => {});
     }
   }
@@ -58,7 +65,11 @@ export class ExpiryRunnerService {
       const memberships = await this.prisma.membership.findMany({ where: { userId: token.userId } });
       for (const m of memberships) {
         await this.notifications
-          .fireForEvent(m.teamId, "token_expiring", `⚠️ API token "${token.name}" expires in ${days} day(s)`)
+          .fireForEvent(m.teamId, "token_expiring", {
+            tokenName: token.name,
+            days,
+            expiresAt: token.expiresAt?.toISOString() ?? "",
+          })
           .catch(() => {});
       }
     }

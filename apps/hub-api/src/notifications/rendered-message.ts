@@ -90,21 +90,3 @@ export function toPlain(msg: RenderedMessage): string {
   if (lines) parts.push(lines);
   return parts.join("\n\n");
 }
-
-/**
- * SHIM (temporary bridge until Dilim 3 supplies typed per-event templates with real levels): wrap a
- * plain firing-site string into a RenderedMessage, inferring the level from a leading emoji. Uses
- * startsWith (⚠️ is U+26A0 U+FE0F — a code-point index would miss the trailing variation selector).
- * Known gap: backup_failed/restore_failed fire with no leading emoji → info (grey); Dilim 3 makes them red.
- */
-export function plainToRendered(message: string): RenderedMessage {
-  const s = message.trimStart();
-  const level: MsgLevel = s.startsWith("✅")
-    ? "success"
-    : s.startsWith("🔴") || s.startsWith("❌")
-      ? "failure"
-      : s.startsWith("⚠️") || s.startsWith("⚠")
-        ? "warning"
-        : "info";
-  return { level, title: message, summary: message, fields: [], links: [], critical: false, timestamp: new Date().toISOString(), event: "" };
-}

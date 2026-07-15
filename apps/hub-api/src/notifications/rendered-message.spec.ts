@@ -5,7 +5,6 @@ import {
   levelPriority,
   levelPriorityGotify,
   levelTag,
-  plainToRendered,
   sanitizeHeader,
   sanitizeNtfyHeader,
   toPlain,
@@ -66,19 +65,5 @@ describe("rendered-message helpers", () => {
   it("toPlain degrades to title+summary with no fields, and does not repeat an identical summary", () => {
     expect(toPlain(rm({ title: "A", summary: "B", fields: [] }))).toBe("A\n\nB");
     expect(toPlain(rm({ title: "same", summary: "same", fields: [] }))).toBe("same");
-  });
-
-  it("plainToRendered (shim) infers the level from a leading emoji", () => {
-    expect(plainToRendered("✅ ok").level).toBe("success");
-    expect(plainToRendered("🔴 down").level).toBe("failure");
-    expect(plainToRendered("❌ nope").level).toBe("failure");
-    expect(plainToRendered("⚠️ ssl expiring").level).toBe("warning");
-    expect(plainToRendered("Backup failed for x").level).toBe("info"); // no emoji → info (Dilim 3 fixes)
-    const m = plainToRendered("hi");
-    expect(m.title).toBe("hi");
-    expect(m.summary).toBe("hi");
-    expect(m.fields).toEqual([]);
-    expect(m.links).toEqual([]);
-    expect(m.event).toBe("");
   });
 });

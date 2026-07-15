@@ -64,11 +64,17 @@ export class MonitorRunnerService {
     });
 
     if (t.important) {
-      const head = t.status === "UP" ? "✅ UP" : "🔴 DOWN";
-      await this.notifications.fireForMonitor(
-        m.id,
-        `${head} — ${m.name} (${m.target}) · ${r.msg}`,
-      );
+      // The service derives monitor_up/monitor_down from ctx.status to select the template.
+      await this.notifications.fireForMonitor(m.id, {
+        status: t.status,
+        monitorId: m.id,
+        monitorName: m.name,
+        target: m.target,
+        monitorType: m.type,
+        resultMsg: r.msg,
+        responseMs: r.ms,
+        teamId: m.teamId,
+      });
     }
 
     return { status: t.status, ms: r.ms, msg: r.msg, important: t.important };

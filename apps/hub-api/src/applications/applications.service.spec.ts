@@ -141,6 +141,9 @@ const app = {
   createdAt: new Date(),
 };
 
+/** Drain the microtask queue so a fire-and-forget notification (awaited internally) has run. */
+const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
 describe("ApplicationsService", () => {
   it("forbids creating an app for a team the user can't write to", async () => {
     const prisma = {
@@ -252,7 +255,7 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(rollingApp), update: appUpdate },
       deployment: {
-        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED", kind: "AUTO_ROLLBACK" }),
         // active-deploy check (status RUNNING) → none; prev-success check (status SUCCESS) → a prior live version
@@ -260,6 +263,7 @@ describe("ApplicationsService", () => {
           Promise.resolve(where.status === "SUCCESS" ? { id: "prev", imageTag: "tugra_app1:prev" } : null),
         ),
       },
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: null, publicIpv6: null }) },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
@@ -272,6 +276,7 @@ describe("ApplicationsService", () => {
     } as unknown as AgentWsServer;
     const svc = make(prisma, access, agentWs);
     await svc.deploy("u1", "app1");
+    await flushMicrotasks(); // the deploy notification fires-and-forgets after project/url enrichment
     // a routed rolling app uses the rolling builder (temp __rollout container)
     expect(sentCmd).toContain("tugra_app1__rollout");
     // exit 3 → deployment FAILED + kind AUTO_ROLLBACK, but the app is still RUNNING (old kept)
@@ -282,7 +287,7 @@ describe("ApplicationsService", () => {
     expect((svc as unknown as { notifications: { fireForEvent: jest.Mock } }).notifications.fireForEvent).toHaveBeenCalledWith(
       "t1",
       "deploy_rolled_back",
-      expect.any(String),
+      expect.objectContaining({ appName: "web", appId: "app1" }),
     );
   });
 
@@ -342,13 +347,14 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(hp), update: appUpdate },
       deployment: {
-        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED", kind: "AUTO_ROLLBACK" }),
         findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
           Promise.resolve(where.status === "SUCCESS" ? { id: "prev", imageTag: "tugra_app1:prev" } : null),
         ),
       },
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: null, publicIpv6: null }) },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
@@ -361,6 +367,7 @@ describe("ApplicationsService", () => {
     } as unknown as AgentWsServer;
     const svc = make(prisma, access, agentWs);
     await svc.deploy("u1", "app1");
+    await flushMicrotasks(); // the deploy notification fires-and-forgets after project/url enrichment
     // the recreate script carries the previous image as its rollback target
     expect(sentCmd).toContain("tugra_app1:prev");
     expect(depUpdate).toHaveBeenCalledWith(
@@ -370,7 +377,7 @@ describe("ApplicationsService", () => {
     expect((svc as unknown as { notifications: { fireForEvent: jest.Mock } }).notifications.fireForEvent).toHaveBeenCalledWith(
       "t1",
       "deploy_rolled_back",
-      expect.any(String),
+      expect.objectContaining({ appName: "web", appId: "app1" }),
     );
   });
 

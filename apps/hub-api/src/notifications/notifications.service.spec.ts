@@ -1,3 +1,4 @@
+import { ConfigService } from "@nestjs/config";
 import { NotificationsService } from "./notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -10,9 +11,10 @@ const crypto = {
   encrypt: (s: string) => `enc(${s})`,
   decrypt: (s: string) => s.replace(/^enc\(/, "").replace(/\)$/, ""),
 } as unknown as CryptoService;
+const config = { get: () => "https://web.test" } as unknown as ConfigService;
 
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto);
+  return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, config);
 }
 
 describe("NotificationsService", () => {
@@ -39,10 +41,19 @@ describe("NotificationsService", () => {
   it("fireForEvent only queries enabled channels subscribed to the event", async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
-    await svc.fireForEvent("t1", "deploy_failed", "boom");
+    await svc.fireForEvent("t1", "deploy_failed", { appName: "blog" });
     expect(findMany).toHaveBeenCalledWith({
       where: { teamId: "t1", enabled: true, eventTypes: { has: "deploy_failed" } },
     });
+  });
+
+  it("fireForEvent early-outs without rendering when no channels match", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const fetchMock = jest.fn();
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
+    await svc.fireForEvent("t1", "deploy_failed", { appName: "blog" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fireForEvent dispatches to matching channels and swallows provider errors", async () => {
@@ -52,22 +63,51 @@ describe("NotificationsService", () => {
     const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 500 });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
-    await expect(svc.fireForEvent("t1", "deploy_failed", "boom")).resolves.toBeUndefined();
+    await expect(svc.fireForEvent("t1", "deploy_failed", { appName: "blog" })).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith("https://hook", expect.objectContaining({ method: "POST" }));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "notification.failed", target: "c1" }));
   });
 
-  it("fireForEvent wraps the plain message via the shim (level inferred → structured body)", async () => {
+  it("fireForEvent renders the typed template into a structured body (level/title/fields/link)", async () => {
     const findMany = jest.fn().mockResolvedValue([
       { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` },
     ]);
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
-    await svc.fireForEvent("t1", "deploy_failed", "🔴 boom");
+    await svc.fireForEvent("t1", "deploy_failed", { appName: "blog", appId: "app1", projectName: "web" });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.level).toBe("failure"); // 🔴 leading emoji → failure via plainToRendered
-    expect(body.summary).toBe("🔴 boom");
+    expect(body.event).toBe("deploy_failed");
+    expect(body.level).toBe("failure");
+    expect(body.title).toBe("Deploy failed — blog");
+    expect(body.fields.find((f: { label: string }) => f.label === "Project").value).toBe("web");
+    expect(body.links.find((l: { label: string }) => l.label === "View in Tugra").url).toBe("https://web.test/apps/app1");
+  });
+
+  it("fireForMonitor derives monitor_up/down from ctx.status and hits only enabled links", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { channelId: "c1", channel: { enabled: true, type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` } },
+      { channelId: "c2", channel: { enabled: false, type: "webhook", configEnc: "enc({})" } },
+    ]);
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const svc = make({ monitorChannel: { findMany } } as unknown as PrismaService, {});
+    await svc.fireForMonitor("m1", { status: "DOWN", monitorName: "api", target: "x", teamId: "t1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // disabled link skipped
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.event).toBe("monitor_down");
+    expect(body.level).toBe("failure");
+  });
+
+  it("fireForMonitor early-outs when no linked channel is enabled", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { channelId: "c1", channel: { enabled: false, type: "webhook", configEnc: "enc({})" } },
+    ]);
+    const fetchMock = jest.fn();
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const svc = make({ monitorChannel: { findMany } } as unknown as PrismaService, {});
+    await svc.fireForMonitor("m1", { status: "UP" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("update can change eventTypes without re-encrypting when no config given", async () => {
