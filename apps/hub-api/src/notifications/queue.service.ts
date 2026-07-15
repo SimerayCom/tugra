@@ -4,12 +4,38 @@ import { Job, Queue, Worker } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { RedisService } from "../redis/redis.service";
 import { webBaseUrl } from "../common/web-url";
 import { getProvider } from "./providers";
 import { renderEvent, type NotificationEvent, type RenderEnv } from "./event";
 import { NotifI18nService } from "./notif-i18n.service";
 
 const QUEUE = "notifications";
+
+// Monitor events are NOT deduped at the notification layer: the monitor runner's state machine
+// (monitors/transition.ts) is their authoritative throttle — it fires only on down/up EDGES plus the
+// configured `resendEvery` re-alerts. A blind time-window dedup would silently drop those configured
+// resend re-alerts AND (worse) suppress a genuine re-DOWN that follows a recovery, leaving the operator's
+// last alert as "recovered" while the service is down. So we skip anything monitor_*.
+const MONITOR_PREFIX = "monitor_";
+
+// Stable, UNIQUE resource-identity fields read from a fired event's ctx to build a dedupe key. Only durable
+// unique ids belong here — NOT display names (e.g. tokenName is a non-unique label → deliberately excluded,
+// else two distinct tokens sharing a name collapse and the second is never alerted) and NOT volatile fields
+// (errorTail/sizeBytes/responseMs/durationMs/days/…). All present values are joined so an app-scoped task
+// keeps appId+taskName distinct. An event carrying none of these has no safe key and is NOT deduped.
+const ID_FIELDS = ["appId", "dbId", "serverId", "domain", "taskName"] as const;
+
+/** A stable entity key for the resource an event is about, or "" when the ctx carries no unique identifier. */
+function entityKey(ctx: Record<string, unknown>): string {
+  return ID_FIELDS.map((f) => ctx[f]).filter((v) => v != null && v !== "").map(String).join(":");
+}
+
+/** Redis key for the dedupe window. event.type is part of the key so distinct event types on the same
+ *  resource never collapse into each other. */
+function dedupeKey(channelId: string, eventType: string, entity: string): string {
+  return `notifdedup:${channelId}:${eventType}:${entity}`;
+}
 
 interface DeliverJob {
   deliveryId: string;
@@ -36,6 +62,7 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     private readonly audit: AuditService,
     private readonly config: ConfigService,
     private readonly i18n: NotifI18nService,
+    private readonly redis: RedisService,
   ) {}
 
   private connection() {
@@ -77,6 +104,20 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
    * await, so one channel's DB/Redis hiccup must not abort the loop or reject to the caller.
    */
   async enqueue(channelId: string, event: NotificationEvent): Promise<void> {
+    // Dedupe/throttle: suppress a repeat of the same (channel, event, entity) GENERAL alert within the
+    // window, BEFORE the snapshot — a suppressed enqueue creates no delivery row and no job. Skipped for
+    // monitors (the runner throttles them) and for events with no unique entity id (never risk collapsing
+    // two distinct resources). Fail-open: a Redis hiccup must never drop an alert (availability > dedup),
+    // and this check must never throw (enqueue is best-effort). 0/unset window disables dedupe. deliverNow
+    // (the test button) bypasses this entirely.
+    const windowSec = Number(this.config.get<number>("NOTIFY_DEDUPE_WINDOW_SEC") ?? 0);
+    if (windowSec > 0 && !event.type.startsWith(MONITOR_PREFIX)) {
+      const entity = entityKey(event.ctx);
+      if (entity) {
+        const fresh = await this.redis.firstInWindow(dedupeKey(channelId, event.type, entity), windowSec).catch(() => true);
+        if (!fresh) return;
+      }
+    }
     let delivery: { id: string };
     try {
       delivery = await this.snapshot(channelId, event);

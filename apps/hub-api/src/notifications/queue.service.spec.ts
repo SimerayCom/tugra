@@ -7,6 +7,7 @@ import { NotifI18nService } from "./notif-i18n.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { RedisService } from "../redis/redis.service";
 import { safeSend } from "./safe-url";
 import type { NotificationEvent } from "./event";
 
@@ -16,14 +17,36 @@ const crypto = {
   encrypt: (s: string) => `enc(${s})`,
   decrypt: (s: string) => s.replace(/^enc\(/, "").replace(/\)$/, ""),
 } as unknown as CryptoService;
+// Default config returns a non-numeric webBaseUrl for every key → Number(NOTIFY_DEDUPE_WINDOW_SEC) is NaN
+// → dedupe disabled, so the existing tests are unaffected without touching them.
 const config = { get: () => "https://web.test" } as unknown as ConfigService;
+// A config with a real dedupe window (60s) for the throttle tests.
+const dedupeConfig = { get: (k: string) => (k === "NOTIFY_DEDUPE_WINDOW_SEC" ? 60 : "https://web.test") } as unknown as ConfigService;
+// Redis stub whose firstInWindow is a no-op (never consulted when dedupe is disabled).
+const noRedis = { firstInWindow: jest.fn().mockResolvedValue(true) } as unknown as RedisService;
+
+// In-memory dedupe backend with an advanceable clock — mirrors SET NX EX semantics without a real Redis.
+function fakeRedis() {
+  const store = new Map<string, number>();
+  const clock = { now: 0 };
+  const svc = {
+    firstInWindow: jest.fn(async (key: string, ttl: number) => {
+      const exp = store.get(key);
+      if (exp != null && exp > clock.now) return false;
+      store.set(key, clock.now + ttl);
+      return true;
+    }),
+  } as unknown as RedisService;
+  return { svc, advance: (s: number) => { clock.now += s; } };
+}
 
 const EVENT: NotificationEvent = { type: "deploy_failed", teamId: "t1", ctx: { appName: "blog", appId: "app1" } };
 const webhookChannel = { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` };
 
-function make(prisma: Partial<PrismaService>) {
-  return new NotificationQueueService(prisma as PrismaService, crypto, audit, config, new NotifI18nService());
+function make(prisma: Partial<PrismaService>, redis: RedisService = noRedis, cfg: ConfigService = config) {
+  return new NotificationQueueService(prisma as PrismaService, crypto, audit, cfg, new NotifI18nService(), redis);
 }
+const createsOf = (prisma: PrismaService) => (prisma.notificationDelivery.create as jest.Mock).mock.calls.length;
 // handleFailed is private (the real worker wires it); invoke it directly in the unit test.
 const callFailed = (svc: NotificationQueueService, job: unknown, err: Error): Promise<void> =>
   (svc as unknown as { handleFailed(j: unknown, e: Error): Promise<void> }).handleFailed(job, err);
@@ -156,6 +179,79 @@ describe("NotificationQueueService — queued (prod) path", () => {
     (svc as unknown as { queue: { add: jest.Mock } }).queue = { add: jest.fn().mockRejectedValue(new Error("ECONNREFUSED")) };
     await expect(svc.enqueue("c1", EVENT)).resolves.toBeUndefined();
     expect(updateManyOf(prisma)).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+});
+
+describe("NotificationQueueService — dedupe / throttle window", () => {
+  const monitorDown: NotificationEvent = { type: "monitor_down", teamId: "t1", ctx: { monitorId: "m1", status: "DOWN" } };
+  const monitorUp: NotificationEvent = { type: "monitor_up", teamId: "t1", ctx: { monitorId: "m1", status: "UP" } };
+
+  it("does NOT dedupe when the window is unset/0 (firstInWindow never consulted)", async () => {
+    const prisma = prismaMock();
+    const redis = { firstInWindow: jest.fn() } as unknown as RedisService;
+    await make(prisma, redis).enqueue("c1", EVENT); // default config → NaN window → disabled
+    await make(prisma, redis).enqueue("c1", EVENT);
+    expect(redis.firstInWindow).not.toHaveBeenCalled();
+    expect(createsOf(prisma)).toBe(2); // both go through
+  });
+
+  it("suppresses a repeat of the same (channel,event,entity) within the window (no row, no send)", async () => {
+    const prisma = prismaMock();
+    const fr = fakeRedis();
+    const q = make(prisma, fr.svc, dedupeConfig);
+    await q.enqueue("c1", EVENT);
+    await q.enqueue("c1", EVENT);
+    expect(createsOf(prisma)).toBe(1);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows the alert again after the window lapses", async () => {
+    const prisma = prismaMock();
+    const fr = fakeRedis();
+    const q = make(prisma, fr.svc, dedupeConfig);
+    await q.enqueue("c1", EVENT);
+    fr.advance(61);
+    await q.enqueue("c1", EVENT);
+    expect(createsOf(prisma)).toBe(2);
+  });
+
+  it("keys on the entity: a different resource is not suppressed", async () => {
+    const prisma = prismaMock();
+    const fr = fakeRedis();
+    const q = make(prisma, fr.svc, dedupeConfig);
+    await q.enqueue("c1", EVENT); // appId app1
+    await q.enqueue("c1", { type: "deploy_failed", teamId: "t1", ctx: { appName: "shop", appId: "app2" } });
+    expect(createsOf(prisma)).toBe(2);
+  });
+
+  it("does NOT dedupe monitor events — the runner owns their cadence (a real re-DOWN after recovery must fire)", async () => {
+    const prisma = prismaMock();
+    const fr = fakeRedis();
+    const q = make(prisma, fr.svc, dedupeConfig);
+    await q.enqueue("c1", monitorDown);
+    await q.enqueue("c1", monitorUp);
+    await q.enqueue("c1", monitorDown); // a genuine re-DOWN after recovery — must NOT be swallowed
+    expect(createsOf(prisma)).toBe(3);
+    expect(fr.svc.firstInWindow).not.toHaveBeenCalled(); // monitors bypass the dedupe gate entirely
+  });
+
+  it("does NOT dedupe an event with no unique entity id (token_expiring by non-unique name)", async () => {
+    const prisma = prismaMock();
+    const fr = fakeRedis();
+    const q = make(prisma, fr.svc, dedupeConfig);
+    const tok: NotificationEvent = { type: "token_expiring", teamId: "t1", ctx: { tokenName: "ci", days: 7 } };
+    await q.enqueue("c1", tok);
+    await q.enqueue("c1", tok); // two distinct tokens named "ci" (or two members) → both must alert
+    expect(createsOf(prisma)).toBe(2);
+    expect(fr.svc.firstInWindow).not.toHaveBeenCalled();
+  });
+
+  it("fails open: a Redis error never drops the alert", async () => {
+    const prisma = prismaMock();
+    const redis = { firstInWindow: jest.fn().mockRejectedValue(new Error("redis down")) } as unknown as RedisService;
+    await make(prisma, redis, dedupeConfig).enqueue("c1", EVENT);
+    expect(createsOf(prisma)).toBe(1);
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });
 
