@@ -433,16 +433,44 @@ model Heartbeat {
 }
 
 model NotificationChannel {
-  id         String           @id @default(cuid())
-  team       Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id         String                 @id @default(cuid())
+  team       Team                   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId     String
   name       String
   type       String // webhook | telegram | ntfy | discord | slack | smtp | gotify
   configEnc  String // encrypted JSON config (secrets never stored plaintext)
-  enabled    Boolean          @default(true)
-  eventTypes String[]         @default([]) // deploy_success | deploy_failed | server_offline …
+  enabled    Boolean                @default(true)
+  eventTypes String[]               @default([]) // deploy_success | deploy_failed | server_offline …
   monitors   MonitorChannel[]
-  createdAt  DateTime         @default(now())
+  deliveries NotificationDelivery[]
+  createdAt  DateTime               @default(now())
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  DEAD
+}
+
+// Per-attempt delivery record for a fired notification — the durable audit/history behind the queue
+// (BullMQ retries feed status FAILED → DEAD). Message content is snapshotted; config secrets never are.
+model NotificationDelivery {
+  id        String                     @id @default(cuid())
+  channel   NotificationChannel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channelId String
+  event     String
+  level     String
+  title     String
+  summary   String
+  status    NotificationDeliveryStatus @default(PENDING)
+  attempts  Int                        @default(0)
+  lastError String?
+  createdAt DateTime                   @default(now())
+  sentAt    DateTime?
+
+  @@index([channelId, createdAt])
+  @@index([status])
 }
 
 model MonitorChannel {

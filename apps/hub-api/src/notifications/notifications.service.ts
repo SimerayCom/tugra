@@ -9,12 +9,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
-import { webBaseUrl } from "../common/web-url";
-import { getProvider, PROVIDER_TYPES } from "./providers";
-import { renderEvent, type RenderEnv } from "./event";
-import { type RenderedMessage } from "./rendered-message";
+import { PROVIDER_TYPES } from "./providers";
+import { type NotificationEvent } from "./event";
 import { WebhookConfigSchema } from "./dto";
 import { assertSafeHost, assertSafeUrl, SsrfError } from "./safe-url";
+import { NotificationQueueService } from "./queue.service";
 
 export interface ChannelView {
   id: string;
@@ -34,12 +33,8 @@ export class NotificationsService {
     private readonly audit: AuditService,
     private readonly crypto: CryptoService,
     private readonly config: ConfigService,
+    private readonly queue: NotificationQueueService,
   ) {}
-
-  /** Environment threaded into pure templates for building web deep-links. */
-  private renderEnv(): RenderEnv {
-    return { webBaseUrl: webBaseUrl(this.config) };
-  }
 
   private view(
     c: {
@@ -53,14 +48,6 @@ export class NotificationsService {
     canWrite: boolean,
   ): ChannelView {
     return { id: c.id, name: c.name, type: c.type, teamId: c.teamId, enabled: c.enabled, eventTypes: c.eventTypes, canWrite };
-  }
-
-  private decodeConfig(configEnc: string): Record<string, unknown> {
-    try {
-      return JSON.parse(this.crypto.decrypt(configEnc));
-    } catch {
-      return {};
-    }
   }
 
   async list(userId: string): Promise<ChannelView[]> {
@@ -173,22 +160,32 @@ export class NotificationsService {
     if (!(await this.access.teamRole(userId, c.teamId))) {
       throw new ForbiddenException("not a member of this team");
     }
-    const msg: RenderedMessage = {
-      level: "info",
-      event: "test",
-      title: "Tugra test notification",
-      summary: "This channel is working.",
-      fields: [],
-      links: [],
-      timestamp: new Date().toISOString(),
-    };
-    await getProvider(c.type).send(this.decodeConfig(c.configEnc), msg);
+    // Synchronous send (the button reports pass/fail immediately) that also records a delivery row.
+    await this.queue.deliverNow(c.id, {
+      type: "test",
+      teamId: c.teamId,
+      ctx: { title: "Tugra test notification", summary: "This channel is working.", level: "info" },
+    });
+  }
+
+  /** A channel's recent delivery history — any team member may read it (mirrors test()/list()). */
+  async listDeliveries(userId: string, channelId: string) {
+    const c = await this.prisma.notificationChannel.findUnique({ where: { id: channelId } });
+    if (!c) throw new NotFoundException("channel not found");
+    if (!(await this.access.teamRole(userId, c.teamId))) {
+      throw new ForbiddenException("not a member of this team");
+    }
+    return this.prisma.notificationDelivery.findMany({
+      where: { channelId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
   }
 
   /**
    * Fire all enabled channels attached to a monitor (called by the runner). Recipients come from the
    * MonitorChannel link table (not the eventTypes filter); the event id (monitor_up/down) is derived
-   * from ctx.status purely to select the template.
+   * from ctx.status purely to select the template. Each channel is enqueued for durable delivery.
    */
   async fireForMonitor(monitorId: string, ctx: Record<string, unknown> = {}): Promise<void> {
     const links = await this.prisma.monitorChannel.findMany({
@@ -199,9 +196,9 @@ export class NotificationsService {
     if (!enabled.length) return;
     const type = String(ctx.status).toUpperCase() === "UP" ? "monitor_up" : "monitor_down";
     // teamId is unused by English templates but threaded (real m.teamId) for Dilim 7 team-scoped i18n.
-    const msg = renderEvent({ type, teamId: String(ctx.teamId ?? ""), ctx }, this.renderEnv());
+    const event: NotificationEvent = { type, teamId: String(ctx.teamId ?? ""), ctx };
     for (const l of enabled) {
-      await this.dispatch(l.channel.type, l.channel.configEnc, msg, l.channelId);
+      await this.queue.enqueue(l.channelId, event);
     }
   }
 
@@ -211,18 +208,9 @@ export class NotificationsService {
       where: { teamId, enabled: true, eventTypes: { has: eventType } },
     });
     if (!channels.length) return;
-    const msg = renderEvent({ type: eventType, teamId, ctx }, this.renderEnv());
+    const event: NotificationEvent = { type: eventType, teamId, ctx };
     for (const ch of channels) {
-      await this.dispatch(ch.type, ch.configEnc, msg, ch.id);
-    }
-  }
-
-  private async dispatch(type: string, configEnc: string, msg: RenderedMessage, channelId: string): Promise<void> {
-    try {
-      await getProvider(type).send(this.decodeConfig(configEnc), msg);
-    } catch {
-      // Log ONLY the channel id — never the error (which could carry config/secret detail).
-      await this.audit.log({ actor: "system", action: "notification.failed", target: channelId });
+      await this.queue.enqueue(ch.id, event);
     }
   }
 }
