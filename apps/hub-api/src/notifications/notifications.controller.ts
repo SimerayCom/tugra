@@ -58,6 +58,11 @@ export class NotificationsController {
     return { ok: true };
   }
 
+  @Get(":id/deliveries")
+  deliveries(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.svc.listDeliveries(user.userId, id);
+  }
+
   @Delete(":id")
   @HttpCode(200)
   async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {

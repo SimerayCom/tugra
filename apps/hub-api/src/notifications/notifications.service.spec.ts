@@ -6,13 +6,14 @@ import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { lookup } from "node:dns/promises";
 import { NotificationsService } from "./notifications.service";
+import { NotificationQueueService } from "./queue.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { safeSend } from "./safe-url";
 
-const audit = { log: jest.fn() } as unknown as AuditService;
+const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
 // reversible stub crypto: enc(<plain>)
 const crypto = {
   encrypt: (s: string) => `enc(${s})`,
@@ -27,7 +28,11 @@ const mockLookup = lookup as unknown as jest.Mock;
 const mockSend = safeSend as jest.Mock;
 
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>, allowPrivate = false) {
-  return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, makeConfig(allowPrivate));
+  const config = makeConfig(allowPrivate);
+  // Real queue service — jest sets NODE_ENV=test and onApplicationBootstrap is never called here, so
+  // its BullMQ queue stays undefined and delivery runs inline (send via the mocked safeSend).
+  const queue = new NotificationQueueService(prisma as PrismaService, crypto, audit, config);
+  return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, config, queue);
 }
 
 beforeEach(() => {
@@ -125,22 +130,52 @@ describe("NotificationsService", () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  // The inline (test-mode) delivery path re-fetches the channel and records a NotificationDelivery.
+  const webhookChannel = { id: "c1", teamId: "t1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` };
+  const deliveryStub = () => ({
+    create: jest.fn().mockResolvedValue({ id: "d1" }),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  });
+
   it("fireForEvent dispatches to matching channels and swallows provider errors", async () => {
-    const findMany = jest.fn().mockResolvedValue([
-      { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` },
-    ]);
     mockSend.mockRejectedValue(new Error("HTTP 500"));
-    const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
+    const svc = make(
+      {
+        notificationChannel: { findMany: jest.fn().mockResolvedValue([webhookChannel]), findUnique: jest.fn().mockResolvedValue(webhookChannel) },
+        notificationDelivery: deliveryStub(),
+      } as unknown as PrismaService,
+      {},
+    );
     await expect(svc.fireForEvent("t1", "deploy_failed", { appName: "blog" })).resolves.toBeUndefined();
     expect(mockSend).toHaveBeenCalledWith("https://hook", expect.any(String), expect.any(Object), expect.any(Object));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "notification.failed", target: "c1" }));
   });
 
+  it("fireForEvent isolates a per-channel enqueue failure — the remaining channels still fire", async () => {
+    const chA = { id: "cA", teamId: "t1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://a" })})` };
+    const chB = { id: "cB", teamId: "t1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://b" })})` };
+    // cA's snapshot create fails (e.g. the channel was just deleted → FK violation); cB must still send.
+    const create = jest.fn().mockRejectedValueOnce(new Error("P2003")).mockResolvedValue({ id: "d2" });
+    const svc = make(
+      {
+        notificationChannel: { findMany: jest.fn().mockResolvedValue([chA, chB]), findUnique: jest.fn().mockResolvedValue(chB) },
+        notificationDelivery: { create, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      } as unknown as PrismaService,
+      {},
+    );
+    await expect(svc.fireForEvent("t1", "deploy_failed", { appName: "blog" })).resolves.toBeUndefined();
+    expect(mockSend).toHaveBeenCalledTimes(1); // cA skipped (create failed), cB delivered
+    expect(mockSend).toHaveBeenCalledWith("https://b", expect.any(String), expect.any(Object), expect.any(Object));
+  });
+
   it("fireForEvent renders the typed template into a structured body (level/title/fields/link)", async () => {
-    const findMany = jest.fn().mockResolvedValue([
-      { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` },
-    ]);
-    const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
+    const svc = make(
+      {
+        notificationChannel: { findMany: jest.fn().mockResolvedValue([webhookChannel]), findUnique: jest.fn().mockResolvedValue(webhookChannel) },
+        notificationDelivery: deliveryStub(),
+      } as unknown as PrismaService,
+      {},
+    );
     await svc.fireForEvent("t1", "deploy_failed", { appName: "blog", appId: "app1", projectName: "web" });
     const body = JSON.parse(mockSend.mock.calls[0][1]);
     expect(body.event).toBe("deploy_failed");
@@ -151,11 +186,19 @@ describe("NotificationsService", () => {
   });
 
   it("fireForMonitor derives monitor_up/down from ctx.status and hits only enabled links", async () => {
-    const findMany = jest.fn().mockResolvedValue([
-      { channelId: "c1", channel: { enabled: true, type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` } },
-      { channelId: "c2", channel: { enabled: false, type: "webhook", configEnc: "enc({})" } },
-    ]);
-    const svc = make({ monitorChannel: { findMany } } as unknown as PrismaService, {});
+    const svc = make(
+      {
+        monitorChannel: {
+          findMany: jest.fn().mockResolvedValue([
+            { channelId: "c1", channel: { enabled: true, type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` } },
+            { channelId: "c2", channel: { enabled: false, type: "webhook", configEnc: "enc({})" } },
+          ]),
+        },
+        notificationChannel: { findUnique: jest.fn().mockResolvedValue(webhookChannel) },
+        notificationDelivery: deliveryStub(),
+      } as unknown as PrismaService,
+      {},
+    );
     await svc.fireForMonitor("m1", { status: "DOWN", monitorName: "api", target: "x", teamId: "t1" });
     expect(mockSend).toHaveBeenCalledTimes(1); // disabled link skipped
     const body = JSON.parse(mockSend.mock.calls[0][1]);
