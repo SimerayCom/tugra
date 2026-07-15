@@ -1,0 +1,57 @@
+{
+  "deploy": {
+    "failed": { "title": "Deploy failed — {app}", "summary": "Deploy of {app} failed." },
+    "rolledBack": {
+      "title": "Deploy rolled back — {app}",
+      "summary": "New version of {app} failed its health check; the previous version is still live."
+    },
+    "succeeded": { "title": "Deploy succeeded — {app}", "summary": "{app} deployed successfully." },
+    "field": { "project": "Project", "environment": "Environment", "duration": "Duration" },
+    "link": { "openApp": "Open app", "viewInTugra": "View in Tugra" }
+  },
+  "backup": {
+    "failed": { "title": "Backup failed — {db}", "summary": "A backup of {db} failed." },
+    "restoreFailed": { "title": "Restore failed — {db}", "summary": "A restore into {db} failed." },
+    "field": {
+      "engine": "Engine",
+      "destination": "Destination",
+      "bucket": "Bucket",
+      "error": "Error",
+      "exitCode": "Exit code"
+    },
+    "link": { "openDatabase": "Open database" }
+  },
+  "server": {
+    "offline": { "title": "Server offline — {server}", "summary": "Server {server} stopped responding." },
+    "field": { "hostname": "Hostname", "lastSeen": "Last seen", "ip": "IP" },
+    "link": { "openServer": "Open server" }
+  },
+  "expiry": {
+    "ssl": {
+      "title": "SSL certificate expiring — {domain}",
+      "summary": "The TLS certificate for {domain} expires in {days} day(s)."
+    },
+    "token": {
+      "title": "API token expiring — {token}",
+      "summary": "API token \"{token}\" expires in {days} day(s)."
+    },
+    "field": {
+      "domain": "Domain",
+      "issuer": "Issuer",
+      "token": "Token",
+      "expiresIn": "Expires in",
+      "expiry": "Expiry"
+    },
+    "value": { "days": "{days} day(s)" },
+    "link": { "openApp": "Open app", "manageTokens": "Manage tokens" }
+  },
+  "monitor": {
+    "up": { "title": "Monitor recovered — {monitor}", "summary": "{monitor} ({target}) is back UP." },
+    "down": { "title": "Monitor down — {monitor}", "summary": "{monitor} ({target}) is DOWN." },
+    "field": { "target": "Target", "type": "Type", "response": "Response", "detail": "Detail" },
+    "value": { "ms": "{ms} ms" },
+    "link": { "viewMonitor": "View monitor" }
+  },
+  "generic": { "link": { "open": "Open" } },
+  "test": { "title": "Tugra test notification", "summary": "This channel is working." }
+}

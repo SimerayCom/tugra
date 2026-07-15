@@ -7,6 +7,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { webBaseUrl } from "../common/web-url";
 import { getProvider } from "./providers";
 import { renderEvent, type NotificationEvent, type RenderEnv } from "./event";
+import { NotifI18nService } from "./notif-i18n.service";
 
 const QUEUE = "notifications";
 
@@ -34,6 +35,7 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
+    private readonly i18n: NotifI18nService,
   ) {}
 
   private connection() {
@@ -41,8 +43,9 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     return { host: url.hostname, port: Number(url.port || 6379), maxRetriesPerRequest: null };
   }
 
-  private renderEnv(): RenderEnv {
-    return { webBaseUrl: webBaseUrl(this.config) };
+  /** Render environment for the templates: deep-link base + a translator bound to the channel's locale. */
+  private renderEnv(locale?: string): RenderEnv {
+    return { webBaseUrl: webBaseUrl(this.config), t: this.i18n.forLocale(locale) };
   }
 
   private decodeConfig(configEnc: string): Record<string, unknown> {
@@ -124,9 +127,9 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     }
   }
 
-  /** Any team member may read a channel's delivery history — see the row-count of this list method. */
+  /** Create the PENDING delivery row with a rendered snapshot (title/summary/level) for the history. */
   private async snapshot(channelId: string, event: NotificationEvent) {
-    const msg = renderEvent(event, this.renderEnv());
+    const msg = renderEvent(event, this.renderEnv(event.locale));
     return this.prisma.notificationDelivery.create({
       data: { channelId, event: event.type, level: msg.level, title: msg.title, summary: msg.summary },
     });
@@ -136,7 +139,7 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
   private async attempt(deliveryId: string, channelId: string, event: NotificationEvent, attempts: number): Promise<void> {
     const ch = await this.prisma.notificationChannel.findUnique({ where: { id: channelId } });
     if (!ch) return; // channel was deleted (its deliveries cascade away) — nothing to send, no retry
-    const msg = renderEvent(event, this.renderEnv());
+    const msg = renderEvent(event, this.renderEnv(event.locale));
     await getProvider(ch.type).send(this.decodeConfig(ch.configEnc), msg); // throws → inline caller / BullMQ retry
     // The send already happened — a DB hiccup here must NOT reject the job (that would re-send). Swallow.
     await this.markSent(deliveryId, attempts).catch((e) => this.logger.error(`markSent: ${e.message}`));

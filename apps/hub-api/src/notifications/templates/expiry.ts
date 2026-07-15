@@ -9,15 +9,15 @@ export const sslExpiringTemplate: EventTemplate = {
     const days = num(c, "days");
     return base(ev, {
       level: "warning",
-      title: `SSL certificate expiring — ${domain}`,
-      summary: `The TLS certificate for ${domain} expires in ${days} day(s).`,
+      title: env.t("expiry.ssl.title", { domain }),
+      summary: env.t("expiry.ssl.summary", { domain, days }),
       fields: fields([
-        { label: "Domain", value: domain, inline: true },
-        { label: "Expires in", value: `${days} day(s)`, inline: true },
-        { label: "Expiry", value: fmtDate(s(c, "validTo")), inline: true },
-        { label: "Issuer", value: s(c, "issuer"), inline: true },
+        { label: env.t("expiry.field.domain"), value: domain, inline: true },
+        { label: env.t("expiry.field.expiresIn"), value: env.t("expiry.value.days", { days }), inline: true },
+        { label: env.t("expiry.field.expiry"), value: fmtDate(s(c, "validTo")), inline: true },
+        { label: env.t("expiry.field.issuer"), value: s(c, "issuer"), inline: true },
       ]),
-      links: appId ? [{ label: "Open app", url: `${env.webBaseUrl}/apps/${appId}` }] : [],
+      links: appId ? [{ label: env.t("expiry.link.openApp"), url: `${env.webBaseUrl}/apps/${appId}` }] : [],
     });
   },
 };
@@ -30,14 +30,14 @@ export const tokenExpiringTemplate: EventTemplate = {
     const days = num(c, "days");
     return base(ev, {
       level: "warning",
-      title: `API token expiring — ${tokenName}`,
-      summary: `API token "${tokenName}" expires in ${days} day(s).`,
+      title: env.t("expiry.token.title", { token: tokenName }),
+      summary: env.t("expiry.token.summary", { token: tokenName, days }),
       fields: fields([
-        { label: "Token", value: tokenName, inline: true },
-        { label: "Expires in", value: `${days} day(s)`, inline: true },
-        { label: "Expiry", value: fmtDate(s(c, "expiresAt")), inline: true },
+        { label: env.t("expiry.field.token"), value: tokenName, inline: true },
+        { label: env.t("expiry.field.expiresIn"), value: env.t("expiry.value.days", { days }), inline: true },
+        { label: env.t("expiry.field.expiry"), value: fmtDate(s(c, "expiresAt")), inline: true },
       ]),
-      links: [{ label: "Manage tokens", url: `${env.webBaseUrl}/settings` }],
+      links: [{ label: env.t("expiry.link.manageTokens"), url: `${env.webBaseUrl}/settings` }],
     });
   },
 };

@@ -103,7 +103,7 @@ export class NotificationsService {
 
   async create(
     userId: string,
-    dto: { name: string; type: string; teamId: string; config: Record<string, unknown>; eventTypes?: string[] },
+    dto: { name: string; type: string; teamId: string; config: Record<string, unknown>; eventTypes?: string[]; locale?: string },
   ): Promise<ChannelView> {
     await this.access.requirePermission(userId, dto.teamId, "integrations");
     if (!PROVIDER_TYPES.includes(dto.type)) {
@@ -117,6 +117,7 @@ export class NotificationsService {
         teamId: dto.teamId,
         configEnc: this.crypto.encrypt(JSON.stringify(dto.config)),
         eventTypes: dto.eventTypes ?? [],
+        locale: dto.locale ?? "en",
       },
     });
     await this.audit.log({ actor: userId, action: "channel.create", target: c.id });
@@ -126,7 +127,7 @@ export class NotificationsService {
   async update(
     userId: string,
     id: string,
-    dto: { name?: string; enabled?: boolean; eventTypes?: string[]; config?: Record<string, unknown> },
+    dto: { name?: string; enabled?: boolean; eventTypes?: string[]; config?: Record<string, unknown>; locale?: string },
   ): Promise<ChannelView> {
     const c = await this.prisma.notificationChannel.findUnique({ where: { id } });
     if (!c) throw new NotFoundException("channel not found");
@@ -139,6 +140,7 @@ export class NotificationsService {
         name: dto.name ?? c.name,
         enabled: dto.enabled ?? c.enabled,
         eventTypes: dto.eventTypes ?? c.eventTypes,
+        locale: dto.locale ?? c.locale,
         ...(dto.config ? { configEnc: this.crypto.encrypt(JSON.stringify(dto.config)) } : {}),
       },
     });
@@ -161,11 +163,8 @@ export class NotificationsService {
       throw new ForbiddenException("not a member of this team");
     }
     // Synchronous send (the button reports pass/fail immediately) that also records a delivery row.
-    await this.queue.deliverNow(c.id, {
-      type: "test",
-      teamId: c.teamId,
-      ctx: { title: "Tugra test notification", summary: "This channel is working.", level: "info" },
-    });
+    // The testTemplate renders the (localized) confirmation message; ctx carries nothing.
+    await this.queue.deliverNow(c.id, { type: "test", teamId: c.teamId, locale: c.locale, ctx: {} });
   }
 
   /** A channel's recent delivery history — any team member may read it (mirrors test()/list()). */
@@ -195,9 +194,10 @@ export class NotificationsService {
     const enabled = links.filter((l) => l.channel.enabled);
     if (!enabled.length) return;
     const type = String(ctx.status).toUpperCase() === "UP" ? "monitor_up" : "monitor_down";
-    // teamId is unused by English templates but threaded (real m.teamId) for Dilim 7 team-scoped i18n.
-    const event: NotificationEvent = { type, teamId: String(ctx.teamId ?? ""), ctx };
+    const teamId = String(ctx.teamId ?? "");
     for (const l of enabled) {
+      // Per-channel locale → the notification renders in each channel's configured language.
+      const event: NotificationEvent = { type, teamId, locale: l.channel.locale, ctx };
       await this.queue.enqueue(l.channelId, event);
     }
   }
@@ -208,8 +208,8 @@ export class NotificationsService {
       where: { teamId, enabled: true, eventTypes: { has: eventType } },
     });
     if (!channels.length) return;
-    const event: NotificationEvent = { type: eventType, teamId, ctx };
     for (const ch of channels) {
+      const event: NotificationEvent = { type: eventType, teamId, locale: ch.locale, ctx };
       await this.queue.enqueue(ch.id, event);
     }
   }

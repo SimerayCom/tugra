@@ -2,8 +2,8 @@
  * Typed notification events + a template registry (Dilim 3). Firing sites produce a typed
  * `NotificationEvent` (an id + a plain-object `ctx`); `renderEvent` picks a per-event template that
  * builds a rich `RenderedMessage`. This replaces the D2 `plainToRendered` shim. Templates are PURE
- * (no DI): the web base URL for deep-links is threaded in via `RenderEnv`. Server-side i18n is a
- * later slice — templates hardcode English now; `locale` is reserved for it.
+ * (no DI): the web base URL for deep-links AND a locale-bound translator `t` are threaded in via
+ * `RenderEnv`. Every user-facing string comes from `t(key, params)` (Dilim 5 server-side i18n).
  */
 import type { MsgField, MsgLevel, RenderedMessage } from "./rendered-message";
 import { deployTemplate } from "./templates/deploy";
@@ -11,16 +11,20 @@ import { backupFailedTemplate, restoreFailedTemplate } from "./templates/backup"
 import { serverOfflineTemplate } from "./templates/server";
 import { sslExpiringTemplate, tokenExpiringTemplate } from "./templates/expiry";
 import { monitorTemplate } from "./templates/monitor";
-import { genericTemplate } from "./templates/generic";
+import { genericTemplate, testTemplate } from "./templates/generic";
+
+/** A locale-bound translator: resolves a dotted key with `{param}` interpolation (NotifI18nService). */
+export type NotifI18n = (key: string, params?: Record<string, string | number>) => string;
 
 export interface NotificationEvent {
   type: string;
   teamId: string;
-  locale?: string; // reserved for Dilim 7 server-side i18n
+  locale?: string; // the channel's language; picks the catalog for `t`
   ctx: Record<string, unknown>;
 }
 export interface RenderEnv {
   webBaseUrl: string;
+  t: NotifI18n;
 }
 export interface EventTemplate {
   render(ev: NotificationEvent, env: RenderEnv): RenderedMessage;
@@ -89,6 +93,7 @@ const REGISTRY: Record<string, EventTemplate> = {
   server_offline: serverOfflineTemplate,
   monitor_up: monitorTemplate,
   monitor_down: monitorTemplate,
+  test: testTemplate,
 };
 
 /** Select a template by event id (unknown ids → generic) and render the typed event. */

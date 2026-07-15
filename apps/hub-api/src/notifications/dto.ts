@@ -35,6 +35,7 @@ export const CreateChannelSchema = z.object({
   teamId: z.string().min(1),
   config: z.record(z.unknown()),
   eventTypes: z.array(z.enum(EVENT_TYPES)).optional(),
+  locale: z.string().min(1).default("en"),
 });
 export type CreateChannelInput = z.infer<typeof CreateChannelSchema>;
 
@@ -43,5 +44,6 @@ export const UpdateChannelSchema = z.object({
   enabled: z.boolean().optional(),
   eventTypes: z.array(z.enum(EVENT_TYPES)).optional(),
   config: z.record(z.unknown()).optional(),
+  locale: z.string().min(1).optional(),
 });
 export type UpdateChannelInput = z.infer<typeof UpdateChannelSchema>;

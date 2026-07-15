@@ -9,32 +9,23 @@ export const deployTemplate: EventTemplate = {
     const failed = ev.type === "deploy_failed";
     const rolled = ev.type === "deploy_rolled_back";
     const level: MsgLevel = failed ? "failure" : rolled ? "warning" : "success";
-    const title = failed
-      ? `Deploy failed — ${name}`
-      : rolled
-        ? `Deploy rolled back — ${name}`
-        : `Deploy succeeded — ${name}`;
-    const summary = failed
-      ? `Deploy of ${name} failed.`
-      : rolled
-        ? `New version of ${name} failed its health check; the previous version is still live.`
-        : `${name} deployed successfully.`;
+    const key = failed ? "deploy.failed" : rolled ? "deploy.rolledBack" : "deploy.succeeded";
     const appId = s(c, "appId");
     const links = [
-      { label: "Open app", url: s(c, "url") },
-      { label: "View in Tugra", url: appId ? `${env.webBaseUrl}/apps/${appId}` : "" },
+      { label: env.t("deploy.link.openApp"), url: s(c, "url") },
+      { label: env.t("deploy.link.viewInTugra"), url: appId ? `${env.webBaseUrl}/apps/${appId}` : "" },
     ].filter((l) => l.url);
     return base(ev, {
       level,
-      title,
-      summary,
+      title: env.t(`${key}.title`, { app: name }),
+      summary: env.t(`${key}.summary`, { app: name }),
       critical: failed,
       // The raw deploy log is intentionally NOT rendered here (it can carry secrets); the "View in
       // Tugra" link points at the access-controlled in-app deploy log instead.
       fields: fields([
-        { label: "Project", value: s(c, "projectName"), inline: true },
-        { label: "Environment", value: s(c, "environmentName"), inline: true },
-        { label: "Duration", value: fmtDuration(num(c, "durationMs")), inline: true },
+        { label: env.t("deploy.field.project"), value: s(c, "projectName"), inline: true },
+        { label: env.t("deploy.field.environment"), value: s(c, "environmentName"), inline: true },
+        { label: env.t("deploy.field.duration"), value: fmtDuration(num(c, "durationMs")), inline: true },
       ]),
       links,
     });

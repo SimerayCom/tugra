@@ -3,6 +3,7 @@ jest.mock("./safe-url", () => ({ ...jest.requireActual("./safe-url"), safeSend: 
 
 import { ConfigService } from "@nestjs/config";
 import { NotificationQueueService, sanitizeError } from "./queue.service";
+import { NotifI18nService } from "./notif-i18n.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
@@ -21,7 +22,7 @@ const EVENT: NotificationEvent = { type: "deploy_failed", teamId: "t1", ctx: { a
 const webhookChannel = { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` };
 
 function make(prisma: Partial<PrismaService>) {
-  return new NotificationQueueService(prisma as PrismaService, crypto, audit, config);
+  return new NotificationQueueService(prisma as PrismaService, crypto, audit, config, new NotifI18nService());
 }
 // handleFailed is private (the real worker wires it); invoke it directly in the unit test.
 const callFailed = (svc: NotificationQueueService, job: unknown, err: Error): Promise<void> =>

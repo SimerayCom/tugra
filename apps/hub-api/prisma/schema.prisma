@@ -441,6 +441,7 @@ model NotificationChannel {
   configEnc  String // encrypted JSON config (secrets never stored plaintext)
   enabled    Boolean                @default(true)
   eventTypes String[]               @default([]) // deploy_success | deploy_failed | server_offline …
+  locale     String                 @default("en") // notification language (server-side i18n)
   monitors   MonitorChannel[]
   deliveries NotificationDelivery[]
   createdAt  DateTime               @default(now())

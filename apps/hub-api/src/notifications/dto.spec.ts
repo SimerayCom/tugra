@@ -9,6 +9,12 @@ describe("notification channel schemas — event types", () => {
     expect(() => UpdateChannelSchema.parse({ eventTypes: ["backup_failed"] })).not.toThrow();
   });
 
+  it("defaults locale to en on create and accepts an explicit locale", () => {
+    expect(CreateChannelSchema.parse(base).locale).toBe("en");
+    expect(CreateChannelSchema.parse({ ...base, locale: "tr" }).locale).toBe("tr");
+    expect(() => UpdateChannelSchema.parse({ locale: "de" })).not.toThrow();
+  });
+
   it("still rejects an unknown event type", () => {
     expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["not_a_real_event"] })).toThrow();
   });
