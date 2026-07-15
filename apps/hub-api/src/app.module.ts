@@ -7,6 +7,7 @@ import { validateEnv } from "./config/env";
 import { CsrfGuard } from "./common/csrf.guard";
 import { EmailVerifiedGuard } from "./common/email-verified.guard";
 import { HealthController } from "./health/health.controller";
+import { VersionController } from "./health/version.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
@@ -72,7 +73,7 @@ import { CatalogModule } from "./catalog/catalog.module";
     RetentionModule,
     CatalogModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, VersionController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },

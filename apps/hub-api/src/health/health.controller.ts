@@ -1,5 +1,5 @@
 import { Controller, Get } from "@nestjs/common";
-import { PROTOCOL_VERSION } from "@tugra/shared";
+import { PROTOCOL_VERSION, appVersion } from "@tugra/shared";
 
 @Controller("health")
 export class HealthController {
@@ -8,6 +8,7 @@ export class HealthController {
     return {
       status: "ok",
       service: "tugra-hub-api",
+      version: appVersion(),
       protocol: PROTOCOL_VERSION,
       time: new Date().toISOString(),
     };

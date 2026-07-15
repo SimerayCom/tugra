@@ -3,7 +3,9 @@
  * The agent (Go) mirrors these shapes (same JSON field names); keep them in sync.
  */
 
-export const PROTOCOL_VERSION = 2;
+// Version — PROTOCOL_VERSION (re-exported so existing `import { PROTOCOL_VERSION } from "@tugra/shared"`
+// consumers are unchanged) + the app/build metadata helpers (appVersion/versionInfo/…).
+export * from "./version";
 
 /**
  * Notification event types — single source of truth for the hub (Zod enum) and the web UI (served via
