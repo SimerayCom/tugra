@@ -3,11 +3,12 @@ import { CryptoModule } from "../crypto/crypto.module";
 import { NotificationsController } from "./notifications.controller";
 import { NotificationsService } from "./notifications.service";
 import { NotificationQueueService } from "./queue.service";
+import { NotifI18nService } from "./notif-i18n.service";
 
 @Module({
   imports: [CryptoModule],
   controllers: [NotificationsController],
-  providers: [NotificationsService, NotificationQueueService],
+  providers: [NotificationsService, NotificationQueueService, NotifI18nService],
   exports: [NotificationsService],
 })
 export class NotificationsModule {}

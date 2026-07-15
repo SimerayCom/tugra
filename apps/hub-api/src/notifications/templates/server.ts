@@ -8,15 +8,15 @@ export const serverOfflineTemplate: EventTemplate = {
     const serverId = s(c, "serverId");
     return base(ev, {
       level: "failure",
-      title: `Server offline — ${name}`,
-      summary: `Server ${name} stopped responding.`,
+      title: env.t("server.offline.title", { server: name }),
+      summary: env.t("server.offline.summary", { server: name }),
       critical: true,
       fields: fields([
-        { label: "Hostname", value: s(c, "hostname"), inline: true },
-        { label: "Last seen", value: fmtDate(s(c, "lastSeenAt")), inline: true },
-        { label: "IP", value: s(c, "publicIp"), inline: true },
+        { label: env.t("server.field.hostname"), value: s(c, "hostname"), inline: true },
+        { label: env.t("server.field.lastSeen"), value: fmtDate(s(c, "lastSeenAt")), inline: true },
+        { label: env.t("server.field.ip"), value: s(c, "publicIp"), inline: true },
       ]),
-      links: serverId ? [{ label: "Open server", url: `${env.webBaseUrl}/servers/${serverId}` }] : [],
+      links: serverId ? [{ label: env.t("server.link.openServer"), url: `${env.webBaseUrl}/servers/${serverId}` }] : [],
     });
   },
 };

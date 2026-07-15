@@ -8,16 +8,16 @@ export const backupFailedTemplate: EventTemplate = {
     const dbId = s(c, "dbId");
     return base(ev, {
       level: "failure",
-      title: `Backup failed — ${dbName}`,
-      summary: `A backup of ${dbName} failed.`,
+      title: env.t("backup.failed.title", { db: dbName }),
+      summary: env.t("backup.failed.summary", { db: dbName }),
       critical: true,
       fields: fields([
-        { label: "Engine", value: [s(c, "engine"), s(c, "version")].filter(Boolean).join(" "), inline: true },
-        { label: "Destination", value: s(c, "destType"), inline: true },
-        { label: "Bucket", value: s(c, "bucket"), inline: true },
-        { label: "Error", value: clamp(s(c, "errorTail")) },
+        { label: env.t("backup.field.engine"), value: [s(c, "engine"), s(c, "version")].filter(Boolean).join(" "), inline: true },
+        { label: env.t("backup.field.destination"), value: s(c, "destType"), inline: true },
+        { label: env.t("backup.field.bucket"), value: s(c, "bucket"), inline: true },
+        { label: env.t("backup.field.error"), value: clamp(s(c, "errorTail")) },
       ]),
-      links: dbId ? [{ label: "Open database", url: `${env.webBaseUrl}/databases/${dbId}` }] : [],
+      links: dbId ? [{ label: env.t("backup.link.openDatabase"), url: `${env.webBaseUrl}/databases/${dbId}` }] : [],
     });
   },
 };
@@ -30,15 +30,15 @@ export const restoreFailedTemplate: EventTemplate = {
     const dbId = s(c, "dbId");
     return base(ev, {
       level: "failure",
-      title: `Restore failed — ${dbName}`,
-      summary: `A restore into ${dbName} failed.`,
+      title: env.t("backup.restoreFailed.title", { db: dbName }),
+      summary: env.t("backup.restoreFailed.summary", { db: dbName }),
       critical: true,
       fields: fields([
-        { label: "Engine", value: s(c, "engine"), inline: true },
-        { label: "Exit code", value: s(c, "exitCode"), inline: true },
-        { label: "Error", value: clamp(s(c, "errorTail")) },
+        { label: env.t("backup.field.engine"), value: s(c, "engine"), inline: true },
+        { label: env.t("backup.field.exitCode"), value: s(c, "exitCode"), inline: true },
+        { label: env.t("backup.field.error"), value: clamp(s(c, "errorTail")) },
       ]),
-      links: dbId ? [{ label: "Open database", url: `${env.webBaseUrl}/databases/${dbId}` }] : [],
+      links: dbId ? [{ label: env.t("backup.link.openDatabase"), url: `${env.webBaseUrl}/databases/${dbId}` }] : [],
     });
   },
 };

@@ -1,7 +1,10 @@
 import { renderEvent, type NotificationEvent, type RenderEnv } from "./event";
 import type { RenderedMessage } from "./rendered-message";
+import { NotifI18nService } from "./notif-i18n.service";
 
-const env: RenderEnv = { webBaseUrl: "https://web.test" };
+// A real en translator — the en.json values equal the old hardcoded strings, so every assertion below
+// (e.g. "Deploy failed — blog") holds unchanged while the strings now flow through i18n.
+const env: RenderEnv = { webBaseUrl: "https://web.test", t: new NotifI18nService().forLocale("en") };
 const render = (type: string, ctx: Record<string, unknown> = {}): RenderedMessage =>
   renderEvent({ type, teamId: "t1", ctx }, env);
 const fieldVal = (m: RenderedMessage, label: string): string | undefined =>

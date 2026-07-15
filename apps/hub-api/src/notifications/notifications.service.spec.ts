@@ -7,6 +7,7 @@ import { ConfigService } from "@nestjs/config";
 import { lookup } from "node:dns/promises";
 import { NotificationsService } from "./notifications.service";
 import { NotificationQueueService } from "./queue.service";
+import { NotifI18nService } from "./notif-i18n.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
@@ -31,7 +32,7 @@ function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>
   const config = makeConfig(allowPrivate);
   // Real queue service — jest sets NODE_ENV=test and onApplicationBootstrap is never called here, so
   // its BullMQ queue stays undefined and delivery runs inline (send via the mocked safeSend).
-  const queue = new NotificationQueueService(prisma as PrismaService, crypto, audit, config);
+  const queue = new NotificationQueueService(prisma as PrismaService, crypto, audit, config, new NotifI18nService());
   return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, config, queue);
 }
 
