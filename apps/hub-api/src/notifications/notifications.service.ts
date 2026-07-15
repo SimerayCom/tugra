@@ -82,6 +82,11 @@ export class NotificationsService {
     discord: "webhookUrl",
     slack: "webhookUrl",
     smtp: "host",
+    teams: "webhookUrl",
+    mattermost: "webhookUrl",
+    lark: "webhookUrl",
+    // pushover/resend use fixed API hosts (api.pushover.net / api.resend.com) — nothing user-controlled
+    // to validate at create; send-time safeSend still resolves+pins those fixed public hosts.
   };
 
   /**

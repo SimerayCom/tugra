@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import nodemailer from "nodemailer";
 import { safeSend } from "./safe-url";
 import { getProvider } from "./providers";
-import { levelColorHex, levelColorInt, levelPriorityGotify, levelTag, type RenderedMessage } from "./rendered-message";
+import { levelColorHex, levelColorInt, levelPriorityGotify, levelPriorityPushover, levelTag, type RenderedMessage } from "./rendered-message";
 
 const mockSend = safeSend as jest.Mock;
 
@@ -204,6 +204,154 @@ describe("notification providers — rich rendering over the SSRF-guarded transp
       for (const k of Object.keys(h)) expect(k.toLowerCase()).not.toBe("transfer-encoding");
       for (const k of Object.keys(h)) expect(k.toLowerCase()).not.toBe("connection");
       expect(h.Host).toBeUndefined();
+    });
+  });
+
+  describe("pushover", () => {
+    it("maps title/message/user + level priority + first link, no emergency by default", async () => {
+      await getProvider("pushover").send({ token: "app", userKey: "usr" }, RM());
+      expect(sentUrl()).toBe("https://api.pushover.net/1/messages.json");
+      const b = sentJson();
+      expect(b.token).toBe("app");
+      expect(b.user).toBe("usr");
+      expect(b.title).toBe("Deploy failed");
+      expect(b.message).toContain("Project: web");
+      expect(b.priority).toBe(levelPriorityPushover("failure"));
+      expect(b.url).toBe("https://hub/logs");
+      expect(b.url_title).toBe("Logs");
+      expect(b.retry).toBeUndefined();
+      expect(b.expire).toBeUndefined();
+    });
+
+    it("critical → priority 1; omits url when no links", async () => {
+      await getProvider("pushover").send({ token: "app", userKey: "usr" }, RM({ critical: true, links: [] }));
+      const b = sentJson();
+      expect(b.priority).toBe(1);
+      expect(b.url).toBeUndefined();
+      expect(b.url_title).toBeUndefined();
+    });
+
+    it("config priority override wins and is clamped to [-2,2]", async () => {
+      await getProvider("pushover").send({ priority: "-2" }, RM());
+      expect(sentJson().priority).toBe(-2);
+      mockSend.mockClear();
+      await getProvider("pushover").send({ priority: "5" }, RM());
+      expect(sentJson().priority).toBe(2);
+    });
+
+    it("emergency (priority 2) adds retry/expire with floors/caps", async () => {
+      await getProvider("pushover").send({ priority: "2" }, RM());
+      expect(sentJson()).toMatchObject({ priority: 2, retry: 60, expire: 3600 });
+      mockSend.mockClear();
+      await getProvider("pushover").send({ priority: "2", retry: "10", expire: "99999" }, RM());
+      expect(sentJson()).toMatchObject({ retry: 30, expire: 10800 }); // floored / capped
+      mockSend.mockClear();
+      // expire must stay positive — a bad "0"/negative would 400 and silently drop the alert
+      await getProvider("pushover").send({ priority: "2", expire: "0" }, RM());
+      expect(sentJson().expire).toBe(1);
+      mockSend.mockClear();
+      await getProvider("pushover").send({ priority: "2", expire: "-5" }, RM());
+      expect(sentJson().expire).toBe(1);
+    });
+
+    it("an empty-string priority reads as UNSET (not 0)", async () => {
+      await getProvider("pushover").send({ priority: "" }, RM()); // failure level
+      expect(sentJson().priority).toBe(levelPriorityPushover("failure")); // 1, not 0
+    });
+
+    it("clamps an over-long message to 1024 chars", async () => {
+      await getProvider("pushover").send({}, RM({ summary: "x".repeat(2000), fields: [] }));
+      expect(sentJson().message.length).toBe(1024);
+    });
+  });
+
+  describe("teams", () => {
+    it("renders an adaptive card with a colored title, FactSet, and root actions", async () => {
+      await getProvider("teams").send({ webhookUrl: "https://t" }, RM());
+      const b = sentJson();
+      expect(b.type).toBe("message");
+      expect(b.attachments[0].contentType).toBe("application/vnd.microsoft.card.adaptive");
+      const c = b.attachments[0].content;
+      expect(c.type).toBe("AdaptiveCard");
+      expect(c.body[0]).toMatchObject({ type: "TextBlock", weight: "Bolder", size: "Large", color: "attention", text: "Deploy failed" });
+      const factSet = c.body.find((x: { type: string }) => x.type === "FactSet");
+      expect(factSet.facts).toEqual([
+        { title: "Project", value: "web" },
+        { title: "Env", value: "prod" },
+      ]);
+      expect(c.actions).toEqual([{ type: "Action.OpenUrl", title: "Logs", url: "https://hub/logs" }]);
+    });
+
+    it("omits FactSet when no fields and actions when no links", async () => {
+      await getProvider("teams").send({ webhookUrl: "https://t" }, RM({ fields: [], links: [] }));
+      const c = sentJson().attachments[0].content;
+      expect(c.body.some((x: { type: string }) => x.type === "FactSet")).toBe(false);
+      expect(c.actions).toBeUndefined();
+    });
+  });
+
+  describe("mattermost", () => {
+    it("renders a Slack-compatible attachment WITHOUT a top-level text (no double title)", async () => {
+      await getProvider("mattermost").send({ webhookUrl: "https://m" }, RM());
+      const b = sentJson();
+      expect(b.text).toBeUndefined(); // guards the double-title regression
+      const a = b.attachments[0];
+      expect(a.color).toBe(levelColorHex("failure"));
+      expect(a.pretext).toBe("Deploy failed");
+      expect(a.fields).toEqual([
+        { title: "Project", value: "web", short: false },
+        { title: "Env", value: "prod", short: true },
+      ]);
+      expect(a.text).toContain("<https://hub/logs|Logs>");
+    });
+  });
+
+  describe("lark", () => {
+    it("renders an interactive card with a templated header + button action", async () => {
+      await getProvider("lark").send({ webhookUrl: "https://l" }, RM());
+      const b = sentJson();
+      expect(b.msg_type).toBe("interactive");
+      expect(b.card.header.template).toBe("red"); // failure
+      expect(b.card.header.title.content).toBe("Deploy failed");
+      expect(b.card.elements[0]).toMatchObject({ tag: "div", text: { tag: "lark_md" } });
+      expect(b.card.elements[0].text.content).toContain("Project: web");
+      expect(b.card.elements[1]).toMatchObject({
+        tag: "action",
+        actions: [{ tag: "button", text: { tag: "plain_text", content: "Logs" }, url: "https://hub/logs", type: "default" }],
+      });
+    });
+
+    it("omits the action element when there are no links", async () => {
+      await getProvider("lark").send({ webhookUrl: "https://l" }, RM({ links: [] }));
+      expect(sentJson().card.elements).toHaveLength(1);
+    });
+  });
+
+  describe("resend", () => {
+    it("POSTs to the Resend email API with a Bearer key, comma-split recipients, and escaped html", async () => {
+      await getProvider("resend").send(
+        { apiKey: "re_x", from: "a@b.c", to: "a@b.c, d@e.f" },
+        RM({ fields: [{ label: "F", value: "<script>alert(1)</script>" }] }),
+      );
+      expect(sentUrl()).toBe("https://api.resend.com/emails");
+      const h = sentHeaders();
+      expect(h.authorization).toBe("Bearer re_x");
+      expect(h["content-type"]).toBe("application/json");
+      const b = sentJson();
+      expect(b.from).toBe("a@b.c");
+      expect(b.to).toEqual(["a@b.c", "d@e.f"]);
+      expect(b.subject).not.toMatch(/[\r\n]/);
+      expect(b.html).toContain("<h2>");
+      expect(b.html).toContain("&lt;script&gt;");
+      expect(b.html).not.toContain("<script>alert");
+      expect(typeof b.text).toBe("string");
+    });
+
+    it("sanitizes a CRLF-laced api key out of the Authorization header", async () => {
+      await getProvider("resend").send({ apiKey: "re_x\r\nX-Evil: 1", from: "a@b.c", to: "a@b.c" }, RM());
+      const auth = sentHeaders().authorization;
+      expect(auth).not.toMatch(/[\r\n]/);
+      expect(auth.startsWith("Bearer ")).toBe(true);
     });
   });
 

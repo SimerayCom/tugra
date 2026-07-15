@@ -58,6 +58,13 @@ export function levelPriorityGotify(level: MsgLevel): number {
   return GOTIFY_PRIORITY[level];
 }
 
+// Pushover priority (-2 lowest … 2 emergency). Emergency (2) is intentionally NOT mapped from a level —
+// it re-alerts until acknowledged, so it stays opt-in via an explicit config.priority=2.
+const PUSHOVER_PRIORITY: Record<MsgLevel, number> = { info: -1, success: 0, warning: 1, failure: 1 };
+export function levelPriorityPushover(level: MsgLevel): number {
+  return PUSHOVER_PRIORITY[level];
+}
+
 /** HTML-escape a value before interpolating it into Telegram (parse_mode HTML) or an SMTP html body. */
 export function escapeHtml(s: string): string {
   return s
