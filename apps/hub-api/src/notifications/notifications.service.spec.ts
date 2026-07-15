@@ -1,9 +1,16 @@
+jest.mock("node:dns/promises");
+// Keep the SSRF validators REAL (they exercise the policy against mocked DNS); only stub the transport.
+jest.mock("./safe-url", () => ({ ...jest.requireActual("./safe-url"), safeSend: jest.fn() }));
+
+import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { lookup } from "node:dns/promises";
 import { NotificationsService } from "./notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { safeSend } from "./safe-url";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 // reversible stub crypto: enc(<plain>)
@@ -11,11 +18,23 @@ const crypto = {
   encrypt: (s: string) => `enc(${s})`,
   decrypt: (s: string) => s.replace(/^enc\(/, "").replace(/\)$/, ""),
 } as unknown as CryptoService;
-const config = { get: () => "https://web.test" } as unknown as ConfigService;
+const makeConfig = (allowPrivate: boolean) =>
+  ({
+    get: (k: string) => (k === "NOTIFY_ALLOW_PRIVATE_TARGETS" ? (allowPrivate ? "true" : "false") : "https://web.test"),
+  }) as unknown as ConfigService;
 
-function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, config);
+const mockLookup = lookup as unknown as jest.Mock;
+const mockSend = safeSend as jest.Mock;
+
+function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>, allowPrivate = false) {
+  return new NotificationsService(prisma as PrismaService, access as TeamAccessService, audit, crypto, makeConfig(allowPrivate));
 }
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockLookup.mockResolvedValue([{ address: "203.0.113.7", family: 4 }]); // resolve public by default
+  mockSend.mockResolvedValue(undefined);
+});
 
 describe("NotificationsService", () => {
   it("encrypts the config blob on create (never plaintext)", async () => {
@@ -24,9 +43,9 @@ describe("NotificationsService", () => {
       { notificationChannel: { create } } as unknown as PrismaService,
       { requirePermission: jest.fn().mockResolvedValue(undefined) },
     );
-    await svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "https://x" }, eventTypes: ["deploy_failed"] });
+    await svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "https://hook.test" }, eventTypes: ["deploy_failed"] });
     const data = create.mock.calls[0][0].data;
-    expect(data.configEnc).toBe(`enc(${JSON.stringify({ url: "https://x" })})`);
+    expect(data.configEnc).toBe(`enc(${JSON.stringify({ url: "https://hook.test" })})`);
     expect(data.eventTypes).toEqual(["deploy_failed"]);
     expect(data).not.toHaveProperty("config");
   });
@@ -36,6 +55,58 @@ describe("NotificationsService", () => {
     await expect(
       svc.create("u1", { name: "n", type: "carrierpigeon", teamId: "t1", config: {} }),
     ).rejects.toThrow(/unsupported/);
+  });
+
+  describe("SSRF validation on create/update", () => {
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
+
+    it("rejects a webhook whose url is a blocked address (cloud metadata) before persisting", async () => {
+      const create = jest.fn();
+      const svc = make({ notificationChannel: { create } } as unknown as PrismaService, access);
+      await expect(
+        svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "http://169.254.169.254/latest/meta-data/" } }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a webhook whose host resolves to a private address (default policy)", async () => {
+      mockLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+      const create = jest.fn();
+      const svc = make({ notificationChannel: { create } } as unknown as PrismaService, access);
+      await expect(
+        svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "http://internal.example" } }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("allows a private target when NOTIFY_ALLOW_PRIVATE_TARGETS is set", async () => {
+      const create = jest.fn().mockResolvedValue({ id: "c1", name: "n", type: "webhook", teamId: "t1", enabled: true, eventTypes: [] });
+      const svc = make({ notificationChannel: { create } } as unknown as PrismaService, access, true);
+      await expect(
+        svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "http://192.168.1.10/hook" } }),
+      ).resolves.toBeDefined();
+      expect(create).toHaveBeenCalled();
+    });
+
+    it("rejects a webhook with a too-short signing secret (shape check)", async () => {
+      const create = jest.fn();
+      const svc = make({ notificationChannel: { create } } as unknown as PrismaService, access);
+      await expect(
+        svc.create("u1", { name: "n", type: "webhook", teamId: "t1", config: { url: "https://hook.test", signingSecret: "short" } }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("re-validates the url on update against the stored channel type", async () => {
+      const existing = { id: "c1", teamId: "t1", name: "n", type: "webhook", enabled: true, eventTypes: [], configEnc: "enc({})" };
+      const update = jest.fn();
+      const svc = make(
+        { notificationChannel: { findUnique: jest.fn().mockResolvedValue(existing), update } } as unknown as PrismaService,
+        access,
+      );
+      await expect(svc.update("u1", "c1", { config: { url: "http://127.0.0.1/hook" } })).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
   });
 
   it("fireForEvent only queries enabled channels subscribed to the event", async () => {
@@ -49,22 +120,19 @@ describe("NotificationsService", () => {
 
   it("fireForEvent early-outs without rendering when no channels match", async () => {
     const findMany = jest.fn().mockResolvedValue([]);
-    const fetchMock = jest.fn();
-    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
     await svc.fireForEvent("t1", "deploy_failed", { appName: "blog" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("fireForEvent dispatches to matching channels and swallows provider errors", async () => {
     const findMany = jest.fn().mockResolvedValue([
       { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` },
     ]);
-    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 500 });
-    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    mockSend.mockRejectedValue(new Error("HTTP 500"));
     const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
     await expect(svc.fireForEvent("t1", "deploy_failed", { appName: "blog" })).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledWith("https://hook", expect.objectContaining({ method: "POST" }));
+    expect(mockSend).toHaveBeenCalledWith("https://hook", expect.any(String), expect.any(Object), expect.any(Object));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "notification.failed", target: "c1" }));
   });
 
@@ -72,11 +140,9 @@ describe("NotificationsService", () => {
     const findMany = jest.fn().mockResolvedValue([
       { id: "c1", type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` },
     ]);
-    const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
-    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const svc = make({ notificationChannel: { findMany } } as unknown as PrismaService, {});
     await svc.fireForEvent("t1", "deploy_failed", { appName: "blog", appId: "app1", projectName: "web" });
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse(mockSend.mock.calls[0][1]);
     expect(body.event).toBe("deploy_failed");
     expect(body.level).toBe("failure");
     expect(body.title).toBe("Deploy failed — blog");
@@ -89,12 +155,10 @@ describe("NotificationsService", () => {
       { channelId: "c1", channel: { enabled: true, type: "webhook", configEnc: `enc(${JSON.stringify({ url: "https://hook" })})` } },
       { channelId: "c2", channel: { enabled: false, type: "webhook", configEnc: "enc({})" } },
     ]);
-    const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
-    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const svc = make({ monitorChannel: { findMany } } as unknown as PrismaService, {});
     await svc.fireForMonitor("m1", { status: "DOWN", monitorName: "api", target: "x", teamId: "t1" });
-    expect(fetchMock).toHaveBeenCalledTimes(1); // disabled link skipped
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(mockSend).toHaveBeenCalledTimes(1); // disabled link skipped
+    const body = JSON.parse(mockSend.mock.calls[0][1]);
     expect(body.event).toBe("monitor_down");
     expect(body.level).toBe("failure");
   });
@@ -103,11 +167,9 @@ describe("NotificationsService", () => {
     const findMany = jest.fn().mockResolvedValue([
       { channelId: "c1", channel: { enabled: false, type: "webhook", configEnc: "enc({})" } },
     ]);
-    const fetchMock = jest.fn();
-    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
     const svc = make({ monitorChannel: { findMany } } as unknown as PrismaService, {});
     await svc.fireForMonitor("m1", { status: "UP" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("update can change eventTypes without re-encrypting when no config given", async () => {

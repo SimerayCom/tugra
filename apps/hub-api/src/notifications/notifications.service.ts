@@ -13,6 +13,8 @@ import { webBaseUrl } from "../common/web-url";
 import { getProvider, PROVIDER_TYPES } from "./providers";
 import { renderEvent, type RenderEnv } from "./event";
 import { type RenderedMessage } from "./rendered-message";
+import { WebhookConfigSchema } from "./dto";
+import { assertSafeHost, assertSafeUrl, SsrfError } from "./safe-url";
 
 export interface ChannelView {
   id: string;
@@ -72,6 +74,41 @@ export class NotificationsService {
     return rows.map((c) => this.view(c, permsByTeam.get(c.teamId)?.has("integrations") ?? false));
   }
 
+  // The user-controlled host/URL field per provider type (telegram is a fixed api.telegram.org host).
+  private static readonly HOST_FIELD: Record<string, string> = {
+    webhook: "url",
+    ntfy: "server",
+    gotify: "server",
+    discord: "webhookUrl",
+    slack: "webhookUrl",
+    smtp: "host",
+  };
+
+  /**
+   * Validate a channel's config before it is encrypted+stored: webhook shape (signingSecret/headers)
+   * and the SSRF policy on its outbound host/URL — a channel must not be able to point the hub at
+   * cloud-metadata / loopback / (by default) private LAN addresses. Throws BadRequestException.
+   */
+  private async validateChannelConfig(type: string, config: Record<string, unknown>): Promise<void> {
+    if (type === "webhook") {
+      const parsed = WebhookConfigSchema.safeParse(config);
+      if (!parsed.success) throw new BadRequestException(parsed.error.issues.map((i) => i.message).join("; "));
+    }
+    const field = NotificationsService.HOST_FIELD[type];
+    if (!field) return; // telegram (fixed host) — nothing user-controlled to validate
+    const value = config[field];
+    if (value == null || value === "") return; // unset (e.g. ntfy defaults to https://ntfy.sh) → nothing to check
+    const allowPrivate = this.config.get<string>("NOTIFY_ALLOW_PRIVATE_TARGETS") === "true";
+    try {
+      // smtp stores a bare host; the others store a full URL.
+      if (type === "smtp") await assertSafeHost(String(value), { allowPrivate });
+      else await assertSafeUrl(String(value), { allowPrivate });
+    } catch (e) {
+      if (e instanceof SsrfError) throw new BadRequestException(e.message);
+      throw e;
+    }
+  }
+
   async create(
     userId: string,
     dto: { name: string; type: string; teamId: string; config: Record<string, unknown>; eventTypes?: string[] },
@@ -80,6 +117,7 @@ export class NotificationsService {
     if (!PROVIDER_TYPES.includes(dto.type)) {
       throw new BadRequestException(`unsupported channel type: ${dto.type}`);
     }
+    await this.validateChannelConfig(dto.type, dto.config);
     const c = await this.prisma.notificationChannel.create({
       data: {
         name: dto.name,
@@ -101,6 +139,8 @@ export class NotificationsService {
     const c = await this.prisma.notificationChannel.findUnique({ where: { id } });
     if (!c) throw new NotFoundException("channel not found");
     await this.access.requirePermission(userId, c.teamId, "integrations");
+    // The update DTO has no `type`, so validate against the stored channel's type.
+    if (dto.config) await this.validateChannelConfig(c.type, dto.config);
     const updated = await this.prisma.notificationChannel.update({
       where: { id },
       data: {

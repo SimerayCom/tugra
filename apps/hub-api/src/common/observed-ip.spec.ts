@@ -1,4 +1,14 @@
-import { observedIp, isIpv6, isLoopbackIp, isPublicIp, bestReportedIp, reconcileReportedIp } from "./observed-ip";
+import {
+  observedIp,
+  isIpv6,
+  isLoopbackIp,
+  isPublicIp,
+  bestReportedIp,
+  reconcileReportedIp,
+  isSsrfSafeIp,
+  isAlwaysBlockedIp,
+  isPrivateNetworkIp,
+} from "./observed-ip";
 
 describe("observedIp", () => {
   it("uses the raw TCP peer address by default", () => {
@@ -83,6 +93,56 @@ describe("isPublicIp", () => {
   it("rejects a malformed / non-IP string (not just out-of-range) so it is never trusted as an address", () => {
     for (const bad of ["", "not-an-ip", "203.0.113.7\n      - EXTRA=pwned", "203.0.113.7 8080", "203.0.113.256", "1.2.3", "::ffff:garbage", "http://203.0.113.7"]) {
       expect(isPublicIp(bad)).toBe(false);
+    }
+  });
+});
+
+describe("SSRF address policy (isSsrfSafeIp / isAlwaysBlockedIp / isPrivateNetworkIp)", () => {
+  const ALWAYS_BLOCKED = [
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+    "0.1.2.3", // 0.0.0.0/8
+    "255.255.255.255", // broadcast
+    "169.254.169.254", // cloud metadata
+    "169.254.1.1", // link-local
+    "::ffff:169.254.169.254", // mapped metadata
+    "224.0.0.1", // multicast
+    "239.255.255.250", // multicast (SSDP)
+    "64:ff9b::1", // NAT64
+    "::7f00:1", // IPv4-compatible loopback
+    "::ffff:7f00:1", // hex form of a mapped address
+    "fd00:ec2::254", // AWS IPv6 instance metadata (ULA carve-out)
+    "fd00:0ec2:0:0:0:0:0:254", // ...same, expanded/zero-padded notation
+    "fe80::1", // IPv6 link-local
+    "ff02::1", // IPv6 multicast
+    "::", // unspecified
+    "not-an-ip", // fail closed
+  ];
+  const PRIVATE = ["10.0.0.5", "192.168.1.5", "172.16.0.1", "100.64.0.1", "fd12:3456::1", "fc00::1"];
+  const PUBLIC = ["8.8.8.8", "203.0.113.7", "2001:db8::1", "::ffff:8.8.8.8"];
+
+  it("always blocks metadata/loopback/link-local/multicast/broadcast/nat64 regardless of policy", () => {
+    for (const ip of ALWAYS_BLOCKED) {
+      expect(isAlwaysBlockedIp(ip)).toBe(true);
+      expect(isSsrfSafeIp(ip, false)).toBe(false);
+      expect(isSsrfSafeIp(ip, true)).toBe(false); // allowPrivate does NOT unblock these
+    }
+  });
+
+  it("blocks private/CGNAT/ULA by default, allows them only when allowPrivate is set", () => {
+    for (const ip of PRIVATE) {
+      expect(isPrivateNetworkIp(ip)).toBe(true);
+      expect(isAlwaysBlockedIp(ip)).toBe(false);
+      expect(isSsrfSafeIp(ip, false)).toBe(false);
+      expect(isSsrfSafeIp(ip, true)).toBe(true);
+    }
+  });
+
+  it("accepts globally-routable addresses under both policies", () => {
+    for (const ip of PUBLIC) {
+      expect(isSsrfSafeIp(ip, false)).toBe(true);
+      expect(isSsrfSafeIp(ip, true)).toBe(true);
     }
   });
 });

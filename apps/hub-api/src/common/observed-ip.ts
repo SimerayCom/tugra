@@ -11,12 +11,12 @@ export function isLoopbackIp(ip: string): boolean {
 }
 
 /** RFC 1918 private IPv4 ranges (LAN, still often reachable but not public). */
-function isPrivateV4(ip: string): boolean {
+export function isPrivateV4(ip: string): boolean {
   return /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
 }
 
 /** RFC 6598 carrier-grade NAT (100.64.0.0/10) — a shared ISP address, never publicly reachable. */
-function isCgnatV4(ip: string): boolean {
+export function isCgnatV4(ip: string): boolean {
   return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
 }
 
@@ -49,6 +49,57 @@ export function isPublicIp(ip: string): boolean {
   if (v === "0.0.0.0") return false; // unspecified IPv4 (resolves to localhost on connect)
   if (/^169\.254\./.test(v)) return false; // link-local IPv4
   return !isPrivateV4(v) && !isCgnatV4(v);
+}
+
+/**
+ * SSRF: addresses that are NEVER a legitimate outbound target, regardless of any policy toggle.
+ * Loopback, unspecified (0.0.0.0/8, ::), IPv4 link-local incl. 169.254.169.254 cloud metadata,
+ * broadcast, multicast (v4 224/4, v6 ff00::/8), IPv6 link-local (fe80::/10), NAT64 (64:ff9b::/96),
+ * IPv4-compatible IPv6 (::a.b.c.d). A non-literal string fails closed (blocked). `normalizeIp` folds
+ * ::ffff: mapped forms to their IPv4 so ::ffff:169.254.169.254 is judged as its v4 and blocked.
+ */
+export function isAlwaysBlockedIp(ip: string): boolean {
+  const v = normalizeIp(ip);
+  if (isIP(v) === 0) return true; // not a well-formed literal → fail closed
+  if (isLoopbackIp(v)) return true;
+  if (isIpv6(v)) {
+    // Anything in ::/96 that survived normalizeIp — IPv4-compatible (::a.b.c.d / ::7f00:1), the hex form
+    // of a mapped address (::ffff:7f00:1), unspecified (::) — is never legitimate global unicast.
+    // (Callers canonicalize IPv6 literals first, so an EXPANDED mapped form is folded to this shape.)
+    if (v.startsWith("::")) return true;
+    // AWS IPv6 instance-metadata (fd00:ec2::254) is a ULA carve-out; block its /32 regardless of the
+    // private-targets toggle so "metadata is always blocked" holds for IPv6 too. fd00/ec2 are non-zero
+    // groups so they always render literally at the start, in any zero-compression notation.
+    if (/^fd00:0*ec2:/i.test(v)) return true;
+    if (/^ff[0-9a-f]{2}:/i.test(v)) return true; // multicast ff00::/8
+    if (/^fe[89ab][0-9a-f]:/i.test(v)) return true; // link-local fe80::/10
+    if (/^64:ff9b:/i.test(v)) return true; // NAT64 well-known prefix
+    return false;
+  }
+  if (v === "0.0.0.0" || /^0\./.test(v)) return true; // unspecified 0.0.0.0/8
+  if (v === "255.255.255.255") return true; // limited broadcast
+  if (/^169\.254\./.test(v)) return true; // link-local incl. 169.254.169.254 metadata
+  if (/^(22[4-9]|23\d)\./.test(v)) return true; // multicast 224.0.0.0/4
+  return false;
+}
+
+/** LAN-routable private ranges that a policy toggle MAY loosen: RFC1918, CGNAT (v4), ULA (v6). */
+export function isPrivateNetworkIp(ip: string): boolean {
+  const v = normalizeIp(ip);
+  if (isIP(v) === 0) return false;
+  if (isIpv6(v)) return /^f[cd][0-9a-f]{2}:/i.test(v); // ULA fc00::/7
+  return isPrivateV4(v) || isCgnatV4(v);
+}
+
+/**
+ * Final SSRF gate for an outbound-notification target IP. Metadata/loopback/link-local are ALWAYS
+ * blocked; private LAN ranges are blocked unless `allowPrivate` (NOTIFY_ALLOW_PRIVATE_TARGETS) is set,
+ * so a self-hoster can point a webhook at an internal ntfy/gotify while cloud-metadata theft stays shut.
+ */
+export function isSsrfSafeIp(ip: string, allowPrivate: boolean): boolean {
+  if (isAlwaysBlockedIp(ip)) return false;
+  if (!allowPrivate && isPrivateNetworkIp(ip)) return false;
+  return true;
 }
 
 /** Best reachable candidate from agent-reported interface IPs: public IPv4 > private IPv4 > any non-loopback. */

@@ -1,4 +1,4 @@
-import { CreateChannelSchema, UpdateChannelSchema, EVENT_TYPES } from "./dto";
+import { CreateChannelSchema, UpdateChannelSchema, WebhookConfigSchema, EVENT_TYPES } from "./dto";
 
 describe("notification channel schemas — event types", () => {
   const base = { name: "ops", type: "slack", teamId: "t1", config: {} };
@@ -18,5 +18,40 @@ describe("notification channel schemas — event types", () => {
     expect(EVENT_TYPES).not.toContain("monitor_up");
     expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["monitor_down"] })).toThrow();
     expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["monitor_up"] })).toThrow();
+  });
+});
+
+describe("WebhookConfigSchema", () => {
+  it("accepts a url with an optional signing secret and custom headers", () => {
+    expect(
+      WebhookConfigSchema.safeParse({
+        url: "https://hook.test/x",
+        signingSecret: "a-super-secret-16+",
+        headers: { "X-Foo": "bar", Authorization: "Bearer abc" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires a valid url", () => {
+    expect(WebhookConfigSchema.safeParse({ url: "not-a-url" }).success).toBe(false);
+  });
+
+  it("rejects a signing secret shorter than 16 chars", () => {
+    expect(WebhookConfigSchema.safeParse({ url: "https://hook.test/x", signingSecret: "short" }).success).toBe(false);
+  });
+
+  it("rejects a reserved header key (content-type / x-tugra-signature, case-insensitive)", () => {
+    expect(WebhookConfigSchema.safeParse({ url: "https://hook.test/x", headers: { "Content-Type": "text/x" } }).success).toBe(false);
+    expect(WebhookConfigSchema.safeParse({ url: "https://hook.test/x", headers: { "X-Tugra-Signature": "x" } }).success).toBe(false);
+  });
+
+  it("rejects request-framing / hop-by-hop headers (smuggling guard)", () => {
+    for (const k of ["Content-Length", "Transfer-Encoding", "Connection", "Host"]) {
+      expect(WebhookConfigSchema.safeParse({ url: "https://hook.test/x", headers: { [k]: "5" } }).success).toBe(false);
+    }
+  });
+
+  it("rejects a header value containing CR/LF", () => {
+    expect(WebhookConfigSchema.safeParse({ url: "https://hook.test/x", headers: { "X-Evil": "a\r\nX-I: 1" } }).success).toBe(false);
   });
 });
