@@ -11,11 +11,13 @@
   },
   "backup": {
     "failed": { "title": "Backup failed — {db}", "summary": "A backup of {db} failed." },
+    "succeeded": { "title": "Backup succeeded — {db}", "summary": "A backup of {db} completed." },
     "restoreFailed": { "title": "Restore failed — {db}", "summary": "A restore into {db} failed." },
     "field": {
       "engine": "Engine",
       "destination": "Destination",
       "bucket": "Bucket",
+      "size": "Size",
       "error": "Error",
       "exitCode": "Exit code"
     },
@@ -23,7 +25,32 @@
   },
   "server": {
     "offline": { "title": "Server offline — {server}", "summary": "Server {server} stopped responding." },
+    "online": { "title": "Server online — {server}", "summary": "Server {server} is back online." },
     "field": { "hostname": "Hostname", "lastSeen": "Last seen", "ip": "IP" },
+    "link": { "openServer": "Open server" }
+  },
+  "volumeBackup": {
+    "succeeded": { "title": "Volume backup succeeded — {app}", "summary": "The volume backup for {app} completed." },
+    "failed": { "title": "Volume backup failed — {app}", "summary": "The volume backup for {app} failed." },
+    "field": {
+      "volumes": "Volumes",
+      "destination": "Destination",
+      "bucket": "Bucket",
+      "size": "Size",
+      "failedVolumes": "Failed volumes"
+    },
+    "link": { "openApp": "Open app" }
+  },
+  "scheduledTask": {
+    "succeeded": { "title": "Scheduled task succeeded — {task}", "summary": "Scheduled task {task} on {app} completed." },
+    "failed": { "title": "Scheduled task failed — {task}", "summary": "Scheduled task {task} on {app} failed." },
+    "field": { "app": "App", "exitCode": "Exit code" },
+    "link": { "openApp": "Open app" }
+  },
+  "dockerCleanup": {
+    "succeeded": { "title": "Cleanup succeeded — {server}", "summary": "Docker cleanup on {server} completed." },
+    "failed": { "title": "Cleanup failed — {server}", "summary": "Docker cleanup on {server} failed." },
+    "field": { "reclaimed": "Reclaimed", "error": "Error" },
     "link": { "openServer": "Open server" }
   },
   "expiry": {

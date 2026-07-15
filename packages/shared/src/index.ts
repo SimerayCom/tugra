@@ -19,10 +19,18 @@ export const EVENT_TYPES = [
   "deploy_failed",
   "deploy_rolled_back",
   "server_offline",
+  "server_online",
   "ssl_expiring",
   "token_expiring",
   "backup_failed",
+  "backup_success",
   "backup_restore_failed",
+  "volume_backup_success",
+  "volume_backup_failed",
+  "scheduled_task_success",
+  "scheduled_task_failed",
+  "docker_cleanup_success",
+  "docker_cleanup_failed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

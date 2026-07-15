@@ -2,6 +2,7 @@ import { Module, type OnModuleInit } from "@nestjs/common";
 import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoModule } from "../crypto/crypto.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 import { ServerOpsController } from "./server-ops.controller";
 import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
@@ -12,7 +13,7 @@ import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
 
 @Module({
-  imports: [AgentGatewayModule, CryptoModule],
+  imports: [AgentGatewayModule, CryptoModule, NotificationsModule],
   controllers: [ServerOpsController, FleetController],
   providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService],
 })

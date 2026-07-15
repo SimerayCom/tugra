@@ -420,10 +420,26 @@ export class ServersService {
   }
 
   async markOnline(serverId: string, extra: Prisma.ServerUpdateInput = {}): Promise<void> {
-    await this.prisma.server.update({
+    // Read the prior status so we can notify ONLY on a real OFFLINE→ONLINE recovery edge. markOnline
+    // runs on every reconnect/auth (and the periodic touch path), so firing unconditionally would spam
+    // one "server online" per authentication. enroll writes ONLINE via its own update (never markOnline),
+    // so a first enrollment is not reported as a recovery. A concurrent double-auth racing the same edge
+    // is a cosmetic best-effort dup, not correctness.
+    const prev = await this.prisma.server.findUnique({ where: { id: serverId }, select: { status: true } });
+    const s = await this.prisma.server.update({
       where: { id: serverId },
       data: { status: ServerStatus.ONLINE, lastSeenAt: new Date(), ...extra },
     });
+    if (prev?.status === ServerStatus.OFFLINE) {
+      this.notifications
+        .fireForEvent(s.teamId, "server_online", {
+          serverId: s.id,
+          serverName: s.name,
+          hostname: s.hostname ?? "",
+          publicIp: s.publicIp ?? "",
+        })
+        .catch(() => {});
+    }
   }
 
   async markOffline(serverId: string): Promise<void> {

@@ -1,4 +1,26 @@
-import { base, clamp, fields, s, type EventTemplate } from "../event";
+import { base, clamp, fields, fmtBytes, num, s, type EventTemplate } from "../event";
+
+/** backup_success — a scheduled/on-demand database backup completed. */
+export const backupSucceededTemplate: EventTemplate = {
+  render(ev, env) {
+    const c = ev.ctx;
+    const dbName = s(c, "dbName");
+    const dbId = s(c, "dbId");
+    return base(ev, {
+      level: "success",
+      title: env.t("backup.succeeded.title", { db: dbName }),
+      summary: env.t("backup.succeeded.summary", { db: dbName }),
+      critical: false,
+      fields: fields([
+        { label: env.t("backup.field.engine"), value: [s(c, "engine"), s(c, "version")].filter(Boolean).join(" "), inline: true },
+        { label: env.t("backup.field.destination"), value: s(c, "destType"), inline: true },
+        { label: env.t("backup.field.bucket"), value: s(c, "bucket"), inline: true },
+        { label: env.t("backup.field.size"), value: fmtBytes(num(c, "sizeBytes")), inline: true },
+      ]),
+      links: dbId ? [{ label: env.t("backup.link.openDatabase"), url: `${env.webBaseUrl}/databases/${dbId}` }] : [],
+    });
+  },
+};
 
 /** backup_failed — a scheduled/on-demand database backup did not complete. */
 export const backupFailedTemplate: EventTemplate = {

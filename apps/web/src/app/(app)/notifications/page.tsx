@@ -38,10 +38,18 @@ const EVENT_LABEL: Record<string, string> = {
   deploy_failed: "eventDeployFailed",
   deploy_rolled_back: "eventDeployRolledBack",
   server_offline: "eventServerOffline",
+  server_online: "eventServerOnline",
   ssl_expiring: "eventSslExpiring",
   token_expiring: "eventTokenExpiring",
   backup_failed: "eventBackupFailed",
+  backup_success: "eventBackupSuccess",
   backup_restore_failed: "eventBackupRestoreFailed",
+  volume_backup_success: "eventVolumeBackupSuccess",
+  volume_backup_failed: "eventVolumeBackupFailed",
+  scheduled_task_success: "eventScheduledTaskSuccess",
+  scheduled_task_failed: "eventScheduledTaskFailed",
+  docker_cleanup_success: "eventDockerCleanupSuccess",
+  docker_cleanup_failed: "eventDockerCleanupFailed",
 };
 
 export default function NotificationsPage() {

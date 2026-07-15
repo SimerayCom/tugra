@@ -102,6 +102,7 @@ export class BackupRunnerService {
 
     let succeeded = false;
     let errorText = "";
+    let sizeBytes: bigint | null = null;
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
@@ -111,15 +112,20 @@ export class BackupRunnerService {
       );
       succeeded = r.exitCode === 0;
       if (!succeeded) errorText = r.output;
+      sizeBytes = succeeded ? parseSize(r.output) : null;
       await this.prisma.backup.update({
         where: { id: backup.id },
         data: {
           status: succeeded ? "SUCCESS" : "FAILED",
-          sizeBytes: succeeded ? parseSize(r.output) : null,
+          sizeBytes,
           completedAt: new Date(),
         },
       });
     } catch (e) {
+      // Reaching here with succeeded already true means the dump ran (exit 0) but persisting the SUCCESS
+      // row threw — the backup is now recorded FAILED, so force succeeded=false to fire backup_failed (not
+      // a false backup_success for a FAILED row).
+      succeeded = false;
       errorText = e instanceof Error ? e.message : String(e);
       await this.prisma.backup.update({
         where: { id: backup.id },
@@ -141,6 +147,21 @@ export class BackupRunnerService {
           bucket: dest.type === "S3" && dest.s3 ? dest.s3.bucket : "",
           region: dest.type === "S3" && dest.s3 ? dest.s3.region : "",
           errorTail: scrubRestoreOutput(errorText),
+        })
+        .catch(() => undefined);
+    } else {
+      // sizeBytes is a Prisma BigInt — stringify before it reaches the notification queue's JSON payload
+      // (JSON.stringify throws on a raw BigInt). No agent output in ctx on success (nothing to scrub).
+      await this.notifications
+        .fireForEvent(db.teamId, "backup_success", {
+          dbId: db.id,
+          dbName: db.name,
+          engine: db.engine,
+          version: db.version,
+          destType: dest.type,
+          bucket: dest.type === "S3" && dest.s3 ? dest.s3.bucket : "",
+          region: dest.type === "S3" && dest.s3 ? dest.s3.region : "",
+          sizeBytes: sizeBytes != null ? sizeBytes.toString() : "",
         })
         .catch(() => undefined);
     }

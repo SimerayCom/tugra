@@ -42,10 +42,45 @@ describe("BackupRunnerService backup-failure notification", () => {
     expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.objectContaining({ dbName: expect.stringContaining("shop"), errorTail: expect.stringContaining("agent offline") }));
   });
 
-  it("does NOT notify on a successful backup", async () => {
-    const { svc, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 0, output: "" }));
+  it("fires backup_success (with a STRINGIFIED size) when the dump succeeds", async () => {
+    const { svc, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 0, output: "1048576" }));
     await svc.runBackup("db1", "u1");
-    expect(fireForEvent).not.toHaveBeenCalled();
+    expect(fireForEvent).toHaveBeenCalledWith(
+      "t1",
+      "backup_success",
+      expect.objectContaining({ dbName: "shop", sizeBytes: "1048576" }),
+    );
+    // sizeBytes must be a string: a raw Prisma BigInt would throw when the queue JSON-serializes the job.
+    const ctx = fireForEvent.mock.calls[0][2] as Record<string, unknown>;
+    expect(typeof ctx.sizeBytes).toBe("string");
+    expect(fireForEvent).not.toHaveBeenCalledWith("t1", "backup_failed", expect.anything());
+  });
+
+  it("does NOT fire backup_success when persisting the SUCCESS row throws (row ends FAILED)", async () => {
+    // dump exits 0, but the first backup.update (status:SUCCESS) rejects → catch records FAILED. A false
+    // backup_success for a FAILED row must not fire; backup_failed does.
+    const update = jest.fn().mockRejectedValueOnce(new Error("db deadlock")).mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db) },
+      backup: {
+        create: jest.fn().mockResolvedValue({ id: "b1" }),
+        update,
+        findUnique: jest.fn().mockResolvedValue({ id: "b1" }),
+        findMany: jest.fn().mockResolvedValue([]),
+        delete: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const fireForEvent = jest.fn().mockResolvedValue(undefined);
+    const svc = new BackupRunnerService(
+      prisma,
+      { log: jest.fn() } as unknown as AuditService,
+      { decrypt: () => JSON.stringify({ username: "u", password: "p", database: "d" }) } as unknown as CryptoService,
+      { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "123" }) } as unknown as AgentWsServer,
+      { fireForEvent } as unknown as NotificationsService,
+    );
+    await svc.runBackup("db1", "u1");
+    expect(fireForEvent).not.toHaveBeenCalledWith("t1", "backup_success", expect.anything());
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.anything());
   });
 });
 

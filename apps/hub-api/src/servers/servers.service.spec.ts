@@ -218,6 +218,44 @@ describe("ServersService.enroll (token validation)", () => {
   });
 });
 
+describe("ServersService.markOnline (server_online recovery edge)", () => {
+  beforeEach(() => (notifications.fireForEvent as jest.Mock).mockClear());
+
+  const onlineRow = { id: "s1", name: "node-1", teamId: "teamA", hostname: "h1", publicIp: "1.2.3.4" };
+  const withPrev = (status: ServerStatus) => {
+    const update = jest.fn().mockResolvedValue(onlineRow);
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ status }), update },
+    } as unknown as PrismaService;
+    return { prisma, update };
+  };
+
+  it("fires server_online ONLY on an OFFLINE→ONLINE recovery edge", async () => {
+    const { prisma, update } = withPrev(ServerStatus.OFFLINE);
+    await svcWith(prisma).markOnline("s1");
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "s1" }, data: expect.objectContaining({ status: ServerStatus.ONLINE }) }),
+    );
+    expect(notifications.fireForEvent).toHaveBeenCalledWith(
+      "teamA",
+      "server_online",
+      expect.objectContaining({ serverId: "s1", serverName: "node-1", hostname: "h1", publicIp: "1.2.3.4" }),
+    );
+  });
+
+  it("does NOT fire when the server was already ONLINE (every reconnect would otherwise spam)", async () => {
+    const { prisma } = withPrev(ServerStatus.ONLINE);
+    await svcWith(prisma).markOnline("s1");
+    expect(notifications.fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire when the server was PENDING (first enroll is not a recovery)", async () => {
+    const { prisma } = withPrev(ServerStatus.PENDING);
+    await svcWith(prisma).markOnline("s1");
+    expect(notifications.fireForEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe("ServersService.saveHostInfo + uptime view", () => {
   const hostInfo = (over: Record<string, unknown> = {}) => ({
     os: "ubuntu",
