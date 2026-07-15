@@ -435,7 +435,13 @@ export class ServersService {
       .catch(() => undefined);
     if (s) {
       this.notifications
-        .fireForEvent(s.teamId, "server_offline", `🔴 ${s.name} is offline`)
+        .fireForEvent(s.teamId, "server_offline", {
+          serverId: s.id,
+          serverName: s.name,
+          hostname: s.hostname ?? "",
+          lastSeenAt: s.lastSeenAt?.toISOString() ?? "",
+          publicIp: s.publicIp ?? "",
+        })
         .catch(() => {});
     }
   }

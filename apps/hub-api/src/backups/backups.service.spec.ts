@@ -217,14 +217,14 @@ describe("BackupsService.restore — result verification + history", () => {
     const { svc, update, fireForEvent } = setup({ output: "ERROR: boom", exitCode: 1 });
     await expect(svc.restore("u1", "db1", "bk")).rejects.toThrow();
     expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "FAILED", exitCode: 1, errorTail: expect.stringContaining("boom") }) });
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.stringContaining("shop"));
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.objectContaining({ dbName: expect.stringContaining("shop"), exitCode: 1 }));
   });
 
   it("records FAILED and throws when the agent is offline (sendCommand rejects)", async () => {
     const { svc, update, fireForEvent } = setup(new Error("agent offline"));
     await expect(svc.restore("u1", "db1", "bk")).rejects.toThrow();
     expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "FAILED", exitCode: null }) });
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.any(String));
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.objectContaining({ dbName: expect.stringContaining("shop"), exitCode: null }));
   });
 
   it("listRestores requires write and returns the history view", async () => {

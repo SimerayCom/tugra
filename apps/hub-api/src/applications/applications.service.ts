@@ -890,17 +890,11 @@ export class ApplicationsService {
         exitCode: code,
         deploymentId: dep.id,
       });
-      this.notifications
-        .fireForEvent(
-          app.teamId,
-          ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed",
-          ok
-            ? `✅ ${app.name}: deploy succeeded`
-            : rolledBack
-              ? `⚠️ ${app.name}: new version failed its health check — kept the previous version`
-              : `🔴 ${app.name}: deploy failed`,
-        )
-        .catch(() => {});
+      this.notifyDeploy(
+        app,
+        dep,
+        ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed",
+      ).catch(() => {});
       if (ok && !isCompose) {
         await this.pruneImages(app);
       } else if (!isCompose) {
@@ -920,7 +914,7 @@ export class ApplicationsService {
         data: { status: AppStatus.FAILED },
       });
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
-      this.notifications.fireForEvent(app.teamId, "deploy_failed", `🔴 ${app.name}: deploy failed`).catch(() => {});
+      this.notifyDeploy(app, dep, "deploy_failed").catch(() => {});
     }
     await this.audit.log({ actor, action: "app.deploy", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
@@ -1656,6 +1650,42 @@ export class ApplicationsService {
     if (!app) throw new NotFoundException("application not found");
     await this.access.requirePermission(userId, app.teamId, permission);
     return app;
+  }
+
+  /** Build the typed deploy-event ctx (project/env names, app URL, duration) and fire it. */
+  private async notifyDeploy(
+    app: Application,
+    dep: { id: string; createdAt: Date },
+    event: string,
+  ): Promise<void> {
+    const [pctx, serverIp] = await Promise.all([
+      // Enrichment is best-effort — a transient lookup failure must not drop the notification.
+      loadProjectCtx(this.prisma, app.environmentId).catch(
+        (): ResourceProjectCtx => ({ projectId: null, projectName: null, environmentName: null }),
+      ),
+      this.serverIp(app.serverId),
+    ]);
+    const url = appUrl(
+      {
+        domain: app.domain,
+        https: app.https,
+        hostPort:
+          app.hostPort ??
+          (app.domain == null && app.source === "COMPOSE" ? primaryHostPort(app, this.composeWeb(app)) : null),
+      },
+      serverIp ?? null,
+    );
+    // The raw deploy output is deliberately NOT forwarded: it can echo secrets (env/connection
+    // strings) and is writer-only in-app. The notification links to the access-controlled log instead.
+    await this.notifications.fireForEvent(app.teamId, event, {
+      appId: app.id,
+      appName: app.name,
+      domain: app.domain,
+      url: url ?? "",
+      projectName: pctx.projectName,
+      environmentName: pctx.environmentName,
+      durationMs: Date.now() - dep.createdAt.getTime(),
+    });
   }
 
   /** Best reachable IP for one server (IPv4 preferred), or null. Best-effort:

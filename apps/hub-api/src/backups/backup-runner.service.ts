@@ -15,6 +15,7 @@ import {
   backupFilename,
   buildBackupScript,
   buildDeleteBackupScript,
+  scrubRestoreOutput,
 } from "./backup-script";
 import { LOCAL_DEST, objectKey, type DestinationSpec } from "./destination";
 
@@ -100,6 +101,7 @@ export class BackupRunnerService {
     });
 
     let succeeded = false;
+    let errorText = "";
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
@@ -108,6 +110,7 @@ export class BackupRunnerService {
         BACKUP_TIMEOUT_MS,
       );
       succeeded = r.exitCode === 0;
+      if (!succeeded) errorText = r.output;
       await this.prisma.backup.update({
         where: { id: backup.id },
         data: {
@@ -116,7 +119,8 @@ export class BackupRunnerService {
           completedAt: new Date(),
         },
       });
-    } catch {
+    } catch (e) {
+      errorText = e instanceof Error ? e.message : String(e);
       await this.prisma.backup.update({
         where: { id: backup.id },
         data: { status: "FAILED", completedAt: new Date() },
@@ -124,9 +128,20 @@ export class BackupRunnerService {
     }
     await this.audit.log({ actor, action: "database.backup", target: db.id });
     if (!succeeded) {
-      // Don't let a silent backup failure go unnoticed (best-effort).
+      // Don't let a silent backup failure go unnoticed (best-effort). Scrub the agent output the same
+      // way restore does (pg/mysql can echo row data / connection detail); only bucket/region — never
+      // secrets — reach the ctx.
       await this.notifications
-        .fireForEvent(db.teamId, "backup_failed", `Backup failed for "${db.name}"`)
+        .fireForEvent(db.teamId, "backup_failed", {
+          dbId: db.id,
+          dbName: db.name,
+          engine: db.engine,
+          version: db.version,
+          destType: dest.type,
+          bucket: dest.type === "S3" && dest.s3 ? dest.s3.bucket : "",
+          region: dest.type === "S3" && dest.s3 ? dest.s3.region : "",
+          errorTail: scrubRestoreOutput(errorText),
+        })
         .catch(() => undefined);
     }
     await this.prune(db);

@@ -29,8 +29,8 @@ describe("ExpiryRunnerService", () => {
       } as unknown as PrismaService;
       const { svc, fire } = make(prisma);
       await svc.checkTokens();
-      expect(fire).toHaveBeenCalledWith("team1", "token_expiring", expect.stringContaining('"ci"'));
-      expect(fire).toHaveBeenCalledWith("team2", "token_expiring", expect.stringContaining("7 day"));
+      expect(fire).toHaveBeenCalledWith("team1", "token_expiring", expect.objectContaining({ tokenName: "ci" }));
+      expect(fire).toHaveBeenCalledWith("team2", "token_expiring", expect.objectContaining({ tokenName: "ci", days: 7 }));
     });
 
     it("ignores tokens far from expiry", async () => {
@@ -52,7 +52,7 @@ describe("ExpiryRunnerService", () => {
       const { svc, fire } = make(prisma);
       jest.spyOn(svc, "probeDomain").mockResolvedValue({ state: "expiring", daysRemaining: 3, validTo: null, issuer: null });
       await svc.checkSsl();
-      expect(fire).toHaveBeenCalledWith("team1", "ssl_expiring", expect.stringContaining("x.io"));
+      expect(fire).toHaveBeenCalledWith("team1", "ssl_expiring", expect.objectContaining({ domain: expect.stringContaining("x.io") }));
     });
 
     it("skips healthy certs and probe errors", async () => {
