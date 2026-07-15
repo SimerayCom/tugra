@@ -33,5 +33,7 @@
   "f_pass": "Password",
   "f_from": "From address",
   "f_to": "To address(es)",
-  "f_secure": "Use TLS (secure)"
+  "f_secure": "Use TLS (secure)",
+  "f_userKey": "User key",
+  "f_apiKey": "API key"
 }

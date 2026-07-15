@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
@@ -44,5 +44,16 @@ describe("NotificationsPage — event list from the backend single source", () =
     await waitFor(() => expect(screen.getByText("Backup failed")).toBeTruthy());
     // an id with no EVENT_LABEL / i18n key falls back to the raw key rather than throwing
     expect(screen.getByText("notifications.brand_new_event")).toBeTruthy();
+  });
+
+  it("renders a newly-added provider's config fields when its type is selected (resend)", async () => {
+    vi.spyOn(api, "listChannelEvents").mockResolvedValue({ events: ["deploy_failed"] });
+    const { container } = wrap(<NotificationsPage />);
+    await waitFor(() => expect(screen.getByText("Deploy failed")).toBeTruthy());
+    // the channel-type select shows the default option "SMTP"; switch it to the new "resend" type
+    fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value: "resend" } });
+    expect(screen.getByText("API key")).toBeTruthy(); // f_apiKey label rendered
+    expect(screen.getByText("From address")).toBeTruthy(); // reused f_from
+    expect(container.querySelector('input[type="password"]')).toBeTruthy(); // apiKey is a secret field
   });
 });

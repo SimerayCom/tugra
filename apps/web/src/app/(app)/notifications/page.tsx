@@ -13,7 +13,7 @@ import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
 
-const TYPES = ["smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify"];
+const TYPES = ["smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify", "pushover", "teams", "mattermost", "lark", "resend"];
 
 // config fields per channel type (key → i18n label key f_<key>)
 const FIELDS: Record<string, string[]> = {
@@ -24,8 +24,13 @@ const FIELDS: Record<string, string[]> = {
   telegram: ["botToken", "chatId"],
   ntfy: ["server", "topic"],
   gotify: ["server", "token"],
+  pushover: ["token", "userKey"], // priority/retry/expire are advanced → set via API, not surfaced here
+  teams: ["webhookUrl"],
+  mattermost: ["webhookUrl"],
+  lark: ["webhookUrl"],
+  resend: ["apiKey", "from", "to"],
 };
-const SECRET_FIELDS = new Set(["pass", "token", "botToken"]);
+const SECRET_FIELDS = new Set(["pass", "token", "botToken", "userKey", "apiKey"]);
 // The subscribable event ids come from the backend (GET /channels/events) so the UI never drifts from
 // the enum. EVENT_LABEL maps each id → an i18n key (unknown ids fall back to the raw id).
 const EVENT_LABEL: Record<string, string> = {

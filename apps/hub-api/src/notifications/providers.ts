@@ -13,15 +13,34 @@ import {
   levelColorInt,
   levelPriority,
   levelPriorityGotify,
+  levelPriorityPushover,
   levelTag,
   sanitizeHeader,
   sanitizeNtfyHeader,
   toPlain,
+  type MsgLevel,
   type RenderedMessage,
 } from "./rendered-message";
 import { allowPrivateTargets, safeSend } from "./safe-url";
 
 export type ChannelConfig = Record<string, unknown>;
+
+/** Read a numeric config field; missing/empty-string → undefined (a blank web field must NOT read as 0). */
+function numCfg(v: unknown): number | undefined {
+  if (v == null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Hard-truncate to a provider length limit (no ellipsis). */
+function clampLen(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+// Provider-specific NAMED color vocabularies (Teams AdaptiveCard / Lark card) — deliberately NOT in the
+// hex PALETTE, whose contract is one hex per level.
+const TEAMS_COLOR: Record<MsgLevel, string> = { success: "good", failure: "attention", warning: "warning", info: "default" };
+const LARK_COLOR: Record<MsgLevel, string> = { success: "green", failure: "red", warning: "orange", info: "blue" };
 
 /**
  * Headers a user's custom-header map may never set: the ones we control (content-type + signature) and
@@ -218,6 +237,126 @@ class SmtpProvider extends NotificationProvider {
   }
 }
 
+class PushoverProvider extends NotificationProvider {
+  readonly type = "pushover";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const message = clampLen([msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n\n"), 1024) || msg.title;
+    const override = numCfg(config.priority);
+    // Emergency (2) only via an explicit config override; a level/critical never auto-escalates to it.
+    const priority = override != null ? Math.max(-2, Math.min(2, override)) : msg.critical ? 1 : levelPriorityPushover(msg.level);
+    const body: Record<string, unknown> = {
+      token: String(config.token ?? ""),
+      user: String(config.userKey ?? ""),
+      title: clampLen(msg.title, 250),
+      message,
+      priority,
+    };
+    const link = msg.links[0];
+    if (link) {
+      body.url = link.url;
+      body.url_title = link.label;
+    }
+    if (priority === 2) {
+      // Pushover requires retry ≥ 30 and a POSITIVE expire ≤ 10800; floor both so a bad API-set value
+      // (e.g. expire "0") can't produce a 400 that silently drops the emergency alert.
+      body.retry = Math.max(30, numCfg(config.retry) ?? 60);
+      body.expire = Math.max(1, Math.min(10800, numCfg(config.expire) ?? 3600));
+    }
+    await this.postJson("https://api.pushover.net/1/messages.json", body);
+  }
+}
+
+class TeamsProvider extends NotificationProvider {
+  readonly type = "teams";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const body: unknown[] = [
+      { type: "TextBlock", text: msg.title, weight: "Bolder", size: "Large", color: TEAMS_COLOR[msg.level], wrap: true },
+    ];
+    if (msg.summary) body.push({ type: "TextBlock", text: msg.summary, wrap: true });
+    if (msg.fields.length) body.push({ type: "FactSet", facts: msg.fields.map((f) => ({ title: f.label, value: f.value })) });
+    const content: Record<string, unknown> = {
+      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      type: "AdaptiveCard",
+      version: "1.4",
+      body,
+    };
+    // Action.OpenUrl lives at the AdaptiveCard ROOT (content.actions), never inside body.
+    if (msg.links.length) content.actions = msg.links.map((l) => ({ type: "Action.OpenUrl", title: l.label, url: l.url }));
+    await this.postJson(String(config.webhookUrl), {
+      type: "message",
+      attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content }],
+    });
+  }
+}
+
+class MattermostProvider extends NotificationProvider {
+  readonly type = "mattermost";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    // Slack-compatible attachment, minus the top-level text (would render the title twice) and mrkdwn_in.
+    const links = msg.links.map((l) => `<${l.url}|${l.label}>`).join(" · ");
+    await this.postJson(String(config.webhookUrl), {
+      attachments: [
+        {
+          color: levelColorHex(msg.level),
+          pretext: msg.title,
+          text: links ? `${msg.summary}\n${links}` : msg.summary,
+          fields: msg.fields.map((f) => ({ title: f.label, value: f.value, short: !!f.inline })),
+        },
+      ],
+    });
+  }
+}
+
+class LarkProvider extends NotificationProvider {
+  readonly type = "lark";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const content = [msg.summary, fieldsAsLines(msg.fields)].filter(Boolean).join("\n") || msg.title;
+    const elements: unknown[] = [{ tag: "div", text: { tag: "lark_md", content } }];
+    if (msg.links.length) {
+      elements.push({
+        tag: "action",
+        actions: msg.links.map((l) => ({ tag: "button", text: { tag: "plain_text", content: l.label }, url: l.url, type: "default" })),
+      });
+    }
+    await this.postJson(String(config.webhookUrl), {
+      msg_type: "interactive",
+      card: { header: { title: { tag: "plain_text", content: msg.title }, template: LARK_COLOR[msg.level] }, elements },
+    });
+  }
+}
+
+class ResendProvider extends NotificationProvider {
+  readonly type = "resend";
+  async send(config: ChannelConfig, msg: RenderedMessage): Promise<void> {
+    const to = String(config.to ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const rows = msg.fields
+      .map((f) => `<tr><td><b>${escapeHtml(f.label)}</b></td><td>${escapeHtml(f.value)}</td></tr>`)
+      .join("");
+    const btns = msg.links.map((l) => `<a href="${escapeHtml(l.url)}">${escapeHtml(l.label)}</a>`).join(" &nbsp; ");
+    const html =
+      `<h2>${escapeHtml(msg.title)}</h2><p>${escapeHtml(msg.summary)}</p>` +
+      (rows ? `<table>${rows}</table>` : "") +
+      (btns ? `<p>${btns}</p>` : "");
+    const body = JSON.stringify({
+      from: String(config.from ?? ""),
+      to,
+      subject: sanitizeHeader(msg.title),
+      html,
+      text: toPlain(msg),
+    });
+    await safeSend(
+      "https://api.resend.com/emails",
+      body,
+      // sanitizeHeader the Bearer value: apiKey is user config; a CRLF would inject a header / throw.
+      { "content-type": "application/json", authorization: `Bearer ${sanitizeHeader(String(config.apiKey ?? ""))}` },
+      { allowPrivate: allowPrivateTargets() },
+    );
+  }
+}
+
 const list: NotificationProvider[] = [
   new WebhookProvider(),
   new TelegramProvider(),
@@ -226,6 +365,11 @@ const list: NotificationProvider[] = [
   new SlackProvider(),
   new GotifyProvider(),
   new SmtpProvider(),
+  new PushoverProvider(),
+  new TeamsProvider(),
+  new MattermostProvider(),
+  new LarkProvider(),
+  new ResendProvider(),
 ];
 
 export const providers: Record<string, NotificationProvider> = Object.fromEntries(
