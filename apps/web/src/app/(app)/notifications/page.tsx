@@ -12,25 +12,36 @@ import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
+import { DeliveryHistory } from "./delivery-history";
 
 const TYPES = ["smtp", "webhook", "discord", "slack", "telegram", "ntfy", "gotify", "pushover", "teams", "mattermost", "lark", "resend"];
 
-// config fields per channel type (key → i18n label key f_<key>)
+// config fields per channel type (key → i18n label key f_<key>). Webhook `headers` are handled by a
+// dedicated key/value editor, not this flat list.
 const FIELDS: Record<string, string[]> = {
   smtp: ["host", "port", "user", "pass", "from", "to"],
-  webhook: ["url"],
+  webhook: ["url", "signingSecret"],
   discord: ["webhookUrl"],
   slack: ["webhookUrl"],
-  telegram: ["botToken", "chatId"],
-  ntfy: ["server", "topic"],
-  gotify: ["server", "token"],
-  pushover: ["token", "userKey"], // priority/retry/expire are advanced → set via API, not surfaced here
+  telegram: ["botToken", "chatId", "messageThreadId"],
+  ntfy: ["server", "topic", "priority", "accessToken"],
+  gotify: ["server", "token", "priority"],
+  pushover: ["token", "userKey", "priority", "retry", "expire"],
   teams: ["webhookUrl"],
   mattermost: ["webhookUrl"],
   lark: ["webhookUrl"],
   resend: ["apiKey", "from", "to"],
 };
-const SECRET_FIELDS = new Set(["pass", "token", "botToken", "userKey", "apiKey"]);
+const SECRET_FIELDS = new Set(["pass", "token", "botToken", "userKey", "apiKey", "signingSecret", "accessToken"]);
+// Rendered with <input type="number"> (UX only — the value is still submitted as a string; the backend's
+// numCfg treats "" as undefined, so empty numeric fields are simply dropped, never coerced to 0).
+const NUMBER_FIELDS = new Set(["port", "priority", "retry", "expire", "messageThreadId"]);
+// Optional inline guidance under a field.
+const FIELD_HINTS: Record<string, string> = {
+  signingSecret: "hint_signingSecret",
+  retry: "hint_retryExpire",
+  expire: "hint_retryExpire",
+};
 // The subscribable event ids come from the backend (GET /channels/events) so the UI never drifts from
 // the enum. EVENT_LABEL maps each id → an i18n key (unknown ids fall back to the raw id).
 const EVENT_LABEL: Record<string, string> = {
@@ -77,24 +88,33 @@ export default function NotificationsPage() {
   const [type, setType] = useState("smtp");
   const [config, setConfig] = useState<Record<string, string>>({});
   const [secure, setSecure] = useState(false);
+  const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
   const [events, setEvents] = useState<string[]>(["deploy_failed", "server_offline"]);
+
+  // Assemble the opaque config bag submitted on create: smtp keeps its `secure` toggle; webhook folds the
+  // key/value editor rows into a `headers` object (empty keys dropped, omitted entirely when empty).
+  const buildConfig = (): Record<string, unknown> => {
+    const base: Record<string, unknown> = { ...config };
+    if (type === "smtp") base.secure = secure;
+    if (type === "webhook") {
+      const h: Record<string, string> = {};
+      for (const r of headers) if (r.key.trim()) h[r.key.trim()] = r.value;
+      if (Object.keys(h).length) base.headers = h;
+    }
+    return base;
+  };
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["channels"] });
   const create = useMutation({
-    mutationFn: () =>
-      api.createChannel({
-        name,
-        type,
-        teamId: target,
-        config: type === "smtp" ? { ...config, secure } : config,
-        eventTypes: events,
-      }),
-    onSuccess: () => { setName(""); setConfig({}); setSecure(false); setCreateTeam(""); invalidate(); },
+    mutationFn: () => api.createChannel({ name, type, teamId: target, config: buildConfig(), eventTypes: events }),
+    onSuccess: () => { setName(""); setConfig({}); setSecure(false); setHeaders([]); setCreateTeam(""); invalidate(); },
   });
   const test = useMutation({ mutationFn: (id: string) => api.testChannel(id) });
   const del = useMutation({ mutationFn: (id: string) => api.deleteChannel(id), onSuccess: invalidate });
 
   const setField = (k: string, v: string) => setConfig((c) => ({ ...c, [k]: v }));
+  const setHeaderRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
+    setHeaders((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const toggleEvent = (e: string) => setEvents((es) => (es.includes(e) ? es.filter((x) => x !== e) : [...es, e]));
 
   return (
@@ -132,6 +152,7 @@ export default function NotificationsPage() {
                   <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
                 </>
               )}
+              <DeliveryHistory channelId={c.id} />
             </Card>
           ))}
         </div>
@@ -153,12 +174,12 @@ export default function NotificationsPage() {
               <TextInput id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required />
             </Field>
             <Field label={t("notifications.channelType")}>
-              <Select value={type} onChange={(v) => { setType(v); setConfig({}); }} options={TYPES.map((tp) => ({ value: tp, label: tp.toUpperCase() }))} />
+              <Select value={type} onChange={(v) => { setType(v); setConfig({}); setHeaders([]); setSecure(false); }} options={TYPES.map((tp) => ({ value: tp, label: tp.toUpperCase() }))} />
             </Field>
             {(FIELDS[type] ?? []).map((k) => (
-              <Field key={k} label={t(`notifications.f_${k}`)}>
+              <Field key={k} label={t(`notifications.f_${k}`)} hint={FIELD_HINTS[k] ? t(`notifications.${FIELD_HINTS[k]}`) : undefined}>
                 <TextInput
-                  type={SECRET_FIELDS.has(k) ? "password" : k === "port" ? "number" : "text"}
+                  type={SECRET_FIELDS.has(k) ? "password" : NUMBER_FIELDS.has(k) ? "number" : "text"}
                   value={config[k] ?? ""}
                   onChange={(e) => setField(k, e.target.value)}
                 />
@@ -170,6 +191,24 @@ export default function NotificationsPage() {
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)", marginTop: 10 }}>
               <input type="checkbox" checked={secure} onChange={(e) => setSecure(e.target.checked)} /> {t("notifications.f_secure")}
             </label>
+          )}
+
+          {type === "webhook" && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("notifications.headers")}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {headers.map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 6 }}>
+                    <TextInput style={{ width: 200 }} placeholder={t("notifications.headerKey")} value={r.key} onChange={(e) => setHeaderRow(i, { key: e.target.value })} />
+                    <TextInput style={{ flex: 1 }} placeholder={t("notifications.headerValue")} value={r.value} onChange={(e) => setHeaderRow(i, { value: e.target.value })} />
+                    <Btn variant="ghost" onClick={() => setHeaders((rs) => rs.filter((_, j) => j !== i))}>✕</Btn>
+                  </div>
+                ))}
+              </div>
+              <Btn variant="ghost" style={{ marginTop: 6 }} onClick={() => setHeaders((rs) => [...rs, { key: "", value: "" }])}>
+                {t("notifications.addHeader")}
+              </Btn>
+            </div>
           )}
 
           <div style={{ marginTop: 14 }}>

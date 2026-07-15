@@ -69,3 +69,73 @@ describe("NotificationsPage — event list from the backend single source", () =
     expect(container.querySelector('input[type="password"]')).toBeTruthy(); // apiKey is a secret field
   });
 });
+
+describe("NotificationsPage — rich provider config fields", () => {
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team", role: "OWNER" }] as never);
+    vi.spyOn(api, "listChannels").mockResolvedValue([] as never);
+    vi.spyOn(api, "listChannelEvents").mockResolvedValue({ events: ["deploy_failed"] });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const switchType = async (value: string) => {
+    const res = wrap(<NotificationsPage />);
+    await waitFor(() => expect(screen.getByText("Deploy failed")).toBeTruthy());
+    fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value } });
+    return res;
+  };
+
+  it("webhook: surfaces the signing secret (masked) + a custom-headers editor", async () => {
+    const { container } = await switchType("webhook");
+    expect(screen.getByText("Webhook URL")).toBeTruthy();
+    expect(screen.getByText("Signing secret (HMAC)")).toBeTruthy();
+    expect(screen.getByText("Add header")).toBeTruthy();
+    expect(container.querySelector('input[type="password"]')).toBeTruthy(); // signingSecret masked
+  });
+
+  it("pushover: surfaces priority/retry/expire as number fields", async () => {
+    const { container } = await switchType("pushover");
+    expect(screen.getByText("Priority")).toBeTruthy();
+    expect(screen.getByText("Retry (seconds)")).toBeTruthy();
+    expect(screen.getByText("Expire (seconds)")).toBeTruthy();
+    expect(container.querySelector('input[type="number"]')).toBeTruthy();
+  });
+
+  it("ntfy: surfaces priority + access token (masked)", async () => {
+    const { container } = await switchType("ntfy");
+    expect(screen.getByText("Priority")).toBeTruthy();
+    expect(screen.getByText("Access token")).toBeTruthy();
+    expect(container.querySelector('input[type="password"]')).toBeTruthy(); // accessToken masked
+  });
+
+  it("telegram: surfaces the message thread id", async () => {
+    await switchType("telegram");
+    expect(screen.getByText("Message thread ID")).toBeTruthy();
+  });
+
+  it("resets the SMTP TLS toggle when the channel type is switched away and back", async () => {
+    wrap(<NotificationsPage />);
+    await waitFor(() => expect(screen.getByText("Deploy failed")).toBeTruthy());
+    const secureBox = () => screen.getByLabelText("Use TLS (secure)") as HTMLInputElement;
+    fireEvent.click(secureBox());
+    expect(secureBox().checked).toBe(true);
+    fireEvent.change(screen.getByDisplayValue("SMTP"), { target: { value: "discord" } });
+    fireEvent.change(screen.getByDisplayValue("DISCORD"), { target: { value: "smtp" } });
+    expect(secureBox().checked).toBe(false); // stale TLS flag must not survive a type round-trip
+  });
+
+  it("folds webhook custom-header rows into a config.headers object on submit", async () => {
+    const createSpy = vi.spyOn(api, "createChannel").mockResolvedValue({} as never);
+    await switchType("webhook");
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "hook" } });
+    fireEvent.click(screen.getByText("Add header"));
+    fireEvent.change(screen.getByPlaceholderText("Header"), { target: { value: "X-Api-Key" } });
+    fireEvent.change(screen.getByPlaceholderText("Value"), { target: { value: "abc123" } });
+    fireEvent.click(screen.getByText("Add channel"));
+    await waitFor(() => expect(createSpy).toHaveBeenCalled());
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "webhook", config: expect.objectContaining({ headers: { "X-Api-Key": "abc123" } }) }),
+    );
+  });
+});

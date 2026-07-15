@@ -9,6 +9,7 @@ import type {
   BackupDestination,
   AuditPage,
   Channel,
+  Delivery,
   Database,
   GitSource,
   SourceRepo,
@@ -482,6 +483,10 @@ export const api = {
   /** The canonical subscribable event ids — the single source the UI renders from (no drift). */
   listChannelEvents() {
     return apiFetch<{ events: string[] }>("/channels/events");
+  },
+  /** Recent delivery attempts for a channel (newest first, up to 100) — any team member may read. */
+  listDeliveries(channelId: string) {
+    return apiFetch<Delivery[]>(`/channels/${channelId}/deliveries`);
   },
   createChannel(input: {
     name: string;
