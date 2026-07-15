@@ -222,6 +222,24 @@ export interface Channel {
   canWrite: boolean;
 }
 
+export type DeliveryStatus = "PENDING" | "SENT" | "FAILED" | "DEAD";
+
+/** A single notification-delivery attempt row (GET /channels/:id/deliveries). Read-only history:
+ *  title/summary/level are the snapshot frozen at enqueue; lastError is server-side sanitized. */
+export interface Delivery {
+  id: string;
+  channelId: string;
+  event: string;
+  level: string;
+  title: string;
+  summary: string;
+  status: DeliveryStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string; // ISO
+  sentAt: string | null; // ISO
+}
+
 export interface AuditEntry {
   id: string;
   actor: string;

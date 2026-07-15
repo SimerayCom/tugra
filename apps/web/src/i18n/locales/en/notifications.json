@@ -43,5 +43,21 @@
   "f_to": "To address(es)",
   "f_secure": "Use TLS (secure)",
   "f_userKey": "User key",
-  "f_apiKey": "API key"
+  "f_apiKey": "API key",
+  "f_signingSecret": "Signing secret (HMAC)",
+  "f_messageThreadId": "Message thread ID",
+  "f_priority": "Priority",
+  "f_accessToken": "Access token",
+  "f_retry": "Retry (seconds)",
+  "f_expire": "Expire (seconds)",
+  "hint_signingSecret": "Optional. Minimum 16 characters.",
+  "hint_retryExpire": "Only used when priority = Emergency (2).",
+  "headers": "Custom headers",
+  "headerKey": "Header",
+  "headerValue": "Value",
+  "addHeader": "Add header",
+  "history": "Delivery history",
+  "noDeliveries": "No deliveries yet",
+  "historyError": "Couldn't load delivery history",
+  "attempts": "{n} attempts"
 }
