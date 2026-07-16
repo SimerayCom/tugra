@@ -15,10 +15,17 @@ function make(current: { apiEnabled: boolean; apiAllowedIps: string[] }) {
   return { ctrl: new InstanceSettingsController(settings, audit), settings, audit };
 }
 
+const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
+afterEach(() => {
+  if (ORIGINAL_EDITION === undefined) delete process.env.TUGRA_EDITION;
+  else process.env.TUGRA_EDITION = ORIGINAL_EDITION;
+});
+
 describe("InstanceSettingsController", () => {
-  it("returns only the API-gating fields", async () => {
+  it("returns the API-gating fields plus the read-only env edition", async () => {
+    process.env.TUGRA_EDITION = "pro";
     const { ctrl } = make({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] });
-    expect(await ctrl.getSettings()).toEqual({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] });
+    expect(await ctrl.getSettings()).toEqual({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"], edition: "pro" });
   });
 
   it("patches apiEnabled + apiAllowedIps (dropping blanks) and audits", async () => {

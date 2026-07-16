@@ -1,5 +1,6 @@
 import { Controller, Get } from "@nestjs/common";
 import { InstanceSettingsService } from "./instance-settings.service";
+import { currentEdition } from "../common/edition";
 
 /**
  * Public onboarding/instance status. No `@UseGuards` → unauthenticated by default (auth is opt-in per
@@ -18,7 +19,8 @@ export class InstanceController {
       // First-user setup complete iff `initializedAt` has been claimed (see registration-gating).
       initialized: s.initializedAt != null,
       allowRegistration: s.allowRegistration,
-      edition: s.edition,
+      // Env-authoritative (single source of truth); the DB column is reserved for a future license writer.
+      edition: currentEdition(),
     };
   }
 }

@@ -12,6 +12,8 @@
 // enough — it is not emitted globally and does not pull the node type surface into the shared package.
 declare const process: { env: Record<string, string | undefined> };
 
+import { normalizeEdition, type Edition } from "./editions";
+
 /** Wire-protocol version — the agent (Go) mirrors this; keep them in sync. */
 export const PROTOCOL_VERSION = 2;
 
@@ -30,9 +32,10 @@ export function gitSha(): string {
   return process.env.GIT_SHA || "";
 }
 
-/** Product edition: "community" | "pro" | "cloud". Env-driven for now; formalised by a later slice. */
-export function edition(): string {
-  return process.env.TUGRA_EDITION || "community";
+/** Product edition ("community" | "pro" | "cloud"), env-driven (TUGRA_EDITION, build/license-injected).
+ *  An unknown value normalises to "community" so a misconfigured env never unlocks a higher tier. */
+export function edition(): Edition {
+  return normalizeEdition(process.env.TUGRA_EDITION);
 }
 
 /** The full version descriptor served by GET /version and embedded in GET /health. */

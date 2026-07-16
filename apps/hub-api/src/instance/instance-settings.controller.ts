@@ -6,6 +6,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { AuditService } from "../audit/audit.service";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { InstanceOwnerGuard } from "./instance-owner.guard";
+import { currentEdition } from "../common/edition";
 import { UpdateInstanceSettingsInput, UpdateInstanceSettingsSchema } from "./dto";
 
 /**
@@ -24,7 +25,9 @@ export class InstanceSettingsController {
   @Get("settings")
   async getSettings() {
     const s = await this.settings.get();
-    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps };
+    // `edition` is env/license-driven and read-only here (deliberately absent from PATCH) — surfacing it
+    // lets the owner see their tier without being able to grant themselves a higher one.
+    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps, edition: currentEdition() };
   }
 
   @Patch("settings")

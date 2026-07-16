@@ -7,6 +7,10 @@
 // consumers are unchanged) + the app/build metadata helpers (appVersion/versionInfo/…).
 export * from "./version";
 
+// Editions — the open-core tier ordering (community < pro < cloud) + normalizeEdition/editionAtLeast,
+// shared by the hub's requireEdition gate and any web edition display.
+export * from "./editions";
+
 /**
  * Notification event types — single source of truth for the hub (Zod enum) and the web UI (served via
  * GET /channels/events). Every value here is subscribable AND reachable through `fireForEvent`. Add new

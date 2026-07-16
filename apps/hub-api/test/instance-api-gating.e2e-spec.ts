@@ -77,7 +77,7 @@ describe("instance API gating (e2e)", () => {
     await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: true } });
     try {
       const got = await request(srv()).get("/instance/settings").set("Authorization", `Bearer ${jwt}`).expect(200);
-      expect(got.body).toEqual({ apiEnabled: expect.any(Boolean), apiAllowedIps: expect.any(Array) });
+      expect(got.body).toEqual({ apiEnabled: expect.any(Boolean), apiAllowedIps: expect.any(Array), edition: expect.any(String) });
 
       const patched = await request(srv())
         .patch("/instance/settings")
