@@ -12,11 +12,15 @@ import {
   Query,
   Sse,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
+import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApplicationsService } from "./applications.service";
@@ -60,7 +64,8 @@ import {
 } from "./dto";
 
 @Controller("apps")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
+@UseInterceptors(new RedactSecretsInterceptor(["webhookSecret"]))
 export class ApplicationsController {
   constructor(private readonly apps: ApplicationsService) {}
 
@@ -211,6 +216,7 @@ export class ApplicationsController {
   }
 
   @Post(":id/deploy")
+  @RequireScopes("deploy")
   @HttpCode(200)
   deploy(
     @CurrentUser() user: AuthUser,
@@ -221,6 +227,7 @@ export class ApplicationsController {
   }
 
   @Get(":id/env")
+  @RequireScopes("read:secrets")
   getEnv(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.getEnv(user.userId, id);
   }
@@ -237,6 +244,7 @@ export class ApplicationsController {
   }
 
   @Get(":id/build-args")
+  @RequireScopes("read:secrets")
   getBuildArgs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.getBuildArgs(user.userId, id);
   }
@@ -428,6 +436,7 @@ export class ApplicationsController {
   }
 
   @Post(":id/rollback/:deploymentId")
+  @RequireScopes("deploy")
   @HttpCode(200)
   rollback(
     @CurrentUser() user: AuthUser,
@@ -438,6 +447,7 @@ export class ApplicationsController {
   }
 
   @Post(":id/stop")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.apps.stop(user.userId, id);
@@ -445,6 +455,7 @@ export class ApplicationsController {
   }
 
   @Post(":id/start")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async start(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.apps.start(user.userId, id);
@@ -452,6 +463,7 @@ export class ApplicationsController {
   }
 
   @Post(":id/restart")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async restart(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.apps.restart(user.userId, id);

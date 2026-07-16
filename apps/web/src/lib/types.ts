@@ -74,6 +74,8 @@ export interface PublicUser {
   twoFaEnabled: boolean;
   emailVerified: boolean;
   uiMode: "fleet" | "home";
+  /** First registered user / sole owner of this self-hosted instance — gates owner-only UI. */
+  isInstanceOwner: boolean;
 }
 
 export interface ServerView {
@@ -566,10 +568,14 @@ export interface Database {
   createdAt: string;
 }
 
+/** Least-privilege API-token scopes. `admin` implies everything; `read` is implied by any grant. */
+export type ApiTokenScope = "read" | "write" | "deploy" | "admin" | "read:secrets";
+
 export interface ApiToken {
   id: string;
   name: string;
   prefix: string;
+  scopes: ApiTokenScope[];
   expiresAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;

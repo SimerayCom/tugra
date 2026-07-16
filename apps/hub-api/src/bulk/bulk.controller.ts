@@ -10,6 +10,8 @@ import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BulkService } from "./bulk.service";
 
@@ -20,11 +22,12 @@ const RunSchema = z.object({
 type RunInput = z.infer<typeof RunSchema>;
 
 @Controller("bulk")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class BulkController {
   constructor(private readonly bulk: BulkService) {}
 
   @Post()
+  @RequireScopes("deploy")
   run(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(RunSchema)) body: RunInput,

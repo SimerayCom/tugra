@@ -12,6 +12,7 @@ import {
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ProjectsService } from "./projects.service";
 import {
@@ -24,7 +25,7 @@ import {
 } from "./dto";
 
 @Controller("projects")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
 

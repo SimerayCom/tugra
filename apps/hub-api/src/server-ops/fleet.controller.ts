@@ -2,13 +2,14 @@ import { Body, Controller, HttpCode, Post, UseGuards } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
 import { CleanupConfigBulkInput, CleanupConfigBulkSchema } from "./dto";
 
 /** Fleet-wide bulk operations (cross-team, role-gated per server). */
 @Controller("fleet")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class FleetController {
   constructor(private readonly cleanup: CleanupService) {}
 

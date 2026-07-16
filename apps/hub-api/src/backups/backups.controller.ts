@@ -12,6 +12,8 @@ import {
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BackupsService } from "./backups.service";
 import {
@@ -22,7 +24,7 @@ import {
 } from "./dto";
 
 @Controller("databases/:id")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class BackupsController {
   constructor(private readonly backups: BackupsService) {}
 
@@ -42,6 +44,7 @@ export class BackupsController {
   }
 
   @Post("backups/import-from-url")
+  @RequireScopes("deploy") // restore-class: runs the same destructive runRestore path (overwrites the DB)
   @HttpCode(200)
   async importFromUrl(
     @CurrentUser() user: AuthUser,
@@ -53,6 +56,7 @@ export class BackupsController {
   }
 
   @Post("backups/:backupId/restore")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async restore(
     @CurrentUser() user: AuthUser,
@@ -64,6 +68,7 @@ export class BackupsController {
   }
 
   @Post("backups/:backupId/restore-to/:targetId")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async restoreTo(
     @CurrentUser() user: AuthUser,

@@ -2,12 +2,14 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards } 
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { VolumeBackupsService } from "./volume-backups.service";
 import { VolumeBackupConfigInput, VolumeBackupConfigSchema } from "./dto";
 
 @Controller("apps/:appId/volume-backups")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class VolumeBackupsController {
   constructor(private readonly svc: VolumeBackupsService) {}
 
@@ -23,6 +25,7 @@ export class VolumeBackupsController {
   }
 
   @Post(":id/restore")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async restore(@CurrentUser() user: AuthUser, @Param("appId") appId: string, @Param("id") id: string) {
     await this.svc.restore(user.userId, appId, id);

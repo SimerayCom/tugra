@@ -62,5 +62,18 @@
   "tokenUnused": "never used",
   "revoke": "Revoke",
   "noTokensTitle": "No API tokens yet",
-  "noTokens": "Create a token to use the REST API or CLI."
+  "noTokens": "Create a token to use the REST API or CLI.",
+  "tokenScopes": "Scopes",
+  "tokenScopesHint": "Every token can read. Grant only what this token needs.",
+  "scopeRead": "Read",
+  "scopeReadDesc": "View resources (always included).",
+  "scopeWrite": "Write",
+  "scopeWriteDesc": "Create and edit resources.",
+  "scopeDeploy": "Deploy",
+  "scopeDeployDesc": "Deploy, restart, restore, run commands.",
+  "scopeReadSecrets": "Read secrets",
+  "scopeReadSecretsDesc": "Reveal env vars, credentials, and other secrets.",
+  "scopeAdmin": "Admin",
+  "scopeAdminDesc": "Full access — everything, including delete.",
+  "scopeOwnerOnly": "owner only"
 }

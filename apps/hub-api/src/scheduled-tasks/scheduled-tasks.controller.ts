@@ -12,12 +12,14 @@ import {
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ScheduledTasksService } from "./scheduled-tasks.service";
 import { CreateTaskInput, CreateTaskSchema, UpdateTaskInput, UpdateTaskSchema } from "./dto";
 
 @Controller("apps")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class ScheduledTasksController {
   constructor(private readonly tasks: ScheduledTasksService) {}
 
@@ -27,6 +29,7 @@ export class ScheduledTasksController {
   }
 
   @Post(":id/tasks")
+  @RequireScopes("deploy") // the task body runs `docker exec sh -c <command>` — arbitrary in-container execution
   @HttpCode(201)
   create(
     @CurrentUser() user: AuthUser,
@@ -37,6 +40,7 @@ export class ScheduledTasksController {
   }
 
   @Put(":id/tasks/:taskId")
+  @RequireScopes("deploy") // updates the arbitrary `docker exec` command — same execution surface as create
   @HttpCode(200)
   update(
     @CurrentUser() user: AuthUser,
