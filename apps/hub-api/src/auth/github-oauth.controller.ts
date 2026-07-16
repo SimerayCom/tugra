@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from "@nestjs/common";
+import { Controller, ForbiddenException, Get, Query, Res } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CookieResponse, setAuthCookies } from "../common/cookies";
 import { GithubOAuthService } from "./github-oauth.service";
@@ -45,8 +45,10 @@ export class GithubOAuthController {
       const tokens = await this.oauth.handleCallback(code, state);
       setAuthCookies(res, tokens);
       res.redirect(`${this.web()}/oauth/callback`);
-    } catch {
-      res.redirect(`${this.web()}/login?error=oauth`);
+    } catch (err) {
+      // A gated NEW OAuth user gets a specific error so the login page can explain it (not the generic one).
+      const reason = err instanceof ForbiddenException ? "registration_disabled" : "oauth";
+      res.redirect(`${this.web()}/login?error=${reason}`);
     }
   }
 }

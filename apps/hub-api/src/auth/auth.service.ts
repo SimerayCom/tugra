@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -22,6 +23,7 @@ import {
   emailChangeNoticeEmail,
 } from "../mail/templates";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { TotpService } from "./totp.service";
 import { generateRecoveryCodes, recoveryHashInput } from "./recovery-codes";
 import { hashToken } from "../api-tokens/api-token.util";
@@ -80,9 +82,33 @@ export class AuthService {
     private readonly redis: RedisService,
     private readonly teamDefaults: TeamDefaultsService,
     private readonly mail: MailService,
+    private readonly instanceSettings: InstanceSettingsService,
   ) {}
 
   // ---- registration / login ------------------------------------------------
+
+  /**
+   * Enforce the registration gate for a NEW account (`register` + first OAuth sign-in). Once the instance
+   * is initialized and self-service registration is closed, only an email with a pending team invitation
+   * may create an account. The very first user (initializedAt still null) is always allowed and becomes
+   * the instance owner (see the atomic claim in register/loginWithGithub).
+   */
+  private async assertRegistrationAllowed(email: string): Promise<void> {
+    const s = await this.instanceSettings.get();
+    if (s.initializedAt != null && !s.allowRegistration && !(await this.hasPendingInvite(email))) {
+      throw new ForbiddenException("registration is disabled — ask an admin to invite you");
+    }
+  }
+
+  /** A non-expired team invitation for this email = a pending invite (accepted invites are deleted).
+   *  Invites are stored lowercased (TeamsService.invite) and matched case-insensitively everywhere else
+   *  (accept/decline/list), so normalize here too — otherwise a mixed-case invitee is wrongly gated. */
+  private async hasPendingInvite(email: string): Promise<boolean> {
+    const invite = await this.prisma.teamInvitation.findFirst({
+      where: { email: email.trim().toLowerCase(), expiresAt: { gt: new Date() } },
+    });
+    return !!invite;
+  }
 
   async register(
     email: string,
@@ -93,12 +119,18 @@ export class AuthService {
     if (existing) {
       throw new ConflictException("email already registered");
     }
+    await this.assertRegistrationAllowed(email); // gate closed self-service signups (invites bypass)
 
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 
     const user = await this.prisma.$transaction(async (tx) => {
+      // Atomically elect the FIRST user as the instance owner: only the racer whose UPDATE flips the still-null
+      // initializedAt (count === 1) is the owner. In the same transaction as the create, so a rollback undoes
+      // the claim (never locks the instance "initialized" with no owner).
+      const firstUser =
+        (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
       const created = await tx.user.create({
-        data: { email, password: passwordHash, name: name ?? null },
+        data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser },
       });
       const team = await tx.team.create({
         data: { name: name ? `${name}'s Team` : "My Team" },
@@ -127,11 +159,16 @@ export class AuthService {
   async loginWithGithub(email: string, name?: string): Promise<TokenPair> {
     let user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
+      // A NEW OAuth account is a registration → same gate + first-user ownership as password register.
+      // (Existing users fall through to the `else` login path and are never gated.)
+      await this.assertRegistrationAllowed(email);
       const passwordHash = await argon2.hash(randomUUID(), { type: argon2.argon2id });
       user = await this.prisma.$transaction(async (tx) => {
+        const firstUser =
+          (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
         const created = await tx.user.create({
           // OAuth emails are provider-verified, so the account starts verified.
-          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date() },
+          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser },
         });
         const team = await tx.team.create({
           data: { name: name ? `${name}'s Team` : "My Team" },
