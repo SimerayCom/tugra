@@ -8,6 +8,7 @@ import { CsrfGuard } from "./common/csrf.guard";
 import { EmailVerifiedGuard } from "./common/email-verified.guard";
 import { HealthController } from "./health/health.controller";
 import { VersionController } from "./health/version.controller";
+import { InstanceController } from "./instance/instance.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
@@ -75,7 +76,7 @@ import { CatalogModule } from "./catalog/catalog.module";
     RetentionModule,
     CatalogModule,
   ],
-  controllers: [HealthController, VersionController],
+  controllers: [HealthController, VersionController, InstanceController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
