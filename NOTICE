@@ -1,6 +1,21 @@
 Tugra
 Copyright (c) Simeray Ltd
 
+Open-core boundary
+------------------
+Tugra follows an open-core model. This repository is the Community edition: the
+full self-hosted product, licensed under the GNU AGPL-3.0 (see LICENSE); the
+agent and CLI are MIT (see agent/LICENSE). Contributions are accepted under a
+CLA (see CLA.md) so the core can be dual-licensed.
+
+The Pro and Cloud editions are a proprietary layer built on top of this core.
+Their source is NOT part of this repository or the OSS Docker image — it lives in
+separate, private packages (the reserved "@tugra/cloud-*" namespace; see
+proprietary/README.md). The edition-gating primitive shipped here (requireEdition)
+carries no proprietary code; it only marks where such features would attach.
+Editions and the feature matrix are documented in docs/open-core.md. A commercial
+license is available at license@tugra.io.
+
 This product includes third-party material:
 
 One-click service templates

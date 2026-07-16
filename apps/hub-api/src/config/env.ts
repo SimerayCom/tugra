@@ -56,6 +56,9 @@ export const envSchema = z
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
   HUB_TRUSTED_PROXY: z.enum(["true", "false"]).optional(),
+  // Product edition (open-core): "community" (OSS, default) | "pro" | "cloud". Build/license-injected,
+  // not owner-settable. Validated here for fail-fast boot; @tugra/shared also normalises it defensively.
+  TUGRA_EDITION: z.enum(["community", "pro", "cloud"]).default("community"),
   // Allow notification channels (webhook/ntfy/gotify/smtp) to target private LAN addresses
   // (RFC1918/CGNAT/ULA). Off by default — a self-hoster running an internal ntfy/gotify/SMTP sets
   // this to "true". Cloud-metadata (169.254.169.254), loopback and link-local stay blocked regardless.
