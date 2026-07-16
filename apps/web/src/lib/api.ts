@@ -47,7 +47,9 @@ import type {
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
 // cookie rides along (SameSite=Lax, no CORS). Auth tokens live in cookies now, never JS/localStorage.
-export const API_BASE = "/api";
+// The hub serves its REST API under /api/v1 (versioned); this constant is the single place that base is
+// set, so every api.* method + SSE/download caller follows automatically.
+export const API_BASE = "/api/v1";
 
 // The hub's PUBLIC absolute origin — ONLY for URLs shown to the user to paste into external systems
 // (e.g. GitHub webhooks), which hit the hub directly, NOT through the SPA's same-origin proxy.

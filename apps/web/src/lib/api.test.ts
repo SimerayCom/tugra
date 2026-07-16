@@ -35,8 +35,8 @@ describe("apiFetch 401 → cookie refresh → retry", () => {
     // Exactly one refresh, and /servers is called twice (401 then retry).
     expect(calls.filter((c) => c.url.endsWith("/auth/refresh"))).toHaveLength(1);
     expect(calls.filter((c) => c.url.endsWith("/servers"))).toHaveLength(2);
-    // Same-origin proxy path.
-    expect(calls[0].url).toBe("/api/servers");
+    // Same-origin proxy path, under the versioned /api/v1 base.
+    expect(calls[0].url).toBe("/api/v1/servers");
   });
 
   it("sends the X-CSRF-Token header (from the tg_csrf cookie) on mutations", async () => {
@@ -71,6 +71,6 @@ describe("api.listChannelEvents (single-source event list)", () => {
     }));
     const out = await api.listChannelEvents();
     expect(out.events).toContain("backup_failed");
-    expect(seen[0]).toBe("/api/channels/events");
+    expect(seen[0]).toBe("/api/v1/channels/events");
   });
 });
