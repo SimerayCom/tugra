@@ -7,13 +7,14 @@ import { uiMode, isHomeAllowed } from "../../lib/ui-mode";
 import { AppShell, CenteredSpinner } from "../../components/shell";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, initialized } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [loading, user, router]);
+    // A fresh install (no owner yet) sends the visitor to onboarding instead of a pointless login page.
+    if (!loading && !user) router.replace(initialized === false ? "/welcome" : "/login");
+  }, [loading, user, initialized, router]);
 
   // Home mode keeps the user on the simplified surface; fleet routes reached by
   // URL or ⌘K redirect back to the launcher.

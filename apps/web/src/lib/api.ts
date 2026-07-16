@@ -1,6 +1,7 @@
 import type {
   ApiToken,
   ApiTokenScope,
+  InstanceStatus,
   SavedView,
   Application,
   AppVolume,
@@ -167,6 +168,11 @@ export const api = {
 
   me() {
     return apiFetch<PublicUser>("/auth/me");
+  },
+  // Public: onboarding status (no auth). retry=false so a logged-out/uninitialized visitor never triggers
+  // the 401→cookie-refresh cycle. Drives the welcome gate for a fresh install.
+  getInstanceStatus() {
+    return apiFetch<InstanceStatus>("/instance/status", {}, false);
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current

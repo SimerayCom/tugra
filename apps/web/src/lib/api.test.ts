@@ -74,3 +74,23 @@ describe("api.listChannelEvents (single-source event list)", () => {
     expect(seen[0]).toBe("/api/v1/channels/events");
   });
 });
+
+describe("api.getInstanceStatus (public onboarding status)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("GETs /instance/status and does NOT retry/refresh on 401", async () => {
+    const seen: string[] = [];
+    let hits = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      seen.push(String(url));
+      hits += 1;
+      // If a refresh were attempted this endpoint would be hit twice; assert it's not.
+      return jsonRes(200, { initialized: false, allowRegistration: true, edition: "community" });
+    }));
+    const out = await api.getInstanceStatus();
+    expect(out).toEqual({ initialized: false, allowRegistration: true, edition: "community" });
+    expect(seen[0]).toBe("/api/v1/instance/status");
+    expect(hits).toBe(1);
+    expect(seen.some((u) => u.endsWith("/auth/refresh"))).toBe(false);
+  });
+});

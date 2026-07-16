@@ -23,7 +23,7 @@ const field: React.CSSProperties = {
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { reload } = useAuth();
+  const { reload, initialized } = useAuth();
   const t = useT();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -76,6 +76,11 @@ export default function RegisterPage() {
       {inviteTeam && (
         <div style={{ fontSize: 13, color: "var(--c-tx2)", background: "color-mix(in srgb, var(--c-a) 12%, transparent)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", marginBottom: 14 }}>
           {t("auth.joiningTeam", { team: inviteTeam })}
+        </div>
+      )}
+      {initialized === false && !invite && (
+        <div style={{ fontSize: 13, color: "var(--c-tx2)", background: "color-mix(in srgb, var(--c-a) 12%, transparent)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", marginBottom: 14 }}>
+          {t("auth.registerOwnerHint")}
         </div>
       )}
       <form onSubmit={submit}>

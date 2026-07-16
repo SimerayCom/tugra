@@ -23,7 +23,7 @@ const field: React.CSSProperties = {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { reload } = useAuth();
+  const { reload, initialized, user } = useAuth();
   const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,6 +42,12 @@ export default function LoginPage() {
     else if (e) setErr(t("auth.oauthError"));
     setInvite(params.get("invite") ?? "");
   }, [t]);
+
+  // A fresh install has no account to sign into — forward to the welcome/onboarding flow. Loop-safe:
+  // /welcome only bounces back here once initialized === true.
+  useEffect(() => {
+    if (initialized === false && !user) router.replace("/welcome");
+  }, [initialized, user, router]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

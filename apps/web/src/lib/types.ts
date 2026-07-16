@@ -78,6 +78,14 @@ export interface PublicUser {
   isInstanceOwner: boolean;
 }
 
+/** Public onboarding state (GET /instance/status) — read before login to gate the welcome flow. */
+export interface InstanceStatus {
+  /** True once the first user has completed setup; false → a fresh install needs the owner account. */
+  initialized: boolean;
+  allowRegistration: boolean;
+  edition: string;
+}
+
 export interface ServerView {
   id: string;
   name: string;
