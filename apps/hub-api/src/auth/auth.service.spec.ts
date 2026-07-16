@@ -11,6 +11,7 @@ import { TotpService } from "./totp.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { MailService } from "../mail/mail.service";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
 
 class FakeRedis {
   private kv = new Map<string, string>();
@@ -59,6 +60,12 @@ const mail = { send: jest.fn().mockResolvedValue(true), isConfigured: () => true
 function makeService(
   prisma: Partial<PrismaService> = {},
   teamDefaults: { ensureDefaults: jest.Mock } = { ensureDefaults: jest.fn().mockResolvedValue(undefined) },
+  // Default: a fresh instance (initializedAt null) → registration always allowed, so tests that don't care
+  // about gating (login/2fa/reset/first-oauth) are unaffected. Gating tests pass a specific settings state.
+  instanceSettings: { get: jest.Mock; update: jest.Mock } = {
+    get: jest.fn().mockResolvedValue({ initializedAt: null, allowRegistration: false }),
+    update: jest.fn().mockResolvedValue({}),
+  },
 ): AuthService {
   return new AuthService(
     prisma as PrismaService,
@@ -70,6 +77,7 @@ function makeService(
     new FakeRedis() as unknown as RedisService,
     teamDefaults as unknown as TeamDefaultsService,
     mail,
+    instanceSettings as unknown as InstanceSettingsService,
   );
 }
 
@@ -145,6 +153,7 @@ describe("AuthService 2FA recovery codes", () => {
       new FakeRedis() as unknown as RedisService,
       { ensureDefaults: jest.fn() } as unknown as TeamDefaultsService,
       mail,
+      { get: jest.fn(), update: jest.fn() } as unknown as InstanceSettingsService,
     );
   }
 
@@ -404,6 +413,7 @@ describe("AuthService session hardening", () => {
       redis as unknown as RedisService,
       { ensureDefaults: jest.fn() } as unknown as TeamDefaultsService,
       mail,
+      { get: jest.fn(), update: jest.fn() } as unknown as InstanceSettingsService,
     );
     const legacy = async (jti: string) => {
       const token = await jwt.signAsync({ sub: "u1", jti, family: `fam-${jti}`, type: "refresh" }, { secret, expiresIn: 3600 });
@@ -421,15 +431,77 @@ describe("AuthService session hardening", () => {
   });
 });
 
+describe("AuthService.register — registration gating", () => {
+  function registerPrisma() {
+    const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "a@x.io", name: null, emailVerified: false, twoFaEnabled: false, uiMode: "fleet" });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const invFind = jest.fn().mockResolvedValue(null);
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null), create: userCreate },
+      teamInvitation: { findFirst: invFind },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
+        cb({
+          user: { create: userCreate },
+          team: { create: jest.fn().mockResolvedValue({ id: "t1" }) },
+          membership: { create: jest.fn().mockResolvedValue({}) },
+          instanceSettings: { updateMany },
+        }),
+      ),
+    } as unknown as PrismaService;
+    return { prisma, userCreate, updateMany, invFind };
+  }
+  const settings = (over: Record<string, unknown>) => ({
+    get: jest.fn().mockResolvedValue({ initializedAt: null, allowRegistration: false, ...over }),
+    update: jest.fn().mockResolvedValue({}),
+  });
+
+  it("the FIRST user (initializedAt null) is allowed and becomes the instance owner", async () => {
+    const { prisma, userCreate, updateMany } = registerPrisma();
+    const svc = makeService(prisma, undefined, settings({ initializedAt: null }));
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    await svc.register("a@x.io", "password123");
+    expect(updateMany).toHaveBeenCalledWith({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: expect.any(Date) } });
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ isInstanceOwner: true }) });
+  });
+
+  it("a subsequent register is 403 when registration is closed and there is no invite", async () => {
+    const { prisma } = registerPrisma();
+    const svc = makeService(prisma, undefined, settings({ initializedAt: new Date(), allowRegistration: false }));
+    await expect(svc.register("b@x.io", "password123")).rejects.toThrow(/registration is disabled/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("registration is allowed when allowRegistration is open (created as a non-owner)", async () => {
+    const { prisma, userCreate, updateMany } = registerPrisma();
+    updateMany.mockResolvedValue({ count: 0 }); // already initialized → not the first user
+    const svc = makeService(prisma, undefined, settings({ initializedAt: new Date(), allowRegistration: true }));
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    await svc.register("c@x.io", "password123");
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ isInstanceOwner: false }) });
+  });
+
+  it("an invited email bypasses the closed gate — case-insensitively (invites are stored lowercased)", async () => {
+    const { prisma, userCreate, invFind } = registerPrisma();
+    invFind.mockResolvedValue({ id: "inv1", email: "mixed@x.io" }); // a pending, non-expired invitation
+    const svc = makeService(prisma, undefined, settings({ initializedAt: new Date(), allowRegistration: false }));
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    // The invitee signs up with their natural (mixed-case) address; the lookup must normalize to match.
+    await svc.register("Mixed@X.io", "password123");
+    expect(invFind).toHaveBeenCalledWith({ where: { email: "mixed@x.io", expiresAt: { gt: expect.any(Date) } } });
+    expect(userCreate).toHaveBeenCalled();
+  });
+});
+
 describe("AuthService.loginWithGithub", () => {
-  it("creates a user + team + membership on first GitHub sign-in", async () => {
+  it("creates a user + team + membership on first GitHub sign-in (and owns the instance)", async () => {
     const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "gh@x.io", name: "GH" });
     const teamCreate = jest.fn().mockResolvedValue({ id: "t1" });
     const memberCreate = jest.fn().mockResolvedValue({});
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
-        cb({ user: { create: userCreate }, team: { create: teamCreate }, membership: { create: memberCreate } }),
+        cb({ user: { create: userCreate }, team: { create: teamCreate }, membership: { create: memberCreate }, instanceSettings: { updateMany } }),
       ),
     } as unknown as PrismaService;
     const teamDefaults = { ensureDefaults: jest.fn().mockResolvedValue(undefined) };
@@ -438,7 +510,7 @@ describe("AuthService.loginWithGithub", () => {
 
     const pair = await svc.loginWithGithub("gh@x.io", "GH");
 
-    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ email: "gh@x.io", name: "GH" }) });
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ email: "gh@x.io", name: "GH", isInstanceOwner: true }) });
     expect(memberCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: "OWNER" }) });
     // The new team is bootstrapped with its default project + env inside the tx.
     expect(teamDefaults.ensureDefaults).toHaveBeenCalledWith("t1", expect.anything());
@@ -478,6 +550,21 @@ describe("AuthService.loginWithGithub", () => {
       where: { id: "u9" },
       data: expect.objectContaining({ emailVerified: true }),
     });
+  });
+
+  it("gates a NEW GitHub user when registration is closed and there is no invite (403, no create)", async () => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      teamInvitation: { findFirst: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(),
+    } as unknown as PrismaService;
+    const instanceSettings = {
+      get: jest.fn().mockResolvedValue({ initializedAt: new Date(), allowRegistration: false }),
+      update: jest.fn(),
+    };
+    const svc = makeService(prisma, undefined, instanceSettings);
+    await expect(svc.loginWithGithub("new@x.io")).rejects.toThrow(/registration is disabled/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
 
