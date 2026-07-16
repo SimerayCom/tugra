@@ -1,5 +1,6 @@
 import type {
   ApiToken,
+  ApiTokenScope,
   SavedView,
   Application,
   AppVolume,
@@ -956,10 +957,10 @@ export const api = {
   listApiTokens() {
     return apiFetch<ApiToken[]>("/api-tokens");
   },
-  createApiToken(name: string, expiresInDays?: number) {
+  createApiToken(name: string, scopes: ApiTokenScope[], expiresInDays?: number) {
     return apiFetch<{ token: string; view: ApiToken }>("/api-tokens", {
       method: "POST",
-      body: JSON.stringify({ name, expiresInDays }),
+      body: JSON.stringify({ name, scopes, expiresInDays }),
     });
   },
   deleteApiToken(id: string) {

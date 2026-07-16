@@ -16,6 +16,8 @@ import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
@@ -31,7 +33,7 @@ import {
 } from "./dto";
 
 @Controller("servers/:id")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class ServerOpsController {
   constructor(
     private readonly cleanup: CleanupService,
@@ -46,18 +48,21 @@ export class ServerOpsController {
   }
 
   @Post("proxy/start")
+  @RequireScopes("deploy")
   @HttpCode(200)
   proxyStart(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.proxy.start(user.userId, id);
   }
 
   @Post("proxy/stop")
+  @RequireScopes("deploy")
   @HttpCode(200)
   proxyStop(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.proxy.stop(user.userId, id);
   }
 
   @Post("proxy/restart")
+  @RequireScopes("deploy")
   @HttpCode(200)
   proxyRestart(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.proxy.restart(user.userId, id);
@@ -109,12 +114,14 @@ export class ServerOpsController {
   }
 
   @Post("updates/apply")
+  @RequireScopes("deploy")
   @HttpCode(200)
   upgradeAll(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.patch.upgradeAll(user.userId, id);
   }
 
   @Post("updates/apply/:pkg")
+  @RequireScopes("deploy")
   @HttpCode(200)
   upgradeOne(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("pkg") pkg: string) {
     return this.patch.upgradeOne(user.userId, id, pkg);
@@ -130,6 +137,7 @@ export class ServerOpsController {
   }
 
   @Post("cleanup")
+  @RequireScopes("deploy")
   @HttpCode(200)
   cleanupNow(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.cleanup.cleanupNow(user.userId, id);

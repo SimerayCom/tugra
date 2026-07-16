@@ -13,6 +13,7 @@ import {
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MonitorsService } from "./monitors.service";
 import {
@@ -25,7 +26,7 @@ import {
 } from "./dto";
 
 @Controller("monitors")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class MonitorsController {
   constructor(private readonly monitors: MonitorsService) {}
 

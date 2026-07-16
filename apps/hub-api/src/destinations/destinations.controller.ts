@@ -11,12 +11,13 @@ import {
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { DestinationsService } from "./destinations.service";
 import { CreateDestinationInput, CreateDestinationSchema } from "./dto";
 
 @Controller("backup-destinations")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class DestinationsController {
   constructor(private readonly destinations: DestinationsService) {}
 

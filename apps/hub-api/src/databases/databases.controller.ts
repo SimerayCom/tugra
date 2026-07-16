@@ -8,11 +8,15 @@ import {
   Post,
   Put,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
+import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { DatabasesService } from "./databases.service";
 import {
@@ -29,7 +33,8 @@ import {
 } from "./dto";
 
 @Controller("databases")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
+@UseInterceptors(new RedactSecretsInterceptor(["password", "connectionUri", "username", "internalHost"]))
 export class DatabasesController {
   constructor(private readonly databases: DatabasesService) {}
 
@@ -52,12 +57,14 @@ export class DatabasesController {
   }
 
   @Post(":id/provision")
+  @RequireScopes("deploy")
   @HttpCode(200)
   provision(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.databases.provision(user.userId, id);
   }
 
   @Post(":id/stop")
+  @RequireScopes("deploy")
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.databases.stop(user.userId, id);

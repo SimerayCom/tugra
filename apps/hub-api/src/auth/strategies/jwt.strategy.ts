@@ -11,6 +11,11 @@ export interface AccessTokenPayload {
 
 export interface AuthUser {
   userId: string;
+  /** The granted API-token scopes. A browser/JWT session is FULL access (["*"]); a PAT carries its
+   *  own subset. Read by ScopesGuard + the secret-redaction helpers. */
+  scopes: string[];
+  /** Present only for PAT-authenticated requests (the token's id); absent for a session. */
+  tokenId?: string;
 }
 
 /** Minimal request shape we read — avoids a hard @types/express dependency. */
@@ -39,6 +44,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (payload.type !== "access") {
       throw new UnauthorizedException("invalid token type");
     }
-    return { userId: payload.sub };
+    // A session (browser cookie / JWT bearer) is the user themselves → FULL access. Scopes only
+    // constrain PATs; ScopesGuard treats "*" as satisfying everything, so the web is never gated.
+    return { userId: payload.sub, scopes: ["*"] };
   }
 }

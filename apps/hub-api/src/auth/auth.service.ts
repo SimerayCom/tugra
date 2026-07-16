@@ -60,6 +60,7 @@ export interface PublicUser {
   twoFaEnabled: boolean;
   emailVerified: boolean;
   uiMode: string;
+  isInstanceOwner: boolean;
 }
 
 interface RefreshPayload {
@@ -725,6 +726,7 @@ export class AuthService {
     twoFaEnabled: boolean;
     emailVerified: boolean;
     uiMode: string;
+    isInstanceOwner: boolean;
   }): PublicUser {
     return {
       id: user.id,
@@ -733,6 +735,7 @@ export class AuthService {
       twoFaEnabled: user.twoFaEnabled,
       emailVerified: user.emailVerified,
       uiMode: user.uiMode,
+      isInstanceOwner: user.isInstanceOwner,
     };
   }
 }

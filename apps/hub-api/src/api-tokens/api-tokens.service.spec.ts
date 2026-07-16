@@ -17,22 +17,24 @@ describe("ApiTokensService", () => {
       },
     } as unknown as PrismaService;
     const svc = new ApiTokensService(prisma, audit);
-    const res = await svc.create("u1", { name: "ci" });
+    const res = await svc.create("u1", { name: "ci", scopes: ["read", "deploy"] });
     expect(res.token).toMatch(/^tugra_pat_/);
     expect(saved.tokenHash).toBe(hashToken(res.token));
     expect(saved.tokenHash).not.toBe(res.token);
+    expect(saved.scopes).toEqual(["read", "deploy"]);
+    expect(res.view.scopes).toEqual(["read", "deploy"]);
     expect(res.view).not.toHaveProperty("tokenHash");
   });
 
-  it("validates a good token to its owner", async () => {
+  it("validates a good token to its owner, carrying scopes + tokenId", async () => {
     const prisma = {
       apiToken: {
-        findUnique: jest.fn().mockResolvedValue({ id: "t1", userId: "u9", expiresAt: null }),
+        findUnique: jest.fn().mockResolvedValue({ id: "t1", userId: "u9", scopes: ["read", "write"], expiresAt: null }),
         update: jest.fn().mockResolvedValue({}),
       },
     } as unknown as PrismaService;
     const user = await new ApiTokensService(prisma, audit).validate("tugra_pat_abc");
-    expect(user).toEqual({ userId: "u9" });
+    expect(user).toEqual({ userId: "u9", scopes: ["read", "write"], tokenId: "t1" });
   });
 
   it("rejects expired, unknown, and non-PAT tokens", async () => {

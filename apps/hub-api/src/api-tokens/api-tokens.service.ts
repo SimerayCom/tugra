@@ -15,6 +15,7 @@ export interface ApiTokenView {
   id: string;
   name: string;
   prefix: string;
+  scopes: string[];
   expiresAt: Date | null;
   lastUsedAt: Date | null;
   createdAt: Date;
@@ -39,6 +40,7 @@ export class ApiTokensService {
       data: {
         userId,
         name: dto.name,
+        scopes: dto.scopes,
         tokenHash: hashToken(raw),
         prefix: tokenPrefix(raw),
         expiresAt,
@@ -74,7 +76,7 @@ export class ApiTokensService {
     await this.prisma.apiToken
       .update({ where: { id: t.id }, data: { lastUsedAt: new Date() } })
       .catch(() => undefined);
-    return { userId: t.userId };
+    return { userId: t.userId, scopes: t.scopes, tokenId: t.id };
   }
 
   private view(t: ApiToken): ApiTokenView {
@@ -82,6 +84,7 @@ export class ApiTokensService {
       id: t.id,
       name: t.name,
       prefix: t.prefix,
+      scopes: t.scopes,
       expiresAt: t.expiresAt,
       lastUsedAt: t.lastUsedAt,
       createdAt: t.createdAt,

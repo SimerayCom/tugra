@@ -23,6 +23,8 @@ import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { MetricsLiveService } from "../metrics/metrics-live.service";
@@ -48,7 +50,7 @@ function publicUrlFrom(req: ReqLike): string | undefined {
 }
 
 @Controller("servers")
-@UseGuards(ApiAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class ServersController {
   constructor(
     private readonly servers: ServersService,
@@ -118,12 +120,16 @@ export class ServersController {
     return this.servers.createServer(user.userId, body.name, body.teamId, publicUrlFrom(req));
   }
 
+  // The install command embeds the server enroll token — a bearer credential that lets its holder
+  // enroll as this server (takeover). Reading it is a secret read; regenerating it also mutates.
   @Get(":id/install")
+  @RequireScopes("read:secrets")
   getInstall(@CurrentUser() user: AuthUser, @Param("id") id: string, @Req() req: ReqLike) {
     return this.servers.getInstall(user.userId, id, publicUrlFrom(req));
   }
 
   @Post(":id/reissue")
+  @RequireScopes("write", "read:secrets")
   @HttpCode(200)
   reissue(@CurrentUser() user: AuthUser, @Param("id") id: string, @Req() req: ReqLike) {
     return this.servers.reissueEnroll(user.userId, id, publicUrlFrom(req));
