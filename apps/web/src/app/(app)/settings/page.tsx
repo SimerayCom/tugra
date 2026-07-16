@@ -8,6 +8,7 @@ import { Home, Server } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
+import { InstanceApiAccessCard } from "./instance-api-access-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 import { Field, TextInput } from "../../../components/form";
@@ -30,6 +31,7 @@ export default function SettingsPage() {
       <TwoFactorCard />
 
       <ApiTokensCard />
+      <InstanceApiAccessCard />
 
       <Card style={{ padding: 18, marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>

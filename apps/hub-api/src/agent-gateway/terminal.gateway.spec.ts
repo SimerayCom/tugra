@@ -13,6 +13,8 @@ function make(over: {
   server?: any;
   isOnline?: boolean;
   terminalGranted?: boolean;
+  apiEnabled?: boolean;
+  apiAllowedIps?: string[];
 } = {}) {
   const agentWs = {
     sendToAgent: jest.fn().mockReturnValue(true),
@@ -31,12 +33,15 @@ function make(over: {
   } as any;
   const apiTokens = { validate: over.validate ?? jest.fn() } as any;
   const audit = { log: jest.fn() } as any;
-  const gw = new TerminalGateway({} as any, agentWs, jwt, config, prisma, access, apiTokens, audit);
+  const instance = {
+    get: jest.fn().mockResolvedValue({ apiEnabled: over.apiEnabled ?? true, apiAllowedIps: over.apiAllowedIps ?? [] }),
+  } as any;
+  const gw = new TerminalGateway({} as any, agentWs, jwt, config, prisma, access, apiTokens, audit, instance);
   return { gw, agentWs, audit };
 }
 
-function req(url: string, token = "tugra.bearer, jwt-token") {
-  return { url, headers: { "sec-websocket-protocol": token } } as any;
+function req(url: string, token = "tugra.bearer, jwt-token", remoteAddress = "127.0.0.1") {
+  return { url, headers: { "sec-websocket-protocol": token }, socket: { remoteAddress } } as any;
 }
 
 const connect = (gw: TerminalGateway, ws: any, r: any) => (gw as any).onConnection(ws, r);
@@ -74,6 +79,53 @@ describe("TerminalGateway", () => {
     });
     const ws = fakeWs();
     await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc"));
+    expect(agentWs.sendToAgent).toHaveBeenCalled();
+  });
+
+  it("rejects a PAT terminal when the API is disabled (kill-switch reaches the WS path)", async () => {
+    const { gw, agentWs } = make({
+      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      server: { id: "s1", teamId: "t1" },
+      apiEnabled: false,
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc"));
+    expect(ws.close).toHaveBeenCalledWith(1008, "unauthorized");
+    expect(agentWs.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a PAT terminal from a source IP outside the allowlist", async () => {
+    const { gw, agentWs } = make({
+      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      server: { id: "s1", teamId: "t1" },
+      apiAllowedIps: ["10.0.0.0/8"],
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc", "203.0.113.7"));
+    expect(ws.close).toHaveBeenCalledWith(1008, "unauthorized");
+    expect(agentWs.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it("allows a PAT terminal from an allowlisted source IP", async () => {
+    const { gw, agentWs } = make({
+      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      server: { id: "s1", teamId: "t1" },
+      apiAllowedIps: ["203.0.113.0/24"],
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc", "203.0.113.7"));
+    expect(agentWs.sendToAgent).toHaveBeenCalled();
+  });
+
+  it("does NOT gate a session JWT terminal (only PATs)", async () => {
+    const { gw, agentWs } = make({
+      verifyAsync: jest.fn().mockResolvedValue({ sub: "u1", type: "access" }),
+      server: { id: "s1", teamId: "t1" },
+      apiEnabled: false, // API disabled — but a JWT session must still work
+      apiAllowedIps: ["10.0.0.0/8"],
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, jwt-token", "203.0.113.7"));
     expect(agentWs.sendToAgent).toHaveBeenCalled();
   });
 
@@ -207,7 +259,7 @@ describe("TerminalGateway", () => {
   describe("originAllowed", () => {
     function gw(webUrl = "http://localhost:3001") {
       const config = { get: jest.fn().mockReturnValue(webUrl) } as any;
-      return new TerminalGateway({} as any, {} as any, {} as any, config, {} as any, {} as any, {} as any, {} as any);
+      return new TerminalGateway({} as any, {} as any, {} as any, config, {} as any, {} as any, {} as any, {} as any, {} as any);
     }
     const check = (g: TerminalGateway, origin?: string) =>
       (g as any).originAllowed({ headers: origin ? { origin } : {} });

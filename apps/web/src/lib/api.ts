@@ -2,6 +2,7 @@ import type {
   ApiToken,
   ApiTokenScope,
   InstanceStatus,
+  OwnerInstanceSettings,
   SavedView,
   Application,
   AppVolume,
@@ -173,6 +174,13 @@ export const api = {
   // the 401→cookie-refresh cycle. Drives the welcome gate for a fresh install.
   getInstanceStatus() {
     return apiFetch<InstanceStatus>("/instance/status", {}, false);
+  },
+  // Owner-only instance settings (session-guarded on the hub).
+  getInstanceSettings() {
+    return apiFetch<OwnerInstanceSettings>("/instance/settings");
+  },
+  updateInstanceSettings(patch: { apiEnabled?: boolean; apiAllowedIps?: string[] }) {
+    return apiFetch<OwnerInstanceSettings>("/instance/settings", { method: "PATCH", body: JSON.stringify(patch) });
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current

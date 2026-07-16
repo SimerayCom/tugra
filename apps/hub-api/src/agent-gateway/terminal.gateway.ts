@@ -16,6 +16,9 @@ import { TeamAccessService } from "../common/team-access.service";
 import { ApiTokensService } from "../api-tokens/api-tokens.service";
 import { AuditService } from "../audit/audit.service";
 import { isApiToken } from "../api-tokens/api-token.util";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
+import { observedIp } from "../common/observed-ip";
+import { ipMatchesAllowlist } from "../common/ip-allowlist";
 import { parseCookies, TG_ACCESS } from "../common/cookies";
 import { webBaseUrl } from "../common/web-url";
 import type { AccessTokenPayload } from "../auth/strategies/jwt.strategy";
@@ -55,6 +58,7 @@ export class TerminalGateway
     private readonly access: TeamAccessService,
     private readonly apiTokens: ApiTokensService,
     private readonly audit: AuditService,
+    private readonly instance: InstanceSettingsService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -93,7 +97,7 @@ export class TerminalGateway
   }
 
   private async onConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
-    const userId = await this.authenticate(this.extractToken(req));
+    const userId = await this.authenticate(this.extractToken(req), req);
     if (!userId) return ws.close(1008, "unauthorized");
 
     const url = new URL(req.url ?? "", "ws://localhost");
@@ -235,11 +239,26 @@ export class TerminalGateway
     return set;
   }
 
-  private async authenticate(token: string): Promise<string | null> {
+  private async authenticate(token: string, req: IncomingMessage): Promise<string | null> {
     if (!token) return null;
     if (isApiToken(token)) {
       const u = await this.apiTokens.validate(token);
-      return u?.userId ?? null;
+      if (!u) return null;
+      // The terminal is a PAT entry point outside the HTTP guard pipeline, so it must apply the SAME
+      // instance-level API gating as ApiAuthGuard — otherwise the kill-switch / IP allowlist wouldn't
+      // cover the most sensitive PAT capability (an interactive server shell).
+      const settings = await this.instance.get();
+      if (!settings.apiEnabled) return null;
+      if (settings.apiAllowedIps.length > 0) {
+        const fwd = req.headers["x-forwarded-for"];
+        const ip = observedIp(
+          req.socket?.remoteAddress,
+          Array.isArray(fwd) ? fwd[0] : fwd,
+          process.env.HUB_TRUSTED_PROXY === "true",
+        );
+        if (!ip || !ipMatchesAllowlist(ip, settings.apiAllowedIps)) return null;
+      }
+      return u.userId;
     }
     try {
       const payload = await this.jwt.verifyAsync<AccessTokenPayload | { sub: string; type: string }>(token, {

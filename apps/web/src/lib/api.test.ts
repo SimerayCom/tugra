@@ -94,3 +94,20 @@ describe("api.getInstanceStatus (public onboarding status)", () => {
     expect(seen.some((u) => u.endsWith("/auth/refresh"))).toBe(false);
   });
 });
+
+describe("api instance settings (owner)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("GET /instance/settings and PATCH with the patch body", async () => {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body as string | undefined });
+      return jsonRes(200, { apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] });
+    }));
+    await api.getInstanceSettings();
+    await api.updateInstanceSettings({ apiEnabled: false, apiAllowedIps: ["1.2.3.4"] });
+    expect(calls[0]).toMatchObject({ url: "/api/v1/instance/settings" });
+    expect(calls[1]).toMatchObject({ url: "/api/v1/instance/settings", method: "PATCH" });
+    expect(JSON.parse(calls[1].body!)).toEqual({ apiEnabled: false, apiAllowedIps: ["1.2.3.4"] });
+  });
+});

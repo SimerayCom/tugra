@@ -9,6 +9,7 @@ import { EmailVerifiedGuard } from "./common/email-verified.guard";
 import { HealthController } from "./health/health.controller";
 import { VersionController } from "./health/version.controller";
 import { InstanceController } from "./instance/instance.controller";
+import { InstanceSettingsController } from "./instance/instance-settings.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
@@ -76,7 +77,7 @@ import { CatalogModule } from "./catalog/catalog.module";
     RetentionModule,
     CatalogModule,
   ],
-  controllers: [HealthController, VersionController, InstanceController],
+  controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
