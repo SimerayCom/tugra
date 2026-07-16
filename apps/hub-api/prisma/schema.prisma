@@ -31,6 +31,7 @@ model User {
   emailVerified Boolean                 @default(false)
   emailVerifiedAt DateTime?
   uiMode        String                  @default("fleet") // "fleet" | "home"
+  isInstanceOwner Boolean               @default(false) // the first user to register; owns instance-level settings
   memberships   Membership[]
   apiTokens     ApiToken[]
   savedViews    SavedView[]
@@ -99,6 +100,7 @@ model ApiToken {
   name       String
   tokenHash  String    @unique
   prefix     String
+  scopes     String[]  @default(["read"]) // read | write | deploy | admin | read:secrets
   expiresAt  DateTime?
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -847,4 +849,22 @@ model CatalogSnapshot {
   signatureVerifiedAt DateTime
   fetchedAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+// Instance-level settings (single row, fixed PK) — the source of truth for onboarding state,
+// registration gating, edition, self-update and API gating. Consumed by later slices; created on
+// first access via InstanceSettingsService (get-or-create).
+model InstanceSettings {
+  id                  String    @id @default("singleton")
+  initializedAt       DateTime? // set when the first user registers (bootstrap complete)
+  allowRegistration   Boolean   @default(false) // closed after the first user; owner re-opens or invites
+  edition             String    @default("community") // community | pro | cloud
+  publicUrl           String?
+  acmeEmail           String?
+  autoUpdate          Boolean   @default(false)
+  updateChannel       String    @default("stable")
+  cachedLatestVersion String?
+  apiEnabled          Boolean   @default(true)
+  apiAllowedIps       String[]  @default([])
+  updatedAt           DateTime  @updatedAt
 }
