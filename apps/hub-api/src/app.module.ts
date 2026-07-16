@@ -11,6 +11,7 @@ import { VersionController } from "./health/version.controller";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
+import { InstanceSettingsModule } from "./instance/instance-settings.module";
 import { TeamAccessModule } from "./common/team-access.module";
 import { MailModule } from "./mail/mail.module";
 import { AuthModule } from "./auth/auth.module";
@@ -46,6 +47,7 @@ import { CatalogModule } from "./catalog/catalog.module";
     PrismaModule,
     RedisModule,
     AuditModule,
+    InstanceSettingsModule,
     TeamAccessModule,
     MailModule,
     AuthModule,
