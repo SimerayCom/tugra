@@ -75,5 +75,13 @@
   "scopeReadSecretsDesc": "Reveal env vars, credentials, and other secrets.",
   "scopeAdmin": "Admin",
   "scopeAdminDesc": "Full access — everything, including delete.",
-  "scopeOwnerOnly": "owner only"
+  "scopeOwnerOnly": "owner only",
+  "apiAccess": "API access",
+  "apiAccessDesc": "Control token (API/CLI) access to this instance. Your browser session is never affected.",
+  "apiEnabled": "Enable API access",
+  "apiEnabledHint": "When off, all personal access tokens are rejected — the web app keeps working.",
+  "apiAllowedIps": "Allowed IP addresses",
+  "apiAllowedIpsHint": "One IP or CIDR range per line. Leave empty to allow any address. Requires a trusted reverse proxy to be accurate behind one.",
+  "apiSave": "Save",
+  "apiSaveFailed": "Couldn't save API access settings."
 }
