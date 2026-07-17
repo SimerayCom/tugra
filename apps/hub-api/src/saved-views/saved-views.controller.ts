@@ -8,6 +8,8 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -15,6 +17,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SavedViewsService } from "./saved-views.service";
 import { CreateSavedViewInput, CreateSavedViewSchema } from "./dto";
 
+@ApiTags("saved-views")
+@ApiCookieAuth("session")
 @Controller("saved-views")
 @UseGuards(JwtAuthGuard) // personal UI preference, managed with your login session
 export class SavedViewsController {
@@ -26,6 +30,7 @@ export class SavedViewsController {
   }
 
   @Post()
+  @ApiZodBody(CreateSavedViewSchema)
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateSavedViewSchema)) body: CreateSavedViewInput,

@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
+import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -35,39 +36,40 @@ const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"];
 const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
 
-export interface ServerView {
-  id: string;
-  name: string;
-  status: ServerStatus;
-  teamId: string;
-  hostname: string | null;
-  publicIp: string | null;
-  publicIpv6: string | null;
-  ipSource: string;
-  wildcardDomain: string | null;
-  magicSuffix: string | null;
-  certMode: string;
-  dnsProvider: string | null;
-  customCertResolver: string | null;
-  hasDnsCreds: boolean; // whether DNS-01 creds are configured — the creds are NEVER returned
-  os: string | null;
-  osVersion: string | null;
-  arch: string | null;
-  kernel: string | null;
-  cpuCores: number | null;
-  memTotalBytes: string | null; // BigInt serialized
-  uptimeSeconds: number | null; // derived from bootTime
-  cleanupEnabled: boolean;
-  cleanupIntervalHours: number | null;
-  cleanupVolumes: boolean;
-  lastCleanupAt: Date | null;
-  lastSeenAt: Date | null;
-  createdAt: Date;
-  seal: string | null;
-  tags: string[];
-  capabilities: string[]; // granted agent capabilities the hub may act on; [] = none (fail-safe)
-  canWrite: boolean;
-}
+export const ServerViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.nativeEnum(ServerStatus),
+  teamId: z.string(),
+  hostname: z.string().nullable(),
+  publicIp: z.string().nullable(),
+  publicIpv6: z.string().nullable(),
+  ipSource: z.string(),
+  wildcardDomain: z.string().nullable(),
+  magicSuffix: z.string().nullable(),
+  certMode: z.string(),
+  dnsProvider: z.string().nullable(),
+  customCertResolver: z.string().nullable(),
+  hasDnsCreds: z.boolean(), // whether DNS-01 creds are configured — the creds are NEVER returned
+  os: z.string().nullable(),
+  osVersion: z.string().nullable(),
+  arch: z.string().nullable(),
+  kernel: z.string().nullable(),
+  cpuCores: z.number().nullable(),
+  memTotalBytes: z.string().nullable(), // BigInt serialized
+  uptimeSeconds: z.number().nullable(), // derived from bootTime
+  cleanupEnabled: z.boolean(),
+  cleanupIntervalHours: z.number().nullable(),
+  cleanupVolumes: z.boolean(),
+  lastCleanupAt: z.date().nullable(),
+  lastSeenAt: z.date().nullable(),
+  createdAt: z.date(),
+  seal: z.string().nullable(),
+  tags: z.array(z.string()),
+  capabilities: z.array(z.string()), // granted agent capabilities the hub may act on; [] = none (fail-safe)
+  canWrite: z.boolean(),
+});
+export type ServerView = z.infer<typeof ServerViewSchema>;
 
 export interface HostInfoInput {
   os: string;

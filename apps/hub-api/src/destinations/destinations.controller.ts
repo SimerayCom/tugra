@@ -8,25 +8,32 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { DestinationsService } from "./destinations.service";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { DestinationsService, DestinationViewSchema } from "./destinations.service";
 import { CreateDestinationInput, CreateDestinationSchema } from "./dto";
 
+@ApiTags("backup-destinations")
+@ApiSecurity("pat")
 @Controller("backup-destinations")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class DestinationsController {
   constructor(private readonly destinations: DestinationsService) {}
 
   @Get()
+  @ApiZodResponse(DestinationViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser) {
     return this.destinations.list(user.userId);
   }
 
   @Post()
+  @ApiZodBody(CreateDestinationSchema)
+  @ApiZodResponse(DestinationViewSchema, { status: 201 })
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateDestinationSchema)) body: CreateDestinationInput,
@@ -35,6 +42,7 @@ export class DestinationsController {
   }
 
   @Get(":id")
+  @ApiZodResponse(DestinationViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.destinations.get(user.userId, id);
   }

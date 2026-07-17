@@ -1,4 +1,5 @@
 import { Controller, Get } from "@nestjs/common";
+import { ApiTags } from "@nestjs/swagger";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { currentEdition } from "../common/edition";
 
@@ -8,6 +9,7 @@ import { currentEdition } from "../common/edition";
  * fresh instance should show the welcome/onboarding flow instead of the login page. Returns only
  * non-secret bootstrap state: `{ initialized, allowRegistration, edition }`.
  */
+@ApiTags("instance")
 @Controller("instance")
 export class InstanceController {
   constructor(private readonly instance: InstanceSettingsService) {}

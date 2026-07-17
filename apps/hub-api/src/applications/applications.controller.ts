@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -23,7 +24,8 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
-import { ApplicationsService } from "./applications.service";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { ApplicationsService, AppViewSchema, DomainViewSchema } from "./applications.service";
 import {
   CreateAppInput,
   CreateAppSchema,
@@ -63,6 +65,8 @@ import {
   SetVolumesSchema,
 } from "./dto";
 
+@ApiTags("apps")
+@ApiSecurity("pat")
 @Controller("apps")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 @UseInterceptors(new RedactSecretsInterceptor(["webhookSecret"]))
@@ -70,6 +74,7 @@ export class ApplicationsController {
   constructor(private readonly apps: ApplicationsService) {}
 
   @Get()
+  @ApiZodResponse(AppViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser) {
     return this.apps.list(user.userId);
   }
@@ -94,12 +99,15 @@ export class ApplicationsController {
 
   // Likewise precedes `@Get(":id")` — central domain + live SSL overview.
   @Get("domains")
+  @ApiZodResponse(DomainViewSchema, { isArray: true })
   listDomains(@CurrentUser() user: AuthUser) {
     return this.apps.listDomains(user.userId);
   }
 
   @Post("templates/:slug")
   @HttpCode(201)
+  @ApiZodBody(FromTemplateSchema)
+  @ApiZodResponse(AppViewSchema, { status: 201 })
   fromTemplate(
     @CurrentUser() user: AuthUser,
     @Param("slug") slug: string,
@@ -109,6 +117,8 @@ export class ApplicationsController {
   }
 
   @Post()
+  @ApiZodBody(CreateAppSchema)
+  @ApiZodResponse(AppViewSchema, { status: 201 })
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateAppSchema)) body: CreateAppInput,
@@ -117,6 +127,7 @@ export class ApplicationsController {
   }
 
   @Get(":id")
+  @ApiZodResponse(AppViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.get(user.userId, id);
   }
@@ -218,6 +229,7 @@ export class ApplicationsController {
   @Post(":id/deploy")
   @RequireScopes("deploy")
   @HttpCode(200)
+  @ApiZodBody(DeploySchema)
   deploy(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -234,6 +246,7 @@ export class ApplicationsController {
 
   @Put(":id/env")
   @HttpCode(200)
+  @ApiZodBody(SetEnvSchema)
   async setEnv(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -251,6 +264,7 @@ export class ApplicationsController {
 
   @Put(":id/name")
   @HttpCode(200)
+  @ApiZodBody(RenameSchema)
   async rename(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -262,6 +276,7 @@ export class ApplicationsController {
 
   @Put(":id/docker-options")
   @HttpCode(200)
+  @ApiZodBody(SetDockerOptionsSchema)
   async setDockerOptions(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -273,6 +288,7 @@ export class ApplicationsController {
 
   @Put(":id/build-args")
   @HttpCode(200)
+  @ApiZodBody(SetBuildArgsSchema)
   async setBuildArgs(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -284,6 +300,7 @@ export class ApplicationsController {
 
   @Put(":id/limits")
   @HttpCode(200)
+  @ApiZodBody(SetLimitsSchema)
   async setLimits(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -295,6 +312,7 @@ export class ApplicationsController {
 
   @Put(":id/health-check")
   @HttpCode(200)
+  @ApiZodBody(SetHealthCheckSchema)
   async setHealthCheck(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -306,6 +324,7 @@ export class ApplicationsController {
 
   @Put(":id/build-config")
   @HttpCode(200)
+  @ApiZodBody(SetBuildConfigSchema)
   async setBuildConfig(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -317,6 +336,7 @@ export class ApplicationsController {
 
   @Put(":id/deploy-settings")
   @HttpCode(200)
+  @ApiZodBody(SetDeploySettingsSchema)
   async setDeploySettings(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -328,6 +348,7 @@ export class ApplicationsController {
 
   @Put(":id/volumes")
   @HttpCode(200)
+  @ApiZodBody(SetVolumesSchema)
   async setVolumes(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -339,6 +360,7 @@ export class ApplicationsController {
 
   @Put(":id/credentials")
   @HttpCode(200)
+  @ApiZodBody(SetCredentialsSchema)
   async setCredentials(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -350,6 +372,7 @@ export class ApplicationsController {
 
   @Put(":id/environment")
   @HttpCode(200)
+  @ApiZodBody(SetEnvironmentSchema)
   async setEnvironment(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -361,6 +384,7 @@ export class ApplicationsController {
 
   @Put(":id/domain")
   @HttpCode(200)
+  @ApiZodBody(SetDomainSchema)
   async setDomain(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -372,6 +396,7 @@ export class ApplicationsController {
 
   @Put(":id/domain-options")
   @HttpCode(200)
+  @ApiZodBody(SetDomainOptionsSchema)
   async setDomainOptions(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -383,6 +408,8 @@ export class ApplicationsController {
 
   @Put(":id/expose")
   @HttpCode(200)
+  @ApiZodBody(ExposeSchema)
+  @ApiZodResponse(AppViewSchema)
   expose(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -393,6 +420,7 @@ export class ApplicationsController {
 
   @Put(":id/tags")
   @HttpCode(200)
+  @ApiZodBody(SetTagsSchema)
   async setTags(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -403,12 +431,14 @@ export class ApplicationsController {
   }
 
   @Get(":id/previews")
+  @ApiZodResponse(AppViewSchema, { isArray: true })
   listPreviews(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.listPreviews(user.userId, id);
   }
 
   @Put(":id/preview-config")
   @HttpCode(200)
+  @ApiZodBody(PreviewConfigSchema)
   async setPreviewEnabled(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -431,6 +461,7 @@ export class ApplicationsController {
 
   @Post(":id/webhook/regenerate")
   @HttpCode(200)
+  @ApiZodResponse(AppViewSchema)
   regenerateWebhook(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.regenerateWebhook(user.userId, id);
   }

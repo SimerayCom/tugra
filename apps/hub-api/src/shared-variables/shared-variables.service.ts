@@ -3,20 +3,22 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { z } from "zod";
 import { SharedVariable } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CryptoService } from "../crypto/crypto.service";
 
-export interface SharedVarView {
-  id: string;
-  teamId: string;
-  key: string;
-  value: string | null; // decrypted only for writers
-  canWrite: boolean;
-  createdAt: Date;
-}
+export const SharedVarViewSchema = z.object({
+  id: z.string(),
+  teamId: z.string(),
+  key: z.string(),
+  value: z.string().nullable(), // decrypted only for writers
+  canWrite: z.boolean(),
+  createdAt: z.date(),
+});
+export type SharedVarView = z.infer<typeof SharedVarViewSchema>;
 
 @Injectable()
 export class SharedVariablesService {

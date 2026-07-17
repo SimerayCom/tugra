@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -31,39 +32,40 @@ import type { CreateDatabaseInput, SetDatabaseLimitsInput } from "./dto";
 
 const PROVISION_TIMEOUT_MS = 300_000; // image pull can be slow
 
-export interface DatabaseView {
-  id: string;
-  name: string;
-  engine: DbEngine;
-  version: string;
-  environmentId: string | null;
-  projectId: string | null;
-  projectName: string | null;
-  environmentName: string | null;
-  serverId: string;
-  teamId: string;
-  status: DbStatus;
-  port: number;
-  hostPort: number | null;
+export const DatabaseViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  engine: z.enum(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE"]),
+  version: z.string(),
+  environmentId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  projectName: z.string().nullable(),
+  environmentName: z.string().nullable(),
+  serverId: z.string(),
+  teamId: z.string(),
+  status: z.nativeEnum(DbStatus),
+  port: z.number(),
+  hostPort: z.number().nullable(),
   // Connection details are decrypted only for members who can write.
-  connectionUri: string | null;
-  internalHost: string | null;
-  username: string | null;
-  password: string | null;
-  database: string | null;
-  healthCmd: string | null;
-  memoryMb: number | null;
-  cpus: number | null;
-  backupEnabled: boolean;
-  backupIntervalHours: number | null;
-  backupRetention: number;
-  backupDestinationId: string | null;
-  backupSupported: boolean;
-  tags: string[];
-  role: Role;
-  canWrite: boolean;
-  createdAt: Date;
-}
+  connectionUri: z.string().nullable(),
+  internalHost: z.string().nullable(),
+  username: z.string().nullable(),
+  password: z.string().nullable(),
+  database: z.string().nullable(),
+  healthCmd: z.string().nullable(),
+  memoryMb: z.number().nullable(),
+  cpus: z.number().nullable(),
+  backupEnabled: z.boolean(),
+  backupIntervalHours: z.number().nullable(),
+  backupRetention: z.number(),
+  backupDestinationId: z.string().nullable(),
+  backupSupported: z.boolean(),
+  tags: z.array(z.string()),
+  role: z.nativeEnum(Role),
+  canWrite: z.boolean(),
+  createdAt: z.date(),
+});
+export type DatabaseView = z.infer<typeof DatabaseViewSchema>;
 
 function slug(name: string): string {
   const s = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");

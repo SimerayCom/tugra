@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { z } from "zod";
 import { ApiToken } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -11,15 +12,20 @@ import {
 } from "./api-token.util";
 import type { CreateApiTokenInput } from "./dto";
 
-export interface ApiTokenView {
-  id: string;
-  name: string;
-  prefix: string;
-  scopes: string[];
-  expiresAt: Date | null;
-  lastUsedAt: Date | null;
-  createdAt: Date;
-}
+// zod is the single source of truth for the response shape: it types the service AND generates the OpenAPI
+// response schema (via @ApiZodResponse), so the docs can never drift from what the code returns.
+export const ApiTokenViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  prefix: z.string(),
+  scopes: z.array(z.string()),
+  expiresAt: z.date().nullable(),
+  lastUsedAt: z.date().nullable(),
+  createdAt: z.date(),
+});
+export type ApiTokenView = z.infer<typeof ApiTokenViewSchema>;
+
+export const CreateApiTokenResultSchema = z.object({ token: z.string(), view: ApiTokenViewSchema });
 
 @Injectable()
 export class ApiTokensService {

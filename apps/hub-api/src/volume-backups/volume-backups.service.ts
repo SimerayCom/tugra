@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { z } from "zod";
 import { Application, VolumeBackup } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -11,16 +12,17 @@ import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 import { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
 import type { VolumeBackupConfigInput } from "./dto";
 
-export interface VolumeBackupView {
-  id: string;
-  volumeName: string;
-  status: string;
-  filename: string;
-  sizeBytes: string | null;
-  createdBy: string;
-  createdAt: Date;
-  completedAt: Date | null;
-}
+export const VolumeBackupViewSchema = z.object({
+  id: z.string(),
+  volumeName: z.string(),
+  status: z.string(),
+  filename: z.string(),
+  sizeBytes: z.string().nullable(),
+  createdBy: z.string(),
+  createdAt: z.date(),
+  completedAt: z.date().nullable(),
+});
+export type VolumeBackupView = z.infer<typeof VolumeBackupViewSchema>;
 
 @Injectable()
 export class VolumeBackupsService {

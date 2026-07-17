@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { Observable } from "rxjs";
+import { z } from "zod";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import type { TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
@@ -70,7 +71,7 @@ import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts, substituteSelfUrls } from "../templates/install-compose";
 import { assertSafeCompose } from "../deploy/compose-safety";
 import { PortAllocatorService } from "./port-allocator.service";
-import { probeSsl, type SslStatus } from "./ssl-probe";
+import { probeSsl } from "./ssl-probe";
 import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
@@ -87,84 +88,91 @@ const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
 // network/name/ip) → the app can't roll, so we fall back to hard cutover.
 const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name)(\s|=|$)/;
 
-export interface AppView {
-  id: string;
-  name: string;
-  source: "IMAGE" | "GIT" | "COMPOSE";
-  image: string | null;
-  gitUrl: string | null;
-  gitBranch: string | null;
-  buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
-  buildCommand: string | null;
-  outputDir: string | null;
-  composeFile: string | null;
-  healthCmd: string | null;
-  healthCheckType: string | null;
-  healthCheckPath: string | null;
-  healthCheckPort: number | null;
-  memoryMb: number | null;
-  cpus: number | null;
-  deployTimeoutSec: number | null;
-  dockerOptions: string | null;
-  volumes: AppVolume[];
-  hasGitToken: boolean;
-  registryUrl: string | null;
-  registryUser: string | null;
-  registryId: string | null;
-  pushToRegistry: boolean;
-  buildServerId: string | null;
-  deployStrategy: string;
-  rollbackOnFailure: boolean;
-  zeroDowntime: boolean;
-  templateSlug: string | null;
-  templateLogo: string | null;
-  environmentId: string | null;
-  projectId: string | null;
-  projectName: string | null;
-  environmentName: string | null;
-  serverId: string;
-  teamId: string;
-  status: AppStatus;
-  hostPort: number | null;
-  containerPort: number | null;
-  domain: string | null;
-  domainRedirect: string | null;
-  securityHeaders: boolean;
-  forwardAuth: string | null;
-  https: boolean;
-  domainKind: string;
-  exposeMode: string;
-  certType: string;
-  url: string | null;
-  webhookToken: string | null;
-  webhookSecret: string | null;
-  isPreview: boolean;
-  previewEnabled: boolean;
-  prNumber: number | null;
-  parentAppId: string | null;
-  tags: string[];
-  volumeBackupEnabled: boolean;
-  volumeBackupIntervalHours: number | null;
-  volumeBackupRetention: number;
-  volumeBackupDestinationId: string | null;
-  envCount: number;
-  canWrite: boolean;
-  createdAt: Date;
-}
+export const AppViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  source: z.enum(["IMAGE", "GIT", "COMPOSE"]),
+  image: z.string().nullable(),
+  gitUrl: z.string().nullable(),
+  gitBranch: z.string().nullable(),
+  buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
+  buildCommand: z.string().nullable(),
+  outputDir: z.string().nullable(),
+  composeFile: z.string().nullable(),
+  healthCmd: z.string().nullable(),
+  healthCheckType: z.string().nullable(),
+  healthCheckPath: z.string().nullable(),
+  healthCheckPort: z.number().nullable(),
+  memoryMb: z.number().nullable(),
+  cpus: z.number().nullable(),
+  deployTimeoutSec: z.number().nullable(),
+  dockerOptions: z.string().nullable(),
+  volumes: z.array(z.object({ name: z.string(), path: z.string() })),
+  hasGitToken: z.boolean(),
+  registryUrl: z.string().nullable(),
+  registryUser: z.string().nullable(),
+  registryId: z.string().nullable(),
+  pushToRegistry: z.boolean(),
+  buildServerId: z.string().nullable(),
+  deployStrategy: z.string(),
+  rollbackOnFailure: z.boolean(),
+  zeroDowntime: z.boolean(),
+  templateSlug: z.string().nullable(),
+  templateLogo: z.string().nullable(),
+  environmentId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  projectName: z.string().nullable(),
+  environmentName: z.string().nullable(),
+  serverId: z.string(),
+  teamId: z.string(),
+  status: z.nativeEnum(AppStatus),
+  hostPort: z.number().nullable(),
+  containerPort: z.number().nullable(),
+  domain: z.string().nullable(),
+  domainRedirect: z.string().nullable(),
+  securityHeaders: z.boolean(),
+  forwardAuth: z.string().nullable(),
+  https: z.boolean(),
+  domainKind: z.string(),
+  exposeMode: z.string(),
+  certType: z.string(),
+  url: z.string().nullable(),
+  webhookToken: z.string().nullable(),
+  webhookSecret: z.string().nullable(),
+  isPreview: z.boolean(),
+  previewEnabled: z.boolean(),
+  prNumber: z.number().nullable(),
+  parentAppId: z.string().nullable(),
+  tags: z.array(z.string()),
+  volumeBackupEnabled: z.boolean(),
+  volumeBackupIntervalHours: z.number().nullable(),
+  volumeBackupRetention: z.number(),
+  volumeBackupDestinationId: z.string().nullable(),
+  envCount: z.number(),
+  canWrite: z.boolean(),
+  createdAt: z.date(),
+});
+export type AppView = z.infer<typeof AppViewSchema>;
 
-export interface DomainView {
-  id: string;
-  appId: string;
-  appStatus: AppStatus;
-  teamId: string;
-  name: string;
-  domain: string;
-  https: boolean;
-  url: string | null;
-  domainRedirect: string | null;
-  securityHeaders: boolean;
-  ssl: SslStatus;
-}
+export const DomainViewSchema = z.object({
+  id: z.string(),
+  appId: z.string(),
+  appStatus: z.nativeEnum(AppStatus),
+  teamId: z.string(),
+  name: z.string(),
+  domain: z.string(),
+  https: z.boolean(),
+  url: z.string().nullable(),
+  domainRedirect: z.string().nullable(),
+  securityHeaders: z.boolean(),
+  ssl: z.object({
+    state: z.enum(["ok", "expiring", "error"]),
+    daysRemaining: z.number().nullable(),
+    validTo: z.string().nullable(),
+    issuer: z.string().nullable(),
+  }),
+});
+export type DomainView = z.infer<typeof DomainViewSchema>;
 
 /** Capture the user's non-secret install choices (timezone, username, ...) for the record, but never
  *  persist a secret field's value — installConfig is bookkeeping, not a secret store (SPEC §8). */

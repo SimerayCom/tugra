@@ -10,12 +10,14 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { MonitorsService } from "./monitors.service";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { MonitorsService, MonitorViewSchema } from "./monitors.service";
 import {
   BulkMonitorChannelsInput,
   BulkMonitorChannelsSchema,
@@ -25,17 +27,22 @@ import {
   UpdateMonitorSchema,
 } from "./dto";
 
+@ApiTags("monitors")
+@ApiSecurity("pat")
 @Controller("monitors")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class MonitorsController {
   constructor(private readonly monitors: MonitorsService) {}
 
   @Get()
+  @ApiZodResponse(MonitorViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser) {
     return this.monitors.list(user.userId);
   }
 
   @Post()
+  @ApiZodBody(CreateMonitorSchema)
+  @ApiZodResponse(MonitorViewSchema, { status: 201 })
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateMonitorSchema)) body: CreateMonitorInput,
@@ -46,6 +53,7 @@ export class MonitorsController {
   // Static segment before ":id" so it isn't matched as a monitor id.
   @Post("channels/bulk")
   @HttpCode(200)
+  @ApiZodBody(BulkMonitorChannelsSchema)
   bulkChannels(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(BulkMonitorChannelsSchema)) body: BulkMonitorChannelsInput,
@@ -54,12 +62,15 @@ export class MonitorsController {
   }
 
   @Get(":id")
+  @ApiZodResponse(MonitorViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.monitors.get(user.userId, id);
   }
 
   @Put(":id")
   @HttpCode(200)
+  @ApiZodBody(UpdateMonitorSchema)
+  @ApiZodResponse(MonitorViewSchema)
   update(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

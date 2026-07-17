@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { z } from "zod";
 import { Application, ScheduledTask } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -11,14 +12,15 @@ import { loadProjectCtx } from "../common/resource-project";
 import { ScheduledTasksSchedulerService } from "./scheduled-tasks.scheduler.service";
 import type { CreateTaskInput, UpdateTaskInput } from "./dto";
 
-export interface TaskView {
-  id: string;
-  name: string;
-  schedule: string;
-  command: string;
-  enabled: boolean;
-  lastRunAt: Date | null;
-}
+export const TaskViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  schedule: z.string(),
+  command: z.string(),
+  enabled: z.boolean(),
+  lastRunAt: z.date().nullable(),
+});
+export type TaskView = z.infer<typeof TaskViewSchema>;
 
 @Injectable()
 export class ScheduledTasksService {

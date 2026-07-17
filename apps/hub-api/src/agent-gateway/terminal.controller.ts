@@ -2,6 +2,7 @@ import { Controller, HttpCode, Post, UseGuards } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { Throttle } from "@nestjs/throttler";
+import { ApiCookieAuth, ApiTags } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
@@ -12,6 +13,8 @@ import type { AuthUser } from "../auth/strategies/jwt.strategy";
  * calls this (cookie-authenticated) endpoint to get a 60-second, single-purpose `term_ticket` JWT
  * it CAN read, and passes that in the `tugra.bearer` subprotocol when opening /terminal.
  */
+@ApiTags("terminal")
+@ApiCookieAuth("session")
 @Controller("terminal")
 export class TerminalController {
   constructor(

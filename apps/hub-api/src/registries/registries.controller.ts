@@ -1,4 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -6,6 +8,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { RegistriesService } from "./registries.service";
 import { CreateRegistryInput, CreateRegistrySchema, UpdateRegistryInput, UpdateRegistrySchema } from "./dto";
 
+@ApiTags("registries")
+@ApiCookieAuth("session")
 @Controller("registries")
 @UseGuards(JwtAuthGuard)
 export class RegistriesController {
@@ -17,6 +21,7 @@ export class RegistriesController {
   }
 
   @Post()
+  @ApiZodBody(CreateRegistrySchema)
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateRegistrySchema)) body: CreateRegistryInput,
@@ -26,6 +31,7 @@ export class RegistriesController {
 
   @Put(":id")
   @HttpCode(200)
+  @ApiZodBody(UpdateRegistrySchema)
   update(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

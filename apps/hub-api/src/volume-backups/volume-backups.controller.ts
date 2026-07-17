@@ -1,25 +1,31 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { VolumeBackupsService } from "./volume-backups.service";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { VolumeBackupsService, VolumeBackupViewSchema } from "./volume-backups.service";
 import { VolumeBackupConfigInput, VolumeBackupConfigSchema } from "./dto";
 
+@ApiTags("volume-backups")
+@ApiSecurity("pat")
 @Controller("apps/:appId/volume-backups")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class VolumeBackupsController {
   constructor(private readonly svc: VolumeBackupsService) {}
 
   @Get()
+  @ApiZodResponse(VolumeBackupViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser, @Param("appId") appId: string) {
     return this.svc.list(user.userId, appId);
   }
 
   @Post()
   @HttpCode(200)
+  @ApiZodResponse(VolumeBackupViewSchema, { isArray: true })
   backupNow(@CurrentUser() user: AuthUser, @Param("appId") appId: string) {
     return this.svc.backupNow(user.userId, appId);
   }
@@ -41,6 +47,7 @@ export class VolumeBackupsController {
 
   @Put("config")
   @HttpCode(200)
+  @ApiZodBody(VolumeBackupConfigSchema)
   setConfig(
     @CurrentUser() user: AuthUser,
     @Param("appId") appId: string,

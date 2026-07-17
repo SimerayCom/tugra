@@ -9,6 +9,8 @@ import {
   Put,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -16,6 +18,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
 import { CreateChannelInput, CreateChannelSchema, EVENT_TYPES, UpdateChannelInput, UpdateChannelSchema } from "./dto";
 
+@ApiTags("channels")
+@ApiCookieAuth("session")
 @Controller("channels")
 @UseGuards(JwtAuthGuard)
 export class NotificationsController {
@@ -34,6 +38,7 @@ export class NotificationsController {
   }
 
   @Post()
+  @ApiZodBody(CreateChannelSchema)
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateChannelSchema)) body: CreateChannelInput,
@@ -43,6 +48,7 @@ export class NotificationsController {
 
   @Put(":id")
   @HttpCode(200)
+  @ApiZodBody(UpdateChannelSchema)
   update(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
