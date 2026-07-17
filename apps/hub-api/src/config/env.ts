@@ -102,6 +102,17 @@ export const envSchema = z
     .refine(isBase64Ed25519Spki, "CATALOG_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
     .optional(),
   CATALOG_SYNC_INTERVAL_MIN: z.coerce.number().int().positive().default(60),
+  // Optional, opt-in: the self-update version check. When UPDATE_MANIFEST_URL is set the hub
+  // periodically fetches the signed release manifest (versions.json + a detached versions.json.sig),
+  // verifies the ed25519 signature against UPDATE_PUBLISHER_KEY, and caches the latest published
+  // version so the owner sees an "update available" status. Never applies anything (report-only).
+  UPDATE_MANIFEST_URL: z.string().url().optional(),
+  UPDATE_PUBLISHER_KEY: z
+    .string()
+    .refine(isBase64Ed25519Spki, "UPDATE_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
+    .optional(),
+  UPDATE_CHECK_INTERVAL_MIN: z.coerce.number().int().positive().default(1440), // daily
+  UPDATE_CHANGELOG_URL: z.string().url().optional(),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live
@@ -128,6 +139,14 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ["CATALOG_PUBLISHER_KEY"],
         message: "CATALOG_PUBLISHER_KEY is required when CATALOG_SOURCE_URL is set (never sync an unsigned catalog)",
+      });
+    }
+    // Fail closed: never check an UNSIGNED update manifest — a manifest URL requires a publisher key.
+    if (v.UPDATE_MANIFEST_URL && !v.UPDATE_PUBLISHER_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["UPDATE_PUBLISHER_KEY"],
+        message: "UPDATE_PUBLISHER_KEY is required when UPDATE_MANIFEST_URL is set (never check an unsigned manifest)",
       });
     }
   });

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
-import { ApiZodBody } from "../openapi/openapi";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -10,6 +10,8 @@ import { InstanceSettingsService } from "./instance-settings.service";
 import { InstanceOwnerGuard } from "./instance-owner.guard";
 import { currentEdition } from "../common/edition";
 import { UpdateInstanceSettingsInput, UpdateInstanceSettingsSchema } from "./dto";
+import { UpdateService } from "../update/update.service";
+import { UpdateStatusViewSchema } from "../update/dto";
 
 /**
  * Owner-only instance settings, managed with the login SESSION (JwtAuthGuard, not ApiAuthGuard) — like API
@@ -24,7 +26,20 @@ export class InstanceSettingsController {
   constructor(
     private readonly settings: InstanceSettingsService,
     private readonly audit: AuditService,
+    private readonly update: UpdateService,
   ) {}
+
+  /**
+   * Self-update status: the running version, the latest published version for the tracked channel (from
+   * the last signed check — cached, no remote fetch on this path), and whether an update is available.
+   * `updateAvailable` is computed against the running build, so an older/stale manifest never suggests a
+   * downgrade. Owner-only (inherits the class guards); nothing is applied here (the updater is a later slice).
+   */
+  @Get("update")
+  @ApiZodResponse(UpdateStatusViewSchema)
+  async getUpdate() {
+    return this.update.getStatus();
+  }
 
   @Get("settings")
   async getSettings() {

@@ -2,6 +2,7 @@ import { InstanceSettingsController } from "./instance-settings.controller";
 import type { InstanceSettingsService } from "./instance-settings.service";
 import type { AuditService } from "../audit/audit.service";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
+import type { UpdateService } from "../update/update.service";
 
 const OWNER = { userId: "owner1", scopes: ["*"] } as AuthUser;
 
@@ -12,7 +13,17 @@ function make(current: { apiEnabled: boolean; apiAllowedIps: string[] }) {
     update: jest.fn().mockImplementation((patch) => Promise.resolve(Object.assign(updated, patch))),
   } as unknown as InstanceSettingsService;
   const audit = { log: jest.fn() } as unknown as AuditService;
-  return { ctrl: new InstanceSettingsController(settings, audit), settings, audit };
+  const update = {
+    getStatus: jest.fn().mockResolvedValue({
+      current: "0.0.0-dev",
+      latest: null,
+      channel: "stable",
+      updateAvailable: false,
+      changelogUrl: null,
+      autoUpdate: false,
+    }),
+  } as unknown as UpdateService;
+  return { ctrl: new InstanceSettingsController(settings, audit, update), settings, audit, update };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -40,5 +51,12 @@ describe("InstanceSettingsController", () => {
     const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
     await ctrl.updateSettings(OWNER, { apiEnabled: false });
     expect(settings.update).toHaveBeenCalledWith({ apiEnabled: false });
+  });
+
+  it("getUpdate delegates to UpdateService.getStatus", async () => {
+    const { ctrl, update } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const out = await ctrl.getUpdate();
+    expect(update.getStatus).toHaveBeenCalled();
+    expect(out).toMatchObject({ current: "0.0.0-dev", updateAvailable: false, latest: null });
   });
 });
