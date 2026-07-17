@@ -99,7 +99,10 @@ describe("ServersService.createServer (team role enforced)", () => {
         server: { create: jest.fn().mockResolvedValue(row("s1", "teamA")) },
       } as unknown as PrismaService;
       const res = await svcWith(prisma).createServer("u1", "web", "teamA");
-      expect(res.installCommand).toContain("wss://hub.example.com/agent");
+      // curl|sh bootstrap: fetch the installer from the HTTP base, run it with the ws URL + token.
+      expect(res.installCommand).toContain("curl -fsSL https://hub.example.com/install/agent.sh");
+      expect(res.installCommand).toContain("sh -s -- --hub wss://hub.example.com/agent --token ");
+      expect(res.installCommand).toContain("wss://hub.example.com/agent"); // ws mapping unchanged
       expect(res.installCommand).not.toContain("<YOUR_HUB_URL>");
     } finally {
       if (prev === undefined) delete process.env.HUB_PUBLIC_URL;

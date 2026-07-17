@@ -46,6 +46,9 @@ export const envSchema = z
   // Optional, opt-in: enables AI deploy-log analysis (logs are sent to Anthropic).
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_MODEL: z.string().min(1).optional(),
+  // Optional: overrides the agent image the `/install/agent.sh` bootstrap pulls (custom registry /
+  // air-gapped mirror). Defaults to the version-matched `ghcr.io/mrcandev/tugra-agent:<hub version>`.
+  AGENT_IMAGE: z.string().min(1).optional(),
   // Optional, opt-in: "Sign in with GitHub". When unset, the OAuth routes return
   // a friendly "unconfigured" redirect and the app boots normally.
   GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),

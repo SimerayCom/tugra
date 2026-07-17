@@ -41,6 +41,7 @@ import { ExpiryModule } from "./expiry/expiry.module";
 import { RetentionModule } from "./retention/retention.module";
 import { CatalogModule } from "./catalog/catalog.module";
 import { UpdateModule } from "./update/update.module";
+import { InstallController } from "./install/install.controller";
 
 @Module({
   imports: [
@@ -79,7 +80,7 @@ import { UpdateModule } from "./update/update.module";
     CatalogModule,
     UpdateModule,
   ],
-  controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController],
+  controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
