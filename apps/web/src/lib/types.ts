@@ -86,12 +86,18 @@ export interface InstanceStatus {
   edition: string;
 }
 
-/** Owner-configurable instance settings (GET/PATCH /instance/settings) — API gating. */
+/** Owner-configurable instance settings (GET/PATCH /instance/settings) — API gating + onboarding basics. */
 export interface OwnerInstanceSettings {
   /** Master switch for token (PAT) API access; the web session is never affected. */
   apiEnabled: boolean;
   /** Single IPs and/or CIDR ranges a PAT may connect from; empty = any address. */
   apiAllowedIps: string[];
+  /** Public base URL the agent dials back to (e.g. https://hub.example.com); null when unset. */
+  publicUrl: string | null;
+  /** Let's Encrypt account email used when issuing SSL certs; null when unset. */
+  acmeEmail: string | null;
+  /** Read-only env/license edition (surfaced by GET, never PATCHable). */
+  edition?: string;
 }
 
 export interface ServerView {

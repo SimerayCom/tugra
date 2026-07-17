@@ -25,8 +25,8 @@ describe("InstanceApiAccessCard", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     h.user = { isInstanceOwner: false };
-    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] });
-    vi.spyOn(api, "updateInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: [] });
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"], publicUrl: null, acmeEmail: null });
+    vi.spyOn(api, "updateInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: [], publicUrl: null, acmeEmail: null });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -48,7 +48,7 @@ describe("InstanceApiAccessCard", () => {
 
   it("saves the toggle + parsed allowlist (blank lines dropped)", async () => {
     h.user = { isInstanceOwner: true };
-    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: ["9.9.9.9"] });
+    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: ["9.9.9.9"], publicUrl: null, acmeEmail: null });
     wrap();
     const ta = (await screen.findByLabelText("Allowed IP addresses")) as HTMLTextAreaElement;
     // Wait for the server seed to apply before editing, so the effect doesn't clobber our input.

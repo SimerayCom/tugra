@@ -179,7 +179,12 @@ export const api = {
   getInstanceSettings() {
     return apiFetch<OwnerInstanceSettings>("/instance/settings");
   },
-  updateInstanceSettings(patch: { apiEnabled?: boolean; apiAllowedIps?: string[] }) {
+  updateInstanceSettings(patch: {
+    apiEnabled?: boolean;
+    apiAllowedIps?: string[];
+    publicUrl?: string | null;
+    acmeEmail?: string | null;
+  }) {
     return apiFetch<OwnerInstanceSettings>("/instance/settings", { method: "PATCH", body: JSON.stringify(patch) });
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {

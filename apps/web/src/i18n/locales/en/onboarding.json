@@ -1,0 +1,51 @@
+{
+  "title": "Set up Tugra",
+  "stepOf": "Step {n} of {total}",
+  "back": "Back",
+  "skip": "Skip",
+  "skipAll": "Skip setup",
+  "finish": "Finish",
+  "goToDashboard": "Go to dashboard",
+  "createFailed": "Something went wrong. Please try again.",
+
+  "welcomeHeading": "Welcome to Tugra",
+  "welcomeBody": "Let's get your instance ready in a few steps: create your owner account, set the basics, connect a server, and launch your first workload.",
+  "welcomeStart": "Get started",
+
+  "adminHeading": "Create the owner account",
+  "adminBody": "The first account on this instance becomes the owner.",
+  "email": "Email",
+  "password": "Password",
+  "name": "Name",
+  "createOwner": "Create account & continue",
+
+  "basicsHeading": "Instance basics",
+  "basicsBody": "Optional, but recommended. You can change these later in Settings.",
+  "publicUrl": "Public URL",
+  "publicUrlHint": "The address agents and browsers use to reach this hub, e.g. https://hub.example.com.",
+  "acmeEmail": "Let's Encrypt email",
+  "acmeEmailHint": "Used to issue SSL certificates for your apps' domains.",
+  "saveContinue": "Save & continue",
+
+  "serverHeading": "Connect your first server",
+  "serverBody": "Give it a name — you'll get a one-line command to run on the machine.",
+  "serverName": "Server name",
+  "team": "Team",
+  "createServer": "Create server",
+  "runThisCommand": "Run this on your server, then wait here:",
+  "copy": "Copy",
+  "copied": "Copied",
+  "waitingForServer": "Waiting for the server to connect…",
+  "serverConnected": "Server connected.",
+  "reissueHint": "The enroll command expired before the server connected.",
+  "reissueCta": "Get a new command",
+
+  "workloadHeading": "Launch your first workload",
+  "workloadBody": "Deploy an app from a Git repository, or install one in a click from the app store.",
+  "deployGit": "Deploy from Git",
+  "browseAppStore": "Browse the app store",
+
+  "doneHeading": "You're all set",
+  "doneBody": "Your instance is ready. Manage everything from the dashboard.",
+  "progressLabel": "Onboarding progress"
+}

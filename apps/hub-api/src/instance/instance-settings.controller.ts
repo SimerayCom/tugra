@@ -45,8 +45,15 @@ export class InstanceSettingsController {
   async getSettings() {
     const s = await this.settings.get();
     // `edition` is env/license-driven and read-only here (deliberately absent from PATCH) — surfacing it
-    // lets the owner see their tier without being able to grant themselves a higher one.
-    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps, edition: currentEdition() };
+    // lets the owner see their tier without being able to grant themselves a higher one. publicUrl/acmeEmail
+    // are surfaced so the onboarding wizard can pre-fill them on resume.
+    return {
+      apiEnabled: s.apiEnabled,
+      apiAllowedIps: s.apiAllowedIps,
+      publicUrl: s.publicUrl,
+      acmeEmail: s.acmeEmail,
+      edition: currentEdition(),
+    };
   }
 
   @Patch("settings")
@@ -55,13 +62,16 @@ export class InstanceSettingsController {
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateInstanceSettingsSchema)) body: UpdateInstanceSettingsInput,
   ) {
-    const patch: { apiEnabled?: boolean; apiAllowedIps?: string[] } = {};
+    const patch: { apiEnabled?: boolean; apiAllowedIps?: string[]; publicUrl?: string | null; acmeEmail?: string | null } = {};
     if (body.apiEnabled !== undefined) patch.apiEnabled = body.apiEnabled;
     if (body.apiAllowedIps !== undefined) {
       patch.apiAllowedIps = body.apiAllowedIps.map((e) => e.trim()).filter(Boolean);
     }
+    // Map a falsy value ("" or null) to null so the owner can CLEAR the field; a real value is stored as-is.
+    if (body.publicUrl !== undefined) patch.publicUrl = body.publicUrl || null;
+    if (body.acmeEmail !== undefined) patch.acmeEmail = body.acmeEmail || null;
     const s = await this.settings.update(patch);
     await this.audit.log({ actor: user.userId, action: "instance_settings.update", target: "singleton" });
-    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps };
+    return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps, publicUrl: s.publicUrl, acmeEmail: s.acmeEmail };
   }
 }

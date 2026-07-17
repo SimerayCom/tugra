@@ -77,7 +77,13 @@ describe("instance API gating (e2e)", () => {
     await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: true } });
     try {
       const got = await request(srv()).get("/instance/settings").set("Authorization", `Bearer ${jwt}`).expect(200);
-      expect(got.body).toEqual({ apiEnabled: expect.any(Boolean), apiAllowedIps: expect.any(Array), edition: expect.any(String) });
+      expect(got.body).toEqual({
+        apiEnabled: expect.any(Boolean),
+        apiAllowedIps: expect.any(Array),
+        publicUrl: null,
+        acmeEmail: null,
+        edition: expect.any(String),
+      });
 
       const patched = await request(srv())
         .patch("/instance/settings")
@@ -86,11 +92,31 @@ describe("instance API gating (e2e)", () => {
         .expect(200);
       expect(patched.body.apiAllowedIps).toEqual(["1.2.3.4", "10.0.0.0/8"]);
 
+      // onboarding basics: set publicUrl + acmeEmail, then clear one with ""
+      const basics = await request(srv())
+        .patch("/instance/settings")
+        .set("Authorization", `Bearer ${jwt}`)
+        .send({ publicUrl: "https://hub.example.com", acmeEmail: "ops@example.com" })
+        .expect(200);
+      expect(basics.body).toMatchObject({ publicUrl: "https://hub.example.com", acmeEmail: "ops@example.com" });
+      const cleared = await request(srv())
+        .patch("/instance/settings")
+        .set("Authorization", `Bearer ${jwt}`)
+        .send({ publicUrl: "" })
+        .expect(200);
+      expect(cleared.body.publicUrl).toBeNull();
+
       // invalid entry → 400 (never silently persisted)
       await request(srv())
         .patch("/instance/settings")
         .set("Authorization", `Bearer ${jwt}`)
         .send({ apiAllowedIps: ["not-an-ip"] })
+        .expect(400);
+      // invalid publicUrl → 400
+      await request(srv())
+        .patch("/instance/settings")
+        .set("Authorization", `Bearer ${jwt}`)
+        .send({ publicUrl: "not-a-url" })
         .expect(400);
 
       // a non-owner is forbidden
