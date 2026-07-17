@@ -54,3 +54,56 @@ export function versionInfo(): {
     edition: edition(),
   };
 }
+
+// ── Semver comparison (used by the self-update version check) ──
+// A tiny, dependency-free comparator. It only needs to decide "is the published `latest` strictly
+// NEWER than the running build" so the hub never offers a downgrade. Anchored parse (trailing garbage
+// → null), tolerant of a leading "v" and a `+build` suffix (SemVer precedence ignores build metadata).
+
+export interface ParsedVersion {
+  /** [major, minor, patch] */
+  core: [number, number, number];
+  /** dot-separated pre-release identifiers ("1.2.3-rc.1" → ["rc","1"]); [] for a release. */
+  pre: string[];
+}
+
+/**
+ * Parse "x.y.z", "vX.Y.Z", "x.y.z-pre.1", "x.y.z+build" into its core + pre-release. Returns null for
+ * anything that isn't a clean, fully-anchored version — the caller treats null as "unknown" and, for the
+ * update check, as "no update" (fail-safe: a malformed remote version can never be reported as newer).
+ */
+export function parseVersion(v: string): ParsedVersion | null {
+  if (typeof v !== "string") return null;
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(v.trim());
+  if (!m) return null;
+  return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? m[4].split(".") : [] };
+}
+
+/**
+ * Compare two ALREADY-PARSED versions: -1 (a<b) | 0 (equal precedence) | 1 (a>b). Callers that start
+ * from strings must reject nulls FIRST (see isNewer) — this never sees an unparseable input, so its 0
+ * unambiguously means "equal precedence" (build metadata and pre-release identifier detail beyond
+ * "any pre-release < its release" are intentionally not distinguished; channels are kept separate).
+ */
+export function compareVersions(a: ParsedVersion, b: ParsedVersion): -1 | 0 | 1 {
+  for (let i = 0; i < 3; i++) {
+    if (a.core[i] !== b.core[i]) return a.core[i] < b.core[i] ? -1 : 1;
+  }
+  // Equal core: a release (no pre-release) outranks a pre-release of the same core (SemVer §11).
+  const aRel = a.pre.length === 0;
+  const bRel = b.pre.length === 0;
+  if (aRel !== bRel) return aRel ? 1 : -1;
+  return 0;
+}
+
+/**
+ * True only when `candidate` is strictly newer than `current`. Either side failing to parse → false
+ * (fail-safe: the hub must never treat an unknown/garbage version as an available update — this is the
+ * downgrade guard the whole self-update chain rests on). "0.0.0-dev" (local) < any real release.
+ */
+export function isNewer(candidate: string, current: string): boolean {
+  const c = parseVersion(candidate);
+  const cur = parseVersion(current);
+  if (!c || !cur) return false;
+  return compareVersions(c, cur) === 1;
+}

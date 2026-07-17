@@ -43,6 +43,63 @@
         ]
       }
     },
+    "/api/v1/instance/update": {
+      "get": {
+        "operationId": "InstanceSettingsController_getUpdate",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": {
+                      "type": "string"
+                    },
+                    "latest": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "updateAvailable": {
+                      "type": "boolean"
+                    },
+                    "changelogUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "autoUpdate": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "current",
+                    "latest",
+                    "channel",
+                    "updateAvailable",
+                    "changelogUrl",
+                    "autoUpdate"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
     "/api/v1/instance/settings": {
       "get": {
         "operationId": "InstanceSettingsController_getSettings",
