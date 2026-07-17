@@ -6,10 +6,11 @@ import type { UpdateService } from "../update/update.service";
 
 const OWNER = { userId: "owner1", scopes: ["*"] } as AuthUser;
 
-function make(current: { apiEnabled: boolean; apiAllowedIps: string[] }) {
-  const updated: { apiEnabled: boolean; apiAllowedIps: string[] } = { ...current };
+function make(current: { apiEnabled: boolean; apiAllowedIps: string[]; publicUrl?: string | null; acmeEmail?: string | null }) {
+  const full = { publicUrl: null, acmeEmail: null, ...current };
+  const updated = { ...full };
   const settings = {
-    get: jest.fn().mockResolvedValue(current),
+    get: jest.fn().mockResolvedValue(full),
     update: jest.fn().mockImplementation((patch) => Promise.resolve(Object.assign(updated, patch))),
   } as unknown as InstanceSettingsService;
   const audit = { log: jest.fn() } as unknown as AuditService;
@@ -33,17 +34,23 @@ afterEach(() => {
 });
 
 describe("InstanceSettingsController", () => {
-  it("returns the API-gating fields plus the read-only env edition", async () => {
+  it("returns the API-gating fields, onboarding basics, plus the read-only env edition", async () => {
     process.env.TUGRA_EDITION = "pro";
-    const { ctrl } = make({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] });
-    expect(await ctrl.getSettings()).toEqual({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"], edition: "pro" });
+    const { ctrl } = make({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"], publicUrl: "https://hub.example.com", acmeEmail: "a@b.co" });
+    expect(await ctrl.getSettings()).toEqual({
+      apiEnabled: true,
+      apiAllowedIps: ["10.0.0.0/8"],
+      publicUrl: "https://hub.example.com",
+      acmeEmail: "a@b.co",
+      edition: "pro",
+    });
   });
 
   it("patches apiEnabled + apiAllowedIps (dropping blanks) and audits", async () => {
     const { ctrl, settings, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
     const res = await ctrl.updateSettings(OWNER, { apiEnabled: false, apiAllowedIps: ["1.2.3.4", "", "  ", "10.0.0.0/8"] });
     expect(settings.update).toHaveBeenCalledWith({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "10.0.0.0/8"] });
-    expect(res).toEqual({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "10.0.0.0/8"] });
+    expect(res).toEqual({ apiEnabled: false, apiAllowedIps: ["1.2.3.4", "10.0.0.0/8"], publicUrl: null, acmeEmail: null });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_settings.update", actor: "owner1" }));
   });
 
@@ -51,6 +58,19 @@ describe("InstanceSettingsController", () => {
     const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
     await ctrl.updateSettings(OWNER, { apiEnabled: false });
     expect(settings.update).toHaveBeenCalledWith({ apiEnabled: false });
+  });
+
+  it("sets publicUrl + acmeEmail (onboarding basics)", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const res = await ctrl.updateSettings(OWNER, { publicUrl: "https://hub.example.com", acmeEmail: "ops@example.com" });
+    expect(settings.update).toHaveBeenCalledWith({ publicUrl: "https://hub.example.com", acmeEmail: "ops@example.com" });
+    expect(res).toMatchObject({ publicUrl: "https://hub.example.com", acmeEmail: "ops@example.com" });
+  });
+
+  it("clears publicUrl + acmeEmail when the owner submits empty strings (falsy → null)", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [], publicUrl: "https://old", acmeEmail: "old@x.co" });
+    await ctrl.updateSettings(OWNER, { publicUrl: "", acmeEmail: "" });
+    expect(settings.update).toHaveBeenCalledWith({ publicUrl: null, acmeEmail: null });
   });
 
   it("getUpdate delegates to UpdateService.getStatus", async () => {
