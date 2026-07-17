@@ -1,4 +1,5 @@
 import { Controller, Get, Param } from "@nestjs/common";
+import { ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { TeamsService } from "./teams.service";
 
@@ -7,6 +8,7 @@ import { TeamsService } from "./teams.service";
  * is class-guarded by JwtAuthGuard and there's no per-route bypass. A GET passes the global CSRF /
  * email-verification guards untouched; an explicit throttle caps token probing.
  */
+@ApiTags("invitations")
 @Controller("invitations")
 export class InvitationsController {
   constructor(private readonly teams: TeamsService) {}

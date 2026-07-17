@@ -1,4 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -6,6 +8,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { GitSourcesService } from "./git-sources.service";
 import { CreateGitSourceInput, CreateGitSourceSchema } from "./dto";
 
+@ApiTags("git-sources")
+@ApiCookieAuth("session")
 @Controller("git-sources")
 @UseGuards(JwtAuthGuard)
 export class GitSourcesController {
@@ -17,6 +21,7 @@ export class GitSourcesController {
   }
 
   @Post()
+  @ApiZodBody(CreateGitSourceSchema)
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateGitSourceSchema)) body: CreateGitSourceInput,

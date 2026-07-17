@@ -14,6 +14,8 @@ import {
   type MessageEvent,
 } from "@nestjs/common";
 import { from, interval, map, merge, mergeMap, type Observable } from "rxjs";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 
 interface ReqLike {
   headers: Record<string, string | string[] | undefined>;
@@ -29,7 +31,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { MetricsService } from "../metrics/metrics.service";
 import { MetricsLiveService } from "../metrics/metrics-live.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
-import { ServersService } from "./servers.service";
+import { ServersService, ServerViewSchema } from "./servers.service";
 import {
   CreateServerInput,
   CreateServerSchema,
@@ -49,6 +51,8 @@ function publicUrlFrom(req: ReqLike): string | undefined {
   return `${proto}://${host}`;
 }
 
+@ApiTags("servers")
+@ApiSecurity("pat")
 @Controller("servers")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class ServersController {
@@ -60,6 +64,7 @@ export class ServersController {
   ) {}
 
   @Get()
+  @ApiZodResponse(ServerViewSchema, { isArray: true })
   list(
     @CurrentUser() user: AuthUser,
     @Query("teamId") teamId?: string,
@@ -69,6 +74,7 @@ export class ServersController {
   }
 
   @Get(":id")
+  @ApiZodResponse(ServerViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.servers.getForUser(user.userId, id);
   }
@@ -112,6 +118,7 @@ export class ServersController {
   }
 
   @Post()
+  @ApiZodBody(CreateServerSchema)
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateServerSchema)) body: CreateServerInput,
@@ -137,6 +144,7 @@ export class ServersController {
 
   @Put(":id/tags")
   @HttpCode(200)
+  @ApiZodBody(SetTagsSchema)
   async setTags(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -148,6 +156,7 @@ export class ServersController {
 
   @Put(":id/network")
   @HttpCode(200)
+  @ApiZodBody(NetworkSettingsSchema)
   async setNetwork(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -159,6 +168,7 @@ export class ServersController {
 
   @Put(":id/capabilities")
   @HttpCode(200)
+  @ApiZodBody(SetCapabilitiesSchema)
   async setCapabilities(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

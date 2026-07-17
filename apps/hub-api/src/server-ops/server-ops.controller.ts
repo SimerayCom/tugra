@@ -13,6 +13,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -32,6 +34,8 @@ import {
   UpdateLogDrainSchema,
 } from "./dto";
 
+@ApiTags("servers")
+@ApiSecurity("pat")
 @Controller("servers/:id")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class ServerOpsController {
@@ -83,6 +87,7 @@ export class ServerOpsController {
   }
 
   @Post("log-drains")
+  @ApiZodBody(CreateLogDrainSchema)
   createLogDrain(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -93,6 +98,7 @@ export class ServerOpsController {
 
   @Put("log-drains/:drainId")
   @HttpCode(200)
+  @ApiZodBody(UpdateLogDrainSchema)
   updateLogDrain(
     @CurrentUser() user: AuthUser,
     @Param("drainId") drainId: string,
@@ -145,6 +151,7 @@ export class ServerOpsController {
 
   @Put("cleanup-config")
   @HttpCode(200)
+  @ApiZodBody(CleanupConfigSchema)
   async setConfig(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

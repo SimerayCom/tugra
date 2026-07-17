@@ -1,4 +1,5 @@
 import { Controller, Get } from "@nestjs/common";
+import { ApiTags } from "@nestjs/swagger";
 import { versionInfo } from "@tugra/shared";
 
 /**
@@ -6,6 +7,7 @@ import { versionInfo } from "@tugra/shared";
  * controller here), like HealthController. Returns only non-secret build metadata:
  * `{ version, protocol, channel, commit, edition }`.
  */
+@ApiTags("version")
 @Controller("version")
 export class VersionController {
   @Get()

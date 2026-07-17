@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 import { BackupDestination, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -14,22 +15,23 @@ import { buildDestinationTestScript } from "../backups/backup-script";
 import type { S3Config } from "../backups/destination";
 import type { CreateDestinationInput } from "./dto";
 
-export interface DestinationView {
-  id: string;
-  name: string;
-  type: "LOCAL" | "S3";
-  teamId: string;
-  s3Bucket: string | null;
-  s3Region: string | null;
-  s3Endpoint: string | null;
-  s3Prefix: string | null;
-  encryptionEnabled: boolean;
+export const DestinationViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(["LOCAL", "S3"]),
+  teamId: z.string(),
+  s3Bucket: z.string().nullable(),
+  s3Region: z.string().nullable(),
+  s3Endpoint: z.string().nullable(),
+  s3Prefix: z.string().nullable(),
+  encryptionEnabled: z.boolean(),
   // Secrets (accessKey/secretKey/encryptionKey) are never returned.
-  hasCredentials: boolean;
-  role: Role;
-  canWrite: boolean;
-  createdAt: Date;
-}
+  hasCredentials: z.boolean(),
+  role: z.nativeEnum(Role),
+  canWrite: z.boolean(),
+  createdAt: z.date(),
+});
+export type DestinationView = z.infer<typeof DestinationViewSchema>;
 
 @Injectable()
 export class DestinationsService {

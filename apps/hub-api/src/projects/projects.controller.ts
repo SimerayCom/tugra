@@ -9,12 +9,14 @@ import {
   Put,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { ProjectsService } from "./projects.service";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { ProjectsService, ProjectViewSchema } from "./projects.service";
 import {
   CreateEnvironmentInput,
   CreateEnvironmentSchema,
@@ -24,17 +26,22 @@ import {
   RenameSchema,
 } from "./dto";
 
+@ApiTags("projects")
+@ApiSecurity("pat")
 @Controller("projects")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
 
   @Get()
+  @ApiZodResponse(ProjectViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser) {
     return this.projects.list(user.userId);
   }
 
   @Post()
+  @ApiZodBody(CreateProjectSchema)
+  @ApiZodResponse(ProjectViewSchema, { status: 201 })
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateProjectSchema)) body: CreateProjectInput,
@@ -45,6 +52,7 @@ export class ProjectsController {
   // Static segment before ":id" so it isn't matched as a project id.
   @Put("environments/:envId")
   @HttpCode(200)
+  @ApiZodBody(RenameSchema)
   async renameEnvironment(
     @CurrentUser() user: AuthUser,
     @Param("envId") envId: string,
@@ -62,11 +70,14 @@ export class ProjectsController {
   }
 
   @Get(":id")
+  @ApiZodResponse(ProjectViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.projects.get(user.userId, id);
   }
 
   @Put(":id")
+  @ApiZodBody(RenameSchema)
+  @ApiZodResponse(ProjectViewSchema)
   rename(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -83,6 +94,8 @@ export class ProjectsController {
   }
 
   @Post(":id/environments")
+  @ApiZodBody(CreateEnvironmentSchema)
+  @ApiZodResponse(ProjectViewSchema, { status: 201 })
   addEnvironment(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

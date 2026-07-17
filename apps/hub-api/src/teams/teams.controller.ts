@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { Role } from "@prisma/client";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -33,6 +35,8 @@ import {
   UpdateTeamRoleSchema,
 } from "./dto";
 
+@ApiTags("teams")
+@ApiCookieAuth("session")
 @Controller("teams")
 @UseGuards(JwtAuthGuard)
 export class TeamsController {
@@ -44,6 +48,7 @@ export class TeamsController {
   }
 
   @Post()
+  @ApiZodBody(CreateTeamSchema)
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateTeamSchema)) body: CreateTeamInput,
@@ -78,6 +83,7 @@ export class TeamsController {
 
   @Put(":id")
   @HttpCode(200)
+  @ApiZodBody(RenameTeamSchema)
   async rename(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -100,6 +106,7 @@ export class TeamsController {
   }
 
   @Post(":id/members/invite")
+  @ApiZodBody(InviteSchema)
   invite(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -122,6 +129,7 @@ export class TeamsController {
 
   @Put(":id/members/:userId")
   @HttpCode(200)
+  @ApiZodBody(SetRoleSchema)
   async setRole(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -139,6 +147,7 @@ export class TeamsController {
   }
 
   @Post(":id/roles")
+  @ApiZodBody(TeamRoleSchema)
   createRole(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -148,6 +157,7 @@ export class TeamsController {
   }
 
   @Put(":id/roles/:roleId")
+  @ApiZodBody(UpdateTeamRoleSchema)
   updateRole(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -166,6 +176,7 @@ export class TeamsController {
 
   @Patch(":id/members/:userId/access")
   @HttpCode(200)
+  @ApiZodBody(SetMemberAccessSchema)
   async setMemberAccess(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

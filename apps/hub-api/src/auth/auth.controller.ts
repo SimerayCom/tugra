@@ -10,7 +10,9 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import { ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import {
   CookieResponse,
@@ -54,6 +56,7 @@ interface CookieRequest {
   headers?: { cookie?: string | string[] };
 }
 
+@ApiTags("auth")
 @Controller("auth")
 @AllowUnverified() // every auth self-service route stays reachable for unverified users
 export class AuthController {
@@ -62,6 +65,7 @@ export class AuthController {
   @Post("register")
   @CsrfExempt()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiZodBody(RegisterSchema)
   async register(
     @Body(new ZodValidationPipe(RegisterSchema)) body: RegisterInput,
     @Res({ passthrough: true }) res: CookieResponse,
@@ -77,6 +81,7 @@ export class AuthController {
   @HttpCode(200)
   @CsrfExempt()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiZodBody(LoginSchema)
   async login(
     @Body(new ZodValidationPipe(LoginSchema)) body: LoginInput,
     @Res({ passthrough: true }) res: CookieResponse,
@@ -90,6 +95,7 @@ export class AuthController {
   @HttpCode(200)
   @CsrfExempt()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiZodBody(ForgotPasswordSchema)
   async forgotPassword(@Body(new ZodValidationPipe(ForgotPasswordSchema)) body: ForgotPasswordInput) {
     // Always 200 whether or not the email exists — no account enumeration.
     await this.auth.requestPasswordReset(body.email);
@@ -100,6 +106,7 @@ export class AuthController {
   @HttpCode(200)
   @CsrfExempt()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiZodBody(ResetPasswordSchema)
   async resetPassword(@Body(new ZodValidationPipe(ResetPasswordSchema)) body: ResetPasswordInput) {
     await this.auth.resetPassword(body.token, body.newPassword);
     return { ok: true };
@@ -109,6 +116,7 @@ export class AuthController {
   @HttpCode(200)
   @CsrfExempt()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiZodBody(VerifyEmailSchema)
   async verifyEmail(@Body(new ZodValidationPipe(VerifyEmailSchema)) body: VerifyEmailInput) {
     // Public: the token IS the authorization (clicked from an email, possibly on another device).
     await this.auth.verifyEmail(body.token);
@@ -128,6 +136,7 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiZodBody(RefreshSchema)
   async refresh(
     @Req() req: CookieRequest,
     @Body(new ZodValidationPipe(RefreshSchema)) body: RefreshInput,
@@ -146,6 +155,7 @@ export class AuthController {
 
   @Post("logout")
   @HttpCode(200)
+  @ApiZodBody(RefreshSchema)
   async logout(
     @Req() req: CookieRequest,
     @Body(new ZodValidationPipe(RefreshSchema)) body: RefreshInput,
@@ -175,6 +185,7 @@ export class AuthController {
 
   @Patch("me")
   @UseGuards(JwtAuthGuard)
+  @ApiZodBody(UpdateProfileSchema)
   updateProfile(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateProfileSchema)) body: UpdateProfileInput,
@@ -186,6 +197,7 @@ export class AuthController {
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiZodBody(ChangePasswordSchema)
   async changePassword(
     @CurrentUser() user: AuthUser,
     @Req() req: CookieRequest,
@@ -211,6 +223,7 @@ export class AuthController {
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiZodBody(Enable2faSchema)
   async enable2fa(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(Enable2faSchema)) body: Enable2faInput,
@@ -223,6 +236,7 @@ export class AuthController {
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiZodBody(TwoFaSudoSchema)
   async disable2fa(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(TwoFaSudoSchema)) body: TwoFaSudoInput,
@@ -235,6 +249,7 @@ export class AuthController {
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiZodBody(TwoFaSudoSchema)
   async regenerateRecoveryCodes(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(TwoFaSudoSchema)) body: TwoFaSudoInput,

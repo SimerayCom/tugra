@@ -1,9 +1,12 @@
 import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { AuditService } from "./audit.service";
 
+@ApiTags("audit")
+@ApiCookieAuth("session")
 @Controller("audit")
 @UseGuards(JwtAuthGuard)
 export class AuditController {

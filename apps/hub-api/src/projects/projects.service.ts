@@ -4,44 +4,48 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { z } from "zod";
 import { Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessProject } from "../common/team-access.service";
 import { appUrl } from "../common/app-url";
 
-export interface ProjectResource {
-  id: string;
-  name: string;
-  kind: "app" | "database";
-  source: string | null; // app source (IMAGE/GIT/COMPOSE); null for databases
-  status: string;
-  url: string | null;
-  serverName: string | null;
-  tags: string[];
-  engine: string | null;
-}
+export const ProjectResourceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(["app", "database"]),
+  source: z.string().nullable(), // app source (IMAGE/GIT/COMPOSE); null for databases
+  status: z.string(),
+  url: z.string().nullable(),
+  serverName: z.string().nullable(),
+  tags: z.array(z.string()),
+  engine: z.string().nullable(),
+});
+export type ProjectResource = z.infer<typeof ProjectResourceSchema>;
 
-export interface EnvironmentView {
-  id: string;
-  name: string;
-  isDefault: boolean;
-  appCount: number;
-  dbCount: number;
-  resources?: ProjectResource[];
-  createdAt: Date;
-}
+export const EnvironmentViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  isDefault: z.boolean(),
+  appCount: z.number(),
+  dbCount: z.number(),
+  resources: z.array(ProjectResourceSchema).optional(),
+  createdAt: z.date(),
+});
+export type EnvironmentView = z.infer<typeof EnvironmentViewSchema>;
 
-export interface ProjectView {
-  id: string;
-  teamId: string;
-  name: string;
-  isDefault: boolean;
-  environments: EnvironmentView[];
-  role: Role;
-  canWrite: boolean;
-  createdAt: Date;
-}
+export const ProjectViewSchema = z.object({
+  id: z.string(),
+  teamId: z.string(),
+  name: z.string(),
+  isDefault: z.boolean(),
+  environments: z.array(EnvironmentViewSchema),
+  role: z.nativeEnum(Role),
+  canWrite: z.boolean(),
+  createdAt: z.date(),
+});
+export type ProjectView = z.infer<typeof ProjectViewSchema>;
 
 @Injectable()
 export class ProjectsService {

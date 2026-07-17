@@ -6,6 +6,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { z } from "zod";
 import { Backup, Database, RestoreKind, RestoreStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -22,26 +23,28 @@ import type { BackupConfigInput, ImportFromUrlInput } from "./dto";
 
 const RESTORE_TIMEOUT_MS = 300_000;
 
-export interface BackupView {
-  id: string;
-  status: string;
-  filename: string;
-  sizeBytes: string | null; // BigInt serialized
-  createdBy: string;
-  createdAt: Date;
-  completedAt: Date | null;
-}
+export const BackupViewSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  filename: z.string(),
+  sizeBytes: z.string().nullable(), // BigInt serialized
+  createdBy: z.string(),
+  createdAt: z.date(),
+  completedAt: z.date().nullable(),
+});
+export type BackupView = z.infer<typeof BackupViewSchema>;
 
-export interface RestoreView {
-  id: string;
-  kind: RestoreKind;
-  status: RestoreStatus;
-  exitCode: number | null;
-  errorTail: string | null; // writer-only (may hold command error output)
-  backupId: string | null;
-  createdAt: Date;
-  completedAt: Date | null;
-}
+export const RestoreViewSchema = z.object({
+  id: z.string(),
+  kind: z.nativeEnum(RestoreKind),
+  status: z.nativeEnum(RestoreStatus),
+  exitCode: z.number().nullable(),
+  errorTail: z.string().nullable(), // writer-only (may hold command error output)
+  backupId: z.string().nullable(),
+  createdAt: z.date(),
+  completedAt: z.date().nullable(),
+});
+export type RestoreView = z.infer<typeof RestoreViewSchema>;
 
 @Injectable()
 export class BackupsService {

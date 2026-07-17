@@ -10,6 +10,8 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -18,7 +20,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { DatabasesService } from "./databases.service";
+import { DatabasesService, DatabaseViewSchema } from "./databases.service";
 import {
   CreateDatabaseInput,
   CreateDatabaseSchema,
@@ -32,6 +34,8 @@ import {
   SetEnvironmentSchema,
 } from "./dto";
 
+@ApiTags("databases")
+@ApiSecurity("pat")
 @Controller("databases")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 @UseInterceptors(new RedactSecretsInterceptor(["password", "connectionUri", "username", "internalHost"]))
@@ -39,11 +43,14 @@ export class DatabasesController {
   constructor(private readonly databases: DatabasesService) {}
 
   @Get()
+  @ApiZodResponse(DatabaseViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser) {
     return this.databases.list(user.userId);
   }
 
   @Post()
+  @ApiZodBody(CreateDatabaseSchema)
+  @ApiZodResponse(DatabaseViewSchema, { status: 201 })
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateDatabaseSchema)) body: CreateDatabaseInput,
@@ -52,6 +59,7 @@ export class DatabasesController {
   }
 
   @Get(":id")
+  @ApiZodResponse(DatabaseViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.databases.get(user.userId, id);
   }
@@ -59,6 +67,7 @@ export class DatabasesController {
   @Post(":id/provision")
   @RequireScopes("deploy")
   @HttpCode(200)
+  @ApiZodResponse(DatabaseViewSchema)
   provision(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.databases.provision(user.userId, id);
   }
@@ -73,6 +82,7 @@ export class DatabasesController {
 
   @Put(":id/environment")
   @HttpCode(200)
+  @ApiZodBody(SetEnvironmentSchema)
   async setEnvironment(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -84,6 +94,7 @@ export class DatabasesController {
 
   @Put(":id/tags")
   @HttpCode(200)
+  @ApiZodBody(SetTagsSchema)
   async setTags(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -95,6 +106,7 @@ export class DatabasesController {
 
   @Put(":id/limits")
   @HttpCode(200)
+  @ApiZodBody(SetDatabaseLimitsSchema)
   async setLimits(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -106,6 +118,7 @@ export class DatabasesController {
 
   @Put(":id/name")
   @HttpCode(200)
+  @ApiZodBody(RenameSchema)
   async rename(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -117,6 +130,7 @@ export class DatabasesController {
 
   @Put(":id/port")
   @HttpCode(200)
+  @ApiZodBody(SetDatabasePortSchema)
   async setPort(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
+import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -14,6 +16,8 @@ import { UpdateInstanceSettingsInput, UpdateInstanceSettingsSchema } from "./dto
  * token management. Being session-only means a PAT can't reach it AND it isn't subject to the API gating it
  * configures, so an owner can never lock themselves out (the web always works to re-enable the API).
  */
+@ApiTags("instance")
+@ApiCookieAuth("session")
 @Controller("instance")
 @UseGuards(JwtAuthGuard, InstanceOwnerGuard)
 export class InstanceSettingsController {
@@ -31,6 +35,7 @@ export class InstanceSettingsController {
   }
 
   @Patch("settings")
+  @ApiZodBody(UpdateInstanceSettingsSchema)
   async updateSettings(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateInstanceSettingsSchema)) body: UpdateInstanceSettingsInput,

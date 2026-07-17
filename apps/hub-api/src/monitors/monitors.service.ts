@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { z } from "zod";
 import { Monitor, MonitorStatus, MonitorType, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -14,28 +15,29 @@ import { uptimePercent } from "./transition";
 import { planTargets } from "../bulk/bulk.service";
 import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
-export interface MonitorView {
-  id: string;
-  name: string;
-  type: MonitorType;
-  target: string;
-  serverId: string | null;
-  metric: string | null;
-  thresholdPct: number | null;
-  status: MonitorStatus;
-  intervalSec: number;
-  retries: number;
-  timeoutMs: number;
-  resendEvery: number;
-  enabled: boolean;
-  auto: boolean;
-  appId: string | null;
-  channelIds: string[];
-  teamId: string;
-  role: Role;
-  canWrite: boolean;
-  createdAt: Date;
-}
+export const MonitorViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.nativeEnum(MonitorType),
+  target: z.string(),
+  serverId: z.string().nullable(),
+  metric: z.string().nullable(),
+  thresholdPct: z.number().nullable(),
+  status: z.nativeEnum(MonitorStatus),
+  intervalSec: z.number(),
+  retries: z.number(),
+  timeoutMs: z.number(),
+  resendEvery: z.number(),
+  enabled: z.boolean(),
+  auto: z.boolean(),
+  appId: z.string().nullable(),
+  channelIds: z.array(z.string()),
+  teamId: z.string(),
+  role: z.nativeEnum(Role),
+  canWrite: z.boolean(),
+  createdAt: z.date(),
+});
+export type MonitorView = z.infer<typeof MonitorViewSchema>;
 
 @Injectable()
 export class MonitorsService {
