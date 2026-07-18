@@ -95,6 +95,17 @@ export function canonicalLogStart(
 ): string {
   return `logs\n${streamId}\n${target}\n${tail}\n${follow ? "1" : "0"}\n${since}\n${search}\n${capability}`;
 }
+/** Signed payload for a self-update command: the agent pulls `image` pinned to `sha256` and recreates
+ *  itself. `capability` last binds the grant into the signature (anti-relabel), mirroring the others. */
+export function canonicalAgentUpdate(
+  reqId: string,
+  targetVersion: string,
+  image: string,
+  sha256: string,
+  capability: string,
+): string {
+  return `aupd\n${reqId}\n${targetVersion}\n${image}\n${sha256}\n${capability}`;
+}
 
 /** What a command is for — the agent can locally allowlist these. */
 export type AgentCapability =
@@ -176,6 +187,9 @@ export interface AuthMsg {
   protocol: number;
   serverId: string;
   signature: string; // base64(ed25519 signature over the challenge nonce)
+  /** The reconnecting agent's version — refreshes the stored value (e.g. after a self-update). Optional
+   *  for back-compat with older agents that don't send it. */
+  agentVersion?: string;
 }
 
 /** Periodic host metrics. */
@@ -365,6 +379,31 @@ export interface CapabilitiesMsg {
   capabilities: AgentCapability[];
 }
 
+/** Hub -> Agent: update yourself. The agent pulls `image` pinned to `sha256` (the per-arch image-manifest
+ *  digest from the signed release manifest — Docker enforces it), then recreates its own container on the
+ *  new image. `image`/`targetVersion`/`sha256` come ONLY from the hub's verified manifest, never a caller. */
+export interface AgentUpdateMsg {
+  type: "agent_update";
+  reqId: string;
+  targetVersion: string;
+  image: string; // full ref, e.g. ghcr.io/mrcandev/tugra-agent:0.2.0
+  sha256: string; // per-arch image-manifest digest (bare lowercase hex)
+  capability?: AgentCapability;
+  /** base64(ed25519 signature over canonicalAgentUpdate) — agent rejects if invalid. */
+  sig?: string;
+}
+
+/** Agent -> Hub: a pre-handoff self-update outcome. Success is signalled IMPLICITLY by the recreated
+ *  agent reconnecting with a new agentVersion; this only reports early failures (validate/pull/helper). */
+export interface AgentUpdateResultMsg {
+  type: "agent_update_result";
+  reqId: string;
+  targetVersion: string;
+  ok: boolean;
+  phase: string; // "noop" | "pull" | "helper" | "applying" | "validate"
+  error?: string;
+}
+
 export type AgentMessage =
   | EnrollMsg
   | AuthMsg
@@ -374,6 +413,7 @@ export type AgentMessage =
   | HostInfoMsg
   | CommandLogMsg
   | CommandResultMsg
+  | AgentUpdateResultMsg
   | TermOutputMsg
   | TermExitMsg
   | LogChunkMsg
@@ -384,6 +424,7 @@ export type HubMessage =
   | AuthOkMsg
   | ErrorMsg
   | CommandMsg
+  | AgentUpdateMsg
   | TermStartMsg
   | TermInputMsg
   | TermResizeMsg

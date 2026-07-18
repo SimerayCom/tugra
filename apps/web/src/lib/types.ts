@@ -141,6 +141,7 @@ export interface ServerView {
   osVersion: string | null;
   arch: string | null;
   kernel: string | null;
+  agentVersion: string | null;
   cpuCores: number | null;
   memTotalBytes: string | null;
   uptimeSeconds: number | null;

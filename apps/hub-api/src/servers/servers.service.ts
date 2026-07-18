@@ -55,6 +55,7 @@ export const ServerViewSchema = z.object({
   osVersion: z.string().nullable(),
   arch: z.string().nullable(),
   kernel: z.string().nullable(),
+  agentVersion: z.string().nullable(), // the running agent's reported version (refreshed on reconnect)
   cpuCores: z.number().nullable(),
   memTotalBytes: z.string().nullable(), // BigInt serialized
   uptimeSeconds: z.number().nullable(), // derived from bootTime
@@ -417,15 +418,20 @@ export class ServersService {
     nonce: string,
     signature: string,
     observedIp?: string | null,
+    agentVersion?: string,
   ): Promise<boolean> {
     const server = await this.prisma.server.findUnique({
       where: { id: serverId },
     });
     if (!server?.agentPublicKey) return false;
     if (!verifyEd25519(server.agentPublicKey, nonce, signature)) return false;
-    // Refresh online status + the observed IP in one write (reconnect may bring a
-    // new address — a dynamic IP is tracked on every auth).
-    await this.markOnline(serverId, this.ipFields(observedIp, server.ipSource));
+    // Refresh online status + the observed IP in one write (reconnect may bring a new address — a dynamic
+    // IP is tracked on every auth). Also refresh agentVersion when the agent reports one (only on enroll
+    // before this): a self-updated agent reconnects via auth, so this is how the new version becomes
+    // visible. Store verbatim; never blank an existing value from an older agent that omits it.
+    const extra = this.ipFields(observedIp, server.ipSource);
+    if (agentVersion) extra.agentVersion = agentVersion;
+    await this.markOnline(serverId, extra);
     return true;
   }
 
@@ -529,6 +535,7 @@ export class ServersService {
       osVersion?: string | null;
       arch?: string | null;
       kernel?: string | null;
+      agentVersion?: string | null;
       cpuCores?: number | null;
       memTotalBytes?: bigint | null;
       bootTime?: Date | null;
@@ -563,6 +570,7 @@ export class ServersService {
       osVersion: s.osVersion ?? null,
       arch: s.arch ?? null,
       kernel: s.kernel ?? null,
+      agentVersion: s.agentVersion ?? null,
       cpuCores: s.cpuCores ?? null,
       memTotalBytes: s.memTotalBytes != null ? s.memTotalBytes.toString() : null,
       uptimeSeconds: s.bootTime

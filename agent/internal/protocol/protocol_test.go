@@ -21,6 +21,10 @@ func TestCanonicalStrings(t *testing.T) {
 	if got := CanonicalLogStart("st1", "c", 50, false, "", "", "logs"); got != "logs\nst1\nc\n50\n0\n\n\nlogs" {
 		t.Fatalf("CanonicalLogStart(no-follow) mismatch: %q", got)
 	}
+	// Must be byte-identical to @tugra/shared canonicalAgentUpdate (any drift → every update rejected).
+	if got := CanonicalAgentUpdate("r1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "deadbeef", "deploy"); got != "aupd\nr1\n0.2.0\nghcr.io/mrcandev/tugra-agent:0.2.0\ndeadbeef\ndeploy" {
+		t.Fatalf("CanonicalAgentUpdate mismatch: %q", got)
+	}
 }
 
 func hubKeyB64(t *testing.T, pub ed25519.PublicKey) string {
@@ -62,5 +66,18 @@ func TestVerifySigRoundTripAndTamper(t *testing.T) {
 	}
 	if VerifySig(nil, canonical, sig) {
 		t.Fatal("nil key verified (fail-closed expected)")
+	}
+
+	// agent_update: the signed image/version/sha256 must be bound — tampering any field must not verify.
+	au := CanonicalAgentUpdate("u1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "abc123", "deploy")
+	auSig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte(au)))
+	if !VerifySig(parsed, au, auSig) {
+		t.Fatal("expected valid agent_update signature to verify")
+	}
+	if VerifySig(parsed, CanonicalAgentUpdate("u1", "0.2.0", "ghcr.io/evil/agent:0.2.0", "abc123", "deploy"), auSig) {
+		t.Fatal("tampered image verified — image not bound to signature")
+	}
+	if VerifySig(parsed, CanonicalAgentUpdate("u1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "deadbeef", "deploy"), auSig) {
+		t.Fatal("tampered sha256 verified — digest not bound to signature")
 	}
 }

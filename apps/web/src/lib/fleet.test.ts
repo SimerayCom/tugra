@@ -26,6 +26,7 @@ const s = (
   osVersion: null,
   arch: null,
   kernel: null,
+  agentVersion: null,
   cpuCores: null,
   memTotalBytes: null,
   uptimeSeconds: null,

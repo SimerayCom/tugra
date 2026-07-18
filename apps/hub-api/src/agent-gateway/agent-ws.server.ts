@@ -14,7 +14,7 @@ import type {
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart, canonicalLogStart } from "@tugra/shared";
+import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 
 /** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
@@ -176,6 +176,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             st.nonce,
             msg.signature,
             st.remoteIp,
+            msg.agentVersion,
           );
           if (!ok) return this.fail(socket, "auth failed");
           st.serverId = msg.serverId;
@@ -235,6 +236,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             this.pending.delete(msg.reqId);
             this.chunkListeners.delete(msg.reqId);
             p.resolve({ exitCode: msg.exitCode, output: msg.output });
+          }
+          return;
+        }
+        case "agent_update_result": {
+          // Pre-handoff self-update outcome (best-effort log). Success is observed via the reconnect's
+          // refreshed agentVersion, not here — so we only surface early failures for diagnostics.
+          if (!msg.ok) {
+            this.logger.warn(
+              `agent ${st.serverId} self-update to ${msg.targetVersion} failed at ${msg.phase}: ${msg.error ?? ""}`,
+            );
           }
           return;
         }
@@ -315,8 +326,36 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.capability as string,
         ),
       );
+    } else if (msg.type === "agent_update") {
+      msg.sig = this.hubSign.sign(
+        canonicalAgentUpdate(
+          msg.reqId as string,
+          msg.targetVersion as string,
+          msg.image as string,
+          msg.sha256 as string,
+          msg.capability as string,
+        ),
+      );
     }
     return msg;
+  }
+
+  /**
+   * Fire-and-forget a signed self-update to a connected agent. Fail-closed on the "deploy" capability
+   * (sendToAgent itself does NOT gate). Result is NOT awaited — the agent recreates its container and the
+   * new version becomes visible when it reconnects via auth (see ServersService.authenticate). The
+   * targetVersion/image/sha256 must come ONLY from the hub's verified manifest, never a caller.
+   */
+  async sendAgentUpdate(serverId: string, targetVersion: string, image: string, sha256: string): Promise<boolean> {
+    if (!(await this.isCapabilityGranted(serverId, "deploy"))) return false;
+    return this.sendToAgent(serverId, {
+      type: "agent_update",
+      reqId: randomUUID(),
+      targetVersion,
+      image,
+      sha256,
+      capability: "deploy",
+    });
   }
 
   // ── Live container-log follow ──

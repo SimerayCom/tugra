@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, canonicalLogStart } from "./index";
+import { PROTOCOL_VERSION, canonicalLogStart, canonicalAgentUpdate } from "./index";
 import type {
   MetricsSample,
   EnrollMsg,
@@ -8,6 +8,8 @@ import type {
   LogStartMsg,
   LogChunkMsg,
   AgentCapability,
+  AgentUpdateMsg,
+  AgentUpdateResultMsg,
 } from "./index";
 
 describe("shared protocol", () => {
@@ -52,6 +54,31 @@ describe("shared protocol", () => {
     );
     // empty since/search still occupy their delimited slots
     expect(canonicalLogStart("sid1", "c", 50, false, "", "", "logs")).toBe("logs\nsid1\nc\n50\n0\n\n\nlogs");
+  });
+
+  it("builds a byte-stable canonicalAgentUpdate (must match the Go agent's CanonicalAgentUpdate)", () => {
+    // Any drift from the Go builder → every signed agent_update is rejected. Keep this fixture identical
+    // to protocol_test.go's CanonicalAgentUpdate assertion.
+    expect(canonicalAgentUpdate("r1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "deadbeef", "deploy")).toBe(
+      "aupd\nr1\n0.2.0\nghcr.io/mrcandev/tugra-agent:0.2.0\ndeadbeef\ndeploy",
+    );
+  });
+
+  it("shapes the agent_update messages + unions (additive, no version bump)", () => {
+    const up: AgentUpdateMsg = {
+      type: "agent_update",
+      reqId: "r1",
+      targetVersion: "0.2.0",
+      image: "ghcr.io/mrcandev/tugra-agent:0.2.0",
+      sha256: "deadbeef",
+      capability: "deploy",
+      sig: "SIG",
+    };
+    const res: AgentUpdateResultMsg = { type: "agent_update_result", reqId: "r1", targetVersion: "0.2.0", ok: false, phase: "pull", error: "boom" };
+    const hub: HubMessage = up;
+    const agent: AgentMessage = res;
+    expect(hub.type).toBe("agent_update");
+    expect(agent.type).toBe("agent_update_result");
   });
 
   it("shapes the live-log messages and unions (additive, no version bump)", () => {
