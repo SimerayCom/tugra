@@ -11,7 +11,7 @@ Self-hostable platform to deploy, monitor, back up & orchestrate your servers �
 [![Release](https://img.shields.io/github/v/release/mrcandev/tugra?sort=semver&label=release)](https://github.com/mrcandev/tugra/releases)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-[Website](https://tugra.io) · [Docs](https://tugra.io/docs) · [Releasing](docs/RELEASING.md) · [Roadmap](#roadmap)
+[Website](https://tugra.io) · [Docs](docs/README.md) · [Releasing](docs/RELEASING.md) · [Roadmap](#roadmap)
 
 </div>
 
@@ -94,11 +94,12 @@ Live logs, metrics and the terminal stream over WebSockets.
 - [x] Uptime monitoring (HTTP/TCP/metric) + notification channels
 - [x] Scheduled tasks (cron) · rollbacks · resource limits & health checks
 - [x] Projects / environments · teams, roles & invites · tags · shared variables
+- [x] Public API (OpenAPI) + CLI (`tugra`)
+- [x] Server patching (OS package updates)
+- [x] Self-update (signed releases) + guided onboarding
 
 **Next**
 
-- [ ] Public API + CLI
-- [ ] Server patching (semi-automatic OS package updates)
 - [ ] App store (Home mode)
 - [ ] Mobile app
 - [ ] Migrator (import from Coolify / Dokploy)
