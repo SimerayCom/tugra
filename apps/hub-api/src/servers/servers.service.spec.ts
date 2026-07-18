@@ -1,4 +1,6 @@
 import { Role, ServerStatus } from "@prisma/client";
+// Signature verification is exercised elsewhere; here we drive the auth branch deterministically.
+jest.mock("./agent-auth", () => ({ ...jest.requireActual("./agent-auth"), verifyEd25519: jest.fn(() => true) }));
 import { ServersService } from "./servers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -256,6 +258,33 @@ describe("ServersService.markOnline (server_online recovery edge)", () => {
     const { prisma } = withPrev(ServerStatus.PENDING);
     await svcWith(prisma).markOnline("s1");
     expect(notifications.fireForEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServersService.authenticate (agentVersion refresh on reconnect)", () => {
+  const authPrisma = () => {
+    const update = jest.fn().mockResolvedValue({ id: "s1", teamId: "t", name: "n", hostname: null, publicIp: null });
+    const findUnique = jest
+      .fn()
+      .mockResolvedValueOnce({ id: "s1", agentPublicKey: "k", ipSource: "observed" }) // authenticate's read
+      .mockResolvedValue({ status: ServerStatus.ONLINE }); // markOnline's prev-status read
+    return { prisma: { server: { findUnique, update } } as unknown as PrismaService, update };
+  };
+
+  it("writes the reported agentVersion into the reconnect update", async () => {
+    const { prisma, update } = authPrisma();
+    const ok = await svcWith(prisma).authenticate("s1", "nonce", "sig", "1.2.3.4", "0.2.0");
+    expect(ok).toBe(true);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "s1" }, data: expect.objectContaining({ agentVersion: "0.2.0" }) }),
+    );
+  });
+
+  it("does NOT blank agentVersion when the agent omits it (older agent)", async () => {
+    const { prisma, update } = authPrisma();
+    await svcWith(prisma).authenticate("s1", "nonce", "sig", null);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0].data).not.toHaveProperty("agentVersion");
   });
 });
 

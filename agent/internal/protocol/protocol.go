@@ -41,6 +41,8 @@ type Auth struct {
 	Protocol  int    `json:"protocol"`
 	ServerID  string `json:"serverId"`
 	Signature string `json:"signature"`
+	// AgentVersion refreshes the hub's stored version on reconnect (e.g. after a self-update).
+	AgentVersion string `json:"agentVersion,omitempty"`
 }
 
 type Metrics struct {
@@ -134,6 +136,17 @@ type LogExit struct {
 	ExitCode int    `json:"exitCode"`
 }
 
+// AgentUpdateResult: Agent -> Hub, a pre-handoff self-update outcome. Success is signalled implicitly by
+// the recreated agent reconnecting with a new agentVersion; this only reports early failures.
+type AgentUpdateResult struct {
+	Type          string `json:"type"`
+	ReqID         string `json:"reqId"`
+	TargetVersion string `json:"targetVersion"`
+	OK            bool   `json:"ok"`
+	Phase         string `json:"phase"`
+	Error         string `json:"error,omitempty"`
+}
+
 // Hub -> Agent (one struct covers all; unused fields stay empty)
 type ServerMsg struct {
 	Type      string `json:"type"`
@@ -165,6 +178,10 @@ type ServerMsg struct {
 	Capabilities []string `json:"capabilities"`
 	// Log drains (type "log_drains"): forward container logs to these sinks.
 	Drains []DrainCfg `json:"drains"`
+	// Self-update (type "agent_update"): pull Image pinned to Sha256, recreate onto TargetVersion.
+	TargetVersion string `json:"targetVersion"`
+	Image         string `json:"image"`
+	Sha256        string `json:"sha256"`
 }
 
 // DrainCfg is one external log sink (HTTP endpoint + optional bearer token).
@@ -191,6 +208,11 @@ func CanonicalLogStart(streamID, target string, tail int, follow bool, since, se
 		f = "1"
 	}
 	return "logs\n" + streamID + "\n" + target + "\n" + strconv.Itoa(tail) + "\n" + f + "\n" + since + "\n" + search + "\n" + capability
+}
+
+// CanonicalAgentUpdate mirrors @tugra/shared canonicalAgentUpdate (byte-identical input).
+func CanonicalAgentUpdate(reqID, targetVersion, image, sha256, capability string) string {
+	return "aupd\n" + reqID + "\n" + targetVersion + "\n" + image + "\n" + sha256 + "\n" + capability
 }
 
 // ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).

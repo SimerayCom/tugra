@@ -133,6 +133,38 @@ describe("AgentWsServer terminal relay", () => {
     expect(server.isOnline("s1")).toBe(true);
     expect(server.isOnline("ghost")).toBe(false);
   });
+
+  describe("sendAgentUpdate", () => {
+    it("signs + sends an agent_update when the deploy capability is granted", async () => {
+      const { server, lastSent } = harness();
+      const ok = await server.sendAgentUpdate("s1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "abc123");
+      expect(ok).toBe(true);
+      const sent = lastSent();
+      expect(sent.type).toBe("agent_update");
+      expect(sent).toMatchObject({
+        targetVersion: "0.2.0",
+        image: "ghcr.io/mrcandev/tugra-agent:0.2.0",
+        sha256: "abc123",
+        capability: "deploy",
+        sig: "SIG", // signOutbound stamped the hub signature over canonicalAgentUpdate
+      });
+      expect(typeof sent.reqId).toBe("string");
+    });
+
+    it("returns false (no send) when the deploy capability is not granted (fail-closed)", async () => {
+      const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["logs"]) } as any;
+      const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign);
+      const socket = { readyState: 1, send: jest.fn() } as any;
+      (server as any).sockets.set("s1", socket);
+      expect(await server.sendAgentUpdate("s1", "0.2.0", "img", "sha")).toBe(false);
+      expect(socket.send).not.toHaveBeenCalled();
+    });
+
+    it("returns false when the agent is offline", async () => {
+      const { server } = harness();
+      expect(await server.sendAgentUpdate("ghost", "0.2.0", "img", "sha")).toBe(false);
+    });
+  });
 });
 
 describe("AgentWsServer live container-log streams", () => {

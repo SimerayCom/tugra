@@ -21,6 +21,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   osVersion: null,
   arch: null,
   kernel: null,
+  agentVersion: null,
   cpuCores: null,
   memTotalBytes: null,
   uptimeSeconds: null,

@@ -78,6 +78,7 @@
   "os": "OS",
   "arch": "Architecture",
   "kernel": "Kernel",
+  "agentVersion": "Agent version",
   "cpuCores": "CPU cores",
   "ramTotal": "Total RAM",
   "uptime": "Uptime",

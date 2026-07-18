@@ -132,11 +132,12 @@ export default function ServerDetailPage() {
             <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
             <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
           </Card>
-          {(server.os || server.arch || server.cpuCores) && (
+          {(server.os || server.arch || server.cpuCores || server.agentVersion) && (
             <Card style={{ padding: 16, display: "flex", gap: 28, flexWrap: "wrap" }}>
               <Info label={t("servers.os")} value={server.os ? `${server.os} ${server.osVersion ?? ""}`.trim() : "—"} />
               <Info label={t("servers.arch")} value={server.arch ?? "—"} />
               <Info label={t("servers.kernel")} value={server.kernel ?? "—"} />
+              <Info label={t("servers.agentVersion")} value={server.agentVersion ?? "—"} />
               <Info label={t("servers.cpuCores")} value={server.cpuCores != null ? String(server.cpuCores) : "—"} />
               <Info label={t("servers.ramTotal")} value={fmtBytesStr(server.memTotalBytes)} />
               <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />

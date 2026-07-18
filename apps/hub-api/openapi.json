@@ -1090,6 +1090,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "agentVersion": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "cpuCores": {
                         "type": "number",
                         "nullable": true
@@ -1165,6 +1169,7 @@
                       "osVersion",
                       "arch",
                       "kernel",
+                      "agentVersion",
                       "cpuCores",
                       "memTotalBytes",
                       "uptimeSeconds",
@@ -1329,6 +1334,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "agentVersion": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "cpuCores": {
                       "type": "number",
                       "nullable": true
@@ -1404,6 +1413,7 @@
                     "osVersion",
                     "arch",
                     "kernel",
+                    "agentVersion",
                     "cpuCores",
                     "memTotalBytes",
                     "uptimeSeconds",
@@ -3031,6 +3041,206 @@
         ],
         "tags": [
           "bulk"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/agent-update": {
+      "post": {
+        "operationId": "AgentUpdateController_updateOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "unconfigured",
+                        "error"
+                      ]
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "sent": {
+                      "type": "number"
+                    },
+                    "offline": {
+                      "type": "number"
+                    },
+                    "skipped": {
+                      "type": "number"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "sent",
+                              "offline",
+                              "skipped"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "total",
+                    "sent",
+                    "offline",
+                    "skipped",
+                    "results"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "agent-update"
+        ]
+      }
+    },
+    "/api/v1/fleet/agent-update": {
+      "post": {
+        "operationId": "AgentUpdateController_updateFleet",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "serverIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "unconfigured",
+                        "error"
+                      ]
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "sent": {
+                      "type": "number"
+                    },
+                    "offline": {
+                      "type": "number"
+                    },
+                    "skipped": {
+                      "type": "number"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "sent",
+                              "offline",
+                              "skipped"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "total",
+                    "sent",
+                    "offline",
+                    "skipped",
+                    "results"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "agent-update"
         ]
       }
     },

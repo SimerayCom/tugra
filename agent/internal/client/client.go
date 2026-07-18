@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -21,6 +22,7 @@ import (
 	"github.com/mrcandev/tugra/agent/internal/logs"
 	"github.com/mrcandev/tugra/agent/internal/metrics"
 	"github.com/mrcandev/tugra/agent/internal/protocol"
+	"github.com/mrcandev/tugra/agent/internal/selfupdate"
 	"github.com/mrcandev/tugra/agent/internal/terminal"
 )
 
@@ -58,10 +60,11 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 
 	if store.ServerID != "" {
 		if err := send(protocol.Auth{
-			Type:      "auth",
-			Protocol:  protocol.Version,
-			ServerID:  store.ServerID,
-			Signature: kp.SignBase64(challenge.Nonce),
+			Type:         "auth",
+			Protocol:     protocol.Version,
+			ServerID:     store.ServerID,
+			Signature:    kp.SignBase64(challenge.Nonce),
+			AgentVersion: cfg.Version, // refresh the hub's stored version on reconnect (e.g. after self-update)
 		}); err != nil {
 			return err
 		}
@@ -135,6 +138,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	sessions := map[string]*terminal.Session{}
 	logStreams := map[string]*logs.Session{}
 	var sessMu sync.Mutex
+	var updating atomic.Bool // single-flight: ignore duplicate agent_update messages once one is in flight
 	go func() {
 		// On disconnect, tear down every live terminal + log stream (no zombie shells / `docker logs -f`).
 		defer func() {
@@ -277,6 +281,42 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 			case "capabilities":
 				// Hub pushed an updated granted set → refresh the fail-closed allowlist live.
 				cs.set(m.Capabilities)
+			case "agent_update":
+				// Same fail-closed order as command: verify the hub signature, then the capability.
+				if !protocol.VerifySig(hubPub, protocol.CanonicalAgentUpdate(m.ReqID, m.TargetVersion, m.Image, m.Sha256, m.Capability), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected agent_update: invalid or missing hub signature")
+					continue
+				}
+				if !cs.allows(m.Capability) {
+					fmt.Fprintln(os.Stderr, "rejected agent_update: capability not allowed:", m.Capability)
+					continue
+				}
+				apply, noop := selfupdate.ShouldApply(cfg.Version, m.TargetVersion)
+				if noop {
+					_ = send(protocol.AgentUpdateResult{Type: "agent_update_result", ReqID: m.ReqID, TargetVersion: m.TargetVersion, OK: true, Phase: "noop"})
+					continue
+				}
+				if !apply {
+					_ = send(protocol.AgentUpdateResult{Type: "agent_update_result", ReqID: m.ReqID, TargetVersion: m.TargetVersion, OK: false, Phase: "noop", Error: "target not newer than current"})
+					continue
+				}
+				if !updating.CompareAndSwap(false, true) {
+					continue // an update is already in flight
+				}
+				go func(reqID, targetVersion, image, sha256 string) {
+					handedOff := false
+					selfupdate.Apply(ctx, cfg.HubURL, image, sha256, func(ok bool, phase, errMsg string) {
+						if ok && phase == "applying" {
+							handedOff = true // helper launched; we'll be recreated shortly
+						}
+						_ = send(protocol.AgentUpdateResult{
+							Type: "agent_update_result", ReqID: reqID, TargetVersion: targetVersion, OK: ok, Phase: phase, Error: errMsg,
+						})
+					})
+					if !handedOff {
+						updating.Store(false) // failed before handoff → allow a future retry
+					}
+				}(m.ReqID, m.TargetVersion, m.Image, m.Sha256)
 			}
 		}
 	}()
