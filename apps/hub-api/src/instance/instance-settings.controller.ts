@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -9,7 +9,12 @@ import { AuditService } from "../audit/audit.service";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { InstanceOwnerGuard } from "./instance-owner.guard";
 import { currentEdition } from "../common/edition";
-import { UpdateInstanceSettingsInput, UpdateInstanceSettingsSchema } from "./dto";
+import {
+  UpdateInstanceSettingsInput,
+  UpdateInstanceSettingsSchema,
+  UpdateInstanceUpdateInput,
+  UpdateInstanceUpdateSchema,
+} from "./dto";
 import { UpdateService } from "../update/update.service";
 import { UpdateStatusViewSchema } from "../update/dto";
 
@@ -38,6 +43,36 @@ export class InstanceSettingsController {
   @Get("update")
   @ApiZodResponse(UpdateStatusViewSchema)
   async getUpdate() {
+    return this.update.getStatus();
+  }
+
+  /**
+   * Set the self-update preferences (channel + auto-update). Fast — it does NOT fetch the remote manifest
+   * (that could hang the request), so after changing the channel the caller should trigger a check
+   * (POST update/check) to refresh the cached "latest" for the new channel. autoUpdate is recorded but the
+   * apply step lives in a later slice.
+   */
+  @Patch("update")
+  @ApiZodBody(UpdateInstanceUpdateSchema)
+  @ApiZodResponse(UpdateStatusViewSchema)
+  async setUpdate(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(UpdateInstanceUpdateSchema)) body: UpdateInstanceUpdateInput,
+  ) {
+    const patch: { autoUpdate?: boolean; updateChannel?: string } = {};
+    if (body.autoUpdate !== undefined) patch.autoUpdate = body.autoUpdate;
+    if (body.updateChannel !== undefined) patch.updateChannel = body.updateChannel;
+    await this.settings.update(patch);
+    await this.audit.log({ actor: user.userId, action: "instance_update.settings", target: "singleton" });
+    return this.update.getStatus();
+  }
+
+  /** Manually re-check the signed manifest now (the scheduler otherwise checks daily). Never throws. */
+  @Post("update/check")
+  @HttpCode(200)
+  @ApiZodResponse(UpdateStatusViewSchema)
+  async checkUpdate() {
+    await this.update.checkRemote();
     return this.update.getStatus();
   }
 

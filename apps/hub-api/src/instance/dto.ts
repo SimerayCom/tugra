@@ -21,3 +21,14 @@ export const UpdateInstanceSettingsSchema = z.object({
   acmeEmail: z.union([z.string().email(), z.literal("")]).nullable().optional(),
 });
 export type UpdateInstanceSettingsInput = z.infer<typeof UpdateInstanceSettingsSchema>;
+
+/**
+ * Owner patch for the self-update preferences (channel + auto-update). Both optional (partial patch).
+ * `updateChannel` is constrained to the user-selectable published channels — an unknown channel would
+ * silently never resolve a manifest entry, so we reject it here rather than store it.
+ */
+export const UpdateInstanceUpdateSchema = z.object({
+  autoUpdate: z.boolean().optional(),
+  updateChannel: z.enum(["stable", "beta"]).optional(),
+});
+export type UpdateInstanceUpdateInput = z.infer<typeof UpdateInstanceUpdateSchema>;
