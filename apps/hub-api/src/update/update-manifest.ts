@@ -12,7 +12,7 @@ export const MAX_SIG_BYTES = 512;
  * the image refs / agent digests / minUpgradeFrom / publishedAt are carried for the LATER updater slice
  * (Dilim 11 pull→migrate→recreate) and are validated-but-unused here (forward-compat, reserved).
  */
-const channelEntrySchema = z.object({
+export const channelEntrySchema = z.object({
   version: z.string().min(1),
   hubImage: z.string().optional(), // reserved (updater)
   webImage: z.string().optional(), // reserved (updater)
@@ -25,7 +25,7 @@ const channelEntrySchema = z.object({
 
 // `tugra` maps a channel name ("stable" | "beta" | …) → its latest published entry. Open record so a new
 // channel never fails validation; the service only reads the channel the instance is configured to track.
-const manifestSchema = z.object({
+export const manifestSchema = z.object({
   tugra: z.record(z.string(), channelEntrySchema),
 });
 

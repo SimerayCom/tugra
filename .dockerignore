@@ -1,0 +1,9 @@
+# Keep build contexts small + avoid copying host (darwin/arm) artifacts into linux images.
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+.git
+local
+agent/tugra-agent
+**/*.log

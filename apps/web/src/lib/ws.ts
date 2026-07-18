@@ -1,4 +1,4 @@
-import { HUB_PUBLIC_URL } from "./api";
+import { hubPublicUrl } from "./api";
 
 /** Terminal target: an app container (optionally a specific compose service), a database container, or a server host. */
 export type TerminalTarget = { app: string; container?: string } | { database: string } | { server: string };
@@ -16,13 +16,14 @@ export function wsBase(apiBase: string): string {
 /**
  * WebSocket base for the terminal. Unlike HTTP/SSE (proxied same-origin via /api), a WebSocket
  * upgrade can't traverse the Next rewrite, so the terminal connects straight to the hub by default
- * (HUB_PUBLIC_URL → ws) — the short-lived ticket in the subprotocol authenticates that cross-origin
- * upgrade without a cookie, and the hub pins the Origin to the SPA. A same-origin reverse-proxy
- * deployment that forwards WS upgrades can set NEXT_PUBLIC_WS_URL (e.g. wss://host/api) to override.
+ * (hubPublicUrl() → ws) — the short-lived ticket in the subprotocol authenticates that cross-origin
+ * upgrade without a cookie, and the hub pins the Origin to the SPA. hubPublicUrl() resolves to the
+ * current origin at runtime when unbaked, so a single-origin (--domain) deployment that routes /terminal
+ * to the hub works out of the box. NEXT_PUBLIC_WS_URL overrides for any other topology.
  */
 export function terminalBase(): string {
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
-  return wsBase((explicit ?? HUB_PUBLIC_URL).replace(/\/+$/, ""));
+  return wsBase((explicit ?? hubPublicUrl()).replace(/\/+$/, ""));
 }
 
 /** Build the /terminal WebSocket URL for a target. `wsBase` is idempotent on ws:// bases, so it

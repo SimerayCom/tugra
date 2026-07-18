@@ -133,7 +133,7 @@ elif [ "$FORCE_PULL" -eq 1 ]; then
   compose pull; compose up -d --no-build
 elif compose pull >/dev/null 2>&1; then
   log "Using published images."; compose up -d --no-build
-elif [ -f "$REPO_DIR/local/Dockerfile.hub" ]; then
+elif [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
   log "Published images not available yet — building from source (this checkout)…"
   compose up -d --build
 else

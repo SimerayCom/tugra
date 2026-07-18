@@ -8,7 +8,10 @@
 
 Self-hostable platform to deploy, monitor, back up & orchestrate your servers — one premium control plane. A Coolify / Dokploy / CasaOS alternative, from a Raspberry Pi to a fleet.
 
-[Website](https://tugra.io) · [Docs](https://tugra.io/docs) · [Roadmap](#roadmap)
+[![Release](https://img.shields.io/github/v/release/mrcandev/tugra?sort=semver&label=release)](https://github.com/mrcandev/tugra/releases)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+
+[Website](https://tugra.io) · [Docs](https://tugra.io/docs) · [Releasing](docs/RELEASING.md) · [Roadmap](#roadmap)
 
 </div>
 

@@ -1,0 +1,28 @@
+# Hub API (NestJS + Prisma). Build context = repo root (pnpm workspace).
+# node:20 (not slim) so native deps (argon2, libsodium) + prisma engines build cleanly.
+FROM node:20
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+WORKDIR /app
+
+# Full monorepo (node_modules excluded via .dockerignore → fresh linux install).
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @tugra/shared build \
+ && pnpm --filter @tugra/hub-api build
+
+# Build metadata baked into the running process (GET /version + /health read these). Unset → the app
+# falls back to "0.0.0-dev"/"dev"/"community"; the release pipeline passes real values as build args.
+ARG TUGRA_VERSION
+ARG TUGRA_CHANNEL
+ARG GIT_SHA
+ARG TUGRA_EDITION
+ENV TUGRA_VERSION=$TUGRA_VERSION \
+    TUGRA_CHANNEL=$TUGRA_CHANNEL \
+    GIT_SHA=$GIT_SHA \
+    TUGRA_EDITION=$TUGRA_EDITION
+
+WORKDIR /app/apps/hub-api
+EXPOSE 3000
+# Apply migrations, then boot. DATABASE_URL/REDIS_URL come from compose env.
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main.js"]

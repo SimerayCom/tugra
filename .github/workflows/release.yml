@@ -1,0 +1,175 @@
+name: Release
+
+# Cuts a release on a version tag: builds + pushes the four images to GHCR, then publishes a signed
+# update manifest (versions.json + .sig) to the gh-pages branch. Tag a commit already green on `main`
+# (this workflow does not re-run the CI test suite — tag pushes don't match ci.yml's branch trigger).
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.2.3 or 1.2.3-beta.1"
+        required: true
+      min_upgrade_from:
+        description: "Optional: minimum version required to upgrade directly to this release"
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      channel: ${{ steps.ver.outputs.channel }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # hub/web/updater run on the control-plane host (typically amd64). amd64-only keeps releases
+          # fast + reliable; a Pi/arm64 control plane uses `install.sh --build` to build natively.
+          - name: hub
+            image: ghcr.io/mrcandev/tugra-hub
+            dockerfile: deploy/Dockerfile.hub
+            platforms: linux/amd64
+          - name: web
+            image: ghcr.io/mrcandev/tugra-web
+            dockerfile: deploy/Dockerfile.web
+            platforms: linux/amd64
+          - name: updater
+            image: ghcr.io/mrcandev/tugra-updater
+            dockerfile: deploy/Dockerfile.updater
+            platforms: linux/amd64
+          # The agent runs on managed servers of ANY arch, so it must be multi-arch.
+          - name: agent
+            image: ghcr.io/mrcandev/tugra-agent
+            dockerfile: deploy/Dockerfile.agent
+            platforms: linux/amd64,linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        name: Derive version + channel
+        run: bash scripts/release-version.sh "${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - id: tags
+        name: Compute image tags
+        run: |
+          tags="${{ matrix.image }}:${{ steps.ver.outputs.version }}"
+          if [ "${{ steps.ver.outputs.latest }}" = "true" ]; then
+            tags="$tags"$'\n'"${{ matrix.image }}:latest"
+          fi
+          { echo "tags<<EOF"; echo "$tags"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          # No SLSA attestation entry, so the pushed manifest list contains ONLY the platform entries —
+          # keeps the agent's per-arch digest extraction (below) clean.
+          provenance: false
+          # hub consumes all four; agent consumes TUGRA_VERSION (via ldflags); web/updater ignore the
+          # unused ones. web's NEXT_PUBLIC_API_URL is intentionally left unset → SPA resolves the hub
+          # origin at runtime (window.location.origin).
+          build-args: |
+            TUGRA_VERSION=${{ steps.ver.outputs.version }}
+            TUGRA_CHANNEL=${{ steps.ver.outputs.channel }}
+            GIT_SHA=${{ github.sha }}
+            TUGRA_EDITION=community
+          tags: ${{ steps.tags.outputs.tags }}
+      - name: Capture agent per-arch digests
+        if: matrix.name == 'agent'
+        run: |
+          docker buildx imagetools inspect "${{ matrix.image }}:${{ steps.ver.outputs.version }}" --format '{{json .Manifest}}' \
+            | jq '{
+                amd64: (.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64") | .digest),
+                arm64: (.manifests[] | select(.platform.os=="linux" and .platform.architecture=="arm64") | .digest)
+              }' > agent-digests.json
+          cat agent-digests.json
+      - uses: actions/upload-artifact@v4
+        if: matrix.name == 'agent'
+        with:
+          name: agent-digests
+          path: agent-digests.json
+
+  # Generate + sign versions.json and publish it (with the detached .sig) to the gh-pages branch, the
+  # single stable URL the self-update chain reads. The signer self-verifies against the real consumer
+  # verifier and refuses to write anything that wouldn't validate, so nothing unpublishable can ship.
+  publish-manifest:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push to gh-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Compile the pure signer core (scripts/sign-manifest.mjs imports apps/hub-api/dist).
+      - run: pnpm --filter @tugra/shared build && pnpm --filter @tugra/hub-api build
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-digests
+          path: digests
+      - name: Sign the merged manifest
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          VERSION: ${{ needs.build-push.outputs.version }}
+          CHANNEL: ${{ needs.build-push.outputs.channel }}
+          MIN_UPGRADE_FROM: ${{ github.event.inputs.min_upgrade_from }}
+        run: |
+          set -euo pipefail
+          # Merge base = the CURRENTLY published manifest read straight from the gh-pages branch (the
+          # trust root is repo write access — no unauthenticated HTTP fetch). Missing = first release.
+          git fetch origin gh-pages --depth 1 2>/dev/null || true
+          if git show origin/gh-pages:versions.json > current.json 2>/dev/null; then
+            current_arg="--current current.json"
+          else
+            current_arg=""
+          fi
+          amd64=$(jq -r '.amd64 // empty' digests/agent-digests.json)
+          arm64=$(jq -r '.arm64 // empty' digests/agent-digests.json)
+          node scripts/sign-manifest.mjs \
+            --version "$VERSION" --channel "$CHANNEL" \
+            --hub-image "ghcr.io/mrcandev/tugra-hub:$VERSION" \
+            --web-image "ghcr.io/mrcandev/tugra-web:$VERSION" \
+            ${amd64:+--agent-amd64 "$amd64"} ${arm64:+--agent-arm64 "$arm64"} \
+            --changelog-url "https://github.com/mrcandev/tugra/releases/tag/v$VERSION" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            ${MIN_UPGRADE_FROM:+--min-upgrade-from "$MIN_UPGRADE_FROM"} \
+            $current_arg \
+            --out-dir out
+      - name: Publish to gh-pages
+        env:
+          VERSION: ${{ needs.build-push.outputs.version }}
+          CHANNEL: ${{ needs.build-push.outputs.channel }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stash the signed output, then switch the working copy to gh-pages (the build already produced
+          # everything we need above, so the main tree is no longer required).
+          tmp="$(mktemp -d)"; cp out/versions.json out/versions.json.sig "$tmp/"
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages --depth 1
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp "$tmp/versions.json" "$tmp/versions.json.sig" .
+          git add versions.json versions.json.sig
+          git commit -m "release: versions.json for v$VERSION ($CHANNEL)"
+          git push origin gh-pages
