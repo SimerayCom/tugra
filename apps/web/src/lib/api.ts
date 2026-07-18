@@ -2,6 +2,7 @@ import type {
   ApiToken,
   ApiTokenScope,
   InstanceStatus,
+  InstanceUpdateApply,
   InstanceUpdateStatus,
   OwnerInstanceSettings,
   SavedView,
@@ -198,6 +199,10 @@ export const api = {
   // Trigger a manual re-check of the signed release manifest now.
   checkInstanceUpdate() {
     return apiFetch<InstanceUpdateStatus>("/instance/update/check", { method: "POST" });
+  },
+  // Start the updater (owner). Throws ApiError 409 when an update is already in progress.
+  applyInstanceUpdate() {
+    return apiFetch<InstanceUpdateApply>("/instance/update", { method: "POST" });
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current

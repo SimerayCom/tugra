@@ -3,6 +3,7 @@ import type { InstanceSettingsService } from "./instance-settings.service";
 import type { AuditService } from "../audit/audit.service";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import type { UpdateService } from "../update/update.service";
+import type { UpdaterService } from "../update/updater.service";
 
 const OWNER = { userId: "owner1", scopes: ["*"] } as AuthUser;
 
@@ -25,7 +26,11 @@ function make(current: { apiEnabled: boolean; apiAllowedIps: string[]; publicUrl
     }),
     checkRemote: jest.fn().mockResolvedValue({ status: "unconfigured" }),
   } as unknown as UpdateService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update), settings, audit, update };
+  const updater = {
+    requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: "0.2.0" }),
+    getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null }),
+  } as unknown as UpdaterService;
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater), settings, audit, update, updater };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -102,5 +107,33 @@ describe("InstanceSettingsController", () => {
     expect(update.checkRemote).toHaveBeenCalled();
     expect(update.getStatus).toHaveBeenCalled();
     expect(out).toMatchObject({ current: "0.0.0-dev" });
+  });
+
+  it("applyUpdate delegates to the updater, audits on start, and returns the result", async () => {
+    const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const out = await ctrl.applyUpdate(OWNER);
+    expect(updater.requestUpdate).toHaveBeenCalledWith({ actor: "owner1", auto: false });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply", actor: "owner1" }));
+    expect(out).toEqual({ status: "started", targetVersion: "0.2.0" });
+  });
+
+  it("applyUpdate maps an already-running update to a 409 (and does not audit)", async () => {
+    const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    (updater.requestUpdate as jest.Mock).mockResolvedValue({ status: "in-progress", targetVersion: "0.2.0" });
+    await expect(ctrl.applyUpdate(OWNER)).rejects.toThrow(/already in progress/);
+    expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply" }));
+  });
+
+  it("applyUpdate does not audit a no-op (up-to-date)", async () => {
+    const { ctrl, updater, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    (updater.requestUpdate as jest.Mock).mockResolvedValue({ status: "up-to-date", targetVersion: "0.1.0" });
+    const out = await ctrl.applyUpdate(OWNER);
+    expect(out).toEqual({ status: "up-to-date", targetVersion: "0.1.0" });
+    expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.apply" }));
+  });
+
+  it("streamUpdate returns an Observable of update progress", () => {
+    const { ctrl } = make({ apiEnabled: true, apiAllowedIps: [] });
+    expect(typeof ctrl.streamUpdate().subscribe).toBe("function");
   });
 });

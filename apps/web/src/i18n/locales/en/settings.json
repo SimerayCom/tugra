@@ -101,5 +101,15 @@
   "updateSave": "Save",
   "updateSaveFailed": "Couldn't save update settings.",
   "updateViewChangelog": "View changelog",
-  "updateInstallerNote": "A new version is available. Re-run your installer (./scripts/install.sh) to update — one-click in-app updates are coming."
+  "updateNow": "Update now",
+  "updateStarting": "Starting update…",
+  "updatePulling": "Pulling new images…",
+  "updateRecreating": "Recreating services…",
+  "updateWaiting": "Applying update — reconnecting…",
+  "updatedTo": "Updated to {version}.",
+  "updateFailed": "The update failed. Check the server logs and try again.",
+  "updateInProgress": "An update is already in progress.",
+  "updateUnconfigured": "Automatic updates aren't configured on this instance.",
+  "updateNotifyOnly": "This is a minor/major release — review the changelog, then use your installer to upgrade.",
+  "updateNeedsIntermediate": "This release can't be skipped to directly — upgrade to an intermediate version first."
 }

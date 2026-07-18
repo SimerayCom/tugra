@@ -3,12 +3,19 @@ import { ConfigService } from "@nestjs/config";
 import { appVersion, isNewer, parseVersion } from "@tugra/shared";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { MAX_MANIFEST_BYTES, MAX_SIG_BYTES, UpdateVerifyError, verifyUpdateManifest } from "./update-manifest";
+import type { ChannelEntry, VerifiedManifest } from "./update-manifest";
 import type { UpdateStatusView } from "./dto";
 
 export type CheckResult =
   | { status: "unconfigured" }
   | { status: "ok"; channel: string; current: string; latest: string; updateAvailable: boolean }
   | { status: "error"; reason: string };
+
+/** The full verified channel entry (version + reserved updater fields like minUpgradeFrom). */
+export type LatestEntryResult =
+  | { status: "unconfigured" }
+  | { status: "error"; reason: string }
+  | { status: "ok"; channel: string; entry: ChannelEntry };
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -85,6 +92,49 @@ export class UpdateService {
     const updateAvailable = isNewer(latest, current);
     this.logger.log(`update check: channel=${channel} current=${current} latest=${latest} updateAvailable=${updateAvailable}`);
     return { status: "ok", channel, current, latest, updateAvailable };
+  }
+
+  /**
+   * Fetch + ed25519-verify the manifest FRESH and return the full channel entry (version + minUpgradeFrom
+   * + reserved fields). The updater calls this at apply-time so nothing is ever applied from an unverified
+   * or stale cache. Never throws — a typed status is returned on any failure (opt-in via UPDATE_MANIFEST_URL).
+   */
+  async verifyLatestEntry(): Promise<LatestEntryResult> {
+    const url = this.config.get<string>("UPDATE_MANIFEST_URL");
+    const key = this.config.get<string>("UPDATE_PUBLISHER_KEY");
+    if (!url || !key) return { status: "unconfigured" };
+
+    let channel = "stable";
+    try {
+      channel = (await this.settings.get()).updateChannel || "stable";
+    } catch (e) {
+      return this.failEntry("settings", e);
+    }
+
+    let manifestBody: string;
+    let sigBody: string;
+    try {
+      manifestBody = await this.fetchText(url, MAX_MANIFEST_BYTES);
+      sigBody = await this.fetchText(this.sigUrl(url), MAX_SIG_BYTES);
+    } catch (e) {
+      return this.failEntry("fetch", e);
+    }
+
+    let manifest: VerifiedManifest;
+    try {
+      manifest = verifyUpdateManifest(manifestBody, sigBody, key);
+    } catch (e) {
+      return this.failEntry(e instanceof UpdateVerifyError ? e.reason : "verify", e);
+    }
+
+    const entry = manifest.tugra[channel];
+    if (!entry) return this.failEntry("no-channel", new Error(`no manifest entry for channel "${channel}"`));
+    return { status: "ok", channel, entry };
+  }
+
+  private failEntry(reason: string, e: unknown): LatestEntryResult {
+    this.logger.warn(`verifyLatestEntry failed (${reason}): ${String((e as Error)?.message ?? e)}`);
+    return { status: "error", reason };
   }
 
   /** Owner-facing status. Reads ONLY the cache + running version — never triggers a remote fetch. */
