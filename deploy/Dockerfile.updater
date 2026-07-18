@@ -1,0 +1,11 @@
+# Tugra self-update sidecar. Minimal image: the Docker CLI (+ compose plugin) to recreate the app
+# containers, redis-cli to drain the job queue, and bash to run scripts/update.sh (mounted from the repo).
+# It has docker.sock but a FIXED command set (pull + up -d --no-deps hub-api web) — no arbitrary exec.
+FROM docker:27-cli
+
+RUN apk add --no-cache bash redis
+
+WORKDIR /repo
+# The script + compose file + .env are bind-mounted from the repo at runtime; the compose `command`
+# invokes `scripts/update.sh --watch`. Clear the base image's docker entrypoint so command runs directly.
+ENTRYPOINT []

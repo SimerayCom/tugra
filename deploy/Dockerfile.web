@@ -1,0 +1,21 @@
+# Web (Next.js 15). Build context = repo root.
+# NEXT_PUBLIC_API_URL is baked into the client bundle at build time. Left at its default for the
+# published image: the SPA resolves the hub's public origin at RUNTIME (window.location.origin) when
+# this is unset, so a single published image works for any single-origin (reverse-proxy) deployment.
+# A split-port deployment that needs a fixed absolute hub URL should build from source with this set.
+FROM node:20
+
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+WORKDIR /app
+
+COPY . .
+RUN pnpm install --frozen-lockfile
+
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+RUN pnpm --filter @tugra/shared build \
+ && pnpm --filter @tugra/web build
+
+WORKDIR /app/apps/web
+EXPOSE 3001
+CMD ["pnpm", "start"]

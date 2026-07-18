@@ -1,5 +1,5 @@
 import type { AppStatus, DeploymentStatus } from "./types";
-import { HUB_PUBLIC_URL } from "./api";
+import { hubPublicUrl } from "./api";
 
 export function appColor(s: AppStatus): string {
   if (s === "RUNNING") return "var(--c-g)";
@@ -32,5 +32,5 @@ export function appSourceSummary(app: {
  *  external service directly against the hub, so it must be the hub's absolute public URL — not the
  *  SPA's same-origin "/api" proxy path. */
 export function webhookUrl(token: string): string {
-  return `${HUB_PUBLIC_URL}/webhooks/deploy/${token}`;
+  return `${hubPublicUrl()}/webhooks/deploy/${token}`;
 }

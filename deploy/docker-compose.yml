@@ -41,9 +41,9 @@ services:
     image: "ghcr.io/mrcandev/tugra-hub:${TUGRA_VERSION:-latest}"
     build:
       context: ..
-      dockerfile: local/Dockerfile.hub
+      dockerfile: deploy/Dockerfile.hub
     restart: unless-stopped
-    # The hub image self-runs `prisma migrate deploy` before boot (see local/Dockerfile.hub), so no
+    # The hub image self-runs `prisma migrate deploy` before boot (see deploy/Dockerfile.hub), so no
     # separate migration step is needed — only a healthy database first.
     environment:
       DATABASE_URL: "${DATABASE_URL}"
@@ -75,7 +75,7 @@ services:
     image: "ghcr.io/mrcandev/tugra-web:${TUGRA_VERSION:-latest}"
     build:
       context: ..
-      dockerfile: local/Dockerfile.web
+      dockerfile: deploy/Dockerfile.web
       args:
         # Baked into the client bundle at build time — must be the browser-reachable hub URL so the
         # web terminal / webhook URLs point at the real hub (only applies to the build-from-source path).
@@ -96,7 +96,7 @@ services:
     image: "ghcr.io/mrcandev/tugra-updater:${TUGRA_VERSION:-latest}"
     build:
       context: ..
-      dockerfile: local/Dockerfile.updater
+      dockerfile: deploy/Dockerfile.updater
     profiles: ["updater"]
     restart: unless-stopped
     environment:

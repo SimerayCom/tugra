@@ -22,10 +22,26 @@ describe("ws url helpers", () => {
     expect(terminalUrl({ server: "s1" }, "https://h")).toBe("wss://h/terminal?server=s1");
   });
 
-  it("defaults the terminal base to the hub directly (WS can't traverse the /api proxy)", () => {
-    // HUB_PUBLIC_URL falls back to http://localhost:3000 in the test env → ws://localhost:3000.
-    expect(terminalBase()).toBe("ws://localhost:3000");
-    expect(terminalUrl({ server: "s1" })).toBe("ws://localhost:3000/terminal?server=s1");
+  it("unbaked, resolves the terminal base from the runtime origin (published image → single-origin)", () => {
+    // No baked NEXT_PUBLIC_API_URL → hubPublicUrl() uses window.location.origin so a pulled image works
+    // for any --domain deployment that routes /terminal to the hub on the same origin. Use a DISTINCT
+    // origin (not the localhost dev fallback) so this genuinely exercises the window.origin branch — a
+    // regression that drops it would return the fallback and fail here.
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    const orig = Object.getOwnPropertyDescriptor(window, "location");
+    Object.defineProperty(window, "location", { value: { origin: "https://panel.example.com" }, configurable: true });
+    try {
+      expect(terminalBase()).toBe("wss://panel.example.com");
+    } finally {
+      if (orig) Object.defineProperty(window, "location", orig);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("honours a baked NEXT_PUBLIC_API_URL when present (build-from-source / explicit override)", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://hub.example.com");
+    expect(terminalBase()).toBe("wss://hub.example.com");
+    vi.unstubAllEnvs();
   });
 });
 

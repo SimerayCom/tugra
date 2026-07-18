@@ -1,0 +1,23 @@
+# Agent (Go). Dials OUT to the hub over WS, runs docker on the host via the
+# mounted socket — so it needs the docker CLI + git (for GIT-source deploys).
+#
+# Cross-compiled so a single `docker buildx --platform linux/amd64,linux/arm64` build produces both
+# arches (the agent runs on managed servers of any arch — Raspberry Pi to a cloud VM). BUILDPLATFORM
+# keeps the Go toolchain native (no QEMU for the compile); only the final runtime stage is emulated.
+FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+WORKDIR /src
+COPY agent/ ./
+ARG TARGETOS
+ARG TARGETARCH
+# main.Version defaults to "0.0.0-dev"; the release pipeline injects the real version here. Guard the
+# default so an empty build arg doesn't blank the version (which would break the fleet's version display).
+ARG TUGRA_VERSION
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -ldflags "-X main.Version=${TUGRA_VERSION:-0.0.0-dev}" -o /tugra-agent .
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends docker.io git ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /tugra-agent /usr/local/bin/tugra-agent
+ENTRYPOINT ["tugra-agent"]

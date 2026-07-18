@@ -56,9 +56,18 @@ import type {
 // set, so every api.* method + SSE/download caller follows automatically.
 export const API_BASE = "/api/v1";
 
-// The hub's PUBLIC absolute origin — ONLY for URLs shown to the user to paste into external systems
-// (e.g. GitHub webhooks), which hit the hub directly, NOT through the SPA's same-origin proxy.
-export const HUB_PUBLIC_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+// The hub's PUBLIC absolute origin — ONLY for URLs that hit the hub DIRECTLY (not through the SPA's
+// same-origin "/api" proxy): the terminal WebSocket upgrade and webhook URLs shown to paste externally.
+// Resolution: (1) a baked NEXT_PUBLIC_API_URL wins (explicit override; build-from-source installs set it);
+// (2) otherwise the current browser origin at runtime — so the PUBLISHED image (which bakes no URL) works
+// out of the box for a single-origin reverse-proxy (--domain) deployment where /terminal and /webhooks are
+// routed to the hub on the same origin; (3) a dev/SSR fallback.
+export function hubPublicUrl(): string {
+  const baked = process.env.NEXT_PUBLIC_API_URL;
+  if (baked) return baked;
+  if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
+  return "http://localhost:3000";
+}
 
 const TG_CSRF = "tg_csrf";
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
