@@ -71,3 +71,35 @@ body {
     font-size: 16px !important;
   }
 }
+
+/* App-store / Home template tiles: subtle hover lift (tactile CasaOS feel). */
+.tpl-tile {
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
+}
+.tpl-tile:hover {
+  transform: translateY(-2px);
+  border-color: var(--c-a);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+/* Category chips: wrap on desktop, horizontal-scroll on narrow screens so they never push the grid down. */
+.tpl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+@media (max-width: 640px) {
+  .tpl-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tpl-chips::-webkit-scrollbar {
+    display: none;
+  }
+}
