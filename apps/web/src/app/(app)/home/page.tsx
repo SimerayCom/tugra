@@ -99,7 +99,7 @@ function Tile({ tile, openLabel, manageLabel, onManage }: { tile: LauncherTile; 
   const inner = (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ width: 48, height: 48, borderRadius: 12, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <AppLogo templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={26} />
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -127,7 +127,7 @@ function Tile({ tile, openLabel, manageLabel, onManage }: { tile: LauncherTile; 
     return <div style={boxStyle}>{inner}</div>;
   }
   return (
-    <a href={tile.url} target="_blank" rel="noreferrer" style={boxStyle}>
+    <a href={tile.url} target="_blank" rel="noreferrer" className="tpl-tile" style={boxStyle}>
       {inner}
     </a>
   );

@@ -9,7 +9,8 @@ import { useT } from "../i18n/provider";
 import { TextInput } from "./form";
 
 const logoBox: React.CSSProperties = {
-  width: 52, height: 52, borderRadius: 10, background: "rgba(255,255,255,0.06)",
+  // Theme-aware subtle fill (was a hardcoded white tint → invisible in light mode).
+  width: 56, height: 56, borderRadius: 12, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)",
   display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
   overflow: "hidden", padding: 8, boxSizing: "border-box",
 };
@@ -32,7 +33,7 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
       <div style={{ maxWidth: 480, marginBottom: 10 }}>
         <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("resources.searchServices")} />
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+      <div className="tpl-chips">
         {chips.map((c) => {
           const active = c === cat;
           return (
@@ -43,6 +44,7 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
               style={{
                 fontFamily: "inherit", fontSize: 12, fontWeight: active ? 600 : 500,
                 padding: "5px 11px", borderRadius: 999, cursor: "pointer",
+                flexShrink: 0, whiteSpace: "nowrap", // stay on one line inside the mobile scroll strip
                 border: "1px solid var(--c-bd)",
                 background: active ? "var(--c-a)" : "transparent",
                 color: active ? "#0d0d11" : "var(--c-tx3)",
@@ -61,6 +63,7 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
             <button
               key={tpl.slug}
               type="button"
+              className="tpl-tile"
               onClick={() => onPick(tpl)}
               title={tpl.description}
               style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
