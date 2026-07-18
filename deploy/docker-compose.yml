@@ -89,6 +89,26 @@ services:
     ports:
       - "${WEB_PORT:-3001}:3001"
 
+  # Self-update sidecar. The hub can't recreate its own container, so it queues a job in Redis that this
+  # sidecar drains, then pulls + recreates hub-api/web (--no-deps, never itself/postgres/redis). It has
+  # docker.sock but runs only scripts/update.sh's fixed pull/up command set (see SECURITY.md).
+  tugra-updater:
+    image: "ghcr.io/mrcandev/tugra-updater:${TUGRA_VERSION:-latest}"
+    build:
+      context: ..
+      dockerfile: local/Dockerfile.updater
+    profiles: ["updater"]
+    restart: unless-stopped
+    environment:
+      REDIS_URL: "redis://redis:6379"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ..:/repo
+    working_dir: /repo
+    command: ["bash", "scripts/update.sh", "--watch"]
+    depends_on:
+      - redis
+
 volumes:
   tugra_pg:
   tugra_redis:

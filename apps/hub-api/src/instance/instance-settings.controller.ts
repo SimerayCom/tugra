@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, ConflictException, Controller, Get, HttpCode, type MessageEvent, Patch, Post, Sse, UseGuards } from "@nestjs/common";
+import { distinctUntilChanged, from, interval, map, mergeMap, type Observable, takeWhile } from "rxjs";
 import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -16,7 +17,8 @@ import {
   UpdateInstanceUpdateSchema,
 } from "./dto";
 import { UpdateService } from "../update/update.service";
-import { UpdateStatusViewSchema } from "../update/dto";
+import { UpdaterService, isTerminalPhase } from "../update/updater.service";
+import { UpdateApplyResultSchema, UpdateStatusViewSchema } from "../update/dto";
 
 /**
  * Owner-only instance settings, managed with the login SESSION (JwtAuthGuard, not ApiAuthGuard) — like API
@@ -32,6 +34,7 @@ export class InstanceSettingsController {
     private readonly settings: InstanceSettingsService,
     private readonly audit: AuditService,
     private readonly update: UpdateService,
+    private readonly updater: UpdaterService,
   ) {}
 
   /**
@@ -74,6 +77,38 @@ export class InstanceSettingsController {
   async checkUpdate() {
     await this.update.checkRemote();
     return this.update.getStatus();
+  }
+
+  /**
+   * Apply the available update now. Re-verifies the signed manifest, refuses any downgrade/channel-skip,
+   * then queues the job for the `tugra-updater` sidecar (the hub can't recreate its own container). Returns
+   * a typed status; 409 if an update is already running. Progress streams from GET update/stream.
+   */
+  @Post("update")
+  @HttpCode(200)
+  @ApiZodResponse(UpdateApplyResultSchema)
+  async applyUpdate(@CurrentUser() user: AuthUser) {
+    const res = await this.updater.requestUpdate({ actor: user.userId, auto: false });
+    if (res.status === "in-progress") throw new ConflictException("an update is already in progress");
+    if (res.status === "started") {
+      await this.audit.log({ actor: user.userId, action: "instance_update.apply", target: "singleton" });
+    }
+    return res;
+  }
+
+  /**
+   * Live update progress (SSE). Polls the Redis status the sidecar writes and completes on a terminal phase.
+   * The connection drops when hub-api is recreated mid-update (expected) — the client reconnects/polls the
+   * version. Owner-only via the class guards; the web authenticates with the same-origin session cookie.
+   */
+  @Sse("update/stream")
+  streamUpdate(): Observable<MessageEvent> {
+    return interval(1000).pipe(
+      mergeMap(() => from(this.updater.getProgress())),
+      distinctUntilChanged((a, b) => a.phase === b.phase && a.targetVersion === b.targetVersion && a.error === b.error),
+      takeWhile((p) => !isTerminalPhase(p.phase), true), // inclusive: emit the terminal event, then complete
+      map((p) => ({ data: JSON.stringify(p) }) as MessageEvent),
+    );
   }
 
   @Get("settings")

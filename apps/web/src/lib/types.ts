@@ -116,6 +116,12 @@ export interface InstanceUpdateStatus {
   autoUpdate: boolean;
 }
 
+/** Result of POST /instance/update (starting the updater). `started` = queued for the sidecar. */
+export interface InstanceUpdateApply {
+  status: "started" | "up-to-date" | "in-progress" | "unconfigured" | "error" | "notify-only" | "needs-intermediate";
+  targetVersion: string | null;
+}
+
 export interface ServerView {
   id: string;
   name: string;

@@ -99,9 +99,23 @@ describe("instance update status (e2e)", () => {
     }
   });
 
+  it("owner can request an apply (unconfigured → up-to-date/unconfigured, still 200) and blocks non-owners", async () => {
+    await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: true } });
+    try {
+      // UPDATE_MANIFEST_URL is unset in test → verifyLatestEntry unconfigured → a 200 typed status (no docker).
+      const res = await request(srv()).post("/instance/update").set("Authorization", `Bearer ${jwt}`).expect(200);
+      expect(res.body).toMatchObject({ status: expect.any(String) });
+      await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: false } });
+      await request(srv()).post("/instance/update").set("Authorization", `Bearer ${jwt}`).expect(403);
+    } finally {
+      await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: false } }).catch(() => undefined);
+    }
+  });
+
   it("does not let a PAT read or change the update status (session-only)", async () => {
     // JwtAuthGuard rejects a tugra_pat_ token as an invalid JWT → 401, never reaching the owner check.
     await request(srv()).get("/instance/update").set("Authorization", `Bearer ${pat}`).expect(401);
     await request(srv()).patch("/instance/update").set("Authorization", `Bearer ${pat}`).send({ autoUpdate: true }).expect(401);
+    await request(srv()).post("/instance/update").set("Authorization", `Bearer ${pat}`).expect(401);
   });
 });

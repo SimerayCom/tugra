@@ -8,6 +8,7 @@ import {
   parseVersion,
   compareVersions,
   isNewer,
+  isPatchUpgrade,
 } from "./version";
 
 // @tugra/shared carries no @types/node — type `process` for the spec the same way version.ts does.
@@ -114,6 +115,30 @@ describe("semver comparator", () => {
       expect(isNewer("garbage", "0.1.0")).toBe(false);
       expect(isNewer("0.2.0", "not-a-version")).toBe(false);
       expect(isNewer("", "0.1.0")).toBe(false);
+    });
+  });
+
+  describe("isPatchUpgrade (auto-update gate)", () => {
+    it("is true only for a strictly-newer patch of the same major.minor", () => {
+      expect(isPatchUpgrade("1.2.4", "1.2.3")).toBe(true);
+      expect(isPatchUpgrade("1.2.10", "1.2.3")).toBe(true);
+      expect(isPatchUpgrade("0.4.1", "0.4.0")).toBe(true);
+    });
+    it("is false for a minor or major bump (must notify, not auto-apply)", () => {
+      expect(isPatchUpgrade("1.3.0", "1.2.3")).toBe(false); // minor
+      expect(isPatchUpgrade("2.0.0", "1.2.3")).toBe(false); // major
+    });
+    it("is false for equal or older versions", () => {
+      expect(isPatchUpgrade("1.2.3", "1.2.3")).toBe(false);
+      expect(isPatchUpgrade("1.2.2", "1.2.3")).toBe(false);
+    });
+    it("is false when either side is a pre-release", () => {
+      expect(isPatchUpgrade("1.2.4-rc.1", "1.2.3")).toBe(false);
+      expect(isPatchUpgrade("1.2.4", "1.2.3-rc.1")).toBe(false);
+    });
+    it("is false (fail-safe) when either side is unparseable", () => {
+      expect(isPatchUpgrade("garbage", "1.2.3")).toBe(false);
+      expect(isPatchUpgrade("1.2.4", "")).toBe(false);
     });
   });
 });

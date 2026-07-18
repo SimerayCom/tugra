@@ -7,6 +7,14 @@ import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card } from "../../../components/ui";
 import { Field, Select } from "../../../components/form";
+import { useUpdateStream, type UpdatePhase } from "../../../hooks/useUpdateStream";
+
+const WORKING: UpdatePhase[] = ["starting", "queued", "pulling", "recreating"];
+function phaseLabel(phase: UpdatePhase): string {
+  if (phase === "pulling") return "settings.updatePulling";
+  if (phase === "recreating") return "settings.updateWaiting";
+  return "settings.updateStarting";
+}
 
 /**
  * Owner-only self-update panel: shows the running vs latest version, lets the owner pick a release
@@ -58,6 +66,9 @@ export function UpdatesCard() {
     },
   });
 
+  const upd = useUpdateStream();
+  const working = WORKING.includes(upd.phase);
+
   if (!isOwner) return null;
 
   return (
@@ -82,10 +93,19 @@ export function UpdatesCard() {
         )}
       </div>
 
-      {data?.updateAvailable && (
-        <p style={{ fontSize: 12, color: "var(--c-tx2)", background: "color-mix(in srgb, var(--c-a) 10%, transparent)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 10px", margin: "0 0 14px" }}>
-          {t("settings.updateInstallerNote")}
-        </p>
+      {(data?.updateAvailable || working || upd.phase === "done" || upd.phase === "failed" || upd.messageKey) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 14px" }}>
+          {working ? (
+            <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{t(phaseLabel(upd.phase))}</span>
+          ) : upd.phase === "done" ? (
+            <span style={{ fontSize: 13, color: "var(--c-ok, var(--c-tx2))" }}>{t("settings.updatedTo", { version: upd.target ?? "" })}</span>
+          ) : (
+            data?.updateAvailable && <Btn onClick={() => upd.start()}>{t("settings.updateNow")}</Btn>
+          )}
+          {upd.messageKey && !working && upd.phase !== "done" && (
+            <span style={{ fontSize: 12, color: upd.phase === "failed" ? "var(--c-r)" : "var(--c-tx3)" }}>{t(upd.messageKey)}</span>
+          )}
+        </div>
       )}
 
       <Field label={t("settings.updateChannel")} htmlFor="upd-channel">

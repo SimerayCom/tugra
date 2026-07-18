@@ -176,6 +176,53 @@
         "tags": [
           "instance"
         ]
+      },
+      "post": {
+        "operationId": "InstanceSettingsController_applyUpdate",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "started",
+                        "up-to-date",
+                        "in-progress",
+                        "unconfigured",
+                        "error",
+                        "notify-only",
+                        "needs-intermediate"
+                      ]
+                    },
+                    "targetVersion": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "targetVersion"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
       }
     },
     "/api/v1/instance/update/check": {
@@ -223,6 +270,25 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
+    "/api/v1/instance/update/stream": {
+      "get": {
+        "operationId": "InstanceSettingsController_streamUpdate",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
           }
         },
         "security": [

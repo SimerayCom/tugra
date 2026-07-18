@@ -124,7 +124,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 # --- bring up the stack (pull published images, else build from this checkout) ----------------------
-compose() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
+# Include the `updater` profile so the self-update sidecar is always running (it drains the update queue
+# for both "Update now" and auto-update; it's a fixed-command docker.sock sidecar — see SECURITY.md).
+compose() { docker compose --profile updater --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 if [ "$FORCE_BUILD" -eq 1 ]; then
   log "Building images from source…"; compose up -d --build
 elif [ "$FORCE_PULL" -eq 1 ]; then

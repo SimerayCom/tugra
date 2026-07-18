@@ -107,3 +107,17 @@ export function isNewer(candidate: string, current: string): boolean {
   if (!c || !cur) return false;
   return compareVersions(c, cur) === 1;
 }
+
+/**
+ * True only when `latest` is a PATCH upgrade of `current` — same major AND minor, strictly newer, and
+ * NEITHER side is a pre-release. This is the gate for AUTO-update: patch releases (bugfixes) may be applied
+ * automatically, but a minor/major bump (potential behavior change) or any pre-release must NEVER auto-apply
+ * (notify-only). Fail-safe: an unparseable version → false. Manual updates ignore this (explicit consent).
+ */
+export function isPatchUpgrade(latest: string, current: string): boolean {
+  const l = parseVersion(latest);
+  const c = parseVersion(current);
+  if (!l || !c) return false;
+  if (l.pre.length > 0 || c.pre.length > 0) return false;
+  return l.core[0] === c.core[0] && l.core[1] === c.core[1] && compareVersions(l, c) === 1;
+}
