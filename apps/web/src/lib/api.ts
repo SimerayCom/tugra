@@ -2,6 +2,7 @@ import type {
   ApiToken,
   ApiTokenScope,
   InstanceStatus,
+  InstanceUpdateStatus,
   OwnerInstanceSettings,
   SavedView,
   Application,
@@ -186,6 +187,17 @@ export const api = {
     acmeEmail?: string | null;
   }) {
     return apiFetch<OwnerInstanceSettings>("/instance/settings", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  // Owner-only self-update status + preferences (session-guarded on the hub).
+  getInstanceUpdate() {
+    return apiFetch<InstanceUpdateStatus>("/instance/update");
+  },
+  updateInstanceUpdate(patch: { autoUpdate?: boolean; updateChannel?: string }) {
+    return apiFetch<InstanceUpdateStatus>("/instance/update", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  // Trigger a manual re-check of the signed release manifest now.
+  checkInstanceUpdate() {
+    return apiFetch<InstanceUpdateStatus>("/instance/update/check", { method: "POST" });
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current

@@ -100,6 +100,22 @@ export interface OwnerInstanceSettings {
   edition?: string;
 }
 
+/** Self-update status (GET /instance/update, PATCH .../update, POST .../update/check). Owner-only. */
+export interface InstanceUpdateStatus {
+  /** The running hub version. */
+  current: string;
+  /** Latest published version for the tracked channel (from the last signed check); null until checked. */
+  latest: string | null;
+  /** The release channel being tracked ("stable" | "beta" | …). */
+  channel: string;
+  /** Whether `latest` is strictly newer than `current` (never a downgrade). */
+  updateAvailable: boolean;
+  /** Link to the release notes, or null. */
+  changelogUrl: string | null;
+  /** Whether patch releases are applied automatically (the updater is a later slice). */
+  autoUpdate: boolean;
+}
+
 export interface ServerView {
   id: string;
   name: string;

@@ -23,6 +23,7 @@ function make(current: { apiEnabled: boolean; apiAllowedIps: string[]; publicUrl
       changelogUrl: null,
       autoUpdate: false,
     }),
+    checkRemote: jest.fn().mockResolvedValue({ status: "unconfigured" }),
   } as unknown as UpdateService;
   return { ctrl: new InstanceSettingsController(settings, audit, update), settings, audit, update };
 }
@@ -78,5 +79,28 @@ describe("InstanceSettingsController", () => {
     const out = await ctrl.getUpdate();
     expect(update.getStatus).toHaveBeenCalled();
     expect(out).toMatchObject({ current: "0.0.0-dev", updateAvailable: false, latest: null });
+  });
+
+  it("setUpdate persists channel + autoUpdate, audits, and returns the status (no remote fetch)", async () => {
+    const { ctrl, settings, audit, update } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const out = await ctrl.setUpdate(OWNER, { autoUpdate: true, updateChannel: "beta" });
+    expect(settings.update).toHaveBeenCalledWith({ autoUpdate: true, updateChannel: "beta" });
+    expect(update.checkRemote).not.toHaveBeenCalled(); // PATCH is fast — never fetches
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.settings", actor: "owner1" }));
+    expect(out).toMatchObject({ channel: "stable" }); // getStatus() shape
+  });
+
+  it("setUpdate only patches the fields present in the body", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.setUpdate(OWNER, { autoUpdate: false });
+    expect(settings.update).toHaveBeenCalledWith({ autoUpdate: false });
+  });
+
+  it("checkUpdate triggers a remote re-check then returns the fresh status", async () => {
+    const { ctrl, update } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const out = await ctrl.checkUpdate();
+    expect(update.checkRemote).toHaveBeenCalled();
+    expect(update.getStatus).toHaveBeenCalled();
+    expect(out).toMatchObject({ current: "0.0.0-dev" });
   });
 });
