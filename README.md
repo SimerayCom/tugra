@@ -32,6 +32,40 @@ Two modes, one platform:
 - **Premium, calm UI** — built to be a joy to use, dark-first, WCAG AA.
 - **Yours** — self-hosted by default; your data stays on your machines.
 
+## Quick start
+
+You need a Linux host with **Docker** (with the Compose v2 plugin) and `git`. From the host:
+
+```bash
+git clone https://github.com/mrcandev/tugra.git
+cd tugra
+./scripts/install.sh
+```
+
+The installer generates strong secrets into a local `.env` (re-running preserves them), then brings up the hub, web UI, PostgreSQL and Redis with `docker compose`. When it finishes, open the printed **Web UI** URL and create the first account — it becomes the instance **owner**. Then follow the onboarding wizard to connect your first server.
+
+Re-running `./scripts/install.sh` (e.g. after `git pull`) is safe — it keeps your secrets and only updates configuration, so it doubles as the upgrade path.
+
+**Production (TLS + a domain).** The stack ships plain HTTP on this host's ports for a quick start; put it behind your own reverse proxy that terminates TLS and re-run with your domain:
+
+```bash
+./scripts/install.sh --domain tugra.example.com
+```
+
+Route most traffic to the **web** (`:3001`) — it proxies the REST API and OAuth start to the hub for you — and send only the paths the web can't handle to the **hub** (`:3000`):
+
+| Path prefix | → |
+|---|---|
+| `/agent`, `/terminal` (WebSocket), `/install`, `/webhooks`, `/auth/oauth` | hub `:3000` |
+| everything else (`/`, `/api/*`) | web `:3001` |
+
+Notes:
+
+- **TLS is not bundled** — bring your own reverse proxy (Caddy, Traefik, nginx, …). `--domain` sets `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` for that setup.
+- **"Sign in with GitHub"** works only in this single-origin proxy deployment (the hub and web share a public origin so the session cookie is visible to the SPA); it isn't available in the plain two-port quick start.
+
+> Published images (`ghcr.io/mrcandev/tugra-*`) arrive with the first tagged release. Until then the installer automatically builds from your checkout — same command, no changes needed.
+
 ## Architecture
 
 | Component | Stack |

@@ -1,0 +1,94 @@
+# Tugra — production stack (hub-api + web + postgres + redis).
+#
+# Managed by scripts/install.sh, which generates a repo-root .env (secrets, URLs) first. Manual use:
+#   docker compose --env-file .env -f deploy/docker-compose.yml pull        # published images (once released)
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d
+#   # or, from a source checkout when images are not yet published:
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+#
+# Each app service declares BOTH `image:` (published registry, the end state) and `build:` (this checkout).
+# `pull` uses the registry image; `up --build` builds from source. The installer picks automatically.
+name: tugra
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tugra
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: tugra
+    volumes:
+      - tugra_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tugra -d tugra"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - tugra_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  hub-api:
+    image: "ghcr.io/mrcandev/tugra-hub:${TUGRA_VERSION:-latest}"
+    build:
+      context: ..
+      dockerfile: local/Dockerfile.hub
+    restart: unless-stopped
+    # The hub image self-runs `prisma migrate deploy` before boot (see local/Dockerfile.hub), so no
+    # separate migration step is needed — only a healthy database first.
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
+      REDIS_URL: "${REDIS_URL}"
+      NODE_ENV: "production"
+      HUB_PUBLIC_URL: "${HUB_PUBLIC_URL}"
+      WEB_PUBLIC_URL: "${WEB_PUBLIC_URL}"
+      COOKIE_SECURE: "${COOKIE_SECURE}"
+      HUB_TRUSTED_PROXY: "${HUB_TRUSTED_PROXY:-false}"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET}"
+      SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY}"
+      HUB_SIGNING_KEY: "${HUB_SIGNING_KEY}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    ports:
+      - "${HUB_PORT:-3000}:3000"
+
+  web:
+    image: "ghcr.io/mrcandev/tugra-web:${TUGRA_VERSION:-latest}"
+    build:
+      context: ..
+      dockerfile: local/Dockerfile.web
+      args:
+        # Baked into the client bundle at build time — must be the browser-reachable hub URL so the
+        # web terminal / webhook URLs point at the real hub (only applies to the build-from-source path).
+        NEXT_PUBLIC_API_URL: "${HUB_PUBLIC_URL}"
+    restart: unless-stopped
+    # Only the internal proxy target — NO secrets in the web container (it never touches the DB or keys).
+    environment:
+      HUB_INTERNAL_URL: "http://hub-api:3000"
+    depends_on:
+      - hub-api
+    ports:
+      - "${WEB_PORT:-3001}:3001"
+
+volumes:
+  tugra_pg:
+  tugra_redis:
