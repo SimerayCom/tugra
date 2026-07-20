@@ -32,7 +32,7 @@ describe("TemplateGrid", () => {
 
   it("filters by a category chip", () => {
     wrap(<TemplateGrid templates={tpls} onPick={vi.fn()} />);
-    fireEvent.click(screen.getByText("Automation")); // resources.cat_automation
+    fireEvent.click(screen.getByRole("button", { name: "Automation" })); // chip, not the section heading
     expect(screen.getByText("n8n")).toBeTruthy();
     expect(screen.queryByText("WordPress")).toBeNull();
   });
@@ -43,5 +43,30 @@ describe("TemplateGrid", () => {
     fireEvent.click(screen.getByText("WordPress"));
     expect(onPick).toHaveBeenCalledTimes(1);
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ slug: "wordpress" }));
+  });
+
+  it("groups into category sections when browsing all with no search", () => {
+    wrap(<TemplateGrid templates={tpls} onPick={vi.fn()} />);
+    // one <h2> section header per present category (cms + automation), not the chips
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(2);
+    // every template still shows across the sections
+    expect(screen.getByText("WordPress")).toBeTruthy();
+    expect(screen.getByText("n8n")).toBeTruthy();
+  });
+
+  it("shows a flat grid (no section headings) when a category chip is active", () => {
+    wrap(<TemplateGrid templates={tpls} onPick={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Automation" }));
+    expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
+    expect(screen.getByText("n8n")).toBeTruthy();
+    expect(screen.queryByText("WordPress")).toBeNull();
+  });
+
+  it("shows a flat grid (no section headings) when searching", () => {
+    wrap(<TemplateGrid templates={tpls} onPick={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search the app store…"), { target: { value: "ghost" } });
+    expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
+    expect(screen.getByText("Ghost")).toBeTruthy();
+    expect(screen.queryByText("WordPress")).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { filterTemplates, presentCategories } from "./template-filter";
+import { filterTemplates, presentCategories, groupByCategory } from "./template-filter";
 import type { Template } from "./types";
 
 const T = (slug: string, name: string, category: string, description = ""): Template => ({
@@ -40,5 +40,21 @@ describe("filterTemplates", () => {
 describe("presentCategories", () => {
   it("returns only present categories in display order", () => {
     expect(presentCategories(list)).toEqual(["cms", "analytics", "monitoring"]);
+  });
+});
+
+describe("groupByCategory", () => {
+  it("groups templates by category in display order", () => {
+    const groups = groupByCategory(list);
+    expect(groups.map((g) => g.category)).toEqual(["cms", "analytics", "monitoring"]);
+    expect(groups.find((g) => g.category === "cms")!.items.map((t) => t.slug)).toEqual(["ghost", "wikijs"]);
+  });
+
+  it("omits empty categories and every group is non-empty", () => {
+    expect(groupByCategory(list).every((g) => g.items.length > 0)).toBe(true);
+  });
+
+  it("returns [] for an empty catalog", () => {
+    expect(groupByCategory([])).toEqual([]);
   });
 });

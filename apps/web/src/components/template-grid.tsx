@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { Template } from "../lib/types";
-import { filterTemplates, presentCategories } from "../lib/template-filter";
+import { filterTemplates, presentCategories, groupByCategory } from "../lib/template-filter";
 import { TemplateLogo } from "../lib/template-icons";
 import { useT } from "../i18n/provider";
 import { TextInput } from "./form";
@@ -15,6 +15,10 @@ const logoBox: React.CSSProperties = {
   overflow: "hidden", padding: 8, boxSizing: "border-box",
 };
 const grid3: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 };
+const sectionHeading: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 8, margin: "0 0 12px",
+  fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--c-tx2)",
+};
 
 /**
  * Browseable app-store template gallery: free-text search + category chips +
@@ -27,6 +31,40 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
   const [cat, setCat] = useState("all");
   const matches = filterTemplates(templates, q, cat);
   const chips = ["all", ...presentCategories(templates)];
+  // Browsing the full catalog with no search → group into category sections
+  // (CasaOS-style, easier to scan). A search or a category chip → flat grid.
+  const grouped = cat === "all" && q.trim() === "";
+  const groups = grouped ? groupByCategory(templates) : [];
+
+  const renderTile = (tpl: Template) => (
+    <button
+      key={tpl.slug}
+      type="button"
+      className="tpl-tile"
+      onClick={() => onPick(tpl)}
+      title={tpl.description}
+      style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
+    >
+      <span style={logoBox}><TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} size={36} /></span>
+      <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{tpl.name}</span>
+        <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{tpl.description}</span>
+      </span>
+      {tpl.documentation && (
+        <a
+          href={tpl.documentation}
+          target="_blank"
+          rel="noreferrer"
+          title={t("resources.docTitle")}
+          aria-label={t("resources.docTitle")}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "absolute", top: 8, right: 8, display: "inline-flex", padding: 3, borderRadius: 6, color: "var(--c-tx3)" }}
+        >
+          <ExternalLink size={14} />
+        </a>
+      )}
+    </button>
+  );
 
   return (
     <>
@@ -55,40 +93,24 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
           );
         })}
       </div>
-      {matches.length === 0 ? (
+      {grouped ? (
+        groups.length === 0 ? (
+          <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("resources.noMatches")}</div>
+        ) : (
+          groups.map((g) => (
+            <section key={g.category} style={{ marginBottom: 22 }}>
+              <h2 style={sectionHeading}>
+                {t(`resources.cat_${g.category}`)}
+                <span style={{ fontSize: 11, fontWeight: 500, color: "var(--c-tx3)" }}>{g.items.length}</span>
+              </h2>
+              <div style={grid3}>{g.items.map(renderTile)}</div>
+            </section>
+          ))
+        )
+      ) : matches.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("resources.noMatches")}</div>
       ) : (
-        <div style={grid3}>
-          {matches.map((tpl) => (
-            <button
-              key={tpl.slug}
-              type="button"
-              className="tpl-tile"
-              onClick={() => onPick(tpl)}
-              title={tpl.description}
-              style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
-            >
-              <span style={logoBox}><TemplateLogo logo={tpl.logo} slug={tpl.slug} name={tpl.name} size={36} /></span>
-              <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{tpl.name}</span>
-                <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{tpl.description}</span>
-              </span>
-              {tpl.documentation && (
-                <a
-                  href={tpl.documentation}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={t("resources.docTitle")}
-                  aria-label={t("resources.docTitle")}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ position: "absolute", top: 8, right: 8, display: "inline-flex", padding: 3, borderRadius: 6, color: "var(--c-tx3)" }}
-                >
-                  <ExternalLink size={14} />
-                </a>
-              )}
-            </button>
-          ))}
-        </div>
+        <div style={grid3}>{matches.map(renderTile)}</div>
       )}
     </>
   );
