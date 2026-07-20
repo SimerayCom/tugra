@@ -34,3 +34,14 @@ export function presentCategories(templates: Template[]): string[] {
     [...present].filter((c) => !CATEGORY_ORDER.includes(c)).sort(),
   );
 }
+
+/**
+ * Group templates by category, in display order. Only categories that have at
+ * least one template appear (drives the app-store's "browse all" section list).
+ */
+export function groupByCategory(templates: Template[]): { category: string; items: Template[] }[] {
+  return presentCategories(templates).map((category) => ({
+    category,
+    items: templates.filter((t) => t.category === category),
+  }));
+}
