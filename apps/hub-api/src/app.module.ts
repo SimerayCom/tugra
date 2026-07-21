@@ -29,6 +29,7 @@ import { BackupsModule } from "./backups/backups.module";
 import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
+import { TunnelModule } from "./tunnel/tunnel.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
@@ -68,6 +69,7 @@ import { InstallController } from "./install/install.controller";
     VolumeBackupsModule,
     DestinationsModule,
     ServerOpsModule,
+    TunnelModule,
     ApiTokensModule,
     SavedViewsModule,
     SharedVariablesModule,

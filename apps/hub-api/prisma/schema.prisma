@@ -267,6 +267,7 @@ model Server {
   metricRollups        MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
   logDrains            LogDrain[]
+  tunnel               ServerTunnel?
   createdAt            DateTime     @default(now())
 }
 
@@ -282,6 +283,27 @@ model LogDrain {
   createdAt    DateTime @default(now())
 
   @@index([serverId])
+}
+
+// Cloudflare Tunnel binding for a server (zero-IP expose). 1:1 with Server. Secrets
+// (cfApiTokenEnc, cfTunnelTokenEnc) are libsodium-encrypted at rest and never returned.
+model ServerTunnel {
+  id               String   @id @default(cuid())
+  server           Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId         String   @unique
+  provider         String   @default("cloudflare")
+  cfAccountId      String
+  zoneName         String   // registrable CF zone owning the wildcard (e.g. "example.com")
+  zoneId           String
+  cfApiTokenEnc    String   // encrypted operator CF API token — NEVER returned/logged
+  tunnelId         String?  // CF tunnel UUID, set once createTunnel succeeds (idempotent resume)
+  tunnelName       String   // deterministic "tugra-<serverId>"
+  cfTunnelTokenEnc String?  // encrypted cloudflared connector run-token
+  dnsRecordId      String?  // CF DNS record id of the wildcard CNAME (exact teardown)
+  status           String   @default("pending") // pending | connecting | connected | error | disabled
+  lastError        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Metric {
@@ -678,6 +700,7 @@ model Application {
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"
+  tunnelExposed  Boolean      @default(false)   // per-app opt-in: route this app's hostname through the server's Cloudflare Tunnel
   certType       String       @default("http")  // "http" | "none" | "le-http" | "le-dns" | "custom"
   deployStrategy String       @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
   rollbackOnFailure Boolean   @default(true)      // auto-rollback to the previous version on a failed health gate

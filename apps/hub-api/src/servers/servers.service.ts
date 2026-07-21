@@ -20,6 +20,8 @@ import { TeamAccessService } from "../common/team-access.service";
 // AgentWsServer, which imports ServersService.
 import type { ApplicationsService } from "../applications/applications.service";
 import { APPLICATIONS_SERVICE } from "../applications/applications.tokens";
+import type { TunnelService } from "../tunnel/tunnel.service";
+import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import {
   generateEnrollToken,
   generateSeal,
@@ -252,6 +254,12 @@ export class ServersService {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
+    // Release any Cloudflare Tunnel resources BEFORE the cascade drops the row, so a deleted
+    // server never leaks a live CF tunnel + wildcard CNAME. Best-effort; lazy token avoids a cycle.
+    await this.moduleRef
+      .get<TunnelService>(TUNNEL_SERVICE, { strict: false })
+      .releaseResources(id)
+      .catch(() => undefined);
     await this.prisma.server.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "server.delete", target: id });
   }

@@ -48,6 +48,7 @@ import type {
   Template,
   TemplateManifest,
   TokenPair,
+  TunnelView,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -377,6 +378,21 @@ export const api = {
   },
   getProxyLogs(id: string, tail?: number) {
     return apiFetch<{ output: string }>(`/servers/${id}/proxy/logs${tail ? `?tail=${tail}` : ""}`);
+  },
+  getTunnelStatus(id: string) {
+    return apiFetch<TunnelView>(`/servers/${id}/tunnel`);
+  },
+  setupTunnel(id: string, input: { apiToken: string; cfAccountId: string; zoneName: string; wildcardDomain?: string }) {
+    return apiFetch<TunnelView>(`/servers/${id}/tunnel`, { method: "POST", body: JSON.stringify(input) });
+  },
+  teardownTunnel(id: string) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/tunnel`, { method: "DELETE" });
+  },
+  setAppTunnel(appId: string, exposed: boolean) {
+    return apiFetch<{ tunnelExposed: boolean }>(`/apps/${appId}/tunnel`, {
+      method: "PUT",
+      body: JSON.stringify({ exposed }),
+    });
   },
   setServerTags(id: string, tags: string[]) {
     return apiFetch<{ ok: true }>(`/servers/${id}/tags`, {

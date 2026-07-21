@@ -125,6 +125,9 @@ function make(
       metaList: () => templateMetaList(),
       all: () => TEMPLATES,
     } as unknown as TemplateCatalogService,
+    {
+      get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
+    } as unknown as import("@nestjs/core").ModuleRef,
   );
 }
 

@@ -181,6 +181,7 @@ export default function ServerDetailPage() {
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
           <ProxyCard id={id} canWrite={server.canWrite} />
           {server.canWrite && <NetworkCard id={id} server={server} />}
+          <TunnelCard id={id} server={server} />
           {server.canWrite && <CapabilitiesCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
         </>
@@ -653,6 +654,130 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
       <button onClick={refresh} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>↻</button>
       {logs && (
         <pre className="mono" style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs}</pre>
+      )}
+    </Card>
+  );
+}
+
+const TUNNEL_COLOR: Record<string, string> = {
+  connected: "var(--c-g)",
+  connecting: "var(--c-am)",
+  pending: "var(--c-am)",
+  error: "var(--c-r)",
+  disabled: "var(--c-tx3)",
+};
+
+const tunLabel: React.CSSProperties = { fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 };
+
+function TunnelInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
+      <span style={{ color: "var(--c-tx3)" }}>{label}</span>
+      <span style={{ color: "var(--c-tx)", fontWeight: 500, wordBreak: "break-all" }}>{value}</span>
+    </div>
+  );
+}
+
+/** Cloudflare Tunnel: expose a NAT/no-public-IP server's apps to the internet (zero-IP). */
+function TunnelCard({ id, server }: { id: string; server: ServerView }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const canWrite = server.canWrite;
+  const status = useQuery({ queryKey: ["tunnel", id], queryFn: () => api.getTunnelStatus(id) });
+  const tun = status.data;
+  const [apiToken, setApiToken] = useState("");
+  const [cfAccountId, setCfAccountId] = useState("");
+  const [zoneName, setZoneName] = useState("");
+  const [wildcardDomain, setWildcardDomain] = useState("");
+
+  const setup = useMutation({
+    mutationFn: () =>
+      api.setupTunnel(id, {
+        apiToken: apiToken.trim(),
+        cfAccountId: cfAccountId.trim(),
+        zoneName: zoneName.trim(),
+        wildcardDomain: wildcardDomain.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setApiToken("");
+      qc.invalidateQueries({ queryKey: ["tunnel", id] });
+      qc.invalidateQueries({ queryKey: ["server", id] });
+    },
+  });
+  const teardown = useMutation({
+    mutationFn: () => api.teardownTunnel(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tunnel", id] }),
+  });
+
+  const st = tun?.status ?? undefined;
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontWeight: 600 }}>{t("servers.tunnelTitle")}</div>
+        {tun?.configured && st && <StatusPill label={t(`servers.tunnelSt_${st}`)} color={TUNNEL_COLOR[st] ?? "var(--c-tx3)"} />}
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.tunnelDesc")}</p>
+
+      {server.certMode !== "http" && (
+        <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("servers.tunnelCertWarn")}</p>
+      )}
+
+      {tun?.configured ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <TunnelInfo label={t("servers.tunnelZoneName")} value={tun.zoneName ?? "—"} />
+          <TunnelInfo label={t("servers.wildcardDomain")} value={tun.wildcardDomain ?? "—"} />
+          {tun.lastError && (
+            <p style={{ fontSize: 12, color: "var(--c-r)", margin: 0, wordBreak: "break-word" }}>{tun.lastError}</p>
+          )}
+          {canWrite && (
+            <div>
+              <Btn
+                variant="ghost"
+                onClick={async () => {
+                  if (await confirm({ body: t("servers.tunnelDisconnectConfirm"), danger: true })) teardown.mutate();
+                }}
+                disabled={teardown.isPending}
+              >
+                {t("servers.tunnelDisconnect")}
+              </Btn>
+            </div>
+          )}
+        </div>
+      ) : canWrite ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <label style={tunLabel}>
+            {t("servers.tunnelApiToken")}
+            <input style={netField} type="password" value={apiToken} onChange={(e) => setApiToken(e.target.value)} />
+            <span style={{ fontSize: 11 }}>{t("servers.tunnelApiTokenHint")}</span>
+          </label>
+          <label style={tunLabel}>
+            {t("servers.tunnelAccountId")}
+            <input style={netField} value={cfAccountId} onChange={(e) => setCfAccountId(e.target.value)} />
+          </label>
+          <label style={tunLabel}>
+            {t("servers.tunnelZoneName")}
+            <input style={netField} value={zoneName} placeholder="example.com" onChange={(e) => setZoneName(e.target.value)} />
+          </label>
+          <label style={tunLabel}>
+            {t("servers.tunnelWildcardDomain")}
+            <input style={netField} value={wildcardDomain} placeholder="apps.example.com" onChange={(e) => setWildcardDomain(e.target.value)} />
+            <span style={{ fontSize: 11 }}>{t("servers.tunnelWildcardHint")}</span>
+          </label>
+          {setup.isError && <p style={{ fontSize: 12, color: "var(--c-r)", margin: 0 }}>{t("servers.tunnelSetupFailed")}</p>}
+          <div>
+            <Btn
+              variant="ghost"
+              onClick={() => setup.mutate()}
+              disabled={setup.isPending || !apiToken.trim() || !cfAccountId.trim() || !zoneName.trim()}
+            >
+              {setup.isPending ? "…" : t("servers.tunnelConnect")}
+            </Btn>
+          </div>
+        </div>
+      ) : (
+        <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: 0 }}>{t("servers.tunnelNotConfigured")}</p>
       )}
     </Card>
   );

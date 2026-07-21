@@ -2,6 +2,18 @@ export type Role = "OWNER" | "ADMIN" | "VIEWER";
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 export type ProxyStatus = "running" | "stopped" | "absent";
 
+export interface TunnelView {
+  configured: boolean;
+  provider: string | null;
+  zoneName: string | null;
+  wildcardDomain: string | null;
+  tunnelId: string | null;
+  status: string | null;
+  lastError: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface Team {
   id: string;
   name: string;
@@ -519,6 +531,7 @@ export interface Application {
   https: boolean;
   domainKind: string;
   exposeMode: string;
+  tunnelExposed: boolean;
   certType: string;
   url: string | null;
   webhookToken: string | null;
