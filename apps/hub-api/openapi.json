@@ -3459,6 +3459,9 @@
                       "exposeMode": {
                         "type": "string"
                       },
+                      "tunnelExposed": {
+                        "type": "boolean"
+                      },
                       "certType": {
                         "type": "string"
                       },
@@ -3566,6 +3569,7 @@
                       "https",
                       "domainKind",
                       "exposeMode",
+                      "tunnelExposed",
                       "certType",
                       "url",
                       "webhookToken",
@@ -3937,6 +3941,9 @@
                     "exposeMode": {
                       "type": "string"
                     },
+                    "tunnelExposed": {
+                      "type": "boolean"
+                    },
                     "certType": {
                       "type": "string"
                     },
@@ -4044,6 +4051,7 @@
                     "https",
                     "domainKind",
                     "exposeMode",
+                    "tunnelExposed",
                     "certType",
                     "url",
                     "webhookToken",
@@ -4400,6 +4408,9 @@
                     "exposeMode": {
                       "type": "string"
                     },
+                    "tunnelExposed": {
+                      "type": "boolean"
+                    },
                     "certType": {
                       "type": "string"
                     },
@@ -4507,6 +4518,7 @@
                     "https",
                     "domainKind",
                     "exposeMode",
+                    "tunnelExposed",
                     "certType",
                     "url",
                     "webhookToken",
@@ -4877,6 +4889,9 @@
                     "exposeMode": {
                       "type": "string"
                     },
+                    "tunnelExposed": {
+                      "type": "boolean"
+                    },
                     "certType": {
                       "type": "string"
                     },
@@ -4984,6 +4999,7 @@
                     "https",
                     "domainKind",
                     "exposeMode",
+                    "tunnelExposed",
                     "certType",
                     "url",
                     "webhookToken",
@@ -6425,6 +6441,9 @@
                     "exposeMode": {
                       "type": "string"
                     },
+                    "tunnelExposed": {
+                      "type": "boolean"
+                    },
                     "certType": {
                       "type": "string"
                     },
@@ -6532,6 +6551,7 @@
                     "https",
                     "domainKind",
                     "exposeMode",
+                    "tunnelExposed",
                     "certType",
                     "url",
                     "webhookToken",
@@ -6841,6 +6861,9 @@
                       "exposeMode": {
                         "type": "string"
                       },
+                      "tunnelExposed": {
+                        "type": "boolean"
+                      },
                       "certType": {
                         "type": "string"
                       },
@@ -6948,6 +6971,7 @@
                       "https",
                       "domainKind",
                       "exposeMode",
+                      "tunnelExposed",
                       "certType",
                       "url",
                       "webhookToken",
@@ -7287,6 +7311,9 @@
                     "exposeMode": {
                       "type": "string"
                     },
+                    "tunnelExposed": {
+                      "type": "boolean"
+                    },
                     "certType": {
                       "type": "string"
                     },
@@ -7394,6 +7421,7 @@
                     "https",
                     "domainKind",
                     "exposeMode",
+                    "tunnelExposed",
                     "certType",
                     "url",
                     "webhookToken",
@@ -10648,6 +10676,171 @@
         ],
         "tags": [
           "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/tunnel": {
+      "get": {
+        "operationId": "TunnelController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      },
+      "post": {
+        "operationId": "TunnelController_setup",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apiToken": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 500
+                  },
+                  "cfAccountId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "zoneName": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+                  },
+                  "wildcardDomain": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+                  }
+                },
+                "required": [
+                  "apiToken",
+                  "cfAccountId",
+                  "zoneName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      },
+      "delete": {
+        "operationId": "TunnelController_teardown",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/tunnel": {
+      "put": {
+        "operationId": "AppTunnelController_setExposed",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "exposed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "exposed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
         ]
       }
     },

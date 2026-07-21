@@ -7,12 +7,16 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { Observable } from "rxjs";
+import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import type { TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
+// Lazy string-token lookup (ModuleRef) avoids a static applications→tunnel cycle.
+import type { TunnelService } from "../tunnel/tunnel.service";
+import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
@@ -135,6 +139,7 @@ export const AppViewSchema = z.object({
   https: z.boolean(),
   domainKind: z.string(),
   exposeMode: z.string(),
+  tunnelExposed: z.boolean(),
   certType: z.string(),
   url: z.string().nullable(),
   webhookToken: z.string().nullable(),
@@ -208,7 +213,17 @@ export class ApplicationsService {
     private readonly containerMetricsSvc: ContainerMetricsService,
     private readonly portAlloc: PortAllocatorService,
     private readonly catalog: TemplateCatalogService,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  /** Rebuild the app's server tunnel ingress from DB truth (lazy token avoids a static tunnel cycle).
+   *  Best-effort — a Cloudflare hiccup must not fail the domain/expose mutation that triggered it. */
+  private async syncTunnelIngress(serverId: string): Promise<void> {
+    await this.moduleRef
+      .get<TunnelService>(TUNNEL_SERVICE, { strict: false })
+      .syncIngress(serverId)
+      .catch(() => undefined);
+  }
 
   /**
    * Resolve a new app's initial exposure. A user-provided domain is "custom" and
@@ -1102,6 +1117,8 @@ export class ApplicationsService {
     await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
     await this.monitors.removeForApp(id).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
+    // Drop the deleted app's stale rule from its server's tunnel ingress (recomputed from DB truth).
+    if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
     await this.audit.log({ actor: userId, action: "app.remove", target: id });
   }
 
@@ -1426,7 +1443,7 @@ export class ApplicationsService {
 
   /** Assign, change or clear an app's domain after creation (applied on next deploy). */
   async setDomain(userId: string, id: string, domain: string | null): Promise<void> {
-    await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id);
     // A user-set domain is "custom" and served over HTTPS (Let's Encrypt); clearing
     // it resets the kind. This keeps custom domains on HTTPS under the certType-aware
     // Traefik labels (a bare `{ domain }` update would leave certType at the "http"
@@ -1436,6 +1453,8 @@ export class ApplicationsService {
       : { domain: null, domainKind: "none" };
     await this.prisma.application.update({ where: { id }, data });
     await this.syncMonitor(id).catch(() => undefined); // keep the auto uptime monitor's target in step
+    // A tunnel-exposed app's CF ingress rule keys off its hostname — rebuild it when the domain changes/clears.
+    if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
     await this.audit.log({ actor: userId, action: "app.domain.update", target: id });
   }
 
@@ -1465,6 +1484,8 @@ export class ApplicationsService {
       data: { domain: e.domain, https: e.https, exposeMode: e.exposeMode, domainKind: e.domainKind, certType: e.certType },
     });
     await this.syncMonitor(id).catch(() => undefined);
+    // Rebuild tunnel ingress when the app is routed through a tunnel and its hostname just changed/cleared.
+    if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
     await this.audit.log({ actor: userId, action: "app.expose.update", target: id, meta: { mode: input.mode } });
     const perms = await this.access.membershipPermissions(userId, app.teamId);
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
@@ -1774,6 +1795,7 @@ export class ApplicationsService {
       https: app.https,
       domainKind: app.domainKind,
       exposeMode: app.exposeMode,
+      tunnelExposed: app.tunnelExposed,
       certType: app.certType,
       // A domainless COMPOSE app is reachable via its portMappings, not the always-null scalar
       // hostPort — derive the effective port (only when needed) so the URL is never null.

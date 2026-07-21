@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { cleanDomain } from "../lib/domain";
 import { useT } from "../i18n/provider";
@@ -53,6 +53,24 @@ export function ExposeModal({
 
   const invalid = mode === "custom" && !cleanDomain(domain);
 
+  // Per-app "publicly accessible via tunnel" — only meaningful when the app's server has a
+  // live Cloudflare Tunnel. Self-fetch the app (for serverId + current toggle) and tunnel status.
+  const appQ = useQuery({ queryKey: ["app", appId], queryFn: () => api.getApp(appId) });
+  const serverId = appQ.data?.serverId;
+  const tunnelQ = useQuery({
+    queryKey: ["tunnel", serverId],
+    queryFn: () => api.getTunnelStatus(serverId as string),
+    enabled: !!serverId,
+  });
+  const tunnelReady = !!tunnelQ.data?.configured && tunnelQ.data.status === "connected";
+  const setTunnel = useMutation({
+    mutationFn: (exposed: boolean) => api.setAppTunnel(appId, exposed),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["app", appId] });
+      qc.invalidateQueries({ queryKey: ["apps"] });
+    },
+  });
+
   return (
     <Modal onClose={onClose}>
       <div style={{ fontWeight: 700, marginBottom: 10 }}>{t("apps.exposeTitle")}</div>
@@ -85,6 +103,28 @@ export function ExposeModal({
             />
           </Field>
         </div>
+      )}
+      {tunnelReady && appQ.data && (
+        <label
+          style={{
+            display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, padding: "10px 12px",
+            cursor: appQ.data.domain ? "pointer" : "default", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={appQ.data.tunnelExposed}
+            disabled={setTunnel.isPending || !appQ.data.domain}
+            onChange={(e) => setTunnel.mutate(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 14, color: "var(--c-tx)" }}>{t("apps.tunnelExpose")}</span>
+            <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+              {appQ.data.domain ? t("apps.tunnelExposeDesc") : t("apps.tunnelExposeNeedsDomain")}
+            </span>
+          </span>
+        </label>
       )}
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "12px 0 0" }}>{t("apps.exposeApplyNote")}</p>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
