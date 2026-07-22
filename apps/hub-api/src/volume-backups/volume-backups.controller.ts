@@ -8,7 +8,12 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { VolumeBackupsService, VolumeBackupViewSchema } from "./volume-backups.service";
-import { VolumeBackupConfigInput, VolumeBackupConfigSchema } from "./dto";
+import {
+  VolumeBackupConfigInput,
+  VolumeBackupConfigSchema,
+  VolumeImportFromUrlInput,
+  VolumeImportFromUrlSchema,
+} from "./dto";
 
 @ApiTags("volume-backups")
 @ApiSecurity("pat")
@@ -35,6 +40,19 @@ export class VolumeBackupsController {
   @HttpCode(200)
   async restore(@CurrentUser() user: AuthUser, @Param("appId") appId: string, @Param("id") id: string) {
     await this.svc.restore(user.userId, appId, id);
+    return { ok: true };
+  }
+
+  @Post("import-from-url")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodBody(VolumeImportFromUrlSchema)
+  async importFromUrl(
+    @CurrentUser() user: AuthUser,
+    @Param("appId") appId: string,
+    @Body(new ZodValidationPipe(VolumeImportFromUrlSchema)) body: VolumeImportFromUrlInput,
+  ) {
+    await this.svc.importFromUrl(user.userId, appId, body);
     return { ok: true };
   }
 
