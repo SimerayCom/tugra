@@ -298,6 +298,7 @@ export default function AppDetailPage() {
           {appData.source !== "COMPOSE" && appData.volumes.length > 0 && (
             <VolumeBackupsCard
               id={id}
+              volumes={appData.volumes}
               enabled={appData.volumeBackupEnabled}
               intervalHours={appData.volumeBackupIntervalHours}
               retention={appData.volumeBackupRetention}
@@ -1246,7 +1247,7 @@ const volField: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
-function VolumeBackupsCard({ id, enabled, intervalHours, retention, destinationId }: { id: string; enabled: boolean; intervalHours: number | null; retention: number; destinationId: string | null }) {
+function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, destinationId }: { id: string; volumes: AppVolume[]; enabled: boolean; intervalHours: number | null; retention: number; destinationId: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -1265,15 +1266,67 @@ function VolumeBackupsCard({ id, enabled, intervalHours, retention, destinationI
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
 
+  // Migrator data-pull: import a volume's data from an external staged tar(.gz) URL (overwrites the volume).
+  const [showImport, setShowImport] = useState(false);
+  const [impVol, setImpVol] = useState(volumes[0]?.name ?? "");
+  const [impUrl, setImpUrl] = useState("");
+  const [impGzip, setImpGzip] = useState(true);
+  const [impEnc, setImpEnc] = useState(false);
+  const [impKey, setImpKey] = useState("");
+  const importMut = useMutation({
+    mutationFn: () =>
+      api.importVolumeFromUrl(id, {
+        volumeName: impVol,
+        url: impUrl.trim(),
+        gzip: impGzip,
+        encrypted: impEnc,
+        encryptionKey: impEnc ? impKey : undefined,
+      }),
+    onSuccess: () => { setShowImport(false); setImpUrl(""); setImpKey(""); invalidate(); },
+  });
+
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.volBackups")}</div>
+        <Btn variant="ghost" onClick={() => setShowImport((v) => !v)}>{t("apps.volImport")}</Btn>
         <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
           {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
         </Btn>
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.volBackupsDesc")}</p>
+
+      {showImport && (
+        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.volImportDesc")}</div>
+          <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+            {t("apps.volImportVolume")}
+            <select style={{ ...volField, width: "auto" }} value={impVol} onChange={(e) => setImpVol(e.target.value)}>
+              {volumes.map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
+            </select>
+          </label>
+          <input style={{ ...volField, width: "100%" }} placeholder="https://…/volume.tar.gz" value={impUrl} onChange={(e) => setImpUrl(e.target.value)} />
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={impGzip} onChange={(e) => setImpGzip(e.target.checked)} /> {t("apps.volImportGzip")}
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={impEnc} onChange={(e) => setImpEnc(e.target.checked)} /> {t("apps.volImportEncrypted")}
+            </label>
+            {impEnc && <input style={{ ...volField, flex: 1, minWidth: 160 }} type="password" placeholder={t("apps.volImportKey")} value={impKey} onChange={(e) => setImpKey(e.target.value)} />}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.volImportWarn")}</div>
+          <div>
+            <Btn
+              onClick={async () => { if (await confirm({ body: t("apps.volImportConfirm"), danger: true })) importMut.mutate(); }}
+              disabled={importMut.isPending || !impVol || !impUrl.trim() || (impEnc && !impKey)}
+            >
+              {importMut.isPending ? "…" : t("apps.volImportRun")}
+            </Btn>
+          </div>
+          {importMut.isError && <div style={{ color: "var(--c-r)", fontSize: 12 }}>{(importMut.error as Error).message}</div>}
+        </div>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>

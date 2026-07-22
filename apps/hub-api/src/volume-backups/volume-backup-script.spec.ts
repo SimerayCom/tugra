@@ -1,6 +1,7 @@
 import {
   buildVolumeBackupScript,
   buildVolumeRestoreScript,
+  buildVolumeImportScript,
   buildVolumeDeleteScript,
   volumeBackupFilename,
 } from "./volume-backup-script";
@@ -50,5 +51,45 @@ describe("volume-backup-script", () => {
   it("delete removes the local file or the S3 object", () => {
     expect(buildVolumeDeleteScript("a1", "data", "x.tar.gz", LOCAL)).toContain("rm -f /etc/tugra/volume-backups/a1/data/x.tar.gz");
     expect(buildVolumeDeleteScript("a1", "data", "x.tar.gz", S3)).toContain("mc rm tdest/b/tugra/a1/data/x.tar.gz");
+  });
+
+  describe("buildVolumeImportScript", () => {
+    it("stages the fetch to a temp file first, then wipes+extracts (a failed fetch never touches the volume)", () => {
+      const s = buildVolumeImportScript("tugra_appv_a1_data", "https://x.example/dump.tar.gz", {
+        encrypted: false,
+        key: "",
+        gzip: true,
+      });
+      expect(s).toContain("TMP=$(mktemp)");
+      expect(s).toContain("curl -fsSL 'https://x.example/dump.tar.gz'");
+      expect(s).toContain("| gunzip");
+      expect(s).toContain('> "$TMP"'); // decode staged to temp BEFORE the volume is touched
+      expect(s).toContain("set -o pipefail"); // a failed url/key/gzip aborts (set -e) before the wipe
+      expect(s).toContain("docker run --rm -i -v 'tugra_appv_a1_data':/data alpine sh -c");
+      expect(s).toContain("find . -mindepth 1 -delete");
+      expect(s).toContain("tar --no-same-owner -xf -"); // untrusted tar → no arbitrary ownership
+      expect(s).toContain('< "$TMP"'); // extract reads the staged temp, not a live pipe
+      // the download-to-temp MUST come before the destructive wipe
+      expect(s.indexOf('> "$TMP"')).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
+      expect(s).not.toContain("gpg");
+    });
+
+    it("shell-quotes a URL with metacharacters (no command injection)", () => {
+      const s = buildVolumeImportScript("v", "https://x/$(touch pwned).tar", { encrypted: false, key: "", gzip: true });
+      expect(s).toContain("'https://x/$(touch pwned).tar'"); // inside single quotes → inert
+    });
+
+    it("omits gunzip when gzip:false", () => {
+      const s = buildVolumeImportScript("v", "https://x/dump.tar", { encrypted: false, key: "", gzip: false });
+      expect(s).not.toContain("gunzip");
+    });
+
+    it("adds a gpg -d stage (passphrase quoted) when encrypted", () => {
+      const s = buildVolumeImportScript("v", "https://x/d.tar.gz.gpg", { encrypted: true, key: "pass", gzip: true });
+      expect(s).toContain("gpg --batch --yes --passphrase 'pass' --decrypt");
+      // decode order: fetch → decrypt → gunzip
+      expect(s.indexOf("curl")).toBeLessThan(s.indexOf("gpg"));
+      expect(s.indexOf("gpg")).toBeLessThan(s.indexOf("gunzip"));
+    });
   });
 });

@@ -91,6 +91,38 @@ export function buildVolumeRestoreScript(
   return ["set -e", "set -o pipefail", `${decode.join(" | ")} | ${extract}`].join("\n");
 }
 
+/**
+ * Import an app volume's data from an external tar(.gz) URL (migrator data-pull).
+ * Mirrors buildImportScript (DB) + buildVolumeRestoreScript's clean extract: fetch
+ * the staged tar → [gpg -d] → [gunzip] → wipe the volume then extract into it.
+ */
+export function buildVolumeImportScript(
+  dockerVolume: string,
+  url: string,
+  opts: { encrypted: boolean; key: string; gzip: boolean },
+): string {
+  const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
+  const decode = [`curl -fsSL ${shq(url)}`];
+  if (opts.encrypted) decode.push(gpgDecrypt(dest));
+  if (opts.gzip) decode.push("gunzip");
+  // Download + decode to a TEMP FILE FIRST. With `set -e` + `set -o pipefail`, a failed/expired URL,
+  // wrong key, or gzip-flag mismatch aborts HERE — before the volume is touched — so a failed import
+  // never destroys existing data. Only once a valid archive is staged do we wipe + extract (clean
+  // import). --no-same-owner: an UNTRUSTED external tar must not restore arbitrary uid/gid; the extract
+  // container is ephemeral (--rm) with only the target volume mounted at /data.
+  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data alpine sh -c ${shq(
+    "cd /data && find . -mindepth 1 -delete 2>/dev/null; tar --no-same-owner -xf -",
+  )} < "$TMP"`;
+  return [
+    "set -e",
+    "set -o pipefail",
+    "TMP=$(mktemp)",
+    `trap 'rm -f "$TMP"' EXIT`,
+    `${decode.join(" | ")} > "$TMP"`,
+    extract,
+  ].join("\n");
+}
+
 export function buildVolumeDeleteScript(
   appId: string,
   volumeName: string,

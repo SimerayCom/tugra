@@ -9593,6 +9593,71 @@
         ]
       }
     },
+    "/api/v1/apps/{appId}/volume-backups/import-from-url": {
+      "post": {
+        "operationId": "VolumeBackupsController_importFromUrl",
+        "parameters": [
+          {
+            "name": "appId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volumeName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "gzip": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "encrypted": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "encryptionKey": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "volumeName",
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "volume-backups"
+        ]
+      }
+    },
     "/api/v1/apps/{appId}/volume-backups/{id}": {
       "delete": {
         "operationId": "VolumeBackupsController_remove",
