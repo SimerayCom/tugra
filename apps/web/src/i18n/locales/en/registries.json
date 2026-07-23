@@ -21,5 +21,7 @@
   "add": "Add registry",
   "test": "Test",
   "testOk": "Login succeeded",
+  "edit": "Edit",
+  "passwordKeep": "Leave blank to keep the current password",
   "delete": "Delete"
 }
