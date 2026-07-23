@@ -316,8 +316,9 @@ export default function AppDetailPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {deployments.map((d) => {
               const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
-              // Rollbackable if the local tag is retained OR a portable registry image exists.
-              const canRollback = appData.canWrite && (!!d.imageTag || !!d.registryImage) && d.id !== latestSuccessId;
+              // Rollbackable when the deploy's artifact is retained (image tag / registry image, or —
+              // for compose apps — the compose YAML in its snapshot), and it isn't the current version.
+              const canRollback = appData.canWrite && d.rollbackable && d.id !== latestSuccessId;
               return (
                 <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

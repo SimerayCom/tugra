@@ -578,6 +578,7 @@ export interface Deployment {
   exitCode: number | null;
   imageTag: string | null;
   registryImage: string | null;
+  rollbackable: boolean; // artifact retained → can be a rollback target (image tag/registry, or compose snapshot)
   configChanges?: ConfigChange[];
   createdAt: string;
 }

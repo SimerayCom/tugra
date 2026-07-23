@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
@@ -433,6 +433,163 @@ describe("ApplicationsService", () => {
     // oldest deploy has no previous snapshot → no changes; raw snapshot not leaked
     expect(list[1].configChanges).toEqual([]);
     expect(list[0]).not.toHaveProperty("configSnapshot");
+  });
+
+  const composeApp = {
+    ...app,
+    source: "COMPOSE",
+    composeFile: "services:\n  web:\n    image: nginx:1.21\n",
+    domain: null,
+  };
+  const OLD_COMPOSE = "services:\n  web:\n    image: nginx:1.20\n";
+
+  function composeRollbackDeps(exitCode: number) {
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    let sentCmd = "";
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update: appUpdate },
+      deployment: {
+        // status-aware: the active-deploy guard queries status:"RUNNING" (→ none); the target lookup queries SUCCESS.
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(
+            where.status === "RUNNING"
+              ? null
+              : { id: "target", status: "SUCCESS", configSnapshot: { composeFile: OLD_COMPOSE, env: {}, volumes: [] } },
+          ),
+        ),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: exitCode === 0 ? "SUCCESS" : "FAILED" }),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => {
+        sentCmd = cmd;
+        return Promise.resolve({ exitCode, output: "up" });
+      }),
+    } as unknown as AgentWsServer;
+    return { prisma, access, agentWs, depUpdate, appUpdate, sentCmd: () => sentCmd };
+  }
+
+  it("rolls a compose app back to a prior deploy's compose config (restore + persist)", async () => {
+    const d = composeRollbackDeps(0);
+    await make(d.prisma, d.access, d.agentWs).rollback("u1", "app1", "target");
+    // deployed via the compose path (not `docker run`) with the RESTORED compose YAML written
+    expect(d.sentCmd()).toContain("docker compose");
+    expect(d.sentCmd()).toContain("up -d");
+    expect(d.sentCmd()).toContain(Buffer.from(OLD_COMPOSE, "utf8").toString("base64"));
+    // the rolled-back compose is persisted as the app's current source
+    expect(d.appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { composeFile: OLD_COMPOSE } }));
+    // deployment recorded SUCCESS, no single image tag, snapshot recorded (so it's itself a rollback target)
+    expect(d.depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", imageTag: null, configSnapshot: expect.any(Object) }) }),
+    );
+  });
+
+  it("rejects a compose rollback when the target deploy has no compose snapshot", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update: jest.fn() },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "target", status: "SUCCESS", configSnapshot: { env: {}, volumes: [] } }),
+        ),
+        create: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, { sendCommand: jest.fn() } as unknown as AgentWsServer);
+    await expect(svc.rollback("u1", "app1", "target")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("compose rollback is refused while a deployment is already running (409)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp) },
+      deployment: { findFirst: jest.fn().mockResolvedValue({ id: "running", status: "RUNNING" }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, { sendCommand: jest.fn() } as unknown as AgentWsServer);
+    await expect(svc.rollback("u1", "app1", "target")).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("compose rollback routes to the RESTORED file's web port, not the current version's (domain-routed)", async () => {
+    // current app.composeFile → web on 8080; restored (target) → web on 3000. The Traefik override must
+    // advertise the RESTORED port, else a domain-routed app 502s after a port change (ultracode HIGH #1/#3).
+    const routedApp = {
+      ...app,
+      source: "COMPOSE",
+      domain: "app.example.com",
+      composeFile: "services:\n  web:\n    image: nginx\n    ports:\n      - \"8080:8080\"\n",
+    };
+    const restored = "services:\n  web:\n    image: nginx\n    ports:\n      - \"3000:3000\"\n";
+    let sentCmd = "";
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(routedApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "target", status: "SUCCESS", configSnapshot: { composeFile: restored, env: {}, volumes: [] } }),
+        ),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sentCmd = cmd; return Promise.resolve({ exitCode: 0, output: "up" }); }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).rollback("u1", "app1", "target");
+    // The compose file + Traefik override are base64-transported in the command — decode them to inspect.
+    const decoded = [...sentCmd.matchAll(/printf %s '([^']+)' \| base64 -d/g)]
+      .map((m) => Buffer.from(m[1], "base64").toString("utf8"))
+      .join("\n");
+    expect(decoded).toContain("loadbalancer.server.port=3000"); // routing derived from the RESTORED file
+    expect(decoded).not.toContain("loadbalancer.server.port=8080"); // not the stale current-version port
+  });
+
+  it("a failed compose rollback marks FAILED and does NOT persist the compose file", async () => {
+    const d = composeRollbackDeps(1);
+    await make(d.prisma, d.access, d.agentWs).rollback("u1", "app1", "target");
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    expect(d.appUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ composeFile: expect.anything() }) }),
+    );
+  });
+
+  it("deployments() marks a compose deploy rollbackable only when it has a compose snapshot", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp) },
+      deployment: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "d2", status: "SUCCESS", imageTag: null, registryImage: null, createdAt: new Date(2), configSnapshot: { composeFile: OLD_COMPOSE, env: {}, volumes: [] } },
+          { id: "d1", status: "SUCCESS", imageTag: null, registryImage: null, createdAt: new Date(1), configSnapshot: { env: {}, volumes: [] } },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    const list = await svc.deployments("u1", "app1");
+    expect(list[0].rollbackable).toBe(true); // has a compose snapshot
+    expect(list[1].rollbackable).toBe(false); // no composeFile snapshot
+  });
+
+  it("deployments() does not flag a FAILED compose deploy rollbackable (snapshot exists but rollback would 404)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp) },
+      deployment: {
+        findMany: jest.fn().mockResolvedValue([
+          // a FAILED deploy still carries configSnapshot.composeFile (recorded at deploy START) — the status gate is essential
+          { id: "d1", status: "FAILED", imageTag: null, registryImage: null, createdAt: new Date(1), configSnapshot: { composeFile: OLD_COMPOSE, env: {}, volumes: [] } },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    const list = await svc.deployments("u1", "app1");
+    expect(list[0].rollbackable).toBe(false);
   });
 
   it("refuses a second deploy while one is already running (409)", async () => {
@@ -1620,13 +1777,14 @@ describe("ApplicationsService", () => {
     );
   });
 
-  it("refuses rollback for a compose app", async () => {
+  it("compose rollback 404s when the target deployment doesn't exist", async () => {
     const prisma = {
-      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" }) },
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: "services:\n" }) },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
-    await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/compose/);
+    await expect(svc.rollback("u1", "app1", "depX")).rejects.toBeInstanceOf(NotFoundException);
   });
 
   // ── Preview deployments (B6) ──
@@ -1853,7 +2011,9 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
       deployment: {
-        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:dep1" }),
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "dep1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:dep1" }),
+        ),
         create: jest.fn().mockResolvedValue({ id: "dep2" }),
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
@@ -1888,7 +2048,9 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(regApp), update: jest.fn().mockResolvedValue({}) },
       deployment: {
         // local imageTag was pruned (null) but the registry ref survives
-        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        ),
         create: jest.fn().mockResolvedValue({ id: "dep2" }),
         update: depUpdate,
         findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
@@ -1919,7 +2081,9 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(regApp), update: jest.fn().mockResolvedValue({}) },
       deployment: {
-        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:dep1", registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "dep1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:dep1", registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        ),
         create: jest.fn().mockResolvedValue({ id: "dep2" }),
         update: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn().mockResolvedValue({ id: "dep2", status: "SUCCESS" }),
@@ -1943,7 +2107,9 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(noRegApp), update: appUpdate },
       deployment: {
-        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/org/tugra_app1:dep1" }),
+        ),
         create,
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
@@ -1959,7 +2125,9 @@ describe("ApplicationsService", () => {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
       deployment: {
-        findFirst: jest.fn().mockResolvedValue({ id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: null }),
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "dep1", appId: "app1", status: "SUCCESS", imageTag: null, registryImage: null }),
+        ),
       },
       sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
