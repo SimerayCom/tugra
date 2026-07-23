@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Trash2 } from "lucide-react";
+import { Bell, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
@@ -111,6 +111,16 @@ export default function NotificationsPage() {
   });
   const test = useMutation({ mutationFn: (id: string) => api.testChannel(id) });
   const del = useMutation({ mutationFn: (id: string) => api.deleteChannel(id), onSuccess: invalidate });
+  const toggle = useMutation({
+    mutationFn: (c: { id: string; enabled: boolean }) => api.updateChannel(c.id, { enabled: c.enabled }),
+    onSuccess: invalidate,
+  });
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [rName, setRName] = useState("");
+  const renameCh = useMutation({
+    mutationFn: (id: string) => api.updateChannel(id, { name: rName.trim() }),
+    onSuccess: () => { setRenamingId(null); invalidate(); },
+  });
 
   const setField = (k: string, v: string) => setConfig((c) => ({ ...c, [k]: v }));
   const setHeaderRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
@@ -135,10 +145,29 @@ export default function NotificationsPage() {
           {visible.map((c) => (
             <Card key={c.id} style={{ padding: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  {renamingId === c.id ? (
+                    <form onSubmit={(e) => { e.preventDefault(); if (rName.trim()) renameCh.mutate(c.id); }} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input value={rName} onChange={(e) => setRName(e.target.value)} autoFocus style={{ padding: "4px 8px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit" }} />
+                      <Btn type="submit" disabled={renameCh.isPending || !rName.trim()}>{renameCh.isPending ? "…" : t("common.save")}</Btn>
+                      <Btn variant="ghost" onClick={() => setRenamingId(null)}>{t("common.cancel")}</Btn>
+                    </form>
+                  ) : (
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
+                  )}
                   <Badge tone="gold">{c.type}</Badge>
-                  {!c.enabled && <Badge>off</Badge>}
+                  {c.canWrite ? (
+                    <button
+                      onClick={() => toggle.mutate({ id: c.id, enabled: !c.enabled })}
+                      disabled={toggle.isPending}
+                      title={c.enabled ? t("notifications.disable") : t("notifications.enable")}
+                      style={{ fontFamily: "inherit", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, cursor: "pointer", border: "1px solid var(--c-bd)", background: c.enabled ? "var(--c-ad)" : "transparent", color: c.enabled ? "var(--c-g)" : "var(--c-tx3)" }}
+                    >
+                      {c.enabled ? t("notifications.on") : t("notifications.off")}
+                    </button>
+                  ) : (
+                    !c.enabled && <Badge>off</Badge>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 3 }}>
                   {c.eventTypes.length ? c.eventTypes.map((e) => t(`notifications.${EVENT_LABEL[e] ?? e}`)).join(" · ") : "—"}
@@ -149,6 +178,7 @@ export default function NotificationsPage() {
                   <Btn variant="ghost" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
                     {test.isPending ? "…" : t("notifications.test")}
                   </Btn>
+                  <IconBtn label={t("notifications.editName")} onClick={() => { setRName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}><Pencil size={15} /></IconBtn>
                   <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
                 </>
               )}

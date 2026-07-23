@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Package, Trash2 } from "lucide-react";
+import { Package, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
@@ -98,7 +98,28 @@ function RegistryRow({
   id, name, type, url, username, imagePrefix, canWrite, onDelete,
 }: { id: string; name: string; type: string; url: string | null; username: string; imagePrefix: string | null; canWrite: boolean; onDelete: () => void }) {
   const t = useT();
+  const qc = useQueryClient();
   const test = useMutation({ mutationFn: () => api.testRegistry(id) });
+  const [editing, setEditing] = useState(false);
+  const [eName, setEName] = useState(name);
+  const [eType, setEType] = useState(type);
+  const [eUrl, setEUrl] = useState(url ?? "");
+  const [eUser, setEUser] = useState(username);
+  const [ePass, setEPass] = useState("");
+  const [ePrefix, setEPrefix] = useState(imagePrefix ?? "");
+  const openEdit = () => {
+    setEName(name); setEType(type); setEUrl(url ?? ""); setEUser(username); setEPass(""); setEPrefix(imagePrefix ?? "");
+    setEditing(true);
+  };
+  const update = useMutation({
+    // password is write-only: only send it when the operator typed a new one (blank keeps the current creds).
+    mutationFn: () =>
+      api.updateRegistry(id, {
+        name: eName, type: eType, url: eUrl.trim() || null, username: eUser,
+        imagePrefix: ePrefix.trim() || null, ...(ePass ? { password: ePass } : {}),
+      }),
+    onSuccess: () => { setEditing(false); setEPass(""); qc.invalidateQueries({ queryKey: ["registries"] }); },
+  });
   return (
     <Card style={{ padding: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -114,10 +135,31 @@ function RegistryRow({
         {canWrite && (
           <>
             <Btn variant="ghost" onClick={() => test.mutate()} disabled={test.isPending}>{test.isPending ? "…" : t("registries.test")}</Btn>
+            <IconBtn label={t("registries.edit")} onClick={() => (editing ? setEditing(false) : openEdit())}><Pencil size={15} /></IconBtn>
             <IconBtn label={t("registries.delete")} danger onClick={onDelete}><Trash2 size={15} /></IconBtn>
           </>
         )}
       </div>
+      {editing && canWrite && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (eName && eUser) update.mutate(); }}
+          style={{ marginTop: 12, borderTop: "1px solid var(--c-bd)", paddingTop: 12 }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <Field label={t("registries.name")}><TextInput value={eName} onChange={(e) => setEName(e.target.value)} required /></Field>
+            <Field label={t("registries.type")}><Select value={eType} onChange={setEType} options={TYPES.map((v) => ({ value: v, label: t(`registries.type_${v}`) }))} /></Field>
+            <Field label={t("registries.url")}><TextInput value={eUrl} onChange={(e) => setEUrl(e.target.value)} placeholder="ghcr.io" /></Field>
+            <Field label={t("registries.imagePrefix")}><TextInput value={ePrefix} onChange={(e) => setEPrefix(e.target.value)} placeholder="my-org" /></Field>
+            <Field label={t("registries.username")}><TextInput value={eUser} onChange={(e) => setEUser(e.target.value)} required /></Field>
+            <Field label={t("registries.password")} hint={t("registries.passwordKeep")}><TextInput type="password" value={ePass} onChange={(e) => setEPass(e.target.value)} placeholder="••••••" /></Field>
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <Btn type="submit" disabled={update.isPending || !eName || !eUser}>{update.isPending ? "…" : t("common.save")}</Btn>
+            <Btn variant="ghost" onClick={() => setEditing(false)}>{t("common.cancel")}</Btn>
+          </div>
+          {update.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(update.error as Error).message}</div>}
+        </form>
+      )}
       {test.isSuccess && <div style={{ color: "var(--c-g)", fontSize: 12, marginTop: 8 }}>{t("registries.testOk")}</div>}
       {test.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(test.error as Error).message}</div>}
     </Card>

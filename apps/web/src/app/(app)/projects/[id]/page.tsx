@@ -45,6 +45,12 @@ export default function ProjectDetailPage() {
     mutationFn: () => api.deleteProject(id),
     onSuccess: () => router.replace("/projects"),
   });
+  const [renaming, setRenaming] = useState(false);
+  const [rname, setRname] = useState("");
+  const rename = useMutation({
+    mutationFn: () => api.renameProject(id, rname.trim()),
+    onSuccess: () => { setRenaming(false); invalidate(); qc.invalidateQueries({ queryKey: ["projects"] }); },
+  });
 
   if (isError && !project) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !project) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -55,8 +61,28 @@ export default function ProjectDetailPage() {
       <PageHeader
         breadcrumb={[{ label: t("nav.projects"), href: "/projects" }, { label: project.name }]}
         title={project.name}
-        actions={project.canWrite && empty ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true })) del.mutate(); }}>{t("projects.deleteProject")}</Btn> : undefined}
+        actions={
+          project.canWrite ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn variant="ghost" onClick={() => { setRname(project.name); setRenaming(true); }}>{t("projects.rename")}</Btn>
+              {empty && (
+                <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true })) del.mutate(); }}>{t("projects.deleteProject")}</Btn>
+              )}
+            </div>
+          ) : undefined
+        }
       />
+
+      {renaming && (
+        <Card style={{ padding: 12, marginBottom: 12 }}>
+          <form onSubmit={(e) => { e.preventDefault(); if (rname.trim()) rename.mutate(); }} style={{ display: "flex", gap: 8 }}>
+            <input style={{ ...field, flex: 1 }} value={rname} onChange={(e) => setRname(e.target.value)} autoFocus required />
+            <Btn type="submit" disabled={rename.isPending || !rname.trim()}>{rename.isPending ? "…" : t("common.save")}</Btn>
+            <Btn variant="ghost" onClick={() => setRenaming(false)}>{t("common.cancel")}</Btn>
+          </form>
+          {rename.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(rename.error as Error).message}</div>}
+        </Card>
+      )}
 
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("projects.environments")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
