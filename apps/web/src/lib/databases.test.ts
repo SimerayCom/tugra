@@ -19,10 +19,10 @@ describe("database helpers", () => {
     expect(defaultPort("CLICKHOUSE")).toBe(9000);
   });
 
-  it("knows which engines support backup", () => {
+  it("every engine now supports backup (incl. Dragonfly + ClickHouse)", () => {
     expect(engineSupportsBackup("MARIADB")).toBe(true);
     expect(engineSupportsBackup("KEYDB")).toBe(true);
-    expect(engineSupportsBackup("DRAGONFLY")).toBe(false);
-    expect(engineSupportsBackup("CLICKHOUSE")).toBe(false);
+    expect(engineSupportsBackup("DRAGONFLY")).toBe(true);
+    expect(engineSupportsBackup("CLICKHOUSE")).toBe(true);
   });
 });

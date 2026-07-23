@@ -95,10 +95,18 @@ describe("BackupsService", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.import" }));
   });
 
-  it("rejects import for an engine without backup support", async () => {
-    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "DRAGONFLY" }) } } as unknown as PrismaService;
+  it("imports for a Dragonfly database (now supported) — dispatches a DFLY LOAD restore", async () => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "DRAGONFLY" }) },
+      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
+    } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-    await expect(make(prisma, access).importFromUrl("u1", "db1", { url: "https://x/d", gzip: true, encrypted: false })).rejects.toThrow(/not supported/);
+    const runner = {
+      toSpec: jest.fn().mockReturnValue({ id: "db1", engine: "DRAGONFLY", image: "x", port: 6379, hostPort: null, credentials: { username: "tugra", password: "pw", database: "appdb" } }),
+    } as unknown as BackupRunnerService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    await make(prisma, access, runner, {}, { sendCommand } as unknown as AgentWsServer).importFromUrl("u1", "db1", { url: "https://x/d.rdb.gz", gzip: true, encrypted: false });
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("DFLY LOAD"), "backup", expect.any(Number));
   });
 });
 

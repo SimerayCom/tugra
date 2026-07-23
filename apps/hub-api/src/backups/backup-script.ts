@@ -30,9 +30,8 @@ const EXT: Record<DbEngine, string> = {
   REDIS: "rdb",
   KEYDB: "rdb",
   MONGO: "archive",
-  // backup not supported yet (provision-only) — placeholders keep the map exhaustive
-  DRAGONFLY: "rdb",
-  CLICKHOUSE: "sql",
+  DRAGONFLY: "rdb", // Dragonfly SAVE RDB → single-file RDB snapshot
+  CLICKHOUSE: "zip", // ClickHouse BACKUP … TO File('.zip') → single archive
 };
 
 export function backupDir(dbId: string): string {
@@ -81,8 +80,21 @@ function dumpToStdout(db: DbSpec): string {
     case "KEYDB":
       return `docker exec ${name} sh -c ${shq(`keydb-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
     case "DRAGONFLY":
+      // Redis-wire compatible. `SAVE RDB <base>` forces a SINGLE-file RDB snapshot (default is the
+      // multi-file DFS format). `-e` makes redis-cli exit non-zero on a command-level -ERR (by default it
+      // exits 0 and only PRINTS the error → a failed SAVE would be masked as success). Password via
+      // REDISCLI_AUTH env so it never hits redis-cli's argv. rc-preserving: cleanup rm never masks the exit.
+      return `docker exec -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(
+        "rm -f /data/tugra_backup.rdb; redis-cli -e --no-auth-warning SAVE RDB tugra_backup >/dev/null && cat /data/tugra_backup.rdb; rc=$?; rm -f /data/tugra_backup.rdb; exit $rc",
+      )}`;
     case "CLICKHOUSE":
-      throw new Error(`backup not supported for ${db.engine}`);
+      // `BACKUP … TO File('.zip')` (File backend). Written under /var/lib/clickhouse/backups — the default
+      // `backups.allowed_path` (File() paths are allow-list-gated). Identifier is DOUBLE-QUOTE quoted (\"…\"),
+      // NOT backtick — backticks inside the double-quoted --query would trigger shell command substitution in
+      // the container's `sh -c`. clickhouse-client reads auth from the container env (no password on argv).
+      return `docker exec ${name} sh -c ${shq(
+        `mkdir -p /var/lib/clickhouse/backups; clickhouse-client --query "BACKUP DATABASE \\"${database}\\" TO File('/var/lib/clickhouse/backups/tugra_backup.zip')" >/dev/null && cat /var/lib/clickhouse/backups/tugra_backup.zip; rc=$?; rm -f /var/lib/clickhouse/backups/tugra_backup.zip; exit $rc`,
+      )}`;
   }
 }
 
@@ -199,9 +211,35 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       lines.push(`docker restart ${name}`);
       lines.push(`rm -f /tmp/${name}.rdb`);
       break;
-    case "DRAGONFLY":
-    case "CLICKHOUSE":
-      throw new Error(`restore not supported for ${db.engine}`);
+    case "DRAGONFLY": {
+      // DFLY LOAD does FlushAll-then-load, so VALIDATE the RDB signature FIRST — an obviously corrupt/wrong
+      // file must not wipe the live dataset before we even try to load it. `-e` makes a failed load exit
+      // non-zero (redis-cli otherwise exits 0 on a command-level -ERR, masking a failed restore as success).
+      const inner =
+        "cat > /data/tugra_restore.rdb && head -c5 /data/tugra_restore.rdb | grep -q REDIS && " +
+        "redis-cli -e --no-auth-warning DFLY LOAD /data/tugra_restore.rdb; rc=$?; rm -f /data/tugra_restore.rdb; exit $rc";
+      lines.push(`${decode.join(" | ")} | docker exec -i -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(inner)}`);
+      break;
+    }
+    case "CLICKHOUSE": {
+      // Restore to a TEMP database, then DROP the real one and RENAME temp→real — so a corrupt/rejected backup
+      // never destroys the live DB before the restore is known good (stage-then-swap). A prior-run temp is
+      // cleared up front; on failure the data survives in EITHER the real DB or the temp (never both dropped).
+      // Identifiers are DOUBLE-QUOTE quoted (\"…\") — backticks in the double-quoted --query would trigger shell
+      // command substitution. clickhouse-client reads its credentials from the container env.
+      const tmpDb = `${database}__tugra_restore_tmp`;
+      const zip = "/var/lib/clickhouse/backups/tugra_restore.zip";
+      const inner =
+        "mkdir -p /var/lib/clickhouse/backups; " +
+        `clickhouse-client --query "DROP DATABASE IF EXISTS \\"${tmpDb}\\" SYNC" 2>/dev/null; ` +
+        `cat > ${zip} && ` +
+        `clickhouse-client --query "RESTORE DATABASE \\"${database}\\" AS \\"${tmpDb}\\" FROM File('${zip}')" >/dev/null && ` +
+        `clickhouse-client --query "DROP DATABASE IF EXISTS \\"${database}\\" SYNC" && ` +
+        `clickhouse-client --query "RENAME DATABASE \\"${tmpDb}\\" TO \\"${database}\\""; ` +
+        `rc=$?; rm -f ${zip}; exit $rc`;
+      lines.push(`${decode.join(" | ")} | docker exec -i ${name} sh -c ${shq(inner)}`);
+      break;
+    }
   }
   return lines.join("\n");
 }
