@@ -56,11 +56,11 @@ describe("database-script — extra engines (Dilim 17)", () => {
     expect(connectionInfo(spec("CLICKHOUSE")).uri).toBe("clickhouse://tugra:p@ss@tugra_db_db1:9000/appdb");
   });
 
-  it("supportsBackup: MariaDB/KeyDB yes, Dragonfly/ClickHouse no", () => {
+  it("supportsBackup: every engine now supported (incl. Dragonfly + ClickHouse)", () => {
     expect(supportsBackup("MARIADB")).toBe(true);
     expect(supportsBackup("KEYDB")).toBe(true);
-    expect(supportsBackup("DRAGONFLY")).toBe(false);
-    expect(supportsBackup("CLICKHOUSE")).toBe(false);
+    expect(supportsBackup("DRAGONFLY")).toBe(true);
+    expect(supportsBackup("CLICKHOUSE")).toBe(true);
   });
 
   it("run script joins tugra-net + volume for a new engine", () => {

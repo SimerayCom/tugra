@@ -53,7 +53,8 @@ export function engineVersions(engine: DbEngine): string[] {
   return VERSIONS[engine];
 }
 
-/** Mirrors the hub's supportsBackup — Dragonfly/ClickHouse backup is not yet implemented. */
-export function engineSupportsBackup(engine: DbEngine): boolean {
-  return engine !== "DRAGONFLY" && engine !== "CLICKHOUSE";
+/** Mirrors the hub's supportsBackup — every engine now has a dump/restore pipeline
+ *  (incl. Dragonfly `SAVE RDB`/`DFLY LOAD` and ClickHouse `BACKUP … TO File`/`RESTORE`). */
+export function engineSupportsBackup(_engine: DbEngine): boolean {
+  return true;
 }

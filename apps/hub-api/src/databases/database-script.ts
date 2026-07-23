@@ -37,9 +37,11 @@ export const ENGINES: Record<DbEngine, EngineDef> = {
   CLICKHOUSE: { imagePrefix: "clickhouse/clickhouse-server", port: 9000, dataDir: "/var/lib/clickhouse", scheme: "clickhouse", defaultVersion: "24" },
 };
 
-/** Whether a dump/restore backup pipeline exists for this engine (Dilim 17). */
-export function supportsBackup(engine: DbEngine): boolean {
-  return engine !== "DRAGONFLY" && engine !== "CLICKHOUSE";
+/** Whether a dump/restore backup pipeline exists for this engine — all 8 engines are supported
+ *  (Postgres/MySQL/MariaDB/Mongo/Redis/KeyDB + Dragonfly `SAVE RDB`/`DFLY LOAD` + ClickHouse
+ *  `BACKUP … TO File`/`RESTORE`). Kept as a function so a future unsupported engine can opt out. */
+export function supportsBackup(_engine: DbEngine): boolean {
+  return true;
 }
 
 export interface DbCredentials {

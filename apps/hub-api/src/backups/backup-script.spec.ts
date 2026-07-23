@@ -35,6 +35,8 @@ describe("backup-script", () => {
       expect(backupFilename("POSTGRES", "t", s3Encrypted)).toBe("t.dump.gz.gpg");
       expect(backupFilename("MONGO", "t", LOCAL_DEST)).toBe("t.archive.gz");
       expect(backupFilename("REDIS", "t", LOCAL_DEST)).toBe("t.rdb.gz");
+      expect(backupFilename("DRAGONFLY", "t", LOCAL_DEST)).toBe("t.rdb.gz");
+      expect(backupFilename("CLICKHOUSE", "t", LOCAL_DEST)).toBe("t.zip.gz");
     });
   });
 
@@ -76,6 +78,23 @@ describe("backup-script", () => {
       expect(buildBackupScript(spec("REDIS"), "t", s3Dest)).toContain("redis-cli");
     });
 
+    it("Dragonfly: SAVE RDB single-file snapshot with -e (honest fail), password via REDISCLI_AUTH", () => {
+      const s = buildBackupScript(spec("DRAGONFLY"), "t", s3Dest);
+      expect(s).toContain("redis-cli -e --no-auth-warning SAVE RDB tugra_backup"); // -e → non-zero exit on error
+      expect(s).toContain("cat /data/tugra_backup.rdb");
+      expect(s).toContain("REDISCLI_AUTH=pw");
+      expect(s).not.toContain("redis-cli -a"); // password never on redis-cli's own argv
+    });
+
+    it("ClickHouse: BACKUP … TO File under allowed_path, double-quoted identifier (no backtick substitution)", () => {
+      const s = buildBackupScript(spec("CLICKHOUSE"), "t", s3Dest);
+      expect(s).toContain("BACKUP DATABASE");
+      expect(s).toContain('\\"appdb\\"'); // identifier double-quote-quoted (NOT backtick → no shell cmd-subst)
+      expect(s).not.toContain(`${String.fromCharCode(96)}appdb${String.fromCharCode(96)}`); // no raw `appdb`
+      expect(s).toContain("/var/lib/clickhouse/backups/tugra_backup.zip"); // default backups.allowed_path
+      expect(s).not.toContain("Disk("); // File backend, not the config-dependent Disk backend
+    });
+
     it("dumps MySQL/MariaDB with consistent-snapshot flags (no table locks)", () => {
       const my = buildBackupScript(spec("MYSQL"), "t", s3Dest);
       expect(my).toContain("mysqldump --single-transaction --quick --no-tablespaces");
@@ -112,6 +131,30 @@ describe("backup-script", () => {
       const s = buildRestoreScript(spec("REDIS"), "t.rdb.gz", LOCAL_DEST);
       expect(s).toContain("docker cp /tmp/tugra_db_db1.rdb tugra_db_db1:/data/dump.rdb");
       expect(s).toContain("docker restart tugra_db_db1");
+    });
+
+    it("Dragonfly restore validates the RDB signature BEFORE DFLY LOAD (no wipe on a bad file) + -e honest fail", () => {
+      const s = buildRestoreScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST);
+      expect(s).toContain("gunzip");
+      expect(s).toContain("cat > /data/tugra_restore.rdb");
+      expect(s).toContain("head -c5 /data/tugra_restore.rdb | grep -q REDIS"); // signature check before the destructive load
+      expect(s).toContain("redis-cli -e --no-auth-warning DFLY LOAD /data/tugra_restore.rdb");
+      // the signature gate must precede DFLY LOAD (which flushes-then-loads)
+      expect(s.indexOf("grep -q REDIS")).toBeLessThan(s.indexOf("DFLY LOAD"));
+      expect(s).not.toContain("docker restart");
+    });
+
+    it("ClickHouse restore stages to a temp DB then swaps (never destroy-before-validate)", () => {
+      const s = buildRestoreScript(spec("CLICKHOUSE"), "t.zip.gz", LOCAL_DEST);
+      expect(s).toContain("gunzip");
+      expect(s).toContain("cat > /var/lib/clickhouse/backups/tugra_restore.zip");
+      expect(s).toContain("RESTORE DATABASE");
+      expect(s).toContain("__tugra_restore_tmp"); // restores into a temp DB first
+      expect(s).toContain("RENAME DATABASE"); // then swaps temp → real
+      expect(s).toContain("FROM File(");
+      expect(s).toContain('\\"appdb\\"'); // double-quoted identifier, not backtick
+      // the real DB is dropped only AFTER a successful restore-to-temp (real DROP is the LAST DROP)
+      expect(s.indexOf("RESTORE DATABASE")).toBeLessThan(s.lastIndexOf("DROP DATABASE"));
     });
   });
 
@@ -189,9 +232,11 @@ describe("backup-script", () => {
       expect(s).toContain("cat /data/dump.rdb");
     });
 
-    it("Dragonfly / ClickHouse backup scripts throw (unsupported)", () => {
-      expect(() => buildBackupScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST)).toThrow(/not supported/);
-      expect(() => buildBackupScript(spec("CLICKHOUSE"), "t.sql.gz", LOCAL_DEST)).toThrow(/not supported/);
+    it("Dragonfly / ClickHouse backup + restore are now supported (build without throwing)", () => {
+      expect(() => buildBackupScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST)).not.toThrow();
+      expect(() => buildBackupScript(spec("CLICKHOUSE"), "t.zip.gz", LOCAL_DEST)).not.toThrow();
+      expect(() => buildRestoreScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST)).not.toThrow();
+      expect(() => buildRestoreScript(spec("CLICKHOUSE"), "t.zip.gz", LOCAL_DEST)).not.toThrow();
     });
   });
 });
