@@ -946,31 +946,40 @@ export class ApplicationsService {
   /** Re-run a previous successful deployment's image without rebuilding/pulling. */
   async rollback(userId: string, id: string, targetDeploymentId: string) {
     const app = await this.requireWrite(userId, id, "apps:deploy");
-    if (app.source === "COMPOSE") {
-      throw new BadRequestException("rollback not supported for compose apps");
-    }
+    await this.ensureNoActiveDeploy(id); // don't race a running deploy/rollback (both write app.composeFile for compose)
+    const isCompose = app.source === "COMPOSE";
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
     });
-    // Rollbackable if either the local image tag is still retained OR the deploy pushed a
-    // portable registry image (which survives a local prune / host re-provision).
-    if (!target || (!target.imageTag && !target.registryImage)) {
-      throw new NotFoundException("no rollbackable deployment with that id");
-    }
-    // Resolve the image source BEFORE creating the deployment / touching app status. Prefer the
-    // retained LOCAL tag (fast, no network — and a transient registry outage can't break it);
-    // pull from the registry only when the local image is gone. If neither is usable, 404 up
-    // front so a still-running app is never flipped to FAILED for an impossible rollback.
+    // Resolve the rollback SOURCE up front (before creating the deployment / touching app status) so a
+    // still-running app is never flipped to FAILED for an impossible rollback.
     let registryPull: { auth: RegistryAuth; ref: string } | null = null;
-    if (!target.imageTag && target.registryImage && app.registryId) {
-      const reg = await this.prisma.registry.findFirst({ where: { id: app.registryId, teamId: app.teamId } });
-      if (reg) {
-        const auth: RegistryAuth = { url: reg.url ?? undefined, user: reg.username, token: this.crypto.decrypt(reg.passwordEnc) };
-        registryPull = { auth, ref: target.registryImage };
+    let composeFile: string | null = null;
+    if (isCompose) {
+      // Compose apps have no single image tag; the rollbackable artifact is the compose YAML captured
+      // verbatim in the target deploy's config snapshot. Env stays CURRENT (same as IMAGE/GIT rollback).
+      composeFile = (target?.configSnapshot as ConfigSnapshot | null)?.composeFile ?? null;
+      if (!target || !composeFile) {
+        throw new NotFoundException("no rollbackable compose configuration for that deployment");
       }
-    }
-    if (!registryPull && !target.imageTag) {
-      throw new NotFoundException("the image for this deployment is no longer available locally and cannot be pulled from a registry");
+    } else {
+      // Rollbackable if either the local image tag is still retained OR the deploy pushed a portable
+      // registry image (survives a local prune / host re-provision).
+      if (!target || (!target.imageTag && !target.registryImage)) {
+        throw new NotFoundException("no rollbackable deployment with that id");
+      }
+      // Prefer the retained LOCAL tag (fast, no network); pull from the registry only when the local
+      // image is gone. If neither is usable, 404 up front.
+      if (!target.imageTag && target.registryImage && app.registryId) {
+        const reg = await this.prisma.registry.findFirst({ where: { id: app.registryId, teamId: app.teamId } });
+        if (reg) {
+          const auth: RegistryAuth = { url: reg.url ?? undefined, user: reg.username, token: this.crypto.decrypt(reg.passwordEnc) };
+          registryPull = { auth, ref: target.registryImage };
+        }
+      }
+      if (!registryPull && !target.imageTag) {
+        throw new NotFoundException("the image for this deployment is no longer available locally and cannot be pulled from a registry");
+      }
     }
     const dep = await this.prisma.deployment.create({
       data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK" },
@@ -978,27 +987,46 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
-      const spec = this.toSpec(app);
+      // For compose, derive the spec from the RESTORED compose file so its computed routing
+      // (composeWebService + containerPort, which toSpec infers from the compose YAML) matches the
+      // container actually being deployed — else a domain-routed app's Traefik override/labels would
+      // point at the CURRENT version's service/port against the old container (silent 502 / phantom service).
+      const spec = this.toSpec(isCompose ? { ...app, composeFile: composeFile! } : app);
       spec.env = await this.resolvedEnv(app);
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
-      if (registryPull) spec.registryPull = registryPull;
-      // registryPull → build=true so prepSteps PULLS + tags; else build=false re-runs the local tag.
+      let command: string;
+      if (isCompose) {
+        command = buildComposeUpScript(spec);
+      } else {
+        // registryPull → build=true so prepSteps PULLS + tags; else build=false re-runs the local tag.
+        if (registryPull) spec.registryPull = registryPull;
+        command = buildRunScript(spec, target!.id, !!registryPull);
+      }
       const r = await this.agentWs.sendCommand(
         app.serverId,
-        buildRunScript(spec, target.id, !!registryPull),
+        command,
         "deploy",
         this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
       const ok = r.exitCode === 0;
+      // For compose, the compose YAML IS the deployable source — persist the rolled-back file as the
+      // app's current one (DB+disk consistent, so a later restart/redeploy uses it). IMAGE apps keep
+      // app.image and re-run an old tag, so nothing to persist there.
+      if (ok && isCompose) {
+        await this.prisma.application.update({ where: { id: app.id }, data: { composeFile: composeFile! } });
+      }
       await this.prisma.deployment.update({
         where: { id: dep.id },
         data: {
           status: ok ? "SUCCESS" : "FAILED",
-          logs: `rolled back to ${target.id}\n${r.output.slice(0, 65000)}`,
+          logs: `rolled back to ${target!.id}\n${r.output.slice(0, 65000)}`,
           exitCode: r.exitCode,
-          imageTag: ok ? runTag(app, target.id) : null,
-          registryImage: ok ? target.registryImage : null,
+          // Compose has no single rollback tag; record a snapshot so the rollback is itself a future
+          // rollback target (mirrors the imageTag an IMAGE rollback records).
+          imageTag: ok && !isCompose ? runTag(app, target!.id) : null,
+          registryImage: ok && !isCompose ? target!.registryImage : null,
+          ...(ok && isCompose ? { configSnapshot: buildConfigSnapshot(spec) as object } : {}),
         },
       });
       await this.prisma.application.update({
@@ -1123,7 +1151,8 @@ export class ApplicationsService {
   }
 
   async deployments(userId: string, id: string) {
-    await this.require(userId, id);
+    const app = await this.require(userId, id);
+    const isCompose = app.source === "COMPOSE";
     const rows = await this.prisma.deployment.findMany({
       where: { appId: id },
       orderBy: { createdAt: "desc" },
@@ -1135,7 +1164,12 @@ export class ApplicationsService {
       const next = (d.configSnapshot as ConfigSnapshot | null) ?? null;
       const prev = (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null;
       const { configSnapshot: _snap, ...rest } = d;
-      return { ...rest, configChanges: next ? diffSnapshots(prev, next) : [] };
+      // A SUCCESS deploy is a rollback target if its artifact is retained: for compose that's the
+      // compose YAML in its snapshot (recorded at deploy START, so it exists on FAILED rows too →
+      // the status gate is essential); otherwise the local image tag or a portable registry image.
+      const rollbackable =
+        d.status === "SUCCESS" && (isCompose ? !!next?.composeFile : !!(d.imageTag || d.registryImage));
+      return { ...rest, configChanges: next ? diffSnapshots(prev, next) : [], rollbackable };
     });
   }
 
