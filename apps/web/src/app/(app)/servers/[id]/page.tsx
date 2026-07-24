@@ -17,6 +17,7 @@ import type { MetricsRange, ServerStatus, ServerView } from "../../../../lib/typ
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
+import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
@@ -184,6 +185,7 @@ export default function ServerDetailPage() {
           <TunnelCard id={id} server={server} />
           {server.canWrite && <CapabilitiesCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
+          {server.canWrite && <DiscoverAdoptCard id={id} />}
         </>
       )}
       </>

@@ -194,6 +194,35 @@ export interface PatchInfo {
   count: number;
 }
 
+// Migrator discover/adopt: a foreign (non-Tugra) container found on a server.
+export interface DiscoveredPort {
+  host: number | null; // published host port, or null when only exposed
+  container: number;
+  protocol: "tcp" | "udp";
+}
+export interface DiscoveredEnv {
+  key: string;
+  value: string;
+}
+export interface DiscoveredMount {
+  type: string;
+  source: string;
+  target: string;
+}
+export interface DiscoveredContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  ports: DiscoveredPort[];
+  env: DiscoveredEnv[];
+  mounts: DiscoveredMount[];
+  restartPolicy: string;
+  isTugra: boolean;
+  composeProject: string | null;
+  adoptable: boolean; // false for compose-managed containers (v1 can't adopt those)
+}
+
 export interface MetricsSample {
   ts: number;
   cpu: number;
