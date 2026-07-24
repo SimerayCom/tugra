@@ -1,12 +1,13 @@
 {
   "title": "Server patching",
-  "desc": "Check for and apply OS package updates (apt — Debian/Ubuntu). Reboots are never automatic.",
+  "desc": "Check for and apply OS package updates (apt, dnf, yum, apk). Reboots are never automatic.",
   "check": "Check for updates",
   "updateAll": "Update all",
   "update": "Update",
   "running": "Updating…",
   "upToDate": "Your server is up to date.",
-  "unsupported": "Automatic patching is only available on apt-based (Debian/Ubuntu) servers.",
+  "checkFailed": "The update check couldn't complete — a package repository may be unreachable or misconfigured. This is not the same as being up to date.",
+  "unsupported": "Automatic patching needs one of apt, dnf, yum or apk on the server.",
   "rebootRequired": "A reboot is required to finish applying updates.",
   "count": "{n} package(s) can be upgraded"
 }

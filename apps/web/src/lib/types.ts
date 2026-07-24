@@ -187,6 +187,8 @@ export interface UpgradablePackage {
 
 export interface PatchInfo {
   supported: boolean;
+  manager: string | null; // apt | dnf | yum | apk — the package manager detected on the server
+  checkFailed: boolean; // the update check ran but errored (repo unreachable / bad GPG) — not "up to date"
   rebootRequired: boolean;
   packages: UpgradablePackage[];
   count: number;
