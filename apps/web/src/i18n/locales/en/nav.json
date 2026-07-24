@@ -13,6 +13,7 @@
   "servers": "Servers",
   "sources": "Git Sources",
   "registries": "Container Registries",
+  "cloudCredentials": "Cloud Providers",
   "projects": "Projects",
   "apps": "Apps",
   "databases": "Databases",

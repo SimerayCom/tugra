@@ -29,6 +29,7 @@ import type {
   AppContainerMetrics,
   ServerContainers,
   DiscoveredContainer,
+  CloudCredential,
   Monitor,
   LogDrain,
   MyInvitation,
@@ -477,6 +478,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, teamId }),
     });
+  },
+  deleteServer(id: string, opts?: { destroyVm?: boolean }) {
+    return apiFetch<{ ok: true }>(`/servers/${id}${opts?.destroyVm ? "?destroyVm=true" : ""}`, { method: "DELETE" });
+  },
+  // Cloud provisioning + provider credentials
+  listCloudCredentials() {
+    return apiFetch<CloudCredential[]>("/cloud-credentials");
+  },
+  createCloudCredential(input: { teamId: string; name: string; provider: string; apiToken: string }) {
+    return apiFetch<CloudCredential>("/cloud-credentials", { method: "POST", body: JSON.stringify(input) });
+  },
+  updateCloudCredential(id: string, input: { name?: string; apiToken?: string }) {
+    return apiFetch<CloudCredential>(`/cloud-credentials/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  testCloudCredential(id: string) {
+    return apiFetch<{ ok: true }>(`/cloud-credentials/${id}/test`, { method: "POST" });
+  },
+  deleteCloudCredential(id: string) {
+    return apiFetch<{ ok: true }>(`/cloud-credentials/${id}`, { method: "DELETE" });
+  },
+  provisionServer(input: { teamId: string; name: string; cloudCredentialId: string; provider: "hetzner"; location: string; serverType: string; image?: string }) {
+    return apiFetch<ServerView>("/servers/provision", { method: "POST", body: JSON.stringify(input) });
   },
   getServerInstall(id: string) {
     return apiFetch<{ status: ServerStatus; installCommand: string | null; expiresAt: string | null }>(

@@ -123,6 +123,7 @@ model Team {
   invitations  TeamInvitation[]
   gitSources   GitSource[]
   registries   Registry[]
+  cloudCredentials CloudCredential[]
   savedViews   SavedView[]
   customRoles  TeamRole[]
   createdAt    DateTime     @default(now())
@@ -262,6 +263,13 @@ model Server {
   // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
   // to all-except-terminal (least privilege — the interactive shell is opt-in).
   capabilities         String[]     @default([])
+  // Cloud-provisioned servers only (null for manually-enrolled): the provider that created the VM,
+  // its provider-side server id (needed to destroy it), and the credential used (SetNull so deleting
+  // the credential leaves the server intact but drops its destroy-VM ability).
+  provider             String?
+  providerServerId     String?
+  cloudCredential      CloudCredential? @relation(fields: [cloudCredentialId], references: [id], onDelete: SetNull)
+  cloudCredentialId    String?
   metrics              Metric[]
   containerMetrics     ContainerMetric[]
   metricRollups        MetricRollup[]
@@ -541,6 +549,21 @@ model Registry {
   imagePrefix  String?       // namespace/org under which images are pushed (e.g. myorg)
   applications Application[]
   createdAt    DateTime      @default(now())
+
+  @@index([teamId])
+}
+
+/// A team's cloud-provider API credential (Hetzner, and later DigitalOcean/Vultr) used to provision
+/// servers. The API token is encrypted at rest and NEVER returned in any view.
+model CloudCredential {
+  id          String   @id @default(cuid())
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  name        String
+  provider    String   // "hetzner" | "digitalocean" | "vultr" — only "hetzner" has a client in v1
+  apiTokenEnc String   // encrypted cloud API token — never returned/logged
+  servers     Server[]
+  createdAt   DateTime @default(now())
 
   @@index([teamId])
 }

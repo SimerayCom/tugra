@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { ErrorState } from "../../../../components/error-state";
@@ -18,6 +18,7 @@ import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
+import { Modal } from "../../../../components/modal";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
@@ -186,6 +187,7 @@ export default function ServerDetailPage() {
           {server.canWrite && <CapabilitiesCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
           {server.canWrite && <DiscoverAdoptCard id={id} />}
+          {server.canWrite && <DeleteServerCard id={id} server={server} />}
         </>
       )}
       </>
@@ -444,6 +446,44 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
         </label>
         <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       </div>
+    </Card>
+  );
+}
+
+function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
+  const t = useT();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [destroyVm, setDestroyVm] = useState(true);
+  const del = useMutation({
+    mutationFn: () => api.deleteServer(id, { destroyVm: !!server.provider && destroyVm }),
+    onSuccess: () => router.replace("/servers"),
+  });
+  return (
+    <Card style={{ padding: 16, marginTop: 20, borderColor: "var(--c-r)" }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("servers.deleteServer")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.deleteServerDesc")}</p>
+      <Btn variant="danger" onClick={() => { setDestroyVm(true); setOpen(true); }}>{t("servers.deleteServer")}</Btn>
+      {open && (
+        <Modal onClose={() => setOpen(false)} labelledBy="del-srv-title">
+          <h3 id="del-srv-title" style={{ margin: "0 0 8px", fontSize: 15 }}>{t("servers.deleteServer")}</h3>
+          <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 12px" }}>{t("servers.deleteConfirm", { name: server.name })}</p>
+          {server.provider && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "var(--c-tx2)", marginBottom: 14 }}>
+              <input type="checkbox" checked={destroyVm} onChange={(e) => setDestroyVm(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                {t("servers.destroyVmLabel", { provider: server.provider })}
+                <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>{t("servers.destroyVmHint")}</span>
+              </span>
+            </label>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="ghost" onClick={() => setOpen(false)} disabled={del.isPending}>{t("common.cancel")}</Btn>
+            <Btn variant="danger" onClick={() => del.mutate()} disabled={del.isPending}>{del.isPending ? "…" : t("servers.deleteServer")}</Btn>
+          </div>
+          {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(del.error as Error).message}</div>}
+        </Modal>
+      )}
     </Card>
   );
 }

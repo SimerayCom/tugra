@@ -39,6 +39,8 @@ const s = (
   seal: null,
   tags: [],
   capabilities: [],
+  provider: null,
+  providerServerId: null,
   canWrite,
 });
 

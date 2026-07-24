@@ -180,8 +180,8 @@ export class ServersController {
 
   @Delete(":id")
   @HttpCode(200)
-  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    await this.servers.deleteForUser(user.userId, id);
+  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("destroyVm") destroyVm?: string) {
+    await this.servers.deleteForUser(user.userId, id, { destroyVm: destroyVm === "true" });
     return { ok: true };
   }
 }

@@ -1146,6 +1146,14 @@
                           "type": "string"
                         }
                       },
+                      "provider": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "providerServerId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "canWrite": {
                         "type": "boolean"
                       }
@@ -1182,6 +1190,8 @@
                       "seal",
                       "tags",
                       "capabilities",
+                      "provider",
+                      "providerServerId",
                       "canWrite"
                     ],
                     "additionalProperties": false
@@ -1390,6 +1400,14 @@
                         "type": "string"
                       }
                     },
+                    "provider": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "providerServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "canWrite": {
                       "type": "boolean"
                     }
@@ -1426,6 +1444,8 @@
                     "seal",
                     "tags",
                     "capabilities",
+                    "provider",
+                    "providerServerId",
                     "canWrite"
                   ],
                   "additionalProperties": false
@@ -1450,6 +1470,14 @@
             "name": "id",
             "required": true,
             "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "destroyVm",
+            "required": true,
+            "in": "query",
             "schema": {
               "type": "string"
             }
@@ -10824,6 +10852,255 @@
                 "required": [
                   "container",
                   "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/cloud-credentials": {
+      "get": {
+        "operationId": "CloudCredentialsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "cloud-credentials"
+        ]
+      },
+      "post": {
+        "operationId": "CloudCredentialsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "teamId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "hetzner",
+                      "digitalocean",
+                      "vultr"
+                    ]
+                  },
+                  "apiToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "teamId",
+                  "name",
+                  "provider",
+                  "apiToken"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "cloud-credentials"
+        ]
+      }
+    },
+    "/api/v1/cloud-credentials/{id}": {
+      "put": {
+        "operationId": "CloudCredentialsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apiToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "cloud-credentials"
+        ]
+      },
+      "delete": {
+        "operationId": "CloudCredentialsController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "cloud-credentials"
+        ]
+      }
+    },
+    "/api/v1/cloud-credentials/{id}/test": {
+      "post": {
+        "operationId": "CloudCredentialsController_test",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "cloud-credentials"
+        ]
+      }
+    },
+    "/api/v1/servers/provision": {
+      "post": {
+        "operationId": "ProvisioningController_provision",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "teamId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "cloudCredentialId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "hetzner"
+                    ]
+                  },
+                  "location": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "serverType": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "image": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "teamId",
+                  "name",
+                  "cloudCredentialId",
+                  "provider",
+                  "location",
+                  "serverType"
                 ],
                 "additionalProperties": false
               }

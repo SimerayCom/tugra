@@ -126,6 +126,56 @@ describe("ServersService.createServer (team role enforced)", () => {
       if (prev !== undefined) process.env.HUB_PUBLIC_URL = prev;
     }
   });
+
+  it("persists provider + cloudCredentialId when provisioning metadata is passed", async () => {
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    const prisma = {
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+      server: { create },
+    } as unknown as PrismaService;
+    await svcWith(prisma).createServer("u1", "web", "teamA", undefined, { provider: "hetzner", cloudCredentialId: "cc1" });
+    expect(create.mock.calls[0][0].data).toMatchObject({ provider: "hetzner", cloudCredentialId: "cc1" });
+  });
+});
+
+describe("ServersService.deleteForUser (destroy VM)", () => {
+  function svcForDelete(prisma: Partial<PrismaService>, destroyVm = jest.fn().mockResolvedValue(undefined)) {
+    const mr = {
+      get: jest.fn().mockImplementation((tok: string) =>
+        tok === "PROVISIONING_SERVICE" ? { destroyVm } : { releaseResources: jest.fn().mockResolvedValue(undefined) },
+      ),
+    } as unknown as import("@nestjs/core").ModuleRef;
+    const svc = new ServersService(prisma as PrismaService, audit, notifications, mr, crypto, new TeamAccessService(prisma as PrismaService));
+    return { svc, destroyVm };
+  }
+
+  const provisioned = { id: "s1", teamId: "teamA", provider: "hetzner", providerServerId: "42", cloudCredentialId: "cc1" };
+
+  it("destroys the VM for a provisioned server when destroyVm is requested", async () => {
+    const prisma = { ...owner(), server: { findUnique: jest.fn().mockResolvedValue(provisioned), delete: jest.fn().mockResolvedValue(undefined) } } as unknown as PrismaService;
+    const { svc, destroyVm } = svcForDelete(prisma);
+    await svc.deleteForUser("u1", "s1", { destroyVm: true });
+    expect(destroyVm).toHaveBeenCalledWith("hetzner", "cc1", "42");
+    expect(prisma.server!.delete as jest.Mock).toHaveBeenCalledWith({ where: { id: "s1" } });
+  });
+
+  it("still deletes the row when destroyVm rejects (best-effort)", async () => {
+    const prisma = { ...owner(), server: { findUnique: jest.fn().mockResolvedValue(provisioned), delete: jest.fn().mockResolvedValue(undefined) } } as unknown as PrismaService;
+    const { svc } = svcForDelete(prisma, jest.fn().mockRejectedValue(new Error("provider down")));
+    await svc.deleteForUser("u1", "s1", { destroyVm: true });
+    expect(prisma.server!.delete as jest.Mock).toHaveBeenCalled();
+  });
+
+  it("does NOT destroy for a manually-enrolled server (no provider fields)", async () => {
+    const prisma = {
+      ...owner(),
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "teamA", provider: null, providerServerId: null, cloudCredentialId: null }), delete: jest.fn().mockResolvedValue(undefined) },
+    } as unknown as PrismaService;
+    const { svc, destroyVm } = svcForDelete(prisma);
+    await svc.deleteForUser("u1", "s1", { destroyVm: true });
+    expect(destroyVm).not.toHaveBeenCalled();
+    expect(prisma.server!.delete as jest.Mock).toHaveBeenCalled();
+  });
 });
 
 describe("ServersService.enroll (token validation)", () => {

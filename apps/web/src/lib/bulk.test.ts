@@ -34,6 +34,8 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   seal: null,
   tags: [],
   capabilities: [],
+  provider: null,
+  providerServerId: null,
   canWrite,
 });
 
