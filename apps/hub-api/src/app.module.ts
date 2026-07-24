@@ -30,6 +30,7 @@ import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { MigratorModule } from "./migrator/migrator.module";
+import { CloudModule } from "./cloud/cloud.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
@@ -71,6 +72,7 @@ import { InstallController } from "./install/install.controller";
     DestinationsModule,
     ServerOpsModule,
     MigratorModule,
+    CloudModule,
     TunnelModule,
     ApiTokensModule,
     SavedViewsModule,

@@ -166,6 +166,18 @@ export interface ServerView {
   seal: string | null;
   tags: string[];
   capabilities: string[]; // granted agent capabilities; [] = all
+  provider: string | null; // cloud provider that created this VM (null = manually enrolled)
+  providerServerId: string | null; // provider-side id (present once created; enables destroy-VM)
+  canWrite: boolean;
+}
+
+// A team's cloud-provider API credential. The token itself is never returned.
+export interface CloudCredential {
+  id: string;
+  name: string;
+  teamId: string;
+  provider: string;
+  createdAt: string;
   canWrite: boolean;
 }
 

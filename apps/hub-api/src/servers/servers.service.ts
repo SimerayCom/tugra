@@ -22,6 +22,8 @@ import type { ApplicationsService } from "../applications/applications.service";
 import { APPLICATIONS_SERVICE } from "../applications/applications.tokens";
 import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
+import type { ProvisioningService } from "../cloud/provisioning.service";
+import { PROVISIONING_SERVICE } from "../cloud/cloud.tokens";
 import {
   generateEnrollToken,
   generateSeal,
@@ -70,6 +72,8 @@ export const ServerViewSchema = z.object({
   seal: z.string().nullable(),
   tags: z.array(z.string()),
   capabilities: z.array(z.string()), // granted agent capabilities the hub may act on; [] = none (fail-safe)
+  provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
+  providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
   canWrite: z.boolean(),
 });
 export type ServerView = z.infer<typeof ServerViewSchema>;
@@ -103,6 +107,7 @@ export class ServersService {
     name: string,
     teamId: string,
     publicUrl?: string,
+    provisioning?: { provider: string; cloudCredentialId: string },
   ): Promise<{ server: ServerView; enrollToken: string; installCommand: string }> {
     await this.access.requirePermission(userId, teamId, "servers:manage");
 
@@ -115,6 +120,8 @@ export class ServersService {
         enrollTokenExpiresAt: new Date(Date.now() + ENROLL_TTL_MS),
         status: ServerStatus.PENDING,
         capabilities: DEFAULT_CAPABILITIES, // least privilege: no terminal by default
+        // Set only for cloud-provisioned servers, so a later delete can destroy the VM.
+        ...(provisioning ? { provider: provisioning.provider, cloudCredentialId: provisioning.cloudCredentialId } : {}),
       },
     });
     await this.audit.log({
@@ -250,7 +257,7 @@ export class ServersService {
     return this.toView(server, perms.has("servers:manage"));
   }
 
-  async deleteForUser(userId: string, id: string): Promise<void> {
+  async deleteForUser(userId: string, id: string, opts?: { destroyVm?: boolean }): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
@@ -260,8 +267,16 @@ export class ServersService {
       .get<TunnelService>(TUNNEL_SERVICE, { strict: false })
       .releaseResources(id)
       .catch(() => undefined);
+    // Destroy the cloud VM too when asked — only for provider-created servers, and best-effort so a
+    // provider failure never blocks removing the row (lazy token avoids a static module cycle).
+    if (opts?.destroyVm && server.provider && server.providerServerId && server.cloudCredentialId) {
+      await this.moduleRef
+        .get<ProvisioningService>(PROVISIONING_SERVICE, { strict: false })
+        .destroyVm(server.provider, server.cloudCredentialId, server.providerServerId)
+        .catch(() => undefined);
+    }
     await this.prisma.server.delete({ where: { id } });
-    await this.audit.log({ actor: userId, action: "server.delete", target: id });
+    await this.audit.log({ actor: userId, action: "server.delete", target: id, meta: { destroyVm: !!opts?.destroyVm } });
   }
 
   async setTags(userId: string, id: string, tags: string[]): Promise<void> {
@@ -556,6 +571,8 @@ export class ServersService {
       seal: string | null;
       tags?: string[];
       capabilities?: string[];
+      provider?: string | null;
+      providerServerId?: string | null;
     },
     canWrite: boolean,
   ): ServerView {
@@ -593,6 +610,8 @@ export class ServersService {
       seal: s.seal,
       tags: s.tags ?? [],
       capabilities: s.capabilities ?? [],
+      provider: s.provider ?? null,
+      providerServerId: s.providerServerId ?? null,
       canWrite,
     };
   }
