@@ -37,7 +37,7 @@ describe("PatchService", () => {
     const agentWs = {
       sendCommand: jest.fn().mockImplementation((_s: string, _c: string, capability: string) => {
         cap = capability;
-        return Promise.resolve({ exitCode: 0, output: "TUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\n" });
+        return Promise.resolve({ exitCode: 0, output: "TUGRA_MGR=apt\nTUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\n" });
       }),
     } as unknown as AgentWsServer;
     const r = await make(prisma, access, agentWs).checkUpdates("u1", "s1");

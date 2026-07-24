@@ -287,6 +287,9 @@ function PatchCard({ id }: { id: string }) {
     <Card style={{ padding: 16, marginTop: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <div style={{ fontWeight: 600, flex: 1 }}>{t("patching.title")}</div>
+        {info?.supported && info.manager && (
+          <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{info.manager}</span>
+        )}
         <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
           {check.isPending ? "…" : t("patching.check")}
         </Btn>
@@ -304,7 +307,9 @@ function PatchCard({ id }: { id: string }) {
           {info.rebootRequired && (
             <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}>⚠ {t("patching.rebootRequired")}</div>
           )}
-          {info.count === 0 ? (
+          {info.checkFailed ? (
+            <div style={{ fontSize: 13, color: "var(--c-r)" }}>⚠ {t("patching.checkFailed")}</div>
+          ) : info.count === 0 ? (
             <div style={{ fontSize: 13, color: "var(--c-g)" }}>{t("patching.upToDate")}</div>
           ) : (
             <>
@@ -319,7 +324,7 @@ function PatchCard({ id }: { id: string }) {
                 {info.packages.map((p) => (
                   <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
                     <span style={{ fontWeight: 600, width: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
-                    <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current} → {p.candidate}</span>
+                    <span className="mono" style={{ color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{p.current ? `${p.current} → ${p.candidate}` : `↑ ${p.candidate}`}</span>
                     <button
                       onClick={() => runOne(p.name)}
                       disabled={busy}
