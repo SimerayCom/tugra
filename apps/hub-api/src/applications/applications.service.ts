@@ -1150,6 +1150,14 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.remove", target: id });
   }
 
+  /** Compensating delete for a create() that must be undone before any deploy ran (e.g. the
+   *  migrator's adopt when its `docker rename` fails): drop the monitor + row, run NO docker —
+   *  a deploy:false app never touched the host, and the foreign container must stay intact. */
+  async discardUndeployed(appId: string): Promise<void> {
+    await this.monitors.removeForApp(appId).catch(() => undefined);
+    await this.prisma.application.delete({ where: { id: appId } }).catch(() => undefined);
+  }
+
   async deployments(userId: string, id: string) {
     const app = await this.require(userId, id);
     const isCompose = app.source === "COMPOSE";

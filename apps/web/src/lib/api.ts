@@ -28,6 +28,7 @@ import type {
   MetricsRange,
   AppContainerMetrics,
   ServerContainers,
+  DiscoveredContainer,
   Monitor,
   LogDrain,
   MyInvitation,
@@ -359,6 +360,15 @@ export const api = {
   },
   getServerContainers(id: string) {
     return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);
+  },
+  discoverContainers(id: string) {
+    return apiFetch<{ containers: DiscoveredContainer[] }>(`/servers/${id}/discover`);
+  },
+  adoptContainer(
+    id: string,
+    input: { container: string; name: string; environmentId?: string; portIndex?: number; envKeys?: string[] },
+  ) {
+    return apiFetch<Application>(`/servers/${id}/adopt`, { method: "POST", body: JSON.stringify(input) });
   },
 
   cleanupServer(id: string) {
