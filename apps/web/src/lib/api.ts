@@ -5,6 +5,7 @@ import type {
   InstanceUpdateApply,
   InstanceUpdateStatus,
   OwnerInstanceSettings,
+  OidcConfig,
   SavedView,
   Application,
   AppVolume,
@@ -200,6 +201,19 @@ export const api = {
     acmeEmail?: string | null;
   }) {
     return apiFetch<OwnerInstanceSettings>("/instance/settings", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  // Owner-only OIDC (SSO) config — Pro edition (the hub 403s below Pro). The client secret is write-only.
+  getOidcConfig() {
+    return apiFetch<OidcConfig>("/instance/oidc");
+  },
+  updateOidcConfig(patch: {
+    oidcEnabled?: boolean;
+    oidcIssuer?: string | null;
+    oidcClientId?: string | null;
+    oidcClientSecret?: string;
+    oidcAllowedDomains?: string[];
+  }) {
+    return apiFetch<OidcConfig>("/instance/oidc", { method: "PATCH", body: JSON.stringify(patch) });
   },
   // Owner-only self-update status + preferences (session-guarded on the hub).
   getInstanceUpdate() {

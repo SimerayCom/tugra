@@ -11,6 +11,10 @@ const nextConfig = {
     return [
       { source: "/api/v1/:path*", destination: `${hub}/api/v1/:path*` },
       { source: "/api/auth/oauth/:path*", destination: `${hub}/auth/oauth/:path*` },
+      // OIDC SSO start/callback are likewise exempt from the /api/v1 prefix (the callback is registered
+      // with the external IdP), so they get their own bare-path proxy.
+      { source: "/api/auth/oidc/:path*", destination: `${hub}/auth/oidc/:path*` },
+      { source: "/api/auth/oidc", destination: `${hub}/auth/oidc` },
     ];
   },
 };

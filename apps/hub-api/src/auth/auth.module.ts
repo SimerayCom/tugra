@@ -7,13 +7,15 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { GithubOAuthController } from "./github-oauth.controller";
 import { GithubOAuthService } from "./github-oauth.service";
+import { OidcController } from "./oidc.controller";
+import { OidcService } from "./oidc.service";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 import { TotpService } from "./totp.service";
 
 @Module({
   imports: [PassportModule, JwtModule.register({}), CryptoModule, TeamDefaultsModule],
-  controllers: [AuthController, GithubOAuthController],
-  providers: [AuthService, GithubOAuthService, TotpService, JwtStrategy],
+  controllers: [AuthController, GithubOAuthController, OidcController],
+  providers: [AuthService, GithubOAuthService, OidcService, TotpService, JwtStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

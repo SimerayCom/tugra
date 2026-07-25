@@ -1,7 +1,7 @@
 import { Controller, Get } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { InstanceSettingsService } from "./instance-settings.service";
-import { currentEdition } from "../common/edition";
+import { currentEdition, editionAtLeast } from "../common/edition";
 
 /**
  * Public onboarding/instance status. No `@UseGuards` → unauthenticated by default (auth is opt-in per
@@ -23,6 +23,11 @@ export class InstanceController {
       allowRegistration: s.allowRegistration,
       // Env-authoritative (single source of truth); the DB column is reserved for a future license writer.
       edition: currentEdition(),
+      // Whether the login page should offer the SSO button: OIDC enabled + fully configured on a Pro+
+      // edition. Non-secret (mirrors OidcService.isConfigured); the button just kicks off the redirect.
+      ssoEnabled:
+        editionAtLeast(currentEdition(), "pro") &&
+        !!(s.oidcEnabled && s.oidcIssuer && s.oidcClientId && s.oidcClientSecretEnc),
     };
   }
 }

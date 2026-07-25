@@ -389,6 +389,97 @@
         ]
       }
     },
+    "/api/v1/instance/oidc": {
+      "get": {
+        "operationId": "InstanceSettingsController_getOidc",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      },
+      "patch": {
+        "operationId": "InstanceSettingsController_updateOidc",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "oidcEnabled": {
+                    "type": "boolean"
+                  },
+                  "oidcIssuer": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          ""
+                        ]
+                      }
+                    ],
+                    "nullable": true
+                  },
+                  "oidcClientId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          ""
+                        ]
+                      }
+                    ],
+                    "nullable": true
+                  },
+                  "oidcClientSecret": {
+                    "type": "string"
+                  },
+                  "oidcAllowedDomains": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "operationId": "AuditController_list",
@@ -986,6 +1077,51 @@
         },
         "tags": [
           "GithubOAuth"
+        ]
+      }
+    },
+    "/api/v1/auth/oidc": {
+      "get": {
+        "operationId": "OidcController_start",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Oidc"
+        ]
+      }
+    },
+    "/api/v1/auth/oidc/callback": {
+      "get": {
+        "operationId": "OidcController_callback",
+        "parameters": [
+          {
+            "name": "code",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Oidc"
         ]
       }
     },

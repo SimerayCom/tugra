@@ -4,17 +4,53 @@ import type { AuditService } from "../audit/audit.service";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import type { UpdateService } from "../update/update.service";
 import type { UpdaterService } from "../update/updater.service";
+import type { CryptoService } from "../crypto/crypto.service";
+import { REQUIRE_EDITION } from "../common/edition";
+
+// The SSRF guard does real DNS resolution (tested in safe-url's own spec); mock it here so the controller
+// tests are deterministic and offline. Default: resolves (safe). A test overrides it to reject for the
+// private-issuer case.
+jest.mock("../notifications/safe-url", () => ({
+  assertSafeUrl: jest.fn().mockResolvedValue(undefined),
+  allowPrivateTargets: jest.fn(() => false),
+}));
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+import { assertSafeUrl } from "../notifications/safe-url";
+const mockAssertSafeUrl = assertSafeUrl as jest.Mock;
+beforeEach(() => mockAssertSafeUrl.mockReset().mockResolvedValue(undefined));
 
 const OWNER = { userId: "owner1", scopes: ["*"] } as AuthUser;
 
-function make(current: { apiEnabled: boolean; apiAllowedIps: string[]; publicUrl?: string | null; acmeEmail?: string | null }) {
-  const full = { publicUrl: null, acmeEmail: null, ...current };
+interface CurrentSettings {
+  apiEnabled: boolean;
+  apiAllowedIps: string[];
+  publicUrl?: string | null;
+  acmeEmail?: string | null;
+  oidcEnabled?: boolean;
+  oidcIssuer?: string | null;
+  oidcClientId?: string | null;
+  oidcClientSecretEnc?: string | null;
+  oidcAllowedDomains?: string[];
+}
+
+function make(current: CurrentSettings) {
+  const full = {
+    publicUrl: null,
+    acmeEmail: null,
+    oidcEnabled: false,
+    oidcIssuer: null,
+    oidcClientId: null,
+    oidcClientSecretEnc: null,
+    oidcAllowedDomains: [] as string[],
+    ...current,
+  };
   const updated = { ...full };
   const settings = {
     get: jest.fn().mockResolvedValue(full),
     update: jest.fn().mockImplementation((patch) => Promise.resolve(Object.assign(updated, patch))),
   } as unknown as InstanceSettingsService;
   const audit = { log: jest.fn() } as unknown as AuditService;
+  const crypto = { encrypt: jest.fn((s: string) => `ENC(${s})`) } as unknown as CryptoService;
   const update = {
     getStatus: jest.fn().mockResolvedValue({
       current: "0.0.0-dev",
@@ -30,7 +66,7 @@ function make(current: { apiEnabled: boolean; apiAllowedIps: string[]; publicUrl
     requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: "0.2.0" }),
     getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null }),
   } as unknown as UpdaterService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater), settings, audit, update, updater };
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto), settings, audit, update, updater, crypto };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -135,5 +171,98 @@ describe("InstanceSettingsController", () => {
   it("streamUpdate returns an Observable of update progress", () => {
     const { ctrl } = make({ apiEnabled: true, apiAllowedIps: [] });
     expect(typeof ctrl.streamUpdate().subscribe).toBe("function");
+  });
+});
+
+describe("InstanceSettingsController — OIDC config", () => {
+  it("getOidc returns the config with clientSecretSet, never the secret itself", async () => {
+    const { ctrl } = make({
+      apiEnabled: true,
+      apiAllowedIps: [],
+      oidcEnabled: true,
+      oidcIssuer: "https://idp.example.com",
+      oidcClientId: "cid",
+      oidcClientSecretEnc: "ENC(shh)",
+      oidcAllowedDomains: ["corp.io"],
+    });
+    const res = await ctrl.getOidc();
+    expect(res).toEqual({
+      oidcEnabled: true,
+      oidcIssuer: "https://idp.example.com",
+      oidcClientId: "cid",
+      oidcAllowedDomains: ["corp.io"],
+      clientSecretSet: true,
+    });
+    expect(Object.keys(res)).not.toContain("oidcClientSecretEnc"); // secret never surfaced
+  });
+
+  it("updateOidc encrypts the client secret, normalizes domains, persists and audits (secret not logged)", async () => {
+    const { ctrl, settings, audit, crypto } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const res = await ctrl.updateOidc(OWNER, {
+      oidcEnabled: true,
+      oidcIssuer: "https://idp.example.com",
+      oidcClientId: "cid",
+      oidcClientSecret: "topsecret",
+      oidcAllowedDomains: ["Corp.IO", "  ", "sub.corp.io"],
+    });
+    expect(crypto.encrypt).toHaveBeenCalledWith("topsecret");
+    expect(settings.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        oidcEnabled: true,
+        oidcIssuer: "https://idp.example.com",
+        oidcClientId: "cid",
+        oidcClientSecretEnc: "ENC(topsecret)",
+        oidcAllowedDomains: ["corp.io", "sub.corp.io"],
+      }),
+    );
+    expect(res.clientSecretSet).toBe(true);
+    // The audit entry (and the returned view) must not carry the plaintext or the ciphertext.
+    const auditArg = (audit.log as jest.Mock).mock.calls[0][0];
+    expect(JSON.stringify(auditArg)).not.toContain("topsecret");
+    expect(JSON.stringify(res)).not.toContain("topsecret");
+    expect(res).not.toHaveProperty("oidcClientSecretEnc");
+  });
+
+  it("does NOT re-encrypt when the secret is omitted (preserves the stored one)", async () => {
+    const { ctrl, settings, crypto } = make({
+      apiEnabled: true,
+      apiAllowedIps: [],
+      oidcEnabled: true,
+      oidcIssuer: "https://idp.example.com",
+      oidcClientId: "cid",
+      oidcClientSecretEnc: "ENC(existing)",
+    });
+    await ctrl.updateOidc(OWNER, { oidcAllowedDomains: ["corp.io"] });
+    expect(crypto.encrypt).not.toHaveBeenCalled();
+    expect(settings.update).toHaveBeenCalledWith(expect.not.objectContaining({ oidcClientSecretEnc: expect.anything() }));
+  });
+
+  it("rejects enabling SSO without a full issuer + clientId + secret", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await expect(ctrl.updateOidc(OWNER, { oidcEnabled: true, oidcIssuer: "https://idp.example.com", oidcClientId: "cid" })).rejects.toThrow(/required to enable/);
+    expect(settings.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a private/loopback issuer URL (SSRF guard)", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
+    mockAssertSafeUrl.mockRejectedValueOnce(new Error("blocked address"));
+    await expect(ctrl.updateOidc(OWNER, { oidcIssuer: "http://10.0.0.1" })).rejects.toThrow(/not allowed/);
+    expect(settings.update).not.toHaveBeenCalled();
+  });
+
+  it("clears issuer/clientId when the owner submits empty strings (falsy → null)", async () => {
+    const { ctrl, settings } = make({
+      apiEnabled: true,
+      apiAllowedIps: [],
+      oidcIssuer: "https://old.example.com",
+      oidcClientId: "old",
+    });
+    await ctrl.updateOidc(OWNER, { oidcIssuer: "", oidcClientId: "" });
+    expect(settings.update).toHaveBeenCalledWith(expect.objectContaining({ oidcIssuer: null, oidcClientId: null }));
+  });
+
+  it("marks getOidc + updateOidc as Pro-gated via @RequireEdition metadata", () => {
+    expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.getOidc)).toBe("pro");
+    expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.updateOidc)).toBe("pro");
   });
 });
