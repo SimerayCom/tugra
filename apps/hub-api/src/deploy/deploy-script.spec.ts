@@ -23,6 +23,7 @@ import {
   envFileB64,
   gitAuthUrl,
   runTag,
+  parseImageDigest,
   staticDockerfile,
   staticNginxConf,
   traefikLabels,
@@ -36,6 +37,33 @@ const base: AppSpec = {
   hostPort: null,
   containerPort: 80,
 };
+
+describe("digest pin", () => {
+  it("an IMAGE deploy resolves + echoes the upstream digest right after pull", () => {
+    const s = buildRunScript(base, "v1", true);
+    expect(s).toContain("docker pull -q 'nginx:1.27'");
+    expect(s).toContain("docker inspect --format '{{index .RepoDigests 0}}' 'nginx:1.27'");
+    expect(s).toContain('echo "TUGRA_DIGEST=$TUGRA_D"');
+    // set -e safe: guarded assignment + if/fi, never a bare `[ -n ] && echo`.
+    expect(s).toContain('if [ -n "$TUGRA_D" ]; then');
+    // the running container still uses the local versioned tag (unchanged behaviour).
+    expect(s).toContain("docker tag 'nginx:1.27' tugra_abc:v1");
+  });
+
+  it("a GIT build never emits a digest marker (nothing upstream to pin)", () => {
+    const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/x/y", buildType: "DOCKERFILE" };
+    const s = buildRunScript(git, "v1", true);
+    expect(s).not.toContain("TUGRA_DIGEST");
+    expect(s).not.toContain("RepoDigests");
+  });
+
+  it("parseImageDigest pulls the full ref, tolerates absence + noise", () => {
+    expect(parseImageDigest("...\nTUGRA_DIGEST=nginx@sha256:abc123\n...")).toBe("nginx@sha256:abc123");
+    expect(parseImageDigest("no marker here")).toBeNull();
+    // first marker wins if two ever appear
+    expect(parseImageDigest("TUGRA_DIGEST=a@sha256:1\nTUGRA_DIGEST=b@sha256:2")).toBe("a@sha256:1");
+  });
+});
 
 describe("deploy-script", () => {
   it("names the container + versioned image tag deterministically", () => {
@@ -226,7 +254,7 @@ describe("deploy-script", () => {
 
   it("IMAGE: pulls, snapshots to the versioned tag, removes old, runs the version", () => {
     const s = buildRunScript(base, "v1");
-    expect(s).toContain("docker pull 'nginx:1.27'");
+    expect(s).toContain("docker pull -q 'nginx:1.27'");
     expect(s).toContain("docker tag 'nginx:1.27' tugra_abc:v1");
     expect(s).toContain("docker rm -f tugra_abc");
     expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:v1'");

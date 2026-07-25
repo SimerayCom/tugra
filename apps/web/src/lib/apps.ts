@@ -28,6 +28,12 @@ export function appSourceSummary(app: {
   return app.source === "GIT" ? `git:${app.gitBranch ?? "main"}` : (app.image ?? "");
 }
 
+/** Short display form of a pinned image digest ref (`nginx@sha256:abc123…`) → `sha256:abc123def4…`. */
+export function shortDigest(ref: string): string {
+  const hex = ref.split("@sha256:")[1] ?? "";
+  return hex ? `sha256:${hex.slice(0, 10)}…` : ref;
+}
+
 /** The public webhook URL a user pastes into GitHub/GitLab for auto-deploy. This is called by an
  *  external service directly against the hub, so it must be the hub's absolute public URL — not the
  *  SPA's same-origin "/api" proxy path. */
