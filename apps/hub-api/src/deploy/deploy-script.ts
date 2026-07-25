@@ -45,8 +45,9 @@ export interface AppSpec {
   /** When set, the built image is tagged + pushed to this registry after building. */
   registryPush?: { auth: RegistryAuth; tag: string } | null;
   /** When set, the local tag is produced by PULLING this registry ref (built elsewhere),
-   *  not by building — for a build-server deploy or a registry-backed rollback. */
-  registryPull?: { auth: RegistryAuth; ref: string } | null;
+   *  not by building — for a build-server deploy, a registry-backed rollback, or a digest-pinned
+   *  IMAGE rollback. `auth` is optional (a public image digest needs none). */
+  registryPull?: { auth?: RegistryAuth | null; ref: string } | null;
   hostPort: number | null;
   containerPort: number | null;
   domain?: string | null;
@@ -123,6 +124,16 @@ export function runTag(app: { id: string }, version: string): string {
 /** The upstream image to pull for an IMAGE-source app. */
 export function imageRef(app: AppSpec): string {
   return app.image ?? "";
+}
+
+/**
+ * Extract the resolved upstream image digest from an IMAGE deploy's output. The deploy script emits
+ * `TUGRA_DIGEST=<repo>@sha256:<hex>` right after `docker pull` (see prepSteps). Returns the full
+ * pullable ref (e.g. `nginx@sha256:…`) or null when the image had no registry digest.
+ */
+export function parseImageDigest(output: string): string | null {
+  const m = /TUGRA_DIGEST=(\S+)/.exec(output);
+  return m ? m[1] : null;
 }
 
 /** The registry reference the built image is pushed to:
@@ -413,7 +424,13 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   // IMAGE: pull upstream (optionally authenticating), then snapshot to the tag.
   const imgSteps = [
     ...registryLoginPrelude(app.registryAuth),
-    `docker pull ${shq(imageRef(app))}`,
+    // `-q` keeps the pull output to a single line so the TUGRA_DIGEST marker below can never be pushed
+    // past the agent's 64KB head-capped output buffer by a large multi-layer image's progress noise.
+    `docker pull -q ${shq(imageRef(app))}`,
+    // Record the immutable upstream digest of what we just pulled (provenance + byte-exact rollback).
+    // Best-effort + set-e-safe: a locally-loaded image with no RepoDigests just emits nothing.
+    `TUGRA_D=$(docker inspect --format '{{index .RepoDigests 0}}' ${shq(imageRef(app))} 2>/dev/null || true)`,
+    `if [ -n "$TUGRA_D" ]; then echo "TUGRA_DIGEST=$TUGRA_D"; fi`,
     `docker tag ${shq(imageRef(app))} ${tag}`,
     ...registryLogoutSteps(app.registryAuth),
   ];

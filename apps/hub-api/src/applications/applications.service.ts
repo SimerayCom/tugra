@@ -42,6 +42,7 @@ import {
   buildStopScript,
   runTag,
   registryImageRef,
+  parseImageDigest,
   containerName,
   type AppSpec,
   type AppVolume,
@@ -887,13 +888,16 @@ export class ApplicationsService {
           rolledBack = !!p;
         }
       }
+      // The IMAGE prep steps echo the digest marker; for a build-server deploy those steps run on the
+      // BUILD server (buildLog), not the deploy server (r.output), so parse the COMBINED output.
+      const combinedOutput = buildLog ? `${buildLog}\n${r.output}` : r.output;
       await this.prisma.deployment.update({
         where: { id: dep.id },
         data: {
           status: ok ? "SUCCESS" : "FAILED",
           kind: rolledBack ? "AUTO_ROLLBACK" : "DEPLOY",
           // Prepend the build-server phase output so the persisted record has the full log.
-          logs: (buildLog ? `${buildLog}\n${r.output}` : r.output).slice(0, 65536),
+          logs: combinedOutput.slice(0, 65536),
           exitCode: code,
           // Compose stacks are multi-image → no single rollback tag; a rolled-back
           // deploy's image never went live → no rollback tag either.
@@ -901,6 +905,9 @@ export class ApplicationsService {
           // The registry ref this build pushed to — lets rollback pull it even if the local
           // image was pruned. Only recorded on a successful push.
           registryImage: ok ? registryRef : null,
+          // The resolved upstream digest the deploy script echoed (IMAGE pulls only) — provenance +
+          // a byte-exact rollback source when the local tag is later pruned.
+          imageDigest: ok && !isCompose ? parseImageDigest(combinedOutput) : null,
         },
       });
       await this.prisma.application.update({
@@ -963,9 +970,9 @@ export class ApplicationsService {
         throw new NotFoundException("no rollbackable compose configuration for that deployment");
       }
     } else {
-      // Rollbackable if either the local image tag is still retained OR the deploy pushed a portable
-      // registry image (survives a local prune / host re-provision).
-      if (!target || (!target.imageTag && !target.registryImage)) {
+      // Rollbackable if the local tag is retained, OR a portable artifact exists to re-pull: a pushed
+      // registry image, or the recorded upstream digest (IMAGE apps → byte-exact reconstruction).
+      if (!target || (!target.imageTag && !target.registryImage && !target.imageDigest)) {
         throw new NotFoundException("no rollbackable deployment with that id");
       }
       // Prefer the retained LOCAL tag (fast, no network); pull from the registry only when the local
@@ -977,7 +984,7 @@ export class ApplicationsService {
           registryPull = { auth, ref: target.registryImage };
         }
       }
-      if (!registryPull && !target.imageTag) {
+      if (!registryPull && !target.imageTag && !target.imageDigest) {
         throw new NotFoundException("the image for this deployment is no longer available locally and cannot be pulled from a registry");
       }
     }
@@ -1000,7 +1007,12 @@ export class ApplicationsService {
       } else {
         // registryPull → build=true so prepSteps PULLS + tags; else build=false re-runs the local tag.
         if (registryPull) spec.registryPull = registryPull;
-        command = buildRunScript(spec, target!.id, !!registryPull);
+        // IMAGE app whose local tag was pruned + no registry push: reconstruct byte-exact by pulling
+        // the recorded upstream digest (spec.registryAuth carries any private-registry credentials).
+        else if (!target!.imageTag && target!.imageDigest) {
+          spec.registryPull = { auth: spec.registryAuth, ref: target!.imageDigest };
+        }
+        command = buildRunScript(spec, target!.id, !!spec.registryPull);
       }
       const r = await this.agentWs.sendCommand(
         app.serverId,
@@ -1026,6 +1038,8 @@ export class ApplicationsService {
           // rollback target (mirrors the imageTag an IMAGE rollback records).
           imageTag: ok && !isCompose ? runTag(app, target!.id) : null,
           registryImage: ok && !isCompose ? target!.registryImage : null,
+          // Carry the digest forward so the rollback deploy is itself a byte-exact rollback target.
+          imageDigest: ok && !isCompose ? target!.imageDigest : null,
           ...(ok && isCompose ? { configSnapshot: buildConfigSnapshot(spec) as object } : {}),
         },
       });
@@ -1176,7 +1190,8 @@ export class ApplicationsService {
       // compose YAML in its snapshot (recorded at deploy START, so it exists on FAILED rows too →
       // the status gate is essential); otherwise the local image tag or a portable registry image.
       const rollbackable =
-        d.status === "SUCCESS" && (isCompose ? !!next?.composeFile : !!(d.imageTag || d.registryImage));
+        d.status === "SUCCESS" &&
+        (isCompose ? !!next?.composeFile : !!(d.imageTag || d.registryImage || d.imageDigest));
       return { ...rest, configChanges: next ? diffSnapshots(prev, next) : [], rollbackable };
     });
   }

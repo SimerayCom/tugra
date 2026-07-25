@@ -8,7 +8,7 @@ import { TextInput, Select } from "../../../../components/form";
 import { useDebounce } from "../../../../hooks/useDebounce";
 import { parseAnsi } from "../../../../lib/ansi";
 import type { AppVolume } from "../../../../lib/types";
-import { appColor, appSourceSummary, deploymentColor, webhookUrl } from "../../../../lib/apps";
+import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { useContainerLogStream } from "../../../../hooks/useContainerLogStream";
@@ -325,6 +325,11 @@ export default function AppDetailPage() {
                     <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
                     {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
                     {d.registryImage && <span title={d.registryImage} style={{ fontSize: 10, color: "var(--c-tx3)" }}>☁</span>}
+                    {d.imageDigest && (
+                      <span title={d.imageDigest} className="mono" style={{ fontSize: 10, color: "var(--c-tx3)" }}>
+                        🔒 {shortDigest(d.imageDigest)}
+                      </span>
+                    )}
                     {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
                     <span style={{ flex: 1 }} />
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>

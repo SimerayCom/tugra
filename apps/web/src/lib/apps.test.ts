@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appSourceSummary, appUrl, deploymentColor, webhookUrl } from "./apps";
+import { appColor, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -29,5 +29,10 @@ describe("app helpers", () => {
 
   it("builds the public webhook url from a token", () => {
     expect(webhookUrl("tugra_wh_abc")).toMatch(/\/webhooks\/deploy\/tugra_wh_abc$/);
+  });
+
+  it("shortens a pinned image digest ref for display", () => {
+    expect(shortDigest("nginx@sha256:abc123def4567890")).toBe("sha256:abc123def4…");
+    expect(shortDigest("no-digest-here")).toBe("no-digest-here"); // graceful passthrough
   });
 });

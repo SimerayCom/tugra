@@ -777,6 +777,7 @@ model Deployment {
   exitCode    Int?
   imageTag    String?
   registryImage String?   // registry ref this deploy pushed to (for portable rollback pull)
+  imageDigest String?     // resolved upstream digest of the pulled IMAGE (nginx@sha256:…) — provenance + byte-exact rollback
   // Redacted config snapshot this deploy ran with (secrets fingerprinted, not stored).
   configSnapshot Json?
   createdAt   DateTime         @default(now())

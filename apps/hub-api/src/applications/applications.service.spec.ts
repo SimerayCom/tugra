@@ -251,6 +251,60 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("records the resolved image digest echoed by the deploy (null when no marker)", async () => {
+    const run = (output: string) => {
+      const depUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d1" }),
+          update: depUpdate,
+          findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output }) } as unknown as AgentWsServer;
+      return { depUpdate, run: make(prisma, access, agentWs).deploy("u1", "app1") };
+    };
+    const a = run("pull…\nTUGRA_DIGEST=nginx@sha256:abc123\ndone");
+    await a.run;
+    expect(a.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ imageDigest: "nginx@sha256:abc123" }) }));
+    const b = run("deployed"); // no marker
+    await b.run;
+    expect(b.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ imageDigest: null }) }));
+  });
+
+  it("rolls an IMAGE app back by re-pulling the recorded digest when the local tag is pruned", async () => {
+    let sentCmd = "";
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(
+            where.status === "RUNNING"
+              ? null
+              : { id: "target", status: "SUCCESS", imageTag: null, registryImage: null, imageDigest: "nginx@sha256:deadbeef" },
+          ),
+        ),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sentCmd = cmd; return Promise.resolve({ exitCode: 0, output: "up" }); }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).rollback("u1", "app1", "target");
+    // byte-exact reconstruction: pull the digest ref + tag it as the target version locally.
+    expect(sentCmd).toContain("docker pull 'nginx@sha256:deadbeef'");
+    expect(sentCmd).toContain("docker tag 'nginx@sha256:deadbeef' tugra_app1:target");
+  });
+
   it("a routed app rolls (temp container) and exit 3 auto-rolls-back: FAILED/AUTO_ROLLBACK but app stays RUNNING", async () => {
     const rollingApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true };
     const depUpdate = jest.fn().mockResolvedValue({});
@@ -433,6 +487,21 @@ describe("ApplicationsService", () => {
     // oldest deploy has no previous snapshot → no changes; raw snapshot not leaked
     expect(list[1].configChanges).toEqual([]);
     expect(list[0]).not.toHaveProperty("configSnapshot");
+  });
+
+  it("deployments() marks a digest-only IMAGE deploy rollbackable (byte-exact repull after prune)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: {
+        findMany: jest.fn().mockResolvedValue([
+          // local tag + registry push both absent/pruned, but the recorded upstream digest survives.
+          { id: "d1", status: "SUCCESS", imageTag: null, registryImage: null, imageDigest: "nginx@sha256:abc", createdAt: new Date(1), configSnapshot: { env: {}, volumes: [] } },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    const list = await make(prisma, access, {} as AgentWsServer).deployments("u1", "app1");
+    expect(list[0].rollbackable).toBe(true);
   });
 
   const composeApp = {
@@ -913,6 +982,32 @@ describe("ApplicationsService", () => {
     expect(calls[1].cmd).toContain("docker pull 'ghcr.io/org/tugra_app1:d1'");
     expect(calls[1].cmd).toContain("docker run -d --name tugra_app1");
     expect(calls[1].cmd).not.toContain("docker push");
+  });
+
+  it("records the digest from the BUILD server output when a build server is used (marker lives in buildLog)", async () => {
+    const bsApp = { ...app, image: "nginx:alpine", registryId: "reg1", pushToRegistry: true, buildServerId: "bs1" };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(bsApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      // the build server (bs1) echoes the marker; the deploy server (registryPull path) does not.
+      sendCommand: jest.fn().mockImplementation((server: string) =>
+        Promise.resolve({ exitCode: 0, output: server === "bs1" ? "built\nTUGRA_DIGEST=nginx@sha256:bsdigest" : "pulled+ran" }),
+      ),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ imageDigest: "nginx@sha256:bsdigest" }) }));
   });
 
   it("a build-server build failure persists the real build output (not just a generic message)", async () => {
