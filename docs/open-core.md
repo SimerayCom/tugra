@@ -27,6 +27,12 @@ signal**, injected at build/license time via the `TUGRA_EDITION` build arg — i
 for free). It is surfaced read-only on `GET /version`, `GET /instance/status`, and
 the owner's `GET /instance/settings`.
 
+The core also **verifies a signed license** to raise the edition at runtime: a
+Tugra-issued EdDSA (ed25519) JWT is checked against a public key **compiled into the
+build** (never sourced from the environment, so an operator can't substitute their
+own key and self-sign). The matching private key is held in Tugra's own infrastructure, outside this
+repository; the community core only *verifies* license tokens, it never issues them. Community builds run as the community edition.
+
 | Feature area | Community | Pro | Cloud |
 |--------------|:---------:|:---:|:-----:|
 | Deploy, rollback, build/registry | ✅ | ✅ | ✅ |
