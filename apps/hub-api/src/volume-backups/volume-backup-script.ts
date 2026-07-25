@@ -6,6 +6,8 @@
  * → sink, never through the 64KB exec channel.
  */
 import { mcHostEnv, mcTarget, type DestinationSpec } from "../backups/destination";
+// Shared mc-output parser (also used by DB backups) — re-exported so existing importers keep working.
+export { parseShareUrl } from "../backups/destination";
 
 export const VOL_BACKUP_DIR = "/etc/tugra/volume-backups";
 
@@ -152,17 +154,3 @@ export function buildVolumeExportUrlScript(
   return [MC_INSTALL, `${mcHostEnv(dest.s3)} mc share download --expire ${shq(expire)} --json ${shq(target)}`].join("\n");
 }
 
-/** Extract the presigned download URL (the `share` field) from `mc share download --json` output. */
-export function parseShareUrl(output: string): string | null {
-  for (const line of output.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("{")) continue;
-    try {
-      const j = JSON.parse(t) as { share?: unknown };
-      if (typeof j.share === "string" && /^https?:\/\//i.test(j.share)) return j.share;
-    } catch {
-      /* not a JSON line — keep scanning */
-    }
-  }
-  return null;
-}

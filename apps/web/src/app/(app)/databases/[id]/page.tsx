@@ -76,6 +76,13 @@ export default function DatabaseDetailPage() {
     onSettled: invalidateRestores,
   });
   const delBackup = useMutation({ mutationFn: (bid: string) => api.deleteBackup(id, bid), onSuccess: invalidateBackups });
+  // Migrator export: a presigned migration URL for an S3 DB backup (feed it to import-from-URL elsewhere).
+  const [exported, setExported] = useState<{ id: string; url: string } | null>(null);
+  const exportUrl = useMutation({
+    mutationFn: (bid: string) => api.exportDatabaseBackupUrl(id, bid),
+    onSuccess: (res, bid) => setExported({ id: bid, url: res.url }),
+    onError: () => toast(t("databases.exportFailed"), "error"),
+  });
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
   const [restoreToBackup, setRestoreToBackup] = useState<string | null>(null);
   const [restoreTarget, setRestoreTarget] = useState("");
@@ -266,21 +273,34 @@ export default function DatabaseDetailPage() {
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {backups.map((b) => (
-              <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: backupColor(b.status) }}>{b.status}</span>
-                <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{b.filename}</span>
-                <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{formatSize(b.sizeBytes)}</span>
-                <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
-                <button
-                  onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }}
-                  style={linkBtn}
-                >
-                  {t("databases.restore")}
-                </button>
-                {b.status === "SUCCESS" && db.canWrite && compatibleRestoreTargets(allDatabases, db).length > 0 && (
-                  <button onClick={() => { setRestoreTarget(""); setRestoreToBackup(b.id); }} style={linkBtn}>{t("databases.restoreTo")}</button>
+              <div key={b.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: backupColor(b.status) }}>{b.status}</span>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{b.filename}</span>
+                  <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{formatSize(b.sizeBytes)}</span>
+                  <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
+                  {b.destinationType === "S3" && b.status === "SUCCESS" && (
+                    <button onClick={() => exportUrl.mutate(b.id)} disabled={exportUrl.isPending} title={t("databases.exportHint")} style={{ ...linkBtn, color: "var(--c-a)" }}>
+                      {exportUrl.isPending && exportUrl.variables === b.id ? "…" : t("databases.exportUrl")}
+                    </button>
+                  )}
+                  <button
+                    onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }}
+                    style={linkBtn}
+                  >
+                    {t("databases.restore")}
+                  </button>
+                  {b.status === "SUCCESS" && db.canWrite && compatibleRestoreTargets(allDatabases, db).length > 0 && (
+                    <button onClick={() => { setRestoreTarget(""); setRestoreToBackup(b.id); }} style={linkBtn}>{t("databases.restoreTo")}</button>
+                  )}
+                  <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)" }}>✕</button>
+                </div>
+                {exported?.id === b.id && (
+                  <div style={{ padding: "0 4px 4px" }}>
+                    <CopyRow label={t("databases.exportUrl")} value={exported.url} copy={t("databases.copy")} secret />
+                    <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>{t("databases.exportExpiry")}</div>
+                  </div>
                 )}
-                <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)" }}>✕</button>
               </div>
             ))}
             {backups.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("databases.noBackups")}</div>}

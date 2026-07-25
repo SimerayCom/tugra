@@ -8936,6 +8936,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "destinationType": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "createdBy": {
                         "type": "string"
                       },
@@ -8954,6 +8958,7 @@
                       "status",
                       "filename",
                       "sizeBytes",
+                      "destinationType",
                       "createdBy",
                       "createdAt",
                       "completedAt"
@@ -9007,6 +9012,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "destinationType": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "createdBy": {
                       "type": "string"
                     },
@@ -9025,6 +9034,7 @@
                     "status",
                     "filename",
                     "sizeBytes",
+                    "destinationType",
                     "createdBy",
                     "createdAt",
                     "completedAt"
@@ -9260,6 +9270,60 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/v1/databases/{id}/backups/{backupId}/export-url": {
+      "post": {
+        "operationId": "BackupsController_exportUrl",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "backupId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expireHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 168
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": ""

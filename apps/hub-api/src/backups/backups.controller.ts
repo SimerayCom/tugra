@@ -21,6 +21,8 @@ import { BackupsService, BackupViewSchema, RestoreViewSchema } from "./backups.s
 import {
   BackupConfigInput,
   BackupConfigSchema,
+  ExportUrlInput,
+  ExportUrlSchema,
   ImportFromUrlInput,
   ImportFromUrlSchema,
 } from "./dto";
@@ -86,6 +88,20 @@ export class BackupsController {
   ) {
     await this.backups.restoreTo(user.userId, id, backupId, targetId);
     return { ok: true };
+  }
+
+  // Presigned migration URL — grants time-limited download of the backup data → read:secrets.
+  @Post("backups/:backupId/export-url")
+  @RequireScopes("read:secrets")
+  @HttpCode(200)
+  @ApiZodBody(ExportUrlSchema)
+  exportUrl(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("backupId") backupId: string,
+    @Body(new ZodValidationPipe(ExportUrlSchema)) body: ExportUrlInput,
+  ) {
+    return this.backups.exportUrl(user.userId, id, backupId, body.expireHours ?? 24);
   }
 
   @Delete("backups/:backupId")
