@@ -67,3 +67,18 @@ export function objectKey(s3: S3Config, dbId: string, filename: string): string 
 export function mcTarget(s3: S3Config, dbId: string, filename: string): string {
   return `${MC_ALIAS}/${s3.bucket}/${objectKey(s3, dbId, filename)}`;
 }
+
+/** Extract the presigned download URL (the `share` field) from `mc share download --json` output. */
+export function parseShareUrl(output: string): string | null {
+  for (const line of output.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    try {
+      const j = JSON.parse(t) as { share?: unknown };
+      if (typeof j.share === "string" && /^https?:\/\//i.test(j.share)) return j.share;
+    } catch {
+      /* not a JSON line — keep scanning */
+    }
+  }
+  return null;
+}

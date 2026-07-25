@@ -156,10 +156,18 @@ export function buildImportScript(
   opts: { encrypted: boolean; key: string; gzip: boolean },
 ): string {
   const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
-  // An external dump's format AND transaction structure are unknown — it may
-  // carry its own BEGIN/COMMIT or a CREATE DATABASE that can't run inside one
-  // transaction. Fail loud (ON_ERROR_STOP) but don't force whole-file atomicity.
-  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip, "sql-loose");
+  // A `.dump[.gz][.gpg]` object is a Postgres CUSTOM-format archive → pg_restore (this lets a migration
+  // URL exported from another Tugra DB backup import cleanly). Anything else is plain SQL fed to psql
+  // (sql-loose: fail-loud but not forced-atomic, since an external dump's transaction structure is
+  // unknown). Match the URL's PATH only (end-anchored) — a `.dump`-like tail in a query param must NOT
+  // flip the mode. Only affects Postgres. Unparseable URL → default sql-loose.
+  let pgMode: PgMode = "sql-loose";
+  try {
+    if (/\.dump(\.gz)?(\.gpg)?$/i.test(new URL(url).pathname)) pgMode = "custom";
+  } catch {
+    /* not a parseable URL — leave sql-loose (psql fail-loud) */
+  }
+  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip, pgMode);
 }
 
 // custom = pg_restore of a custom-format archive; sql-atomic = our own plain
@@ -253,6 +261,17 @@ export function buildDeleteBackupScript(
     return `${mcHostEnv(dest.s3)} mc rm ${mcTarget(dest.s3, dbId, filename)} 2>/dev/null || true`;
   }
   return `rm -f ${backupPath(dbId, filename)} 2>/dev/null || true`;
+}
+
+/**
+ * Presigned download URL for an existing S3 database backup, so it can be pulled by import-from-URL
+ * on another server (migration). `expire` is an mc duration string like "24h". S3-only — a LOCAL
+ * backup has no presignable object (the caller guards `dest.type === "S3"` first).
+ */
+export function buildBackupExportUrlScript(dbId: string, filename: string, dest: DestinationSpec, expire: string): string {
+  if (dest.type !== "S3" || !dest.s3) throw new Error("export URL requires an S3 destination");
+  const target = mcTarget(dest.s3, dbId, filename);
+  return [MC_INSTALL, `${mcHostEnv(dest.s3)} mc share download --expire ${shq(expire)} --json ${shq(target)}`].join("\n");
 }
 
 /** Reachability/credentials check for an S3 destination: `mc ls <alias>/<bucket>`. Exit 0 = OK. */

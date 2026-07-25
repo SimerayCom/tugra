@@ -30,3 +30,9 @@ export const ImportFromUrlSchema = z
     message: "encryptionKey is required when encrypted is true",
   });
 export type ImportFromUrlInput = z.infer<typeof ImportFromUrlSchema>;
+
+// Generate a presigned migration URL for an existing S3 database backup.
+export const ExportUrlSchema = z.object({
+  expireHours: z.number().int().min(1).max(168).optional(), // default 24; S3 presigned max = 7 days
+});
+export type ExportUrlInput = z.infer<typeof ExportUrlSchema>;

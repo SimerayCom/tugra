@@ -15,7 +15,8 @@ import { loadProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { supportsBackup, type DbEngine } from "../databases/database-script";
-import { buildDeleteBackupScript, buildImportScript, buildRestoreScript, scrubRestoreOutput } from "./backup-script";
+import { buildBackupExportUrlScript, buildDeleteBackupScript, buildImportScript, buildRestoreScript, scrubRestoreOutput } from "./backup-script";
+import { parseShareUrl } from "./destination";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { planTargets } from "../bulk/bulk.service";
@@ -28,6 +29,7 @@ export const BackupViewSchema = z.object({
   status: z.string(),
   filename: z.string(),
   sizeBytes: z.string().nullable(), // BigInt serialized
+  destinationType: z.string().nullable(), // "S3" | "LOCAL" | null — only an S3 backup can export a migration URL
   createdBy: z.string(),
   createdAt: z.date(),
   completedAt: z.date().nullable(),
@@ -151,7 +153,7 @@ export class BackupsService {
       throw new BadRequestException(`backup not supported for ${db.engine} yet`);
     }
     const backup = await this.runner.runBackup(dbId, userId);
-    return this.view(backup);
+    return (await this.toViews([backup]))[0];
   }
 
   async list(userId: string, dbId: string): Promise<BackupView[]> {
@@ -161,7 +163,7 @@ export class BackupsService {
       orderBy: { createdAt: "desc" },
       take: 50,
     });
-    return backups.map((b) => this.view(b));
+    return this.toViews(backups);
   }
 
   async restore(userId: string, dbId: string, backupId: string): Promise<void> {
@@ -230,6 +232,33 @@ export class BackupsService {
       createdBy: userId,
       auditAction: "database.import",
     });
+  }
+
+  /**
+   * Produce a short-lived presigned download URL for an S3 database backup, so it can be fed to
+   * import-from-URL on another server (migration). S3-only — a LOCAL-disk backup has no presignable
+   * object. The URL grants time-limited download of the backup data → returned to the caller but
+   * NEVER logged/audited.
+   */
+  async exportUrl(userId: string, dbId: string, backupId: string, expireHours: number): Promise<{ url: string; expiresAt: Date }> {
+    const db = await this.requireWrite(userId, dbId);
+    const backup = await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: dbId } });
+    if (!backup) throw new NotFoundException("backup not found");
+    // Read from the backup's OWN destination, not the DB's current one.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
+    if (dest.type !== "S3") throw new BadRequestException("a migration URL needs an S3 backup destination");
+    const r = await this.agentWs.sendCommand(
+      db.serverId,
+      buildBackupExportUrlScript(db.id, backup.filename, dest, `${expireHours}h`),
+      "backup",
+      60_000,
+    );
+    if (r.exitCode !== 0) throw new BadGatewayException("could not generate a migration URL");
+    const url = parseShareUrl(r.output);
+    if (!url) throw new BadGatewayException("could not generate a migration URL");
+    // Audit the action but NEVER the URL (it grants time-limited download of the backup data).
+    await this.audit.log({ actor: userId, action: "database.backup.export", target: dbId, meta: { backupId, expireHours } });
+    return { url, expiresAt: new Date(Date.now() + expireHours * 3600_000) };
   }
 
   async removeBackup(userId: string, dbId: string, backupId: string): Promise<void> {
@@ -306,12 +335,24 @@ export class BackupsService {
   }
 
   // ── helpers ──
-  private view(b: Backup): BackupView {
+  /** Project rows to views, resolving each backup's destination TYPE (so the UI offers export only
+   *  for S3-stored backups) with a single batched lookup — no per-row query, no cred decrypt. */
+  private async toViews(rows: Backup[]): Promise<BackupView[]> {
+    const ids = [...new Set(rows.map((r) => r.destinationId).filter((x): x is string => !!x))];
+    const dests = ids.length
+      ? await this.prisma.backupDestination.findMany({ where: { id: { in: ids } }, select: { id: true, type: true } })
+      : [];
+    const typeById = new Map(dests.map((d) => [d.id, d.type]));
+    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null));
+  }
+
+  private view(b: Backup, destinationType: string | null): BackupView {
     return {
       id: b.id,
       status: b.status,
       filename: b.filename,
       sizeBytes: b.sizeBytes != null ? b.sizeBytes.toString() : null,
+      destinationType,
       createdBy: b.createdBy,
       createdAt: b.createdAt,
       completedAt: b.completedAt,

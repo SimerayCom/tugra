@@ -1006,6 +1006,12 @@ export const api = {
   deleteBackup(dbId: string, backupId: string) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}`, { method: "DELETE" });
   },
+  exportDatabaseBackupUrl(dbId: string, backupId: string, expireHours?: number) {
+    return apiFetch<{ url: string; expiresAt: string }>(`/databases/${dbId}/backups/${backupId}/export-url`, {
+      method: "POST",
+      body: JSON.stringify(expireHours ? { expireHours } : {}),
+    });
+  },
   setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; retention?: number; destinationId?: string | null }) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backup-config`, {
       method: "PUT",

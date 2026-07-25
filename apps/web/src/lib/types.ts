@@ -730,6 +730,7 @@ export interface Backup {
   status: BackupStatus;
   filename: string;
   sizeBytes: string | null;
+  destinationType: string | null; // "S3" | "LOCAL" | null — only an S3 backup can export a migration URL
   createdBy: string;
   createdAt: string;
   completedAt: string | null;

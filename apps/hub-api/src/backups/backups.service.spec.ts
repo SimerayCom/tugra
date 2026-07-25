@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { BackupsService } from "./backups.service";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
@@ -293,5 +293,47 @@ describe("BackupsService.restoreTo (cross-resource)", () => {
   it("rejects a LOCAL backup crossing servers (needs S3)", async () => {
     const { svc } = setup({ target: { serverId: "s2" }, backup: { ...okBackup, destinationId: null } });
     await expect(svc.restoreTo("u1", "A", "bk", "B")).rejects.toThrow(/S3/);
+  });
+});
+
+describe("BackupsService.exportUrl", () => {
+  const S3_DEST = { type: "S3", s3: { bucket: "b", region: "r", endpoint: "s3.example.com", accessKey: "AK", secretKey: "SK", prefix: "tugra" }, encryption: { enabled: false, key: "" } };
+  const LOCAL_DEST = { type: "LOCAL", encryption: { enabled: false, key: "" } };
+  const SHARE_JSON = '{"status":"success","url":"tdest/b/k","share":"https://s3.example.com/b/k?X-Amz-Signature=sig","expiry":86400}';
+
+  function setupExport(dest: unknown, sendResult: { exitCode: number; output: string } = { exitCode: 0, output: SHARE_JSON }) {
+    (audit.log as jest.Mock).mockClear();
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db) },
+      backup: { findFirst: jest.fn().mockResolvedValue({ id: "bk1", databaseId: "db1", filename: "2026.dump.gz", destinationId: (dest as { type: string }).type === "S3" ? "d1" : null }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const runner = { destinationSpecById: jest.fn().mockResolvedValue(dest) } as unknown as BackupRunnerService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue(sendResult) } as unknown as AgentWsServer;
+    return { svc: make(prisma, access, runner, {}, agentWs), agentWs };
+  }
+
+  it("returns a presigned url + expiry for an S3 backup under the 'backup' capability, url not logged", async () => {
+    const t = setupExport(S3_DEST);
+    const res = await t.svc.exportUrl("u1", "db1", "bk1", 24);
+    const [serverId, cmd, cap] = (t.agentWs.sendCommand as jest.Mock).mock.calls[0];
+    expect(serverId).toBe("s1");
+    expect(cap).toBe("backup");
+    expect(cmd).toContain("mc share download --expire '24h'");
+    expect(res.url).toBe("https://s3.example.com/b/k?X-Amz-Signature=sig");
+    expect(res.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("X-Amz");
+  });
+
+  it("rejects a LOCAL backup (no presignable object) without dispatching", async () => {
+    const t = setupExport(LOCAL_DEST);
+    await expect(t.svc.exportUrl("u1", "db1", "bk1", 24)).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("BadGateway when mc fails, and never logs the presigned url", async () => {
+    const t = setupExport(S3_DEST, { exitCode: 1, output: "mc: <ERROR> share failed" });
+    await expect(t.svc.exportUrl("u1", "db1", "bk1", 24)).rejects.toBeInstanceOf(BadGatewayException);
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("http");
   });
 });

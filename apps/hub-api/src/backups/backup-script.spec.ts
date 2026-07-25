@@ -2,6 +2,7 @@ import {
   backupFilename,
   backupPath,
   buildBackupScript,
+  buildBackupExportUrlScript,
   buildDeleteBackupScript,
   buildImportScript,
   buildRestoreScript,
@@ -176,6 +177,48 @@ describe("backup-script", () => {
       const plain = buildImportScript(spec("POSTGRES"), "https://x/d.sql", { encrypted: false, key: "", gzip: false });
       expect(plain).not.toContain("gunzip");
       expect(plain).toContain("curl -fsSL 'https://x/d.sql'");
+    });
+
+    it("Postgres: a plain-SQL URL uses psql (sql-loose, non-atomic)", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://x/d.sql.gz", { encrypted: false, key: "", gzip: true });
+      expect(s).toContain("psql -v ON_ERROR_STOP=1 -U 'tugra'");
+      expect(s).not.toContain("pg_restore");
+      expect(s).not.toContain("--single-transaction"); // external SQL — not forced-atomic
+    });
+
+    it("Postgres: a .dump(.gz) migration URL uses pg_restore (custom format), even with a presigned query string", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://s3/b/db1/2026.dump.gz?X-Amz-Signature=sig", { encrypted: false, key: "", gzip: true });
+      expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
+      expect(s).not.toContain("psql");
+    });
+
+    it("a look-alike .dumped URL is NOT treated as custom format (precise match)", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://x/mydb.dumped.gz", { encrypted: false, key: "", gzip: true });
+      expect(s).not.toContain("pg_restore");
+      expect(s).toContain("psql");
+    });
+
+    it("a .dump only in the query string does NOT flip to custom (path-anchored detection)", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://host/plain-export.sql?ref=https://o/x.dump", { encrypted: false, key: "", gzip: false });
+      expect(s).not.toContain("pg_restore");
+      expect(s).toContain("psql");
+    });
+
+    it("non-Postgres engines ignore the pg mode (mysql client regardless of .dump)", () => {
+      const s = buildImportScript(spec("MYSQL"), "https://x/2026.dump.gz", { encrypted: false, key: "", gzip: true });
+      expect(s).toContain("mysql -u'tugra'");
+      expect(s).not.toContain("pg_restore");
+    });
+  });
+
+  describe("buildBackupExportUrlScript", () => {
+    it("builds an mc share download presigned-URL command (shq target) against the backup object", () => {
+      const s = buildBackupExportUrlScript("db1", "2026.dump.gz", s3Dest, "24h");
+      expect(s).toContain("command -v mc"); // MC_INSTALL
+      expect(s).toContain("mc share download --expire '24h' --json 'tdest/my-bucket/tugra/db1/2026.dump.gz'");
+    });
+    it("refuses a LOCAL destination (no presignable object)", () => {
+      expect(() => buildBackupExportUrlScript("db1", "2026.dump.gz", LOCAL_DEST, "24h")).toThrow(/S3/);
     });
   });
 
