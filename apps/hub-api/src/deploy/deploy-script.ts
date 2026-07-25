@@ -7,10 +7,19 @@
 export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
-// External health-probe image for the rolling health gate — lets us health-check a
-// container over HTTP without baking curl into the app image (works for distroless).
-// TODO(hardening): pin to an @sha256 digest (a wrong pin would break every deploy).
-export const HEALTH_PROBE_IMAGE = "curlimages/curl:8.11.1";
+// Tugra's own infrastructure images, pinned to their multi-arch manifest-list (index) @sha256 digest
+// for supply-chain integrity — a mutated tag can't silently swap the image. The tag is kept for
+// readability; docker uses the digest. To bump: `docker buildx imagetools inspect <repo:tag>` and copy
+// the top-level (index) Digest — it must be the index digest so it resolves on both amd64 and arm64.
+//
+// External health-probe image for the rolling health gate — lets us health-check a container over HTTP
+// without baking curl into the app image (works for distroless).
+export const HEALTH_PROBE_IMAGE =
+  "curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69";
+
+// The reverse-proxy (one per server), launched by buildProxySetupScript.
+export const PROXY_IMAGE =
+  "traefik:v3.1@sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56";
 
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -769,7 +778,7 @@ export function buildProxySetupScript(
     "-v /etc/tugra/letsencrypt:/letsencrypt",
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
     ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
-    "traefik:v3.1",
+    PROXY_IMAGE,
     "--providers.docker=true",
     "--providers.docker.exposedbydefault=false",
     "--entrypoints.web.address=:80",

@@ -12,9 +12,10 @@ import { PROXY_NETWORK } from "./deploy-script";
 export const TUNNEL_CONTAINER_NAME = "tugra-cfd";
 export const TUNNEL_ENV_DIR = "/etc/tugra/tunnel";
 export const TUNNEL_ENV_PATH = `${TUNNEL_ENV_DIR}/cloudflared.env`;
-// TODO(hardening): pin to an @sha256 digest (a wrong pin would break the tunnel),
-// mirroring HEALTH_PROBE_IMAGE in deploy-script.ts.
-export const DEFAULT_CLOUDFLARED_IMAGE = "cloudflare/cloudflared:2024.10.0";
+// Pinned to the multi-arch manifest-list (index) @sha256 digest for supply-chain integrity — see the
+// note on HEALTH_PROBE_IMAGE in deploy-script.ts for the bump procedure. Tag kept for readability.
+export const DEFAULT_CLOUDFLARED_IMAGE =
+  "cloudflare/cloudflared:2024.10.0@sha256:060f16531b1ed6dcb382cd2b35d1a845f8dbcb445003b9ec48eef0078cb08bf4";
 
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;

@@ -42,6 +42,10 @@ describe("buildTunnelSetupScript", () => {
     );
   });
 
+  it("pins the default cloudflared image to a tag + sha256 digest (supply-chain)", () => {
+    expect(DEFAULT_CLOUDFLARED_IMAGE).toMatch(/^cloudflare\/cloudflared:[\w.]+@sha256:[a-f0-9]{64}$/);
+  });
+
   it("sets --restart unless-stopped and --no-autoupdate (Tugra controls the image, not cloudflared)", () => {
     const s = buildTunnelSetupScript({ token: "t" });
     expect(s).toContain("--restart unless-stopped");
