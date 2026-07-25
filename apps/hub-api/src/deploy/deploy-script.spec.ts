@@ -18,6 +18,7 @@ import {
   resolveHealthProbe,
   rolloutName,
   HEALTH_PROBE_IMAGE,
+  PROXY_IMAGE,
   containerName,
   envFileContent,
   envFileB64,
@@ -552,7 +553,7 @@ describe("deploy-script", () => {
   it("proxy setup script runs Traefik with the HTTP-01 resolver by default (no DNS resolver)", () => {
     const s = buildProxySetupScript({ acmeEmail: "me@x.com" });
     expect(s).toContain("docker network create tugra-proxy");
-    expect(s).toContain("traefik:v3.1");
+    expect(s).toContain(PROXY_IMAGE);
     expect(s).toContain("acme.email='me@x.com'");
     expect(s).toContain("certificatesresolvers.le.acme.httpchallenge=true");
     // no DNS-01 resolver / creds when the server has none
@@ -797,5 +798,15 @@ describe("static helpers", () => {
 
   it("staticDockerfile defaults the output dir to dist", () => {
     expect(staticDockerfile("npm run build")).toContain("COPY --from=build /app/dist");
+  });
+});
+
+describe("infra image digest pinning", () => {
+  // Guards against a future edit dropping the @sha256 pin (supply-chain regression).
+  it("pins the health-probe image to a tag + sha256 digest", () => {
+    expect(HEALTH_PROBE_IMAGE).toMatch(/^curlimages\/curl:[\w.]+@sha256:[a-f0-9]{64}$/);
+  });
+  it("pins the reverse-proxy image to a tag + sha256 digest", () => {
+    expect(PROXY_IMAGE).toMatch(/^traefik:[\w.]+@sha256:[a-f0-9]{64}$/);
   });
 });

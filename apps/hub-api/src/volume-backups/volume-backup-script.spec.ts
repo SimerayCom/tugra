@@ -6,6 +6,7 @@ import {
   buildVolumeExportUrlScript,
   parseShareUrl,
   volumeBackupFilename,
+  BACKUP_HELPER_IMAGE,
 } from "./volume-backup-script";
 import type { DestinationSpec } from "../backups/destination";
 
@@ -20,7 +21,7 @@ const ENC: DestinationSpec = { type: "LOCAL", encryption: { enabled: true, key: 
 describe("volume-backup-script", () => {
   it("LOCAL: tars the docker volume → gzip → file, prints size", () => {
     const s = buildVolumeBackupScript("a1", "data", "tugra_appv_a1_data", "20260101.tar.gz", LOCAL);
-    expect(s).toContain("docker run --rm -v 'tugra_appv_a1_data':/data:ro alpine tar -C /data -cf - .");
+    expect(s).toContain(`docker run --rm -v 'tugra_appv_a1_data':/data:ro ${BACKUP_HELPER_IMAGE} tar -C /data -cf - .`);
     expect(s).toContain("| gzip");
     expect(s).toContain("> /etc/tugra/volume-backups/a1/data/20260101.tar.gz");
     expect(s).toContain("stat -c %s /etc/tugra/volume-backups/a1/data/20260101.tar.gz");
@@ -45,7 +46,7 @@ describe("volume-backup-script", () => {
   it("restore clears the volume then extracts the tar", () => {
     const s = buildVolumeRestoreScript("a1", "data", "tugra_appv_a1_data", "20260101.tar.gz", LOCAL);
     expect(s).toContain("gunzip");
-    expect(s).toContain("docker run --rm -i -v 'tugra_appv_a1_data':/data alpine sh -c");
+    expect(s).toContain(`docker run --rm -i -v 'tugra_appv_a1_data':/data ${BACKUP_HELPER_IMAGE} sh -c`);
     expect(s).toContain("find . -mindepth 1 -delete");
     expect(s).toContain("tar -xf -");
   });
@@ -67,7 +68,7 @@ describe("volume-backup-script", () => {
       expect(s).toContain("| gunzip");
       expect(s).toContain('> "$TMP"'); // decode staged to temp BEFORE the volume is touched
       expect(s).toContain("set -o pipefail"); // a failed url/key/gzip aborts (set -e) before the wipe
-      expect(s).toContain("docker run --rm -i -v 'tugra_appv_a1_data':/data alpine sh -c");
+      expect(s).toContain(`docker run --rm -i -v 'tugra_appv_a1_data':/data ${BACKUP_HELPER_IMAGE} sh -c`);
       expect(s).toContain("find . -mindepth 1 -delete");
       expect(s).toContain("tar --no-same-owner -xf -"); // untrusted tar → no arbitrary ownership
       expect(s).toContain('< "$TMP"'); // extract reads the staged temp, not a live pipe
@@ -114,5 +115,11 @@ describe("volume export url (migration)", () => {
     );
     expect(parseShareUrl("no json here")).toBeNull();
     expect(parseShareUrl('{"status":"error","error":{"message":"nope"}}')).toBeNull(); // no share field
+  });
+});
+
+describe("backup helper image", () => {
+  it("pins the tar/restore helper to a tag + sha256 digest (was a bare alpine :latest)", () => {
+    expect(BACKUP_HELPER_IMAGE).toMatch(/^alpine:[\w.]+@sha256:[a-f0-9]{64}$/);
   });
 });

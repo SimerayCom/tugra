@@ -11,6 +11,12 @@ export { parseShareUrl } from "../backups/destination";
 
 export const VOL_BACKUP_DIR = "/etc/tugra/volume-backups";
 
+// The tar/restore helper container. Pinned to the multi-arch manifest-list (index) @sha256 digest for
+// supply-chain integrity (was a bare `alpine`, i.e. implicit :latest) — see HEALTH_PROBE_IMAGE in
+// deploy-script.ts for the bump procedure. Only runs `tar`/`sh`, so the exact minor version is immaterial.
+export const BACKUP_HELPER_IMAGE =
+  "alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d";
+
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
@@ -53,7 +59,7 @@ export function buildVolumeBackupScript(
   dest: DestinationSpec,
 ): string {
   const lines = ["set -e", "set -o pipefail"];
-  const pipe = [`docker run --rm -v ${shq(dockerVolume)}:/data:ro alpine tar -C /data -cf - .`, "gzip"];
+  const pipe = [`docker run --rm -v ${shq(dockerVolume)}:/data:ro ${BACKUP_HELPER_IMAGE} tar -C /data -cf - .`, "gzip"];
   if (dest.encryption.enabled) pipe.push(gpgEncrypt(dest));
 
   if (dest.type === "S3" && dest.s3) {
@@ -89,7 +95,7 @@ export function buildVolumeRestoreScript(
   decode.push("gunzip");
 
   // Clear the volume then extract (clean restore, including dotfiles).
-  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data alpine sh -c ${shq("cd /data && find . -mindepth 1 -delete 2>/dev/null; tar -xf -")}`;
+  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq("cd /data && find . -mindepth 1 -delete 2>/dev/null; tar -xf -")}`;
   return ["set -e", "set -o pipefail", `${decode.join(" | ")} | ${extract}`].join("\n");
 }
 
@@ -112,7 +118,7 @@ export function buildVolumeImportScript(
   // never destroys existing data. Only once a valid archive is staged do we wipe + extract (clean
   // import). --no-same-owner: an UNTRUSTED external tar must not restore arbitrary uid/gid; the extract
   // container is ephemeral (--rm) with only the target volume mounted at /data.
-  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data alpine sh -c ${shq(
+  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq(
     "cd /data && find . -mindepth 1 -delete 2>/dev/null; tar --no-same-owner -xf -",
   )} < "$TMP"`;
   return [
