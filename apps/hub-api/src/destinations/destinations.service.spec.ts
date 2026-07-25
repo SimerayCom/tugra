@@ -5,6 +5,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { CreateDestinationSchema } from "./dto";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 const crypto = {
@@ -115,5 +116,22 @@ describe("DestinationsService.testConnection", () => {
     const res = await make(prisma, writeAccess, { sendCommand }).testConnection("u1", "d1");
     expect(res.ok).toBe(false);
     expect(res.message).toContain("AccessDenied");
+  });
+});
+
+describe("CreateDestinationSchema (shell-safe bucket/prefix)", () => {
+  const base = { teamId: "t1", name: "d", type: "S3" as const, s3Endpoint: "s3.example.com", s3AccessKey: "AK", s3SecretKey: "SK" };
+  it("accepts normal bucket + prefix", () => {
+    expect(CreateDestinationSchema.safeParse({ ...base, s3Bucket: "my-bucket.1", s3Prefix: "team/app" }).success).toBe(true);
+  });
+  it("rejects shell metacharacters in bucket (command-injection guard)", () => {
+    for (const bad of ["b`id`", "b;rm -rf /", "b$(x)", "b|y", "b'x", "b y"]) {
+      expect(CreateDestinationSchema.safeParse({ ...base, s3Bucket: bad }).success).toBe(false);
+    }
+  });
+  it("rejects shell metacharacters in prefix", () => {
+    for (const bad of ["p`x`", "p;y", "p$(z)", "p'x"]) {
+      expect(CreateDestinationSchema.safeParse({ ...base, s3Bucket: "b", s3Prefix: bad }).success).toBe(false);
+    }
   });
 });

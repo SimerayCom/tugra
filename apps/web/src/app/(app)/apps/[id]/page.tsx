@@ -1267,6 +1267,12 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
   const backupNow = useMutation({ mutationFn: () => api.volumeBackupNow(id), onSuccess: invalidate });
   const restore = useMutation({ mutationFn: (bid: string) => api.restoreVolumeBackup(id, bid) });
   const del = useMutation({ mutationFn: (bid: string) => api.deleteVolumeBackup(id, bid), onSuccess: invalidate });
+  // Migrator export: a presigned migration URL for an S3 backup (feed it to import-from-URL elsewhere).
+  const [exported, setExported] = useState<{ id: string; url: string } | null>(null);
+  const exportUrl = useMutation({
+    mutationFn: (bid: string) => api.exportVolumeBackupUrl(id, bid),
+    onSuccess: (res, bid) => setExported({ id: bid, url: res.url }),
+  });
   const save = useMutation({
     mutationFn: () => api.setVolumeBackupConfig(id, { enabled: sched, intervalHours: Number(interval) || 24, retention: Number(ret) || 7, destinationId: dest || null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
@@ -1359,20 +1365,34 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {backups.map((b) => (
-          <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: backupColor(b.status) }}>{b.status}</span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", width: 90 }}>{b.volumeName}</span>
-            <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{formatSize(b.sizeBytes)}</span>
-            <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
-            <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-              {t("databases.restore")}
-            </button>
-            <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+          <div key={b.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: backupColor(b.status) }}>{b.status}</span>
+              <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", width: 90 }}>{b.volumeName}</span>
+              <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{formatSize(b.sizeBytes)}</span>
+              <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
+              {b.destinationType === "S3" && b.status === "SUCCESS" && (
+                <button onClick={() => exportUrl.mutate(b.id)} disabled={exportUrl.isPending} title={t("apps.volExportHint")} style={{ background: "transparent", border: "none", color: "var(--c-a)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  {exportUrl.isPending && exportUrl.variables === b.id ? "…" : t("apps.volExportUrl")}
+                </button>
+              )}
+              <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                {t("databases.restore")}
+              </button>
+              <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+            </div>
+            {exported?.id === b.id && (
+              <div style={{ padding: "0 4px 4px" }}>
+                <CopyRow label={t("apps.volExportUrl")} value={exported.url} copy={t("apps.copy")} secret />
+                <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>{t("apps.volExportExpiry")}</div>
+              </div>
+            )}
           </div>
         ))}
         {backups.length === 0 && <div style={{ color: "var(--c-tx3)", fontSize: 13 }}>{t("apps.noVolBackups")}</div>}
       </div>
       {restore.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(restore.error as Error).message}</div>}
+      {exportUrl.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(exportUrl.error as Error).message}</div>}
     </Card>
   );
 }

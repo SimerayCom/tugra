@@ -134,3 +134,35 @@ export function buildVolumeDeleteScript(
   }
   return `rm -f ${volumeBackupPath(appId, volumeName, filename)} 2>/dev/null || true`;
 }
+
+/**
+ * Produce a presigned download URL for an existing S3 volume backup so it can be pulled by the
+ * import-from-URL flow on another server (migration). `expire` is an mc duration string like "24h".
+ * S3-only — the caller guards `dest.type === "S3"` first (a LOCAL backup has no presignable object).
+ */
+export function buildVolumeExportUrlScript(
+  appId: string,
+  volumeName: string,
+  filename: string,
+  dest: DestinationSpec,
+  expire: string,
+): string {
+  if (dest.type !== "S3" || !dest.s3) throw new Error("export URL requires an S3 destination");
+  const target = mcTarget(dest.s3, ns(appId, volumeName), filename);
+  return [MC_INSTALL, `${mcHostEnv(dest.s3)} mc share download --expire ${shq(expire)} --json ${shq(target)}`].join("\n");
+}
+
+/** Extract the presigned download URL (the `share` field) from `mc share download --json` output. */
+export function parseShareUrl(output: string): string | null {
+  for (const line of output.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    try {
+      const j = JSON.parse(t) as { share?: unknown };
+      if (typeof j.share === "string" && /^https?:\/\//i.test(j.share)) return j.share;
+    } catch {
+      /* not a JSON line — keep scanning */
+    }
+  }
+  return null;
+}
