@@ -6,6 +6,7 @@ import type {
   InstanceUpdateStatus,
   OwnerInstanceSettings,
   OidcConfig,
+  LicenseStatus,
   SavedView,
   Application,
   AppVolume,
@@ -201,6 +202,13 @@ export const api = {
     acmeEmail?: string | null;
   }) {
     return apiFetch<OwnerInstanceSettings>("/instance/settings", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  // Owner-only signed-license status + activation (not edition-gated: Community can upgrade). Write-only token.
+  getLicense() {
+    return apiFetch<LicenseStatus>("/instance/license");
+  },
+  activateLicense(token: string) {
+    return apiFetch<LicenseStatus>("/instance/license", { method: "PATCH", body: JSON.stringify({ token }) });
   },
   // Owner-only OIDC (SSO) config — Pro edition (the hub 403s below Pro). The client secret is write-only.
   getOidcConfig() {

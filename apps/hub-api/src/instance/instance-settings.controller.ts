@@ -12,7 +12,10 @@ import { InstanceOwnerGuard } from "./instance-owner.guard";
 import { currentEdition, RequireEdition, RequireEditionGuard } from "../common/edition";
 import { CryptoService } from "../crypto/crypto.service";
 import { assertSafeUrl, allowPrivateTargets } from "../notifications/safe-url";
+import { LicenseService } from "../license/license.service";
 import {
+  LicenseInput,
+  LicenseSchema,
   OidcConfigInput,
   OidcConfigSchema,
   UpdateInstanceSettingsInput,
@@ -40,6 +43,7 @@ export class InstanceSettingsController {
     private readonly update: UpdateService,
     private readonly updater: UpdaterService,
     private readonly crypto: CryptoService,
+    private readonly license: LicenseService,
   ) {}
 
   /**
@@ -223,5 +227,37 @@ export class InstanceSettingsController {
       oidcAllowedDomains: s.oidcAllowedDomains,
       clientSecretSet: !!s.oidcClientSecretEnc,
     };
+  }
+
+  /**
+   * Signed-license entitlement. Owner-only but deliberately NOT edition-gated — a Community instance must
+   * be able to read its plan and paste a license to UPGRADE. The token is never returned (write-only);
+   * `status()` reports only the effective plan, validity and expiry.
+   */
+  @Get("license")
+  getLicense() {
+    return this.license.status();
+  }
+
+  @Patch("license")
+  @ApiZodBody(LicenseSchema)
+  async updateLicense(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(LicenseSchema)) body: LicenseInput,
+  ) {
+    const token = body.token.trim();
+    // Verify BEFORE persisting — an invalid/expired/forged token is rejected (400) and never stored, so a
+    // bad paste can't silently sit in the DB. An empty token clears the license (downgrade).
+    if (token) {
+      try {
+        await this.license.verifyToken(token);
+      } catch {
+        throw new BadRequestException("invalid or expired license");
+      }
+    }
+    await this.settings.update({ licenseToken: token || null });
+    await this.license.refresh(); // re-read + re-cache the effective edition (no restart needed)
+    await this.audit.log({ actor: user.userId, action: "instance.license", target: "singleton", meta: { cleared: !token } }); // token never logged
+    return this.license.status();
   }
 }

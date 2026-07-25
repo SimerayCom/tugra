@@ -9,6 +9,7 @@ import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
 import { InstanceApiAccessCard } from "./instance-api-access-card";
+import { LicenseCard } from "./license-card";
 import { SsoConfigCard } from "./sso-config-card";
 import { UpdatesCard } from "./updates-card";
 import { useT } from "../../../i18n/provider";
@@ -33,6 +34,7 @@ export default function SettingsPage() {
       <TwoFactorCard />
 
       <ApiTokensCard />
+      <LicenseCard />
       <InstanceApiAccessCard />
       <SsoConfigCard />
       <UpdatesCard />
