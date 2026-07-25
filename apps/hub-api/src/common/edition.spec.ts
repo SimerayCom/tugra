@@ -1,13 +1,16 @@
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { RequireEditionGuard, currentEdition, type Edition } from "./edition";
+import { RequireEditionGuard, currentEdition, setLicensedEdition, type Edition } from "./edition";
 
 // currentEdition() reads TUGRA_EDITION at call time — set/clear it per test (version.spec pattern).
 const ORIGINAL = process.env.TUGRA_EDITION;
 afterEach(() => {
+  setLicensedEdition(null); // clear the module-level licensed cache between tests
   if (ORIGINAL === undefined) delete process.env.TUGRA_EDITION;
   else process.env.TUGRA_EDITION = ORIGINAL;
 });
+
+const HOUR = 3600_000;
 
 function ctx(type = "http"): ExecutionContext {
   return {
@@ -29,6 +32,31 @@ describe("currentEdition", () => {
     process.env.TUGRA_EDITION = "pro";
     expect(currentEdition()).toBe("pro");
     process.env.TUGRA_EDITION = "enterprise";
+    expect(currentEdition()).toBe("community");
+  });
+
+  it("a valid licensed edition RAISES the env edition (community + pro license → pro)", () => {
+    delete process.env.TUGRA_EDITION;
+    setLicensedEdition({ edition: "pro", expiresAt: Date.now() + HOUR });
+    expect(currentEdition()).toBe("pro");
+  });
+
+  it("never LOWERS the env edition (cloud env + pro license → cloud)", () => {
+    process.env.TUGRA_EDITION = "cloud";
+    setLicensedEdition({ edition: "pro", expiresAt: Date.now() + HOUR });
+    expect(currentEdition()).toBe("cloud");
+  });
+
+  it("an expired licensed edition is ignored (falls back to env)", () => {
+    delete process.env.TUGRA_EDITION;
+    setLicensedEdition({ edition: "cloud", expiresAt: Date.now() - HOUR });
+    expect(currentEdition()).toBe("community");
+  });
+
+  it("clearing the license (null) falls back to env", () => {
+    delete process.env.TUGRA_EDITION;
+    setLicensedEdition({ edition: "pro", expiresAt: Date.now() + HOUR });
+    setLicensedEdition(null);
     expect(currentEdition()).toBe("community");
   });
 });

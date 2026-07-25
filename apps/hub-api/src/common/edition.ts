@@ -1,16 +1,39 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, SetMetadata } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { edition, editionAtLeast, type Edition } from "@tugra/shared";
+import { edition, editionAtLeast, EDITIONS, type Edition } from "@tugra/shared";
 
 export { editionAtLeast, normalizeEdition, EDITIONS, type Edition } from "@tugra/shared";
 
+/** The higher of two editions in the community < pro < cloud ordering. */
+function maxEdition(a: Edition, b: Edition): Edition {
+  return EDITIONS.indexOf(a) >= EDITIONS.indexOf(b) ? a : b;
+}
+
+// The edition granted by a verified signed license (set by LicenseService at boot + on change), with its
+// expiry so a license that lapses while the hub runs downgrades on the next read without re-verifying.
+// Kept as module state so currentEdition() stays synchronous (it is called per-request in guards).
+let licensed: { edition: Edition; expiresAt: number } | null = null;
+
 /**
- * The instance's current edition. Env-authoritative (`TUGRA_EDITION`, injected at build/license time) —
- * NOT owner-settable, otherwise anyone could unlock Pro/Cloud for free. This is the single source of
- * truth read by GET /version, GET /instance/status and the requireEdition gate.
+ * Record (or clear) the edition granted by a verified signed license. Only ever called by LicenseService
+ * AFTER an ed25519 signature check — the value here is trusted because the token was cryptographically
+ * verified, not because it was written to the DB. `expiresAt` is epoch milliseconds.
+ */
+export function setLicensedEdition(v: { edition: Edition; expiresAt: number } | null): void {
+  licensed = v;
+}
+
+/**
+ * The instance's effective edition: the HIGHER of the env signal (`TUGRA_EDITION`, injected at build time)
+ * and a currently-valid signed license. A license can only RAISE the edition, and only when its ed25519
+ * signature verified — so an operator still cannot self-grant Pro/Cloud by flipping a setting or writing
+ * the DB (an unsigned/forged token never sets `licensed`). This is the single source of truth read by
+ * GET /version, GET /instance/status and the requireEdition gate.
  */
 export function currentEdition(): Edition {
-  return edition();
+  const env = edition();
+  if (licensed && licensed.expiresAt > Date.now()) return maxEdition(env, licensed.edition);
+  return env;
 }
 
 export const REQUIRE_EDITION = "require_edition";

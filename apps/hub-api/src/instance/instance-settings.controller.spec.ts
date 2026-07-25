@@ -5,6 +5,7 @@ import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import type { UpdateService } from "../update/update.service";
 import type { UpdaterService } from "../update/updater.service";
 import type { CryptoService } from "../crypto/crypto.service";
+import type { LicenseService } from "../license/license.service";
 import { REQUIRE_EDITION } from "../common/edition";
 
 // The SSRF guard does real DNS resolution (tested in safe-url's own spec); mock it here so the controller
@@ -66,7 +67,12 @@ function make(current: CurrentSettings) {
     requestUpdate: jest.fn().mockResolvedValue({ status: "started", targetVersion: "0.2.0" }),
     getProgress: jest.fn().mockResolvedValue({ phase: "idle", targetVersion: null, error: null }),
   } as unknown as UpdaterService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto), settings, audit, update, updater, crypto };
+  const license = {
+    status: jest.fn().mockReturnValue({ plan: "community", valid: false, expiresAt: null, source: null }),
+    verifyToken: jest.fn().mockResolvedValue({ edition: "pro", expiresAt: Date.now() + 3600_000 }),
+    refresh: jest.fn().mockResolvedValue(undefined),
+  } as unknown as LicenseService;
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license), settings, audit, update, updater, crypto, license };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -264,5 +270,45 @@ describe("InstanceSettingsController — OIDC config", () => {
   it("marks getOidc + updateOidc as Pro-gated via @RequireEdition metadata", () => {
     expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.getOidc)).toBe("pro");
     expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.updateOidc)).toBe("pro");
+  });
+});
+
+describe("InstanceSettingsController — license", () => {
+  it("getLicense returns the LicenseService status", async () => {
+    const { ctrl, license } = make({ apiEnabled: true, apiAllowedIps: [] });
+    (license.status as jest.Mock).mockReturnValue({ plan: "pro", valid: true, expiresAt: "2027-01-01T00:00:00.000Z", source: "db" });
+    expect(await ctrl.getLicense()).toEqual({ plan: "pro", valid: true, expiresAt: "2027-01-01T00:00:00.000Z", source: "db" });
+  });
+
+  it("activating a valid token verifies, persists, refreshes and audits (token never logged)", async () => {
+    const { ctrl, settings, license, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.updateLicense(OWNER, { token: "  signed.jwt.token  " });
+    expect(license.verifyToken).toHaveBeenCalledWith("signed.jwt.token"); // trimmed
+    expect(settings.update).toHaveBeenCalledWith({ licenseToken: "signed.jwt.token" });
+    expect(license.refresh).toHaveBeenCalled();
+    const auditArg = (audit.log as jest.Mock).mock.calls[0][0];
+    expect(auditArg).toMatchObject({ action: "instance.license", actor: "owner1" });
+    expect(JSON.stringify(auditArg)).not.toContain("signed.jwt.token");
+  });
+
+  it("rejects an invalid token with 400 and never persists it", async () => {
+    const { ctrl, settings, license } = make({ apiEnabled: true, apiAllowedIps: [] });
+    (license.verifyToken as jest.Mock).mockRejectedValueOnce(new Error("bad signature"));
+    await expect(ctrl.updateLicense(OWNER, { token: "forged" })).rejects.toThrow(/invalid or expired/);
+    expect(settings.update).not.toHaveBeenCalled();
+    expect(license.refresh).not.toHaveBeenCalled();
+  });
+
+  it("an empty token clears the license (downgrade) without verifying", async () => {
+    const { ctrl, settings, license } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.updateLicense(OWNER, { token: "" });
+    expect(license.verifyToken).not.toHaveBeenCalled();
+    expect(settings.update).toHaveBeenCalledWith({ licenseToken: null });
+    expect(license.refresh).toHaveBeenCalled();
+  });
+
+  it("license endpoints are NOT edition-gated (a Community instance can upgrade)", () => {
+    expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.getLicense)).toBeUndefined();
+    expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.updateLicense)).toBeUndefined();
   });
 });

@@ -116,6 +116,16 @@ export const envSchema = z
     .optional(),
   UPDATE_CHECK_INTERVAL_MIN: z.coerce.number().int().positive().default(1440), // daily
   UPDATE_CHANGELOG_URL: z.string().url().optional(),
+  // Signed-license entitlement. TUGRA_LICENSE is an optional signed license (EdDSA JWT) that unlocks the
+  // Pro/Cloud edition — verified against Tugra's license public key, which is COMPILED IN (see
+  // license/license-key.ts), NOT taken from the environment (an env-sourced trust anchor would let an
+  // operator substitute their own key and self-sign). TUGRA_LICENSE_PUBLISHER_KEY is a DEV/TEST-ONLY key
+  // override for local testing; it is ignored in production, so it can never be used to forge a license.
+  TUGRA_LICENSE_PUBLISHER_KEY: z
+    .string()
+    .refine(isBase64Ed25519Spki, "TUGRA_LICENSE_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
+    .optional(),
+  TUGRA_LICENSE: z.string().min(1).optional(),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live

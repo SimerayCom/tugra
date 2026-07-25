@@ -47,6 +47,7 @@ import { CatalogModule } from "./catalog/catalog.module";
 import { UpdateModule } from "./update/update.module";
 import { InstallController } from "./install/install.controller";
 import { CryptoModule } from "./crypto/crypto.module";
+import { LicenseModule } from "./license/license.module";
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { CryptoModule } from "./crypto/crypto.module";
     CatalogModule,
     UpdateModule,
     CryptoModule, // for InstanceSettingsController to encrypt the OIDC client secret
+    LicenseModule, // verifies the signed license at boot + backs the /instance/license endpoints
   ],
   controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],
   providers: [

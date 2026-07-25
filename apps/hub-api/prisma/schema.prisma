@@ -920,5 +920,9 @@ model InstanceSettings {
   oidcClientId        String?
   oidcClientSecretEnc String? // libsodium-encrypted; decrypted only at token exchange
   oidcAllowedDomains  String[]  @default([]) // JIT provisioning is limited to these email domains when non-empty
+  // A signed license (EdDSA JWT, issued by Tugra's proprietary billing service) that unlocks the Pro/Cloud
+  // edition. Safe to store: it is signature-protected, so a DB write can't forge an entitlement — the hub
+  // verifies it against TUGRA_LICENSE_PUBLISHER_KEY on every load. Null = no license (env/community edition).
+  licenseToken        String?
   updatedAt           DateTime  @updatedAt
 }

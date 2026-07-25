@@ -100,6 +100,19 @@ export interface InstanceStatus {
   ssoEnabled: boolean;
 }
 
+/** Owner license status (GET/PATCH /instance/license). The token is write-only (never returned) —
+ *  only the effective plan, validity and expiry are surfaced. */
+export interface LicenseStatus {
+  /** The effective edition the instance runs as (env signal raised by a valid license). */
+  plan: string;
+  /** Whether a currently-valid signed license is active. */
+  valid: boolean;
+  /** License expiry (ISO) when valid, else null. */
+  expiresAt: string | null;
+  /** Where a token was found: "db" (owner-pasted), "env", or null when none is present. */
+  source: "db" | "env" | null;
+}
+
 /** Owner OIDC (SSO) config (GET/PATCH /instance/oidc) — Pro edition. The client secret is write-only:
  *  never returned (`clientSecretSet` reveals only whether one is stored). */
 export interface OidcConfig {

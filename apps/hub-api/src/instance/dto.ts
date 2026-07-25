@@ -57,3 +57,13 @@ export const OidcConfigSchema = z.object({
     }),
 });
 export type OidcConfigInput = z.infer<typeof OidcConfigSchema>;
+
+/**
+ * Owner action to activate (or clear) a signed license. A non-empty token is verified before it is stored;
+ * an empty string clears the license (downgrades to the env/community edition). The token itself is
+ * signature-protected, so storing it is safe.
+ */
+export const LicenseSchema = z.object({
+  token: z.string(),
+});
+export type LicenseInput = z.infer<typeof LicenseSchema>;
