@@ -84,3 +84,55 @@ describe("VolumeBackupsService.importFromUrl", () => {
     expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_import" }));
   });
 });
+
+describe("VolumeBackupsService.exportUrl", () => {
+  const S3_DEST = { type: "S3", s3: { bucket: "b", region: "r", endpoint: "s3.example.com", accessKey: "AK", secretKey: "SK", prefix: "tugra" }, encryption: { enabled: false, key: "" } };
+  const LOCAL_DEST = { type: "LOCAL", encryption: { enabled: false, key: "" } };
+  const SHARE_JSON = '{"status":"success","url":"tdest/b/k","share":"https://s3.example.com/b/k?X-Amz-Signature=sig","expiry":86400}';
+
+  function setup(dest: unknown, sendResult: { exitCode: number; output: string } = { exitCode: 0, output: SHARE_JSON }) {
+    const app = { id: "a1", teamId: "t1", serverId: "s1", environmentId: "e1", volumes: [{ name: "data", path: "/data" }] };
+    const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      volumeBackup: {
+        findFirst: jest.fn().mockResolvedValue({ id: "vb1", appId: "a1", volumeName: "data", filename: "20260101.tar.gz", destinationId: (dest as { type: string }).type === "S3" ? "d1" : null }),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER"), requireResourceAccess: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue(sendResult) } as unknown as AgentWsServer;
+    const runner = { destinationSpecById: jest.fn().mockResolvedValue(dest) } as unknown as VolumeBackupRunnerService;
+    const service = new VolumeBackupsService(prisma, access, audit, agentWs, runner, {} as unknown as VolumeBackupSchedulerService);
+    return { service, agentWs, audit };
+  }
+
+  it("returns a presigned url + expiry for an S3 backup, under the 'backup' capability", async () => {
+    const t = setup(S3_DEST);
+    const res = await t.service.exportUrl("u1", "a1", "vb1", 24);
+    const [serverId, cmd, cap] = (t.agentWs.sendCommand as jest.Mock).mock.calls[0];
+    expect(serverId).toBe("s1");
+    expect(cap).toBe("backup");
+    expect(cmd).toContain("mc share download --expire '24h'");
+    expect(res.url).toBe("https://s3.example.com/b/k?X-Amz-Signature=sig");
+    expect(res.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("rejects a LOCAL backup (no presignable object) without dispatching", async () => {
+    const t = setup(LOCAL_DEST);
+    await expect(t.service.exportUrl("u1", "a1", "vb1", 24)).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("BadGateway when mc fails, and never logs the presigned url", async () => {
+    const t = setup(S3_DEST, { exitCode: 1, output: "mc: <ERROR> share failed" });
+    await expect(t.service.exportUrl("u1", "a1", "vb1", 24)).rejects.toBeInstanceOf(BadGatewayException);
+    expect(JSON.stringify((t.audit.log as jest.Mock).mock.calls)).not.toContain("http");
+  });
+
+  it("never puts the presigned url in the audit log on success", async () => {
+    const t = setup(S3_DEST);
+    await t.service.exportUrl("u1", "a1", "vb1", 24);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_export" }));
+    expect(JSON.stringify((t.audit.log as jest.Mock).mock.calls)).not.toContain("X-Amz");
+  });
+});

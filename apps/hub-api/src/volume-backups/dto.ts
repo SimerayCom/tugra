@@ -22,3 +22,9 @@ export const VolumeImportFromUrlSchema = z
     message: "encryptionKey is required when encrypted is true",
   });
 export type VolumeImportFromUrlInput = z.infer<typeof VolumeImportFromUrlSchema>;
+
+// Generate a presigned migration URL for an existing S3 volume backup.
+export const ExportUrlSchema = z.object({
+  expireHours: z.number().int().min(1).max(168).optional(), // default 24; S3 presigned max = 7 days
+});
+export type ExportUrlInput = z.infer<typeof ExportUrlSchema>;

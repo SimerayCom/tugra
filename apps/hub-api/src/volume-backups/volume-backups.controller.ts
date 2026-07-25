@@ -9,6 +9,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { VolumeBackupsService, VolumeBackupViewSchema } from "./volume-backups.service";
 import {
+  ExportUrlInput,
+  ExportUrlSchema,
   VolumeBackupConfigInput,
   VolumeBackupConfigSchema,
   VolumeImportFromUrlInput,
@@ -54,6 +56,20 @@ export class VolumeBackupsController {
   ) {
     await this.svc.importFromUrl(user.userId, appId, body);
     return { ok: true };
+  }
+
+  // Presigned migration URL — grants time-limited download of the backup data → read:secrets.
+  @Post(":id/export-url")
+  @RequireScopes("read:secrets")
+  @HttpCode(200)
+  @ApiZodBody(ExportUrlSchema)
+  exportUrl(
+    @CurrentUser() user: AuthUser,
+    @Param("appId") appId: string,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(ExportUrlSchema)) body: ExportUrlInput,
+  ) {
+    return this.svc.exportUrl(user.userId, appId, id, body.expireHours ?? 24);
   }
 
   @Delete(":id")

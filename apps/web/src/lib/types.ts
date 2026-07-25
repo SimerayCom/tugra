@@ -599,6 +599,8 @@ export interface VolumeBackup {
   status: BackupStatus;
   filename: string;
   sizeBytes: string | null;
+  destinationId: string | null; // set → stored on a destination
+  destinationType: string | null; // "S3" | "LOCAL" | null — only an S3 backup can export a migration URL
   createdBy: string;
   createdAt: string;
   completedAt: string | null;

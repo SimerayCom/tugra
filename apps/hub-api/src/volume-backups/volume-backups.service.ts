@@ -7,7 +7,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { appVolumeName } from "../deploy/deploy-script";
-import { buildVolumeDeleteScript, buildVolumeImportScript, buildVolumeRestoreScript } from "./volume-backup-script";
+import { buildVolumeDeleteScript, buildVolumeExportUrlScript, buildVolumeImportScript, buildVolumeRestoreScript, parseShareUrl } from "./volume-backup-script";
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 import { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
 import type { VolumeBackupConfigInput, VolumeImportFromUrlInput } from "./dto";
@@ -18,6 +18,8 @@ export const VolumeBackupViewSchema = z.object({
   status: z.string(),
   filename: z.string(),
   sizeBytes: z.string().nullable(),
+  destinationId: z.string().nullable(), // which destination stored it (null = local disk)
+  destinationType: z.string().nullable(), // "S3" | "LOCAL" | null — only an S3 one can export a migration URL
   createdBy: z.string(),
   createdAt: z.date(),
   completedAt: z.date().nullable(),
@@ -38,7 +40,7 @@ export class VolumeBackupsService {
   async backupNow(userId: string, appId: string): Promise<VolumeBackupView[]> {
     await this.requireWrite(userId, appId);
     const rows = await this.runner.runBackup(appId, userId);
-    return rows.map((b) => this.view(b));
+    return this.toViews(rows);
   }
 
   async list(userId: string, appId: string): Promise<VolumeBackupView[]> {
@@ -48,7 +50,18 @@ export class VolumeBackupsService {
       orderBy: { createdAt: "desc" },
       take: 100,
     });
-    return rows.map((b) => this.view(b));
+    return this.toViews(rows);
+  }
+
+  /** Project rows to views, resolving each backup's destination TYPE (so the UI can offer export
+   *  only for S3-stored backups) with a single batched lookup (no per-row query, no cred decrypt). */
+  private async toViews(rows: VolumeBackup[]): Promise<VolumeBackupView[]> {
+    const ids = [...new Set(rows.map((r) => r.destinationId).filter((x): x is string => !!x))];
+    const dests = ids.length
+      ? await this.prisma.backupDestination.findMany({ where: { id: { in: ids } }, select: { id: true, type: true } })
+      : [];
+    const typeById = new Map(dests.map((d) => [d.id, d.type]));
+    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null));
   }
 
   async restore(userId: string, appId: string, backupId: string): Promise<void> {
@@ -64,6 +77,33 @@ export class VolumeBackupsService {
       300_000,
     );
     await this.audit.log({ actor: userId, action: "app.volume_restore", target: appId, meta: { backupId } });
+  }
+
+  /**
+   * Produce a short-lived presigned download URL for an S3 volume backup, so it can be fed to
+   * import-from-URL on another server (migration). S3-only — a LOCAL-disk backup has no presignable
+   * object. The URL grants time-limited download of the backup data → it is returned to the caller
+   * but NEVER logged/audited.
+   */
+  async exportUrl(userId: string, appId: string, backupId: string, expireHours: number): Promise<{ url: string; expiresAt: Date }> {
+    const app = await this.requireWrite(userId, appId);
+    const backup = await this.prisma.volumeBackup.findFirst({ where: { id: backupId, appId } });
+    if (!backup) throw new NotFoundException("backup not found");
+    // Read from the backup's OWN destination, not the app's current one.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
+    if (dest.type !== "S3") throw new BadRequestException("a migration URL needs an S3 backup destination");
+    const r = await this.agentWs.sendCommand(
+      app.serverId,
+      buildVolumeExportUrlScript(app.id, backup.volumeName, backup.filename, dest, `${expireHours}h`),
+      "backup",
+      60_000,
+    );
+    if (r.exitCode !== 0) throw new BadGatewayException("could not generate a migration URL");
+    const url = parseShareUrl(r.output);
+    if (!url) throw new BadGatewayException("could not generate a migration URL");
+    // Audit the action but NEVER the URL (it grants time-limited download of the backup data).
+    await this.audit.log({ actor: userId, action: "app.volume_export", target: appId, meta: { backupId, expireHours } });
+    return { url, expiresAt: new Date(Date.now() + expireHours * 3600_000) };
   }
 
   /**
@@ -130,13 +170,15 @@ export class VolumeBackupsService {
     return app;
   }
 
-  private view(b: VolumeBackup): VolumeBackupView {
+  private view(b: VolumeBackup, destinationType: string | null): VolumeBackupView {
     return {
       id: b.id,
       volumeName: b.volumeName,
       status: b.status,
       filename: b.filename,
       sizeBytes: b.sizeBytes != null ? b.sizeBytes.toString() : null,
+      destinationId: b.destinationId,
+      destinationType,
       createdBy: b.createdBy,
       createdAt: b.createdAt,
       completedAt: b.completedAt,

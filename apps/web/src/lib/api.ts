@@ -746,6 +746,12 @@ export const api = {
   importVolumeFromUrl(appId: string, body: { volumeName: string; url: string; gzip: boolean; encrypted: boolean; encryptionKey?: string }) {
     return apiFetch<{ ok: true }>(`/apps/${appId}/volume-backups/import-from-url`, { method: "POST", body: JSON.stringify(body) });
   },
+  exportVolumeBackupUrl(appId: string, id: string, expireHours?: number) {
+    return apiFetch<{ url: string; expiresAt: string }>(`/apps/${appId}/volume-backups/${id}/export-url`, {
+      method: "POST",
+      body: JSON.stringify(expireHours ? { expireHours } : {}),
+    });
+  },
   stopApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/stop`, { method: "POST" });
   },

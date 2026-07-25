@@ -3,6 +3,8 @@ import {
   buildVolumeRestoreScript,
   buildVolumeImportScript,
   buildVolumeDeleteScript,
+  buildVolumeExportUrlScript,
+  parseShareUrl,
   volumeBackupFilename,
 } from "./volume-backup-script";
 import type { DestinationSpec } from "../backups/destination";
@@ -91,5 +93,26 @@ describe("volume-backup-script", () => {
       expect(s.indexOf("curl")).toBeLessThan(s.indexOf("gpg"));
       expect(s.indexOf("gpg")).toBeLessThan(s.indexOf("gunzip"));
     });
+  });
+});
+
+describe("volume export url (migration)", () => {
+  it("builds an mc share download presigned-URL command against the backup's object", () => {
+    const s = buildVolumeExportUrlScript("a1", "data", "20260101.tar.gz", S3, "24h");
+    expect(s).toContain("command -v mc"); // MC_INSTALL bootstrap
+    expect(s).toContain("mc share download --expire '24h' --json 'tdest/b/tugra/a1/data/20260101.tar.gz'");
+    expect(s).toContain("MC_HOST_tdest="); // creds via env, not written to disk
+  });
+
+  it("refuses a LOCAL destination (no presignable object)", () => {
+    expect(() => buildVolumeExportUrlScript("a1", "data", "f.tar.gz", LOCAL, "24h")).toThrow(/S3/);
+  });
+
+  it("parseShareUrl extracts the presigned url, tolerates noise + absence", () => {
+    expect(parseShareUrl('installing mc\n{"status":"success","url":"tdest/b/k","share":"https://s3.example.com/b/k?X-Amz=sig","expiry":86400}')).toBe(
+      "https://s3.example.com/b/k?X-Amz=sig",
+    );
+    expect(parseShareUrl("no json here")).toBeNull();
+    expect(parseShareUrl('{"status":"error","error":{"message":"nope"}}')).toBeNull(); // no share field
   });
 });

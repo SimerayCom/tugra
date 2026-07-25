@@ -9468,6 +9468,14 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "destinationId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "destinationType": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "createdBy": {
                         "type": "string"
                       },
@@ -9487,6 +9495,8 @@
                       "status",
                       "filename",
                       "sizeBytes",
+                      "destinationId",
+                      "destinationType",
                       "createdBy",
                       "createdAt",
                       "completedAt"
@@ -9545,6 +9555,14 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "destinationId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "destinationType": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "createdBy": {
                         "type": "string"
                       },
@@ -9564,6 +9582,8 @@
                       "status",
                       "filename",
                       "sizeBytes",
+                      "destinationId",
+                      "destinationType",
                       "createdBy",
                       "createdAt",
                       "completedAt"
@@ -9666,6 +9686,60 @@
                   "volumeName",
                   "url"
                 ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "volume-backups"
+        ]
+      }
+    },
+    "/api/v1/apps/{appId}/volume-backups/{id}/export-url": {
+      "post": {
+        "operationId": "VolumeBackupsController_exportUrl",
+        "parameters": [
+          {
+            "name": "appId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expireHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 168
+                  }
+                },
                 "additionalProperties": false
               }
             }
@@ -9911,10 +9985,13 @@
                   },
                   "s3Bucket": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
                   },
                   "s3Region": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 64
                   },
                   "s3Endpoint": {
                     "type": "string",
@@ -9929,7 +10006,9 @@
                     "minLength": 1
                   },
                   "s3Prefix": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9._/-]*$"
                   },
                   "encryptionEnabled": {
                     "type": "boolean"

@@ -32,6 +32,11 @@ export const LOCAL_DEST: DestinationSpec = {
   encryption: { enabled: false, key: "" },
 };
 
+/** Single-quote a value for safe interpolation into an `sh -c` command string. */
+function shq(v: string): string {
+  return `'${v.replaceAll("'", "'\\''")}'`;
+}
+
 /** mc alias used transiently inside a single command (creds via MC_HOST_ env). */
 export const MC_ALIAS = "tdest";
 
@@ -42,12 +47,14 @@ export function endpointUrl(s3: S3Config): string {
   return `https://${ep.replace(/\/+$/, "")}`;
 }
 
-/** MC_HOST_<alias> env carrying creds, so nothing is written to mc's config dir. */
+/** MC_HOST_<alias> env carrying creds, so nothing is written to mc's config dir. The whole value is
+ *  shell-quoted — encodeURIComponent leaves ' ! ~ * ( ) raw, which would otherwise break/inject the
+ *  command line when the creds contain one (this env prefix is spliced into an `sh -c` string). */
 export function mcHostEnv(s3: S3Config): string {
   const url = new URL(endpointUrl(s3));
   url.username = encodeURIComponent(s3.accessKey);
   url.password = encodeURIComponent(s3.secretKey);
-  return `MC_HOST_${MC_ALIAS}=${url.toString()}`;
+  return `MC_HOST_${MC_ALIAS}=${shq(url.toString())}`;
 }
 
 /** The object key (path) inside the bucket for a given db + filename. */
