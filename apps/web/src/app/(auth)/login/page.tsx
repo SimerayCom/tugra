@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SiGithub } from "@icons-pack/react-simple-icons";
+import { KeyRound } from "lucide-react";
 import { api, ApiError } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
@@ -32,16 +33,24 @@ export default function LoginPage() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState("");
+  const [ssoEnabled, setSsoEnabled] = useState(false);
 
-  // Surface an OAuth failure passed back from the callback (?error=…) and capture an invite token
+  // Surface an OAuth/SSO failure passed back from the callback (?error=…) and capture an invite token
   // (from /invite/[token]'s "Sign in" link) to auto-accept after login.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const e = params.get("error");
     if (e === "oauth_unconfigured") setErr(t("auth.oauthUnconfigured"));
+    else if (e === "sso_unconfigured") setErr(t("auth.ssoUnconfigured"));
     else if (e) setErr(t("auth.oauthError"));
     setInvite(params.get("invite") ?? "");
   }, [t]);
+
+  // Only offer the SSO button when the instance has it enabled + configured (Pro). Fail-soft: a status
+  // error just hides the button (password login still works).
+  useEffect(() => {
+    api.getInstanceStatus().then((s) => setSsoEnabled(s.ssoEnabled)).catch(() => undefined);
+  }, []);
 
   // A fresh install has no account to sign into — forward to the welcome/onboarding flow. Loop-safe:
   // /welcome only bounces back here once initialized === true.
@@ -106,6 +115,13 @@ export default function LoginPage() {
       <a href="/api/auth/oauth/github" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 14, fontWeight: 600, textDecoration: "none", boxSizing: "border-box" }}>
         <SiGithub size={16} /> {t("auth.signInGithub")}
       </a>
+      {/* SSO start is exempt from the /api/v1 prefix (its callback is registered with the IdP); a dedicated
+          next.config rewrite proxies this bare path to the hub. Shown only when the instance enables SSO. */}
+      {ssoEnabled && (
+        <a href="/api/auth/oidc" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px 12px", marginTop: 10, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 14, fontWeight: 600, textDecoration: "none", boxSizing: "border-box" }}>
+          <KeyRound size={16} /> {t("auth.signInSso")}
+        </a>
+      )}
       <div style={{ marginTop: 14, fontSize: 13, color: "var(--c-tx3)", textAlign: "center" }}>
         {t("auth.noAccount")} <Link href="/register" style={{ color: "var(--c-a)" }}>{t("auth.register")}</Link>
         <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>

@@ -568,6 +568,78 @@ describe("AuthService.loginWithGithub", () => {
   });
 });
 
+describe("AuthService.loginWithOidc", () => {
+  function newUserPrisma() {
+    const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "jane@corp.io", name: "Jane" });
+    const teamCreate = jest.fn().mockResolvedValue({ id: "t1" });
+    const memberCreate = jest.fn().mockResolvedValue({});
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
+        cb({ user: { create: userCreate }, team: { create: teamCreate }, membership: { create: memberCreate }, instanceSettings: { updateMany } }),
+      ),
+    } as unknown as PrismaService;
+    return { prisma, userCreate, teamCreate, memberCreate, updateMany };
+  }
+
+  it("provisions a new user (verified, owner, team + defaults) when the email domain is allowed", async () => {
+    const { prisma, userCreate, memberCreate } = newUserPrisma();
+    const teamDefaults = { ensureDefaults: jest.fn().mockResolvedValue(undefined) };
+    const svc = makeService(prisma, teamDefaults);
+    const issue = jest.spyOn(svc, "issueTokens");
+    await svc.loginWithOidc("jane@corp.io", "Jane", ["corp.io"]);
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ email: "jane@corp.io", name: "Jane", emailVerified: true, isInstanceOwner: true }) });
+    expect(memberCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ role: "OWNER" }) });
+    expect(teamDefaults.ensureDefaults).toHaveBeenCalledWith("t1", expect.anything());
+    expect(issue).toHaveBeenCalledWith("u1");
+  });
+
+  it("rejects a NEW user whose email domain is not on the allowlist (403, no provisioning)", async () => {
+    const { prisma } = newUserPrisma();
+    const svc = makeService(prisma);
+    await expect(svc.loginWithOidc("evil@attacker.io", undefined, ["corp.io"])).rejects.toThrow(/domain/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("provisions a new user with an EMPTY allowlist even when allowRegistration is closed (SSO bypasses that gate)", async () => {
+    const { prisma, userCreate } = newUserPrisma();
+    // Initialized + closed registration: password register would be blocked, but SSO provisioning is not.
+    const instanceSettings = { get: jest.fn().mockResolvedValue({ initializedAt: new Date(), allowRegistration: false }), update: jest.fn() };
+    const svc = makeService(prisma, undefined, instanceSettings);
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    await svc.loginWithOidc("late@corp.io", undefined, []);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(userCreate).toHaveBeenCalled();
+  });
+
+  it("logs an existing verified user in without provisioning", async () => {
+    const update = jest.fn();
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u9", email: "jane@corp.io", emailVerified: true }), update },
+      $transaction: jest.fn(),
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    const issue = jest.spyOn(svc, "issueTokens");
+    await svc.loginWithOidc("jane@corp.io", undefined, ["corp.io"]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(issue).toHaveBeenCalledWith("u9");
+  });
+
+  it("heals a pre-existing unverified account (the IdP proved email ownership)", async () => {
+    const update = jest.fn().mockResolvedValue({ id: "u9", email: "jane@corp.io", emailVerified: true });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: "u9", email: "jane@corp.io", emailVerified: false }), update },
+      $transaction: jest.fn(),
+    } as unknown as PrismaService;
+    const svc = makeService(prisma);
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    await svc.loginWithOidc("jane@corp.io", undefined, []);
+    expect(update).toHaveBeenCalledWith({ where: { id: "u9" }, data: expect.objectContaining({ emailVerified: true }) });
+  });
+});
+
 describe("AuthService password reset", () => {
   it("forgot: creates a hashed single-use token and emails the reset link (existing user)", async () => {
     const create = jest.fn().mockResolvedValue({});

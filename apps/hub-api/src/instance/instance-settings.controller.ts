@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, Get, HttpCode, type MessageEvent, Patch, Post, Sse, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, HttpCode, type MessageEvent, Patch, Post, Sse, UseGuards } from "@nestjs/common";
 import { distinctUntilChanged, from, interval, map, mergeMap, type Observable, takeWhile } from "rxjs";
 import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
@@ -9,8 +9,12 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { AuditService } from "../audit/audit.service";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { InstanceOwnerGuard } from "./instance-owner.guard";
-import { currentEdition } from "../common/edition";
+import { currentEdition, RequireEdition, RequireEditionGuard } from "../common/edition";
+import { CryptoService } from "../crypto/crypto.service";
+import { assertSafeUrl, allowPrivateTargets } from "../notifications/safe-url";
 import {
+  OidcConfigInput,
+  OidcConfigSchema,
   UpdateInstanceSettingsInput,
   UpdateInstanceSettingsSchema,
   UpdateInstanceUpdateInput,
@@ -28,13 +32,14 @@ import { UpdateApplyResultSchema, UpdateStatusViewSchema } from "../update/dto";
 @ApiTags("instance")
 @ApiCookieAuth("session")
 @Controller("instance")
-@UseGuards(JwtAuthGuard, InstanceOwnerGuard)
+@UseGuards(JwtAuthGuard, InstanceOwnerGuard, RequireEditionGuard)
 export class InstanceSettingsController {
   constructor(
     private readonly settings: InstanceSettingsService,
     private readonly audit: AuditService,
     private readonly update: UpdateService,
     private readonly updater: UpdaterService,
+    private readonly crypto: CryptoService,
   ) {}
 
   /**
@@ -143,5 +148,80 @@ export class InstanceSettingsController {
     const s = await this.settings.update(patch);
     await this.audit.log({ actor: user.userId, action: "instance_settings.update", target: "singleton" });
     return { apiEnabled: s.apiEnabled, apiAllowedIps: s.apiAllowedIps, publicUrl: s.publicUrl, acmeEmail: s.acmeEmail };
+  }
+
+  /**
+   * OIDC single sign-on config (Pro). Owner-only (class guards) AND edition-gated (@RequireEdition("pro"))
+   * — a Community instance gets a 403, so SSO cannot be configured below Pro. The client secret is NEVER
+   * returned; `clientSecretSet` only reveals whether one is stored.
+   */
+  @Get("oidc")
+  @RequireEdition("pro")
+  async getOidc() {
+    const s = await this.settings.get();
+    return {
+      oidcEnabled: s.oidcEnabled,
+      oidcIssuer: s.oidcIssuer,
+      oidcClientId: s.oidcClientId,
+      oidcAllowedDomains: s.oidcAllowedDomains,
+      clientSecretSet: !!s.oidcClientSecretEnc,
+    };
+  }
+
+  @Patch("oidc")
+  @RequireEdition("pro")
+  @ApiZodBody(OidcConfigSchema)
+  async updateOidc(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(OidcConfigSchema)) body: OidcConfigInput,
+  ) {
+    const current = await this.settings.get();
+    const patch: {
+      oidcEnabled?: boolean;
+      oidcIssuer?: string | null;
+      oidcClientId?: string | null;
+      oidcClientSecretEnc?: string;
+      oidcAllowedDomains?: string[];
+    } = {};
+
+    if (body.oidcEnabled !== undefined) patch.oidcEnabled = body.oidcEnabled;
+    if (body.oidcIssuer !== undefined) {
+      const issuer = body.oidcIssuer || null;
+      if (issuer) {
+        // The issuer is fetched server-side (discovery/token/JWKS) — reject internal/metadata targets to
+        // avoid using SSO config as an SSRF primitive (self-hosters can opt in via NOTIFY_ALLOW_PRIVATE_TARGETS).
+        try {
+          await assertSafeUrl(issuer, { allowPrivate: allowPrivateTargets() });
+        } catch {
+          throw new BadRequestException("the issuer URL is not allowed (private/loopback/metadata address)");
+        }
+      }
+      patch.oidcIssuer = issuer;
+    }
+    if (body.oidcClientId !== undefined) patch.oidcClientId = body.oidcClientId || null;
+    // Write-only: only (re)encrypt when a new non-empty secret is supplied; otherwise keep the stored one.
+    if (body.oidcClientSecret) patch.oidcClientSecretEnc = this.crypto.encrypt(body.oidcClientSecret);
+    if (body.oidcAllowedDomains !== undefined) {
+      patch.oidcAllowedDomains = body.oidcAllowedDomains.map((d) => d.trim().toLowerCase()).filter(Boolean);
+    }
+
+    // Refuse to leave SSO enabled-but-broken: enabling requires a full issuer + clientId + secret.
+    const enabled = patch.oidcEnabled ?? current.oidcEnabled;
+    const issuer = patch.oidcIssuer !== undefined ? patch.oidcIssuer : current.oidcIssuer;
+    const clientId = patch.oidcClientId !== undefined ? patch.oidcClientId : current.oidcClientId;
+    const secretSet = patch.oidcClientSecretEnc !== undefined ? true : !!current.oidcClientSecretEnc;
+    if (enabled && (!issuer || !clientId || !secretSet)) {
+      throw new BadRequestException("issuer, client ID and client secret are required to enable SSO");
+    }
+
+    const s = await this.settings.update(patch);
+    await this.audit.log({ actor: user.userId, action: "instance_settings.oidc", target: "singleton" }); // secret never logged
+    return {
+      oidcEnabled: s.oidcEnabled,
+      oidcIssuer: s.oidcIssuer,
+      oidcClientId: s.oidcClientId,
+      oidcAllowedDomains: s.oidcAllowedDomains,
+      clientSecretSet: !!s.oidcClientSecretEnc,
+    };
   }
 }

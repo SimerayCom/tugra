@@ -85,10 +85,10 @@ describe("api.getInstanceStatus (public onboarding status)", () => {
       seen.push(String(url));
       hits += 1;
       // If a refresh were attempted this endpoint would be hit twice; assert it's not.
-      return jsonRes(200, { initialized: false, allowRegistration: true, edition: "community" });
+      return jsonRes(200, { initialized: false, allowRegistration: true, edition: "community", ssoEnabled: false });
     }));
     const out = await api.getInstanceStatus();
-    expect(out).toEqual({ initialized: false, allowRegistration: true, edition: "community" });
+    expect(out).toEqual({ initialized: false, allowRegistration: true, edition: "community", ssoEnabled: false });
     expect(seen[0]).toBe("/api/v1/instance/status");
     expect(hits).toBe(1);
     expect(seen.some((u) => u.endsWith("/auth/refresh"))).toBe(false);

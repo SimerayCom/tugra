@@ -193,6 +193,51 @@ export class AuthService {
     return this.issueTokens(user.id);
   }
 
+  /**
+   * Log a user in from a verified OIDC (SSO) identity — the Pro single-sign-on flow. Mirrors
+   * loginWithGithub, but JIT-provisioning of a NEW account is gated by the instance's OIDC domain
+   * allowlist (when non-empty) instead of allowRegistration: the owner-configured IdP is the authority
+   * on who may sign in, so an enterprise can enable SSO auto-provisioning without opening self-service
+   * password registration. An empty allowlist means no domain restriction. Existing users always log in
+   * (a pre-existing unverified password account is healed, since the IdP proves email ownership).
+   */
+  async loginWithOidc(email: string, name: string | undefined, allowedDomains: string[]): Promise<TokenPair> {
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // JIT gate: the email domain must be on the allowlist (when one is configured). This is the ONLY
+      // gate for SSO — allowRegistration does not apply (the IdP already authorized this identity).
+      const domain = email.split("@")[1]?.toLowerCase();
+      if (allowedDomains.length > 0 && (!domain || !allowedDomains.includes(domain))) {
+        throw new ForbiddenException("your email domain is not permitted to sign in");
+      }
+      const passwordHash = await argon2.hash(randomUUID(), { type: argon2.argon2id });
+      user = await this.prisma.$transaction(async (tx) => {
+        const firstUser =
+          (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
+        const created = await tx.user.create({
+          // OIDC identities are provider-verified, so the account starts verified.
+          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser },
+        });
+        const team = await tx.team.create({
+          data: { name: name ? `${name}'s Team` : "My Team" },
+        });
+        await tx.membership.create({
+          data: { userId: created.id, teamId: team.id, role: Role.OWNER },
+        });
+        await this.teamDefaults.ensureDefaults(team.id, tx);
+        return created;
+      });
+      await this.audit.log({ actor: user.id, action: "auth.register", meta: { provider: "oidc" } });
+    } else if (!user.emailVerified) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true, emailVerifiedAt: new Date() },
+      });
+    }
+    await this.audit.log({ actor: user.id, action: "auth.login", meta: { provider: "oidc" } });
+    return this.issueTokens(user.id);
+  }
+
   async login(
     email: string,
     password: string,

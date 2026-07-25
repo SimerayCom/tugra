@@ -46,6 +46,7 @@ import { RetentionModule } from "./retention/retention.module";
 import { CatalogModule } from "./catalog/catalog.module";
 import { UpdateModule } from "./update/update.module";
 import { InstallController } from "./install/install.controller";
+import { CryptoModule } from "./crypto/crypto.module";
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { InstallController } from "./install/install.controller";
     RetentionModule,
     CatalogModule,
     UpdateModule,
+    CryptoModule, // for InstanceSettingsController to encrypt the OIDC client secret
   ],
   controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],
   providers: [

@@ -32,3 +32,28 @@ export const UpdateInstanceUpdateSchema = z.object({
   updateChannel: z.enum(["stable", "beta"]).optional(),
 });
 export type UpdateInstanceUpdateInput = z.infer<typeof UpdateInstanceUpdateSchema>;
+
+// A DNS domain used for OIDC JIT provisioning (email-suffix match): labels of letters/digits/hyphens
+// separated by dots, at least one dot. Rejects garbage (spaces, `@`, schemes) with a 400.
+const domainRe = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+
+/**
+ * Owner patch for OIDC single sign-on (Pro edition). All optional (partial patch). `oidcIssuer`/
+ * `oidcClientId` are `.nullable()` + accept "" so the owner can clear them (the controller maps "" → null).
+ * `oidcClientSecret` is write-only: when a non-empty value is supplied it is encrypted and stored; when
+ * omitted (or "") the existing secret is preserved — it is never returned in any view. `oidcAllowedDomains`
+ * restricts JIT provisioning to those email domains (empty = no restriction).
+ */
+export const OidcConfigSchema = z.object({
+  oidcEnabled: z.boolean().optional(),
+  oidcIssuer: z.union([z.string().url(), z.literal("")]).nullable().optional(),
+  oidcClientId: z.union([z.string().trim().min(1), z.literal("")]).nullable().optional(),
+  oidcClientSecret: z.string().optional(),
+  oidcAllowedDomains: z
+    .array(z.string().trim())
+    .optional()
+    .refine((a) => a === undefined || a.every((d) => d === "" || domainRe.test(d)), {
+      message: "each entry must be a valid domain name (e.g. company.com)",
+    }),
+});
+export type OidcConfigInput = z.infer<typeof OidcConfigSchema>;

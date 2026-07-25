@@ -913,5 +913,12 @@ model InstanceSettings {
   cachedLatestVersion String?
   apiEnabled          Boolean   @default(true)
   apiAllowedIps       String[]  @default([])
+  // OIDC single sign-on (Pro edition). Owner-configured IdP; the client secret is stored encrypted
+  // (CryptoService) and never surfaced in any view. Empty allowedDomains = no JIT domain restriction.
+  oidcEnabled         Boolean   @default(false)
+  oidcIssuer          String?
+  oidcClientId        String?
+  oidcClientSecretEnc String? // libsodium-encrypted; decrypted only at token exchange
+  oidcAllowedDomains  String[]  @default([]) // JIT provisioning is limited to these email domains when non-empty
   updatedAt           DateTime  @updatedAt
 }

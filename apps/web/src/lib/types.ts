@@ -96,6 +96,18 @@ export interface InstanceStatus {
   initialized: boolean;
   allowRegistration: boolean;
   edition: string;
+  /** OIDC single sign-on is enabled + fully configured on a Pro+ edition → show the SSO login button. */
+  ssoEnabled: boolean;
+}
+
+/** Owner OIDC (SSO) config (GET/PATCH /instance/oidc) — Pro edition. The client secret is write-only:
+ *  never returned (`clientSecretSet` reveals only whether one is stored). */
+export interface OidcConfig {
+  oidcEnabled: boolean;
+  oidcIssuer: string | null;
+  oidcClientId: string | null;
+  oidcAllowedDomains: string[];
+  clientSecretSet: boolean;
 }
 
 /** Owner-configurable instance settings (GET/PATCH /instance/settings) — API gating + onboarding basics. */
