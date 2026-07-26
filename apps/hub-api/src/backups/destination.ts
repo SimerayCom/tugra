@@ -40,6 +40,37 @@ function shq(v: string): string {
 /** mc alias used transiently inside a single command (creds via MC_HOST_ env). */
 export const MC_ALIAS = "tdest";
 
+// The MinIO client (mc) is downloaded on-agent for S3 backup/restore. Pin a specific release + verify its
+// sha256 (supply-chain integrity — the old install curl'd the mutable "latest" with no check), and detect
+// the host arch so arm64 servers get the right binary (the old install was amd64-only → broken on arm64).
+// To bump: pick a RELEASE from dl.min.io, download linux-amd64 + linux-arm64, and copy the matching
+// `mc.<RELEASE>.sha256sum` (the constants below were cross-checked against MinIO's published sha256sum).
+export const MC_VERSION = "RELEASE.2025-08-13T08-35-41Z";
+export const MC_SHA256: Record<string, string> = {
+  amd64: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891",
+  arm64: "14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c",
+};
+
+/**
+ * Install mc if absent: detect the arch, download the PINNED versioned binary for it, verify its sha256,
+ * and only then make it executable (a mismatch/foreign-arch/download-failure removes the file and aborts —
+ * an unverified `mc` is never run). Reused by all S3 backup/restore/export scripts (agent `sh -c`).
+ */
+export const MC_INSTALL = [
+  "command -v mc >/dev/null 2>&1 || {",
+  "  _a=$(uname -m);",
+  "  case \"$_a\" in",
+  `    x86_64|amd64) _p=amd64; _s=${MC_SHA256.amd64};;`,
+  `    aarch64|arm64) _p=arm64; _s=${MC_SHA256.arm64};;`,
+  '    *) echo "tugra: unsupported arch $_a for mc" >&2; exit 1;;',
+  "  esac;",
+  `  curl -fsSL "https://dl.min.io/client/mc/release/linux-$_p/archive/mc.${MC_VERSION}" -o /usr/local/bin/mc &&`,
+  '  echo "$_s  /usr/local/bin/mc" | sha256sum -c - >/dev/null 2>&1 &&',
+  "  chmod +x /usr/local/bin/mc ||",
+  '  { echo "tugra: mc download/verify failed" >&2; rm -f /usr/local/bin/mc; exit 1; };',
+  "}",
+].join("\n");
+
 /** Normalize an endpoint to a scheme + host URL mc/MC_HOST understands. */
 export function endpointUrl(s3: S3Config): string {
   const ep = s3.endpoint.trim();

@@ -61,6 +61,39 @@ describe("renderAgentInstallScript", () => {
     expect(() => renderAgentInstallScript({ image: 'x"$(whoami)' })).toThrow(/unsafe image ref/);
   });
 
+  describe("with per-arch digests (supply-chain pin)", () => {
+    const A = "a".repeat(64);
+    const B = "b".repeat(64);
+    const pinned = renderAgentInstallScript({ image: IMAGE, digests: { amd64: A, arm64: B } });
+
+    it("detects arch and pins IMAGE to image@sha256:<digest>", () => {
+      expect(pinned).toContain('_arch="$(uname -m 2>/dev/null || echo unknown)"');
+      expect(pinned).toContain(`x86_64|amd64) IMAGE="${IMAGE}@sha256:${A}" ;;`);
+      expect(pinned).toContain(`aarch64|arm64) IMAGE="${IMAGE}@sha256:${B}" ;;`);
+    });
+
+    it("pins BEFORE arg parsing so --image still overrides", () => {
+      expect(pinned.indexOf("uname -m")).toBeLessThan(pinned.indexOf("--image) IMAGE="));
+      expect(pinned).toContain("--image) IMAGE=");
+    });
+
+    it("rejects an invalid (non-64-hex) digest", () => {
+      expect(() => renderAgentInstallScript({ image: IMAGE, digests: { amd64: "short", arm64: B } })).toThrow(/invalid agent image digest/);
+      expect(() => renderAgentInstallScript({ image: IMAGE, digests: { amd64: A, arm64: "ZZZ" } })).toThrow(/invalid agent image digest/);
+    });
+
+    it("is valid POSIX shell (sh -n) with the pin block", () => {
+      const dir = mkdtempSync(join(tmpdir(), "agent-install-pin-"));
+      const file = join(dir, "agent.sh");
+      try {
+        writeFileSync(file, pinned);
+        expect(() => execFileSync("sh", ["-n", file], { stdio: "pipe" })).not.toThrow();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("is valid POSIX shell syntax (sh -n)", () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-install-"));
     const file = join(dir, "agent.sh");

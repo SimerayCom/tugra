@@ -12,12 +12,33 @@
 
 /** A conservative image-ref charset (registry/repo:tag@digest). Defensive — the ref is operator config. */
 const IMAGE_RE = /^[A-Za-z0-9._/:@-]+$/;
+/** A docker image digest is exactly 64 lowercase hex chars. */
+const SHA256_RE = /^[a-f0-9]{64}$/;
 
-export function renderAgentInstallScript(opts: { image: string }): string {
+/**
+ * Renders the bootstrap installer. When `digests` is supplied (the release's per-arch agent image digests,
+ * matched to this hub's version), the script detects the host arch and pins IMAGE to `image@sha256:<digest>`
+ * for supply-chain integrity — before arg parsing, so an explicit `--image` still overrides. Without
+ * `digests` (dev / version mismatch / custom AGENT_IMAGE mirror) it falls back to the bare version tag.
+ */
+export function renderAgentInstallScript(opts: { image: string; digests?: { amd64: string; arm64: string } }): string {
   const image = opts.image;
   if (!IMAGE_RE.test(image)) {
     throw new Error(`refusing to render install script for unsafe image ref: ${JSON.stringify(image)}`);
   }
+  if (opts.digests && (!SHA256_RE.test(opts.digests.amd64) || !SHA256_RE.test(opts.digests.arm64))) {
+    throw new Error("refusing to render install script with an invalid agent image digest");
+  }
+  // Arch-aware digest pin (only when digests are known + valid). Set as the default before arg parsing.
+  const pinLines = opts.digests
+    ? [
+        '_arch="$(uname -m 2>/dev/null || echo unknown)"',
+        'case "$_arch" in',
+        `  x86_64|amd64) IMAGE="${image}@sha256:${opts.digests.amd64}" ;;`,
+        `  aarch64|arm64) IMAGE="${image}@sha256:${opts.digests.arm64}" ;;`,
+        "esac",
+      ]
+    : [];
   const lines = [
     "#!/bin/sh",
     "# Tugra agent installer — runs the tugra-agent as a Docker container.",
@@ -26,6 +47,8 @@ export function renderAgentInstallScript(opts: { image: string }): string {
     "",
     // Version-matched agent image, injected by the hub. Override with --image (or edit before piping).
     'IMAGE="' + image + '"',
+    // Pin to the release's per-arch digest when known (supply-chain); --image below still overrides.
+    ...pinLines,
     'HUB="${TUGRA_HUB:-}"',
     'TOKEN="${TUGRA_TOKEN:-}"',
     'NAME="tugra-agent"',

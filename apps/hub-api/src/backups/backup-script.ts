@@ -17,6 +17,7 @@ import {
   mcHostEnv,
   mcTarget,
   MC_ALIAS,
+  MC_INSTALL,
   type DestinationSpec,
   type S3Config,
 } from "./destination";
@@ -52,9 +53,6 @@ export function backupFilename(engine: DbEngine, ts: string, dest: DestinationSp
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
-
-const MC_INSTALL =
-  "command -v mc >/dev/null 2>&1 || { curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc; }";
 
 /** Engine-specific command that writes the raw dump to stdout. */
 function dumpToStdout(db: DbSpec): string {
