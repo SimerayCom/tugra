@@ -79,6 +79,19 @@ describe("BackupsService", () => {
     expect(scheduler.schedule).toHaveBeenCalledWith("db1", 6 * 3600);
   });
 
+  it("refuses to enable a schedule for an engine with no backup pipeline (libSQL) and never persists it", async () => {
+    const update = jest.fn();
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "LIBSQL" }), update },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, access, {}, scheduler);
+    await expect(svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6 })).rejects.toThrow(/not supported/);
+    expect(update).not.toHaveBeenCalled();
+    expect(scheduler.schedule).not.toHaveBeenCalled();
+  });
+
   it("imports from a URL by sending a curl restore command to the agent", async () => {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(db) },

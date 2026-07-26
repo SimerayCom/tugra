@@ -110,6 +110,7 @@ export const AppViewSchema = z.object({
   healthCheckPort: z.number().nullable(),
   memoryMb: z.number().nullable(),
   cpus: z.number().nullable(),
+  gpus: z.string().nullable(),
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
@@ -673,6 +674,7 @@ export class ApplicationsService {
           healthCheckPort: parent.healthCheckPort,
           memoryMb: parent.memoryMb,
           cpus: parent.cpus,
+          gpus: parent.gpus,
           volumes: (parent.volumes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           gitTokenEnc: parent.gitTokenEnc,
           registryAuthEnc: parent.registryAuthEnc,
@@ -764,8 +766,10 @@ export class ApplicationsService {
 
   /**
    * Zero-downtime rolling is safe only for a routed app with no host port, no risky
-   * raw docker flags, and no named volumes (two overlapping containers would share the
-   * same volume and could corrupt data). Otherwise deploy is a hard cutover.
+   * raw docker flags, no named volumes (two overlapping containers would share the
+   * same volume and could corrupt data), and no GPU (the overlapping rollout would
+   * contend for the same device/VRAM and fail health, forcing a false rollback).
+   * Otherwise deploy is a hard cutover.
    */
   private rollingEligible(app: Application): boolean {
     return (
@@ -774,6 +778,7 @@ export class ApplicationsService {
       app.rollbackOnFailure &&
       !app.hostPort &&
       !(app.dockerOptions && RISKY_DOCKER_OPTS.test(app.dockerOptions)) &&
+      !app.gpus &&
       this.appVolumes(app).length === 0
     );
   }
@@ -1361,7 +1366,7 @@ export class ApplicationsService {
   async setLimits(
     userId: string,
     id: string,
-    limits: { memoryMb?: number | null; cpus?: number | null; deployTimeoutSec?: number | null },
+    limits: { memoryMb?: number | null; cpus?: number | null; gpus?: string | null; deployTimeoutSec?: number | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
@@ -1369,6 +1374,7 @@ export class ApplicationsService {
       data: {
         memoryMb: limits.memoryMb ?? null,
         cpus: limits.cpus ?? null,
+        gpus: limits.gpus || null, // "" (cleared) → null
         deployTimeoutSec: limits.deployTimeoutSec ?? null,
       },
     });
@@ -1694,6 +1700,7 @@ export class ApplicationsService {
       healthCheckPort: app.healthCheckPort,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      gpus: app.gpus,
       dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
       gitToken: this.appGitToken(app),
@@ -1818,6 +1825,7 @@ export class ApplicationsService {
       healthCheckPort: app.healthCheckPort,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      gpus: app.gpus,
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),

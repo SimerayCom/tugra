@@ -33,6 +33,7 @@ const EXT: Record<DbEngine, string> = {
   MONGO: "archive",
   DRAGONFLY: "rdb", // Dragonfly SAVE RDB → single-file RDB snapshot
   CLICKHOUSE: "zip", // ClickHouse BACKUP … TO File('.zip') → single archive
+  LIBSQL: "db", // unused — libSQL has no dump/restore pipeline (supportsBackup=false)
 };
 
 export function backupDir(dbId: string): string {
@@ -93,6 +94,8 @@ function dumpToStdout(db: DbSpec): string {
       return `docker exec ${name} sh -c ${shq(
         `mkdir -p /var/lib/clickhouse/backups; clickhouse-client --query "BACKUP DATABASE \\"${database}\\" TO File('/var/lib/clickhouse/backups/tugra_backup.zip')" >/dev/null && cat /var/lib/clickhouse/backups/tugra_backup.zip; rc=$?; rm -f /var/lib/clickhouse/backups/tugra_backup.zip; exit $rc`,
       )}`;
+    case "LIBSQL":
+      throw new Error("backup not supported for libsql"); // unreachable — gated by supportsBackup()
   }
 }
 
@@ -246,6 +249,8 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       lines.push(`${decode.join(" | ")} | docker exec -i ${name} sh -c ${shq(inner)}`);
       break;
     }
+    case "LIBSQL":
+      throw new Error("restore not supported for libsql"); // unreachable — gated by supportsBackup()
   }
   return lines.join("\n");
 }

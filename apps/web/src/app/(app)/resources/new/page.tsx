@@ -21,7 +21,7 @@ import { Field, Select, TextInput } from "../../../../components/form";
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
 
-const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE"];
+const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE", "LIBSQL"];
 
 // vendored brand icon per engine (KeyDB/Dragonfly have none → generic glyph)
 const ENGINE_LOGO: Partial<Record<DbEngine, string>> = {

@@ -160,4 +160,31 @@ describe("database-script", () => {
       expect(connectionInfo(spec("POSTGRES")).internalHost).toBe("tugra_db_db1");
     });
   });
+
+  describe("LIBSQL (sqld)", () => {
+    it("resolves the sqld image + port + defaults", () => {
+      expect(resolveImage("LIBSQL")).toBe("ghcr.io/tursodatabase/libsql-server:latest");
+      expect(enginePort("LIBSQL")).toBe(8080);
+    });
+
+    it("has no credential env and no server command (runs on sqld defaults)", () => {
+      expect(credentialEnv("LIBSQL", creds)).toEqual({});
+      expect(engineCommand("LIBSQL", creds)).toBe("");
+    });
+
+    it("builds a credential-free HTTP connection URI (no built-in auth in v1)", () => {
+      expect(connectionInfo(spec("LIBSQL")).uri).toBe("http://tugra_db_db1:8080");
+    });
+
+    it("has no dump/restore backup pipeline", () => {
+      expect(supportsBackup("LIBSQL")).toBe(false);
+    });
+
+    it("runs on the internal network with a persistent volume and no credential -e flags", () => {
+      const s = buildDatabaseRunScript(spec("LIBSQL"));
+      expect(s).toContain("--network tugra-net");
+      expect(s).toContain("tugra_dbv_db1:/var/lib/sqld");
+      expect(s).not.toContain("-e "); // no credential env for sqld
+    });
+  });
 });

@@ -275,7 +275,12 @@ export class BackupsService {
   }
 
   async setSchedule(userId: string, dbId: string, cfg: BackupConfigInput): Promise<Database> {
-    await this.requireWrite(userId, dbId);
+    const existing = await this.requireWrite(userId, dbId);
+    // Don't enable a schedule for an engine with no dump/restore pipeline (e.g. libSQL) — the runner would
+    // only fail later. requireWrite already loaded the row, so this is a free check (no extra query).
+    if (cfg.enabled && !supportsBackup(existing.engine as DbEngine)) {
+      throw new BadRequestException(`scheduled backups are not supported for ${existing.engine} yet`);
+    }
     const db = await this.apply(dbId, cfg);
     await this.audit.log({ actor: userId, action: "database.backup.schedule", target: dbId });
     return db;
@@ -293,17 +298,24 @@ export class BackupsService {
   ): Promise<{ applied: string[]; skipped: string[] }> {
     const dbs = await this.prisma.database.findMany({
       where: { id: { in: dbIds } },
-      select: { id: true, teamId: true },
+      select: { id: true, teamId: true, engine: true },
     });
+    const engineById = new Map(dbs.map((d) => [d.id, d.engine]));
     const permsByTeam = await this.access.permissionsByTeam(userId);
     const plan = planTargets(dbIds, dbs, permsByTeam, "backups");
     const applied: string[] = [];
+    const engineSkipped: string[] = [];
     for (const target of plan) {
       if (!target.run) continue;
+      // Skip (don't fail the batch) engines with no backup pipeline when enabling a schedule.
+      if (cfg.enabled && !supportsBackup((engineById.get(target.serverId) ?? "POSTGRES") as DbEngine)) {
+        engineSkipped.push(target.serverId);
+        continue;
+      }
       await this.apply(target.serverId, cfg);
       applied.push(target.serverId);
     }
-    const skipped = plan.filter((p) => !p.run).map((p) => p.serverId);
+    const skipped = [...plan.filter((p) => !p.run).map((p) => p.serverId), ...engineSkipped];
     if (applied.length > 0) {
       await this.audit.log({
         actor: userId,
@@ -315,7 +327,7 @@ export class BackupsService {
     return { applied, skipped };
   }
 
-  /** Persist the backup schedule + (re)schedule. Caller handles authz; destinationId untouched when absent. */
+  /** Persist the backup schedule + (re)schedule. Caller handles authz + engine-support; destinationId untouched when absent. */
   private async apply(dbId: string, cfg: BackupConfigInput): Promise<Database> {
     const db = await this.prisma.database.update({
       where: { id: dbId },

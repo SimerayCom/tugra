@@ -658,6 +658,7 @@ enum DbEngine {
   KEYDB
   DRAGONFLY
   CLICKHOUSE
+  LIBSQL
 }
 
 enum DbStatus {
@@ -722,6 +723,7 @@ model Application {
   healthCheckPort Int?                             // HTTP check port (default container/host port)
   memoryMb       Int?
   cpus           Float?
+  gpus           String?      // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
   deployTimeoutSec Int?
   volumes        Json?
   portMappings   Json?        // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
