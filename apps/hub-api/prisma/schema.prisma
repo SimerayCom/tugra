@@ -126,6 +126,7 @@ model Team {
   cloudCredentials CloudCredential[]
   savedViews   SavedView[]
   customRoles  TeamRole[]
+  clusters     Cluster[]
   createdAt    DateTime     @default(now())
 }
 
@@ -258,6 +259,10 @@ model Server {
   lastSeenAt           DateTime?
   team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId               String
+  // Optional membership in a Cluster (a named group of this team's servers). SetNull: deleting the
+  // cluster frees its servers rather than removing them. A server belongs to at most one cluster.
+  cluster              Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  clusterId            String?
   tags                 String[]     @default([])
   // Granted agent capabilities the hub will sign commands for. Enforced verbatim; empty = none
   // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
@@ -277,6 +282,25 @@ model Server {
   logDrains            LogDrain[]
   tunnel               ServerTunnel?
   createdAt            DateTime     @default(now())
+
+  @@index([clusterId])
+}
+
+// A named group of a team's servers (fleet organization + rollup + group-scoped ops). Model-agnostic
+// foundation: it does not change deploy/networking — deploy is still per-server. A server belongs to at
+// most one cluster (Server.clusterId).
+model Cluster {
+  id          String   @id @default(cuid())
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  name        String
+  description String?
+  servers     Server[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([teamId, name])
+  @@index([teamId])
 }
 
 model LogDrain {
