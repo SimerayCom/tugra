@@ -3,7 +3,11 @@ import { ApiExcludeEndpoint } from "@nestjs/swagger";
 import { SkipThrottle } from "@nestjs/throttler";
 import { ConfigService } from "@nestjs/config";
 import { appVersion } from "@tugra/shared";
+import { UpdateService } from "../update/update.service";
 import { renderAgentInstallScript } from "./agent-install-script";
+
+const DIGEST_MEMO_TTL_MS = 10 * 60 * 1000; // this endpoint is public + un-throttled → cache the manifest lookup
+const DIGEST_RE = /^[a-f0-9]{64}$/; // only well-formed digests are pinned (a malformed one degrades to bare tag)
 
 /**
  * Serves the agent bootstrap script at the BARE path `/install/agent.sh` (excluded from the /api/v1
@@ -15,17 +19,59 @@ import { renderAgentInstallScript } from "./agent-install-script";
  */
 @Controller("install")
 export class InstallController {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly update: UpdateService,
+  ) {}
+
+  private memo: { p: Promise<{ amd64: string; arm64: string } | null>; exp: number } | null = null;
 
   @Get("agent.sh")
   @ApiExcludeEndpoint()
   @SkipThrottle()
   @Header("Content-Type", "text/x-shellscript; charset=utf-8")
   @Header("Cache-Control", "no-store")
-  agentScript(): string {
+  async agentScript(): Promise<string> {
     // Version-matched agent image (keeps agent↔hub protocol aligned); AGENT_IMAGE overrides for
     // custom registries / air-gapped mirrors. Published by the release pipeline (release-pipeline-ghcr).
     const image = this.config.get<string>("AGENT_IMAGE") ?? `ghcr.io/mrcandev/tugra-agent:${appVersion()}`;
-    return renderAgentInstallScript({ image });
+    const digests = (await this.agentDigests()) ?? undefined;
+    try {
+      return renderAgentInstallScript({ image, digests });
+    } catch {
+      // Belt-and-suspenders: a bad digest must NEVER 500 this public endpoint — fall back to the bare tag.
+      return renderAgentInstallScript({ image });
+    }
+  }
+
+  /**
+   * The signed-manifest per-arch digests for the agent image of THIS hub's version — used to pin the
+   * bootstrap install (supply-chain). Memoizes the in-flight PROMISE (not just the value) so a burst of
+   * concurrent requests to this public/un-throttled endpoint shares ONE manifest fetch.
+   */
+  private async agentDigests(): Promise<{ amd64: string; arm64: string } | null> {
+    if (this.config.get<string>("AGENT_IMAGE")) return null; // a mirror override isn't the ghcr image the digest pins
+    const now = Date.now();
+    if (!this.memo || this.memo.exp <= now) {
+      this.memo = { p: this.resolveAgentDigests(), exp: now + DIGEST_MEMO_TTL_MS };
+    }
+    return this.memo.p;
+  }
+
+  /**
+   * Best-effort resolve — NEVER throws. Returns digests only when: the signed manifest's latest entry is
+   * exactly this hub's version AND both arch digests are present AND well-formed 64-hex. A malformed (but
+   * signed) digest is treated as "no digest" (→ bare tag) rather than reaching the renderer (which throws).
+   */
+  private async resolveAgentDigests(): Promise<{ amd64: string; arm64: string } | null> {
+    try {
+      const res = await this.update.verifyLatestEntry();
+      if (res.status !== "ok" || res.entry.version !== appVersion()) return null;
+      const d = res.entry.agentSha256;
+      if (d && DIGEST_RE.test(d.amd64 ?? "") && DIGEST_RE.test(d.arm64 ?? "")) return { amd64: d.amd64, arm64: d.arm64 };
+      return null;
+    } catch {
+      return null;
+    }
   }
 }

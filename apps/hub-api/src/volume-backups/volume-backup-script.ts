@@ -5,7 +5,7 @@
  * DB dump: `docker run --rm -v <vol>:/data alpine tar` streams to gzip → [gpg]
  * → sink, never through the 64KB exec channel.
  */
-import { mcHostEnv, mcTarget, type DestinationSpec } from "../backups/destination";
+import { mcHostEnv, mcTarget, MC_INSTALL, type DestinationSpec } from "../backups/destination";
 // Shared mc-output parser (also used by DB backups) — re-exported so existing importers keep working.
 export { parseShareUrl } from "../backups/destination";
 
@@ -20,9 +20,6 @@ export const BACKUP_HELPER_IMAGE =
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
-
-const MC_INSTALL =
-  "command -v mc >/dev/null 2>&1 || { curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc; }";
 
 /** id namespace inside the bucket/dir: <appId>/<volumeName>. */
 function ns(appId: string, volumeName: string): string {
