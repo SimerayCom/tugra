@@ -48,6 +48,7 @@ import { UpdateModule } from "./update/update.module";
 import { InstallController } from "./install/install.controller";
 import { CryptoModule } from "./crypto/crypto.module";
 import { LicenseModule } from "./license/license.module";
+import { ClustersModule } from "./clusters/clusters.module";
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { LicenseModule } from "./license/license.module";
     UpdateModule,
     CryptoModule, // for InstanceSettingsController to encrypt the OIDC client secret
     LicenseModule, // verifies the signed license at boot + backs the /instance/license endpoints
+    ClustersModule, // team-scoped server groups (fleet organization + health rollup)
   ],
   controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],
   providers: [

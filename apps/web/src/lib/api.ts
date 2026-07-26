@@ -7,6 +7,8 @@ import type {
   OwnerInstanceSettings,
   OidcConfig,
   LicenseStatus,
+  Cluster,
+  ClusterDetail,
   SavedView,
   Application,
   AppVolume,
@@ -370,6 +372,26 @@ export const api = {
 
   getServer(id: string) {
     return apiFetch<ServerView>(`/servers/${id}`);
+  },
+
+  // Clusters (server groups) — team-scoped fleet organization + health rollup.
+  listClusters(teamId?: string) {
+    return apiFetch<Cluster[]>(`/clusters${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`);
+  },
+  getCluster(id: string) {
+    return apiFetch<ClusterDetail>(`/clusters/${id}`);
+  },
+  createCluster(body: { teamId: string; name: string; description?: string }) {
+    return apiFetch<Cluster>("/clusters", { method: "POST", body: JSON.stringify(body) });
+  },
+  updateCluster(id: string, body: { name?: string; description?: string | null }) {
+    return apiFetch<ClusterDetail>(`/clusters/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+  },
+  deleteCluster(id: string) {
+    return apiFetch<void>(`/clusters/${id}`, { method: "DELETE" });
+  },
+  setClusterServers(id: string, serverIds: string[]) {
+    return apiFetch<ClusterDetail>(`/clusters/${id}/servers`, { method: "PUT", body: JSON.stringify({ serverIds }) });
   },
 
   getMetrics(id: string, limit = 60) {

@@ -90,6 +90,32 @@ export interface PublicUser {
   isInstanceOwner: boolean;
 }
 
+/** A server group (cluster) — fleet organization. */
+export interface Cluster {
+  id: string;
+  teamId: string;
+  name: string;
+  description: string | null;
+  nodeCount: number;
+  canWrite: boolean;
+  createdAt: string;
+}
+export interface ClusterHealth {
+  nodes: { online: number; offline: number; pending: number; total: number };
+  apps: { running: number; stopped: number; failed: number; new: number; total: number };
+}
+export interface ClusterServerView {
+  id: string;
+  name: string;
+  status: string;
+  hostname: string | null;
+  publicIp: string | null;
+}
+export interface ClusterDetail extends Cluster {
+  servers: ClusterServerView[];
+  health: ClusterHealth;
+}
+
 /** Public onboarding state (GET /instance/status) — read before login to gate the welcome flow. */
 export interface InstanceStatus {
   /** True once the first user has completed setup; false → a fresh install needs the owner account. */

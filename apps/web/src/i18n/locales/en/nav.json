@@ -11,6 +11,7 @@
   "dashboard": "Dashboard",
   "uptime": "Uptime",
   "servers": "Servers",
+  "clusters": "Clusters",
   "sources": "Git Sources",
   "registries": "Container Registries",
   "cloudCredentials": "Cloud Providers",
