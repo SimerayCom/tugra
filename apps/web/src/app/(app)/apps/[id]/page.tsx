@@ -232,7 +232,7 @@ export default function AppDetailPage() {
           )}
 
           {appData.source !== "COMPOSE" && (
-            <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} deployTimeoutSec={appData.deployTimeoutSec} />
+            <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} />
           )}
           {appData.source !== "COMPOSE" && (
             <HealthCheckCard
@@ -723,20 +723,23 @@ function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-function LimitsCard({ id, memoryMb, cpus, deployTimeoutSec }: { id: string; memoryMb: number | null; cpus: number | null; deployTimeoutSec: number | null }) {
+function LimitsCard({ id, memoryMb, cpus, gpus, deployTimeoutSec }: { id: string; memoryMb: number | null; cpus: number | null; gpus: string | null; deployTimeoutSec: number | null }) {
   const t = useT();
   const qc = useQueryClient();
   const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
   const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
+  const [gpu, setGpu] = useState(gpus ?? "");
   const [timeout, setTimeoutS] = useState(deployTimeoutSec != null ? String(deployTimeoutSec) : "");
   const save = useMutation({
     mutationFn: () =>
       api.setAppLimits(id, {
         memoryMb: mem ? Number(mem) : null,
         cpus: cpu ? Number(cpu) : null,
+        gpus: gpu.trim() || null,
         deployTimeoutSec: timeout ? Number(timeout) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    onError: (e) => alert(e instanceof Error ? e.message : t("apps.limitsSaveFailed")),
   });
 
   return (
@@ -746,6 +749,7 @@ function LimitsCard({ id, memoryMb, cpus, deployTimeoutSec }: { id: string; memo
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
         <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
+        <input style={{ ...envField, width: 180 }} placeholder={t("apps.gpus")} value={gpu} onChange={(e) => setGpu(e.target.value)} />
         <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.deployTimeout")} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>

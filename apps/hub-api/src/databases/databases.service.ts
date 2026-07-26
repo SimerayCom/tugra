@@ -35,7 +35,7 @@ const PROVISION_TIMEOUT_MS = 300_000; // image pull can be slow
 export const DatabaseViewSchema = z.object({
   id: z.string(),
   name: z.string(),
-  engine: z.enum(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE"]),
+  engine: z.enum(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]),
   version: z.string(),
   environmentId: z.string().nullable(),
   projectId: z.string().nullable(),

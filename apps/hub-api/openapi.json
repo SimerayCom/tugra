@@ -3549,6 +3549,10 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "gpus": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "deployTimeoutSec": {
                         "type": "number",
                         "nullable": true
@@ -3758,6 +3762,7 @@
                       "healthCheckPort",
                       "memoryMb",
                       "cpus",
+                      "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
                       "volumes",
@@ -4031,6 +4036,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "gpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployTimeoutSec": {
                       "type": "number",
                       "nullable": true
@@ -4240,6 +4249,7 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
@@ -4498,6 +4508,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "gpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployTimeoutSec": {
                       "type": "number",
                       "nullable": true
@@ -4707,6 +4721,7 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
@@ -4979,6 +4994,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "gpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployTimeoutSec": {
                       "type": "number",
                       "nullable": true
@@ -5188,6 +5207,7 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
@@ -5916,6 +5936,21 @@
                     "maximum": 64,
                     "nullable": true
                   },
+                  "gpus": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(all|[1-9][0-9]*|device=[A-Za-z0-9,_.:-]+)$"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          ""
+                        ]
+                      }
+                    ],
+                    "nullable": true
+                  },
                   "deployTimeoutSec": {
                     "type": "integer",
                     "minimum": 30,
@@ -6531,6 +6566,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "gpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployTimeoutSec": {
                       "type": "number",
                       "nullable": true
@@ -6740,6 +6779,7 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
@@ -6951,6 +6991,10 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "gpus": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "deployTimeoutSec": {
                         "type": "number",
                         "nullable": true
@@ -7160,6 +7204,7 @@
                       "healthCheckPort",
                       "memoryMb",
                       "cpus",
+                      "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
                       "volumes",
@@ -7401,6 +7446,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "gpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployTimeoutSec": {
                       "type": "number",
                       "nullable": true
@@ -7610,6 +7659,7 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
@@ -7975,7 +8025,8 @@
                           "MARIADB",
                           "KEYDB",
                           "DRAGONFLY",
-                          "CLICKHOUSE"
+                          "CLICKHOUSE",
+                          "LIBSQL"
                         ]
                       },
                       "version": {
@@ -8166,7 +8217,8 @@
                       "MARIADB",
                       "KEYDB",
                       "DRAGONFLY",
-                      "CLICKHOUSE"
+                      "CLICKHOUSE",
+                      "LIBSQL"
                     ]
                   },
                   "version": {
@@ -8217,7 +8269,8 @@
                         "MARIADB",
                         "KEYDB",
                         "DRAGONFLY",
-                        "CLICKHOUSE"
+                        "CLICKHOUSE",
+                        "LIBSQL"
                       ]
                     },
                     "version": {
@@ -8417,7 +8470,8 @@
                         "MARIADB",
                         "KEYDB",
                         "DRAGONFLY",
-                        "CLICKHOUSE"
+                        "CLICKHOUSE",
+                        "LIBSQL"
                       ]
                     },
                     "version": {
@@ -8643,7 +8697,8 @@
                         "MARIADB",
                         "KEYDB",
                         "DRAGONFLY",
-                        "CLICKHOUSE"
+                        "CLICKHOUSE",
+                        "LIBSQL"
                       ]
                     },
                     "version": {

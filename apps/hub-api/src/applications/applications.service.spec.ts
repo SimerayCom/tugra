@@ -848,9 +848,9 @@ describe("ApplicationsService", () => {
       application: { findUnique: jest.fn().mockResolvedValue(app), update },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 });
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, cpus: 0.5, gpus: "all", deployTimeoutSec: 600 });
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, deployTimeoutSec: 600 } }),
+      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, gpus: "all", deployTimeoutSec: 600 } }),
     );
   });
 

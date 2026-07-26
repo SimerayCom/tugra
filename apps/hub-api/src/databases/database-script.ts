@@ -15,7 +15,8 @@ export type DbEngine =
   | "MARIADB"
   | "KEYDB"
   | "DRAGONFLY"
-  | "CLICKHOUSE";
+  | "CLICKHOUSE"
+  | "LIBSQL";
 
 export interface EngineDef {
   imagePrefix: string; // e.g. "postgres" → image = "postgres:<version>"
@@ -35,13 +36,17 @@ export const ENGINES: Record<DbEngine, EngineDef> = {
   KEYDB: { imagePrefix: "eqalpha/keydb", port: 6379, dataDir: "/data", scheme: "redis", defaultVersion: "latest" },
   DRAGONFLY: { imagePrefix: "docker.dragonflydb.io/dragonflydb/dragonfly", port: 6379, dataDir: "/data", scheme: "redis", defaultVersion: "latest" },
   CLICKHOUSE: { imagePrefix: "clickhouse/clickhouse-server", port: 9000, dataDir: "/var/lib/clickhouse", scheme: "clickhouse", defaultVersion: "24" },
+  // libSQL server (sqld) — SQLite over HTTP/Hrana. No username/password model (optional JWT auth, a
+  // follow-up); v1 runs on the internal tugra-net with no built-in auth, reachable by co-located apps.
+  LIBSQL: { imagePrefix: "ghcr.io/tursodatabase/libsql-server", port: 8080, dataDir: "/var/lib/sqld", scheme: "http", defaultVersion: "latest" },
 };
 
 /** Whether a dump/restore backup pipeline exists for this engine — all 8 engines are supported
  *  (Postgres/MySQL/MariaDB/Mongo/Redis/KeyDB + Dragonfly `SAVE RDB`/`DFLY LOAD` + ClickHouse
  *  `BACKUP … TO File`/`RESTORE`). Kept as a function so a future unsupported engine can opt out. */
-export function supportsBackup(_engine: DbEngine): boolean {
-  return true;
+export function supportsBackup(engine: DbEngine): boolean {
+  // libSQL has no dump/restore pipeline (its data is a single SQLite file captured by volume backups).
+  return engine !== "LIBSQL";
 }
 
 export interface DbCredentials {
@@ -111,6 +116,9 @@ export function credentialEnv(engine: DbEngine, creds: DbCredentials): Record<st
     case "KEYDB":
     case "DRAGONFLY":
       return {};
+    case "LIBSQL":
+      // sqld runs with its defaults (HTTP listener on 8080, data at dataDir); no credential env.
+      return {};
   }
 }
 
@@ -145,7 +153,10 @@ export function connectionInfo(db: DbSpec): ConnectionInfo {
   const auth = username ? `${username}:${password}@` : `:${password}@`;
   const redisFamily = db.engine === "REDIS" || db.engine === "KEYDB" || db.engine === "DRAGONFLY";
   let uri: string;
-  if (redisFamily) {
+  if (db.engine === "LIBSQL") {
+    // sqld speaks HTTP with no built-in auth in v1 — a plain host:port URL, no credentials.
+    uri = `${scheme}://${host}:${db.port}`;
+  } else if (redisFamily) {
     uri = `${scheme}://:${password}@${host}:${db.port}`;
   } else if (db.engine === "MONGO") {
     uri = `${scheme}://${auth}${host}:${db.port}`;

@@ -19,10 +19,16 @@ describe("database helpers", () => {
     expect(defaultPort("CLICKHOUSE")).toBe(9000);
   });
 
-  it("every engine now supports backup (incl. Dragonfly + ClickHouse)", () => {
+  it("every engine now supports backup (incl. Dragonfly + ClickHouse) — except libSQL", () => {
     expect(engineSupportsBackup("MARIADB")).toBe(true);
     expect(engineSupportsBackup("KEYDB")).toBe(true);
     expect(engineSupportsBackup("DRAGONFLY")).toBe(true);
     expect(engineSupportsBackup("CLICKHOUSE")).toBe(true);
+    expect(engineSupportsBackup("LIBSQL")).toBe(false);
+  });
+
+  it("maps libSQL's label + HTTP port", () => {
+    expect(engineLabel("LIBSQL")).toBe("libSQL");
+    expect(defaultPort("LIBSQL")).toBe(8080);
   });
 });

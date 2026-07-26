@@ -43,6 +43,8 @@ export interface AppSpec {
   healthCheckPort?: number | null;
   memoryMb?: number | null;
   cpus?: number | null;
+  /** docker `--gpus` value (e.g. "all", "1", "device=0,1"); requires the NVIDIA container runtime on the host. */
+  gpus?: string | null;
   volumes?: AppVolume[] | null;
   gitToken?: string | null;
   registryAuth?: RegistryAuth | null;
@@ -523,6 +525,8 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const limitArgs: string[] = [];
   if (app.memoryMb) limitArgs.push(`--memory ${app.memoryMb}m`);
   if (app.cpus) limitArgs.push(`--cpus ${app.cpus}`);
+  // GPU passthrough — the value is validated at the DTO (all | count | device=…) and shell-quoted here.
+  if (app.gpus) limitArgs.push(`--gpus ${shq(app.gpus)}`);
   if (app.healthCmd) {
     limitArgs.push(
       `--health-cmd ${shq(app.healthCmd)}`,

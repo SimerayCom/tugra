@@ -77,10 +77,15 @@ export const SetDeploySettingsSchema = z
   .strict();
 export type SetDeploySettingsInput = z.infer<typeof SetDeploySettingsSchema>;
 
+// docker --gpus value: "all", a positive count, or "device=<ids>" (indices or GPU-UUIDs). "" clears it.
+// Conservative charset (validated here, shell-quoted at deploy) so it can never inject into `docker run`.
+const GPU_RE = /^(all|[1-9][0-9]*|device=[A-Za-z0-9,_.:-]+)$/;
+
 export const SetLimitsSchema = z
   .object({
     memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
     cpus: z.number().min(0.1).max(64).nullable().optional(),
+    gpus: z.union([z.string().regex(GPU_RE), z.literal("")]).nullable().optional(),
     deployTimeoutSec: z.number().int().min(30).max(3600).nullable().optional(),
   })
   // healthCmd moved to PUT /health-check; reject (not silently drop) a stale client still

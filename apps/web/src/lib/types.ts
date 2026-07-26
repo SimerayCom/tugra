@@ -597,6 +597,7 @@ export interface Application {
   healthCheckPort: number | null;
   memoryMb: number | null;
   cpus: number | null;
+  gpus: string | null;
   deployTimeoutSec: number | null;
   dockerOptions: string | null;
   volumes: AppVolume[];
@@ -688,7 +689,8 @@ export type DbEngine =
   | "MARIADB"
   | "KEYDB"
   | "DRAGONFLY"
-  | "CLICKHOUSE";
+  | "CLICKHOUSE"
+  | "LIBSQL";
 export type DbStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export interface Database {

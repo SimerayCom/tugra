@@ -345,6 +345,12 @@ describe("deploy-script", () => {
     expect(s).toContain("--health-start-period=30s");
   });
 
+  it("passes --gpus (shell-quoted) when set, and omits it otherwise", () => {
+    expect(buildRunScript({ ...base, gpus: "all" }, "v1")).toContain("--gpus 'all'");
+    expect(buildRunScript({ ...base, gpus: "device=0,1" }, "v1")).toContain("--gpus 'device=0,1'");
+    expect(buildRunScript(base, "v1")).not.toContain("--gpus");
+  });
+
   it("mounts persistent volumes via -v before the image reference", () => {
     const s = buildRunScript(
       { ...base, volumes: [{ name: "data", path: "/app/data" }, { name: "logs", path: "/var/log/app" }] },

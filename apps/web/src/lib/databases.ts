@@ -16,6 +16,7 @@ const LABELS: Record<DbEngine, string> = {
   KEYDB: "KeyDB",
   DRAGONFLY: "Dragonfly",
   CLICKHOUSE: "ClickHouse",
+  LIBSQL: "libSQL",
 };
 
 export function engineLabel(engine: DbEngine): string {
@@ -31,6 +32,7 @@ const PORTS: Record<DbEngine, number> = {
   KEYDB: 6379,
   DRAGONFLY: 6379,
   CLICKHOUSE: 9000,
+  LIBSQL: 8080,
 };
 
 export function defaultPort(engine: DbEngine): number {
@@ -47,6 +49,7 @@ const VERSIONS: Record<DbEngine, string[]> = {
   KEYDB: ["latest"],
   DRAGONFLY: ["latest"],
   CLICKHOUSE: ["24", "latest"],
+  LIBSQL: ["latest"],
 };
 
 export function engineVersions(engine: DbEngine): string[] {
@@ -55,6 +58,7 @@ export function engineVersions(engine: DbEngine): string[] {
 
 /** Mirrors the hub's supportsBackup — every engine now has a dump/restore pipeline
  *  (incl. Dragonfly `SAVE RDB`/`DFLY LOAD` and ClickHouse `BACKUP … TO File`/`RESTORE`). */
-export function engineSupportsBackup(_engine: DbEngine): boolean {
-  return true;
+export function engineSupportsBackup(engine: DbEngine): boolean {
+  // libSQL has no dump/restore pipeline (its SQLite file is captured by volume backups) — mirror the hub.
+  return engine !== "LIBSQL";
 }

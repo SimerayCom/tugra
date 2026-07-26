@@ -43,6 +43,12 @@ describe("buildConfigSnapshot", () => {
     expect(snap.containerPort).toBe(80);
   });
 
+  it("records the gpus field so a GPU config change appears in the deploy diff", () => {
+    expect(buildConfigSnapshot(spec({ gpus: "all" })).gpus).toBe("all");
+    const changes = diffSnapshots(buildConfigSnapshot(spec()), buildConfigSnapshot(spec({ gpus: "all" })));
+    expect(changes).toContainEqual(expect.objectContaining({ field: "gpus", kind: "changed", after: "all" }));
+  });
+
   it("fingerprints config-mount content (never stored verbatim)", () => {
     const snap = buildConfigSnapshot(
       spec({
