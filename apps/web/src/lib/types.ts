@@ -97,6 +97,7 @@ export interface Cluster {
   name: string;
   description: string | null;
   nodeCount: number;
+  swarmStatus: SwarmStatus;
   canWrite: boolean;
   createdAt: string;
 }
@@ -633,6 +634,8 @@ export interface Application {
   registryId: string | null;
   pushToRegistry: boolean;
   buildServerId: string | null;
+  clusterId: string | null;
+  replicas: number | null;
   deployStrategy: string;
   rollbackOnFailure: boolean;
   zeroDowntime: boolean;

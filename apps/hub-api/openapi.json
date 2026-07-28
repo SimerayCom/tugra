@@ -3602,6 +3602,14 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "clusterId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "replicas": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "deployStrategy": {
                         "type": "string"
                       },
@@ -3772,6 +3780,8 @@
                       "registryId",
                       "pushToRegistry",
                       "buildServerId",
+                      "clusterId",
+                      "replicas",
                       "deployStrategy",
                       "rollbackOnFailure",
                       "zeroDowntime",
@@ -4089,6 +4099,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "clusterId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "replicas": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -4259,6 +4277,8 @@
                     "registryId",
                     "pushToRegistry",
                     "buildServerId",
+                    "clusterId",
+                    "replicas",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -4561,6 +4581,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "clusterId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "replicas": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -4731,6 +4759,8 @@
                     "registryId",
                     "pushToRegistry",
                     "buildServerId",
+                    "clusterId",
+                    "replicas",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -5047,6 +5077,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "clusterId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "replicas": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -5217,6 +5255,8 @@
                     "registryId",
                     "pushToRegistry",
                     "buildServerId",
+                    "clusterId",
+                    "replicas",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -6100,6 +6140,58 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/cluster-config": {
+      "put": {
+        "operationId": "ApplicationsController_setClusterConfig",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "clusterId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "nullable": true
+                  },
+                  "replicas": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/deploy-settings": {
       "put": {
         "operationId": "ApplicationsController_setDeploySettings",
@@ -6619,6 +6711,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "clusterId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "replicas": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -6789,6 +6889,8 @@
                     "registryId",
                     "pushToRegistry",
                     "buildServerId",
+                    "clusterId",
+                    "replicas",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -7044,6 +7146,14 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "clusterId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "replicas": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "deployStrategy": {
                         "type": "string"
                       },
@@ -7214,6 +7324,8 @@
                       "registryId",
                       "pushToRegistry",
                       "buildServerId",
+                      "clusterId",
+                      "replicas",
                       "deployStrategy",
                       "rollbackOnFailure",
                       "zeroDowntime",
@@ -7499,6 +7611,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "clusterId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "replicas": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -7669,6 +7789,8 @@
                     "registryId",
                     "pushToRegistry",
                     "buildServerId",
+                    "clusterId",
+                    "replicas",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",

@@ -37,7 +37,7 @@ describe("ClustersPage", () => {
 
   it("lists clusters with node counts", async () => {
     vi.spyOn(api, "listClusters").mockResolvedValue([
-      { id: "c1", teamId: "t1", name: "eu-west", description: "prod", nodeCount: 3, canWrite: true, createdAt: "2026-01-01" },
+      { id: "c1", teamId: "t1", name: "eu-west", description: "prod", nodeCount: 3, swarmStatus: "NONE", canWrite: true, createdAt: "2026-01-01" },
     ]);
     wrap(<ClustersPage />);
     expect(await screen.findByText("eu-west")).toBeTruthy();

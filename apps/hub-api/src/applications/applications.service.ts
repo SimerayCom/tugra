@@ -25,6 +25,7 @@ import { ContainerMetricsService, type AppContainerMetrics } from "../metrics/co
 import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
+import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
@@ -120,6 +121,8 @@ export const AppViewSchema = z.object({
   registryId: z.string().nullable(),
   pushToRegistry: z.boolean(),
   buildServerId: z.string().nullable(),
+  clusterId: z.string().nullable(),
+  replicas: z.number().nullable(),
   deployStrategy: z.string(),
   rollbackOnFailure: z.boolean(),
   zeroDowntime: z.boolean(),
@@ -215,6 +218,7 @@ export class ApplicationsService {
     private readonly containerMetricsSvc: ContainerMetricsService,
     private readonly portAlloc: PortAllocatorService,
     private readonly catalog: TemplateCatalogService,
+    private readonly swarmDeploy: SwarmDeployService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -793,7 +797,8 @@ export class ApplicationsService {
       const isCompose = app.source === "COMPOSE";
       // A compose app also needs the proxy when its web service is routable (magic).
       const composeRoutable = isCompose && !!this.composeWeb(app);
-      if (app.domain && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
+      // Swarm apps route through the cluster's swarm-mode Traefik (PhaseB), not the per-server classic proxy.
+      if (app.domain && !app.clusterId && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
@@ -818,6 +823,39 @@ export class ApplicationsService {
         where: { id: dep.id },
         data: { configSnapshot: buildConfigSnapshot(spec) as object },
       });
+      // ── Swarm service deploy (Phase3): the app targets a cluster's swarm, not a single server. Delegate
+      // the command build + dispatch (to the manager) + async-rollout classification to SwarmDeployService,
+      // then apply the SAME exit-code contract (0 converged / 3 auto-rolled-back / other failed). ──
+      if (app.clusterId) {
+        const sd = await this.swarmDeploy.deploy(app, spec, dep.id, {
+          noCache,
+          timeoutMs: this.deployTimeoutMs(app),
+          onChunk: (chunk) => this.deployLogs.push(app.id, chunk),
+        });
+        const ok = sd.exitCode === 0;
+        const rolledBack = sd.exitCode === 3; // Swarm's native --update-failure-action rollback restored the previous live spec
+        await this.prisma.deployment.update({
+          where: { id: dep.id },
+          data: {
+            status: ok ? "SUCCESS" : "FAILED",
+            kind: rolledBack ? "AUTO_ROLLBACK" : "DEPLOY",
+            logs: sd.output.slice(0, 65536),
+            exitCode: sd.exitCode,
+            imageTag: null, // no local retag on a swarm — the registry ref is the artifact
+            registryImage: ok ? sd.registryRef : null,
+            imageDigest: ok ? sd.digest : null,
+          },
+        });
+        await this.prisma.application.update({
+          where: { id: app.id },
+          data: { status: ok || rolledBack ? AppStatus.RUNNING : AppStatus.FAILED },
+        });
+        this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: sd.exitCode, deploymentId: dep.id });
+        this.notifyDeploy(app, dep, ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed").catch(() => {});
+        // No image prune — nothing was retagged locally; the registry is the retention mechanism.
+        await this.audit.log({ actor, action: "app.deploy", target: app.id });
+        return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+      }
       // Strategy: rolling (zero-downtime overlap) for eligible routed apps; recreate
       // (stop→start→health-gate→restore-previous-on-failure) for every other app that
       // wants auto-rollback (host-port, named volume, risky docker opts, RECREATE); plain
@@ -963,6 +1001,8 @@ export class ApplicationsService {
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
     });
+    // Swarm app: roll the service back to the target deployment's image ref (no rebuild), not a classic run.
+    if (app.clusterId) return this.rollbackSwarm(userId, app, target);
     // Resolve the rollback SOURCE up front (before creating the deployment / touching app status) so a
     // still-running app is never flipped to FAILED for an impossible rollback.
     let registryPull: { auth: RegistryAuth; ref: string } | null = null;
@@ -1077,6 +1117,61 @@ export class ApplicationsService {
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
   }
 
+  /** Swarm-app rollback: `docker service update --image <target ref>` with the app's CURRENT config (no
+   *  rebuild), mirroring the classic rollback philosophy. imageTag is never used for swarm apps, so the
+   *  rollback source is the target deployment's pushed registryImage (GIT) or recorded digest (IMAGE). */
+  private async rollbackSwarm(
+    userId: string,
+    app: Application,
+    target: { id: string; registryImage: string | null; imageDigest: string | null } | null,
+  ) {
+    if (!target || (!target.registryImage && !target.imageDigest)) {
+      throw new NotFoundException("no rollbackable deployment with that id");
+    }
+    let ref: string;
+    let auth: RegistryAuth | null = null;
+    if (target.registryImage) {
+      ref = target.registryImage;
+      if (app.registryId) {
+        const reg = await this.prisma.registry.findFirst({ where: { id: app.registryId, teamId: app.teamId } });
+        if (reg) auth = { url: reg.url ?? undefined, user: reg.username, token: this.crypto.decrypt(reg.passwordEnc) };
+      }
+    } else {
+      ref = target.imageDigest!;
+      auth = this.appRegistryAuth(app) ?? null;
+    }
+    const dep = await this.prisma.deployment.create({ data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK" } });
+    this.deployLogs.begin(app.id);
+    try {
+      const spec = this.toSpec(app);
+      spec.env = await this.resolvedEnv(app);
+      const sd = await this.swarmDeploy.rollbackTo(app, spec, ref, auth, {
+        onChunk: (chunk) => this.deployLogs.push(app.id, chunk),
+      });
+      const ok = sd.exitCode === 0;
+      await this.prisma.deployment.update({
+        where: { id: dep.id },
+        data: {
+          status: ok ? "SUCCESS" : "FAILED",
+          logs: `rolled back to ${target.id}\n${sd.output.slice(0, 65000)}`,
+          exitCode: sd.exitCode,
+          imageTag: null,
+          registryImage: ok ? ref : null,
+          imageDigest: ok ? sd.digest : null,
+        },
+      });
+      await this.prisma.application.update({ where: { id: app.id }, data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED } });
+      this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: sd.exitCode, deploymentId: dep.id });
+      this.notifyDeploy(app, dep, ok ? "deploy_success" : "deploy_failed").catch(() => {});
+    } catch (e) {
+      await this.prisma.deployment.update({ where: { id: dep.id }, data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed" } });
+      await this.prisma.application.update({ where: { id: app.id }, data: { status: AppStatus.FAILED } });
+      this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+    }
+    await this.audit.log({ actor: userId, action: "app.rollback", target: app.id });
+    return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
   /** Keep the newest DEPLOY_IMAGE_KEEP rollback images; remove older ones. */
   private async pruneImages(app: Application): Promise<void> {
     const kept = await this.prisma.deployment.findMany({
@@ -1121,11 +1216,13 @@ export class ApplicationsService {
 
   async stop(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id, "apps:deploy");
-    const cmd =
-      app.source === "COMPOSE"
-        ? buildComposeStopScript(this.toSpec(app))
-        : buildStopScript(app);
-    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    if (app.clusterId) {
+      // Swarm: scale the service to 0 (keeps the service definition so start can scale it back up).
+      await this.swarmDeploy.scale(app, 0).catch(() => undefined);
+    } else {
+      const cmd = app.source === "COMPOSE" ? buildComposeStopScript(this.toSpec(app)) : buildStopScript(app);
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    }
     await this.prisma.application.update({
       where: { id },
       data: { status: AppStatus.STOPPED },
@@ -1135,33 +1232,41 @@ export class ApplicationsService {
 
   async start(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id, "apps:deploy");
-    const cmd =
-      app.source === "COMPOSE"
-        ? buildComposeStartScript(this.toSpec(app))
-        : buildStartScript(app);
-    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    if (app.clusterId) {
+      await this.swarmDeploy.scale(app, Math.max(1, app.replicas ?? 1)).catch(() => undefined);
+    } else {
+      const cmd = app.source === "COMPOSE" ? buildComposeStartScript(this.toSpec(app)) : buildStartScript(app);
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
     await this.audit.log({ actor: userId, action: "app.start", target: id });
   }
 
   async restart(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id, "apps:deploy");
-    const cmd =
-      app.source === "COMPOSE"
-        ? buildComposeRestartScript(this.toSpec(app))
-        : buildRestartScript(app);
-    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    if (app.clusterId) {
+      // Swarm restart = a forced rolling recreation of all tasks (async; the builder polls to convergence).
+      await this.swarmDeploy.restart(app).catch(() => undefined);
+    } else {
+      const cmd = app.source === "COMPOSE" ? buildComposeRestartScript(this.toSpec(app)) : buildRestartScript(app);
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
     await this.audit.log({ actor: userId, action: "app.restart", target: id });
   }
 
   async remove(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
-    const cmd =
-      app.source === "COMPOSE"
-        ? buildComposeDownScript(this.toSpec(app), { volumes: true })
-        : buildRemoveScript(app, this.appVolumes(app));
-    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    if (app.clusterId) {
+      // Swarm: remove the service cluster-wide (Swarm tears down every task on every node).
+      await this.swarmDeploy.remove(app).catch(() => undefined);
+    } else {
+      const cmd =
+        app.source === "COMPOSE"
+          ? buildComposeDownScript(this.toSpec(app), { volumes: true })
+          : buildRemoveScript(app, this.appVolumes(app));
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    }
     await this.monitors.removeForApp(id).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
     // Drop the deleted app's stale rule from its server's tunnel ingress (recomputed from DB truth).
@@ -1479,6 +1584,41 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
   }
 
+  /** Deploy this app as a Docker Swarm service across a cluster (Phase3), or clear it back to classic
+   *  single-server deploy. Swarm mode requires a stateless single-service app on a formed swarm; a GIT app
+   *  additionally needs a registry (its image must be pullable by every node). */
+  async setClusterConfig(
+    userId: string,
+    id: string,
+    cfg: { clusterId?: string | null; replicas?: number | null },
+  ): Promise<void> {
+    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const data: Prisma.ApplicationUncheckedUpdateInput = {};
+    if (cfg.clusterId !== undefined) {
+      if (cfg.clusterId) {
+        if (app.source === "COMPOSE") throw new BadRequestException("compose apps can't be deployed as swarm services yet");
+        // Named volumes / GPUs are node-local — replicas would diverge (data) or fail to schedule (device).
+        if (this.appVolumes(app).length > 0) throw new BadRequestException("remove named volumes before deploying to a swarm — replica data would diverge per node");
+        if (app.gpus) throw new BadRequestException("GPU apps can't be deployed as swarm services");
+        const cluster = await this.prisma.cluster.findUnique({ where: { id: cfg.clusterId }, select: { teamId: true, swarmStatus: true } });
+        if (!cluster || cluster.teamId !== app.teamId) throw new BadRequestException("cluster not found in this team");
+        if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
+          throw new BadRequestException("form the cluster's swarm before deploying to it");
+        }
+        if (app.source === "GIT") {
+          if (!app.registryId) throw new BadRequestException("a GIT app deployed to a swarm needs a registry (the image must be pullable by every node)");
+          data.pushToRegistry = true; // every node pulls the built image from the registry
+        }
+      }
+      data.clusterId = cfg.clusterId;
+    }
+    if (cfg.replicas !== undefined) {
+      data.replicas = cfg.replicas === null ? null : Math.max(1, Math.floor(cfg.replicas));
+    }
+    await this.prisma.application.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "app.clusterconfig.update", target: id });
+  }
+
   /** Choose the deploy strategy (ROLLING zero-downtime vs RECREATE) and whether a failed
    *  health gate auto-rolls-back to the previous version. */
   async setDeploySettings(
@@ -1701,6 +1841,7 @@ export class ApplicationsService {
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       gpus: app.gpus,
+      replicas: app.replicas,
       dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
       gitToken: this.appGitToken(app),
@@ -1835,6 +1976,8 @@ export class ApplicationsService {
       registryId: app.registryId,
       pushToRegistry: app.pushToRegistry,
       buildServerId: app.buildServerId,
+      clusterId: app.clusterId,
+      replicas: app.replicas,
       deployStrategy: app.deployStrategy,
       rollbackOnFailure: app.rollbackOnFailure,
       // Whether this app will ACTUALLY deploy zero-downtime (rolling) — surfaces the fact

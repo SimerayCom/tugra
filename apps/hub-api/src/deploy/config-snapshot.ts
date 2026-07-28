@@ -21,6 +21,7 @@ export interface ConfigSnapshot {
   memoryMb?: number | null;
   cpus?: number | null;
   gpus?: string | null;
+  replicas?: number | null;
   hostPort?: number | null;
   containerPort?: number | null;
   domain?: string | null;
@@ -60,6 +61,7 @@ const SCALAR_FIELDS = [
   "memoryMb",
   "cpus",
   "gpus",
+  "replicas",
   "hostPort",
   "containerPort",
   "domain",
@@ -89,6 +91,7 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     memoryMb: spec.memoryMb ?? null,
     cpus: spec.cpus ?? null,
     gpus: spec.gpus ?? null,
+    replicas: spec.replicas ?? null,
     hostPort: spec.hostPort ?? null,
     containerPort: spec.containerPort ?? null,
     domain: spec.domain ?? null,

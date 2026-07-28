@@ -51,6 +51,7 @@ function make(opts: {
   swarmStatus?: string;
   swarmManagerId?: string | null;
   casCount?: number;
+  appCount?: number;
   agent?: AgentWsServer;
 } = {}) {
   const cluster = {
@@ -73,6 +74,7 @@ function make(opts: {
       findMany: jest.fn().mockResolvedValue(opts.members ?? []),
       update: serverUpdate,
     },
+    application: { count: jest.fn().mockResolvedValue(opts.appCount ?? 0) },
   } as unknown as PrismaService;
   const access = {
     requirePermission: jest.fn().mockResolvedValue(undefined),
@@ -244,5 +246,16 @@ describe("SwarmService.dissolve", () => {
     const { svc, clusterUpdateMany } = make({ swarmStatus: "NONE", members: [] });
     await svc.dissolve("u1", "c1");
     expect(clusterUpdateMany).not.toHaveBeenCalled(); // returned before the CAS
+  });
+
+  it("refuses to dissolve while apps are still deployed to the cluster's swarm (would strand live services)", async () => {
+    const { svc, clusterUpdateMany } = make({
+      swarmStatus: "ACTIVE",
+      swarmManagerId: "mgr",
+      members: [member({ id: "mgr", swarmRole: "MANAGER" })],
+      appCount: 2,
+    });
+    await expect(svc.dissolve("u1", "c1")).rejects.toBeInstanceOf(ConflictException);
+    expect(clusterUpdateMany).not.toHaveBeenCalled(); // blocked before the DISSOLVING CAS
   });
 });
