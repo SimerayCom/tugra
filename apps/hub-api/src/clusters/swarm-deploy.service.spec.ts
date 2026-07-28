@@ -41,7 +41,8 @@ function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; mana
     opts.sendImpl ??
     jest.fn(async (_serverId: string, _cmd: string, _cap: string) => ({ exitCode: 0, output: "TUGRA_ROLLOUT: converged\nTUGRA_SVC_DIGEST=ghcr.io/org/app@sha256:dd" }));
   const agent = { sendCommand: send } as unknown as AgentWsServer;
-  return { svc: new SwarmDeployService(prisma, agent), send, prisma };
+  const swarmProxy = { ensure: jest.fn().mockResolvedValue(undefined) } as unknown as import("./swarm-proxy.service").SwarmProxyService;
+  return { svc: new SwarmDeployService(prisma, agent, swarmProxy), send, prisma, swarmProxy };
 }
 
 describe("SwarmDeployService.resolveManager", () => {
@@ -110,6 +111,20 @@ describe("SwarmDeployService.deploy", () => {
     const { svc, send } = make();
     await svc.deploy(app({ hostPort: 8080 }), spec({ containerPort: 80 }), "dep1", { timeoutMs: 1000 });
     expect(send.mock.calls[0][1]).toContain("--publish '8080:80'");
+  });
+
+  it("domain app: ensures the swarm proxy and attaches Traefik SERVICE labels (no host publish)", async () => {
+    const { svc, send, swarmProxy } = make();
+    await svc.deploy(
+      app({ hostPort: 8080 }),
+      spec({ domain: "app.example.com", containerPort: 80, certType: "le-http" }),
+      "dep1",
+      { timeoutMs: 1000 },
+    );
+    expect((swarmProxy as unknown as { ensure: jest.Mock }).ensure).toHaveBeenCalledWith("c1");
+    const script = send.mock.calls[0][1] as string;
+    expect(script).toContain("--label 'traefik.enable=true'");
+    expect(script).not.toContain("--publish"); // a routed app goes through Traefik over the overlay, not a host port
   });
 });
 
