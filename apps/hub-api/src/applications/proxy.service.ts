@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
@@ -16,6 +16,17 @@ export class ProxyService {
   ) {}
 
   async ensureProxy(serverId: string): Promise<void> {
+    // Coexistence guard: a swarm manager runs the swarm-mode Traefik on :80/:443. Standing up the classic
+    // per-server proxy here would collide (a later `docker run -p 80:80` fails loudly, or worse silently
+    // half-works). Refuse — this server is dedicated to swarm ingress.
+    const swarmManaged = await this.prisma.cluster.count({
+      where: { swarmManagerId: serverId, swarmStatus: { in: ["ACTIVE", "DEGRADED", "FORMING", "DISSOLVING"] } },
+    });
+    if (swarmManaged > 0) {
+      throw new BadRequestException(
+        "this server is a swarm manager (it runs the cluster's swarm ingress on :80/:443) — domain-routed single-server apps can't be deployed directly here",
+      );
+    }
     const email = this.config.get<string>("ACME_EMAIL");
     const dns = await this.dnsConfig(serverId);
     await this.agentWs.sendCommand(

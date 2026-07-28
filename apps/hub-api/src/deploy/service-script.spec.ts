@@ -85,6 +85,17 @@ describe("service-script builders", () => {
     expect(s).toContain("grep -c '^Running'");
   });
 
+  it("UPDATE re-applies labels/publish/env (a config change on redeploy must take effect, not just the image)", () => {
+    const s = buildServiceDeployScript(opts({ labels: ["traefik.enable=true"], publish: ["8080:80"], env: { FOO: "x" } }));
+    expect(s).toContain("docker service update --detach --image");
+    expect(s).toContain("--label-add 'traefik.enable=true'"); // update variant, not just --label on create
+    expect(s).toContain("--publish-add '8080:80'");
+    expect(s).toContain('set -- "$@" --env-add "$TUGRA_K=$TUGRA_V"'); // env re-applied on update (arg array, space-safe)
+    // create branch still uses the name-only form (values off argv).
+    expect(s).toContain("--env 'FOO'");
+    expect(s).toContain('export "$TUGRA_K=$TUGRA_V"');
+  });
+
   it("publishes routing-mesh ports for domain-less reachability", () => {
     const s = buildServiceDeployScript(opts({ publish: ["8080:80"] }));
     expect(s).toContain("--publish '8080:80'");

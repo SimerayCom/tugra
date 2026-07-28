@@ -82,8 +82,9 @@ function make(opts: {
   } as unknown as TeamAccessService;
   const audit = { log: jest.fn() } as unknown as AuditService;
   const agent = opts.agent ?? agentMock();
-  const svc = new SwarmService(prisma, access, audit, agent);
-  return { svc, prisma, access, audit, agent, clusterUpdate, clusterUpdateMany, serverUpdate };
+  const swarmProxy = { teardown: jest.fn().mockResolvedValue(true) } as unknown as import("./swarm-proxy.service").SwarmProxyService;
+  const svc = new SwarmService(prisma, access, audit, agent, swarmProxy);
+  return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate };
 }
 
 /** Every arg passed to a jest.fn, flattened to a string — for leak assertions. */

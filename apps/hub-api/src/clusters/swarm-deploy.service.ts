@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, ServiceUnavailableException } from "@n
 import type { Application } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { buildBuildOnlyScript, imageRef, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
+import { SwarmProxyService } from "./swarm-proxy.service";
+import { buildBuildOnlyScript, imageRef, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
   SWARM_OVERLAY,
   buildOverlayEnsureScript,
@@ -36,6 +37,7 @@ export class SwarmDeployService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly agentWs: AgentWsServer,
+    private readonly swarmProxy: SwarmProxyService,
   ) {}
 
   /** Resolve the live swarm manager for a cluster, or throw a clear error. DEGRADED is allowed (a live
@@ -98,6 +100,10 @@ export class SwarmDeployService {
       ref = imageRef(spec);
     }
 
+    // A routed (domain) swarm app needs the cluster's swarm-mode Traefik up before its service labels can be
+    // discovered. Ensure it (idempotent; refuses on a classic-proxy collision) before deploying.
+    if (spec.domain) await this.swarmProxy.ensure(app.clusterId!);
+
     const svc = await this.dispatchService(managerId, app, spec, ref, auth, opts.onChunk);
     const output = buildLog ? `${buildLog}\n${svc.output}` : svc.output;
     return { exitCode: svc.exitCode, output, digest: parseServiceImageDigest(output), registryRef };
@@ -114,6 +120,9 @@ export class SwarmDeployService {
     opts: { onChunk?: (c: string) => void } = {},
   ): Promise<{ exitCode: number; output: string; digest: string | null }> {
     const managerId = await this.resolveManager(app.clusterId!);
+    // A routed app needs the swarm-mode Traefik up before rollback too (it may have gone down since the last
+    // deploy, or the manager may have been replaced) — same as deploy().
+    if (spec.domain) await this.swarmProxy.ensure(app.clusterId!);
     const svc = await this.dispatchService(managerId, app, spec, ref, auth, opts.onChunk);
     return { exitCode: svc.exitCode, output: svc.output, digest: parseServiceImageDigest(svc.output) };
   }
@@ -130,9 +139,11 @@ export class SwarmDeployService {
   ): Promise<{ exitCode: number; output: string }> {
     const replicas = Math.max(1, app.replicas ?? 1);
     const pollSec = effectivePollSec(replicas, spec.healthCmd);
-    // A domain-less swarm app is reachable via a routing-mesh published port (any-node:hostPort). Domain
-    // + TLS routing (swarm-mode Traefik) is PhaseB; until then a swarm app with only a domain isn't routed.
-    const publish = app.hostPort ? [`${app.hostPort}:${spec.containerPort ?? 80}`] : [];
+    // A routed (domain) app is reached by the swarm-mode Traefik over the overlay via its SERVICE labels →
+    // no host port. A domain-less app instead publishes a routing-mesh port (reachable on any-node:hostPort).
+    const routed = !!spec.domain;
+    const labels = routed ? traefikLabels(spec) : [];
+    const publish = !routed && app.hostPort ? [`${app.hostPort}:${spec.containerPort ?? 80}`] : [];
     const script = [
       buildOverlayEnsureScript(SWARM_OVERLAY),
       buildServiceDeployScript({
@@ -145,7 +156,7 @@ export class SwarmDeployService {
         memoryMb: spec.memoryMb ?? null,
         cpus: spec.cpus ?? null,
         healthCmd: spec.healthCmd ?? null,
-        labels: [],
+        labels,
         publish,
         pollSec,
       }),

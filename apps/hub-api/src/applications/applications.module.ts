@@ -7,20 +7,19 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { TeamDefaultsModule } from "../teams/team-defaults.module";
 import { CatalogModule } from "../catalog/catalog.module";
+import { ClustersModule } from "../clusters/clusters.module";
 import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
-import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 import { ProxyService } from "./proxy.service";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule],
   controllers: [ApplicationsController],
   providers: [
     ApplicationsService,
-    SwarmDeployService,
     ProxyService,
     AiService,
     PortAllocatorService,

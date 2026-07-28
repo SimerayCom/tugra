@@ -10,6 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { SwarmProxyService } from "./swarm-proxy.service";
 import { isPrivateV4, normalizeIp } from "../common/observed-ip";
 import {
   buildNodeLsScript,
@@ -126,6 +127,7 @@ export class SwarmService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
+    private readonly swarmProxy: SwarmProxyService,
   ) {}
 
   /** Form a swarm: init `managerServerId`, join every other ONLINE member as a worker. Idempotent — safe to
@@ -301,17 +303,29 @@ export class SwarmService {
     // Manager last.
     if (manager) {
       if (manager.status === "ONLINE" && manager.capabilities.includes("swarm")) {
+        // Tear down the swarm-mode Traefik (ingress) BEFORE leaving the swarm. If removal isn't CONFIRMED,
+        // the proxy may still be bound to :80/:443 on this box — which will later look like a free classic
+        // target (the ProxyService guard only knows swarm MANAGERS) — so warn loudly instead of silently.
+        const proxyGone = await this.swarmProxy.teardown(manager.id);
+        if (!proxyGone) abandoned = true;
+        const proxyWarn = proxyGone
+          ? null
+          : "the swarm ingress proxy may STILL be bound to :80/:443 on this host — verify and 'docker service rm tugra-swarm-proxy'";
         const res = await this.run(manager.id, buildSwarmLeaveScript(true)).catch(() => ({ exitCode: 1, output: "" }));
         if (res.exitCode === 0) {
-          await this.markServer(manager.id, { swarmRole: null, swarmNodeId: null, swarmError: null });
+          // Clear the role but preserve the proxy warning (a successful leave must not mask an orphaned proxy).
+          await this.markServer(manager.id, { swarmRole: null, swarmNodeId: null, swarmError: proxyWarn });
         } else {
-          await this.markServer(manager.id, { swarmError: "manager leave failed; local swarm state may remain" });
+          await this.markServer(manager.id, { swarmError: proxyWarn ?? "manager leave failed; local swarm state may remain" });
           abandoned = true;
         }
       } else {
         // Dead-manager abandon path: KEEP its swarmRole/swarmNodeId so a later Form's preflight refuses to
-        // blindly re-add a box that may still be a live manager; the operator clears it by hand (terminal cap).
-        await this.markServer(manager.id, { swarmError: "manager unreachable during dissolve; local swarm not cleaned" });
+        // blindly re-add a box that may still be a live manager; the operator clears it by hand. If it hosted
+        // the ingress proxy, that box may STILL be terminating live HTTPS for customer domains — sharper warning.
+        await this.markServer(manager.id, {
+          swarmError: "manager unreachable during dissolve; it may STILL be serving live HTTPS for your domains — verify and run 'docker swarm leave --force' on it",
+        });
         abandoned = true;
       }
     }

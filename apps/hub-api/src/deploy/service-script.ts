@@ -70,29 +70,40 @@ function healthFlags(healthCmd?: string | null): string[] {
   ];
 }
 
-/** Write the app's env to a 0600 file and load it into the shell env SAFELY, so `--env <KEY>` passes each
- *  value from the environment (never argv). Returns { steps, envFlags } where envFlags is `--env KEY`.
+/**
+ * Env handling for a swarm service. The app's env is written to a 0600 file (KEY=VALUE data) and loaded
+ * SAFELY — the file is NEVER `.`/`source`d (that would execute a value like `X=$(rm -rf /)` as a command =
+ * RCE, and break any value with a space). `read` treats the value as literal text; variable expansion does
+ * not re-evaluate `$()` inside an already-read value, so arbitrary values stay inert.
  *
- *  CRITICAL: the file is KEY=VALUE data, NOT shell code — it must NEVER be `.`/`source`d (that would execute
- *  a value like `X=$(rm -rf /)` as a command = RCE, and silently break any value with a space). We read it
- *  with `read` (which treats the value as literal text) and `export "$k=$v"` (variable expansion does not
- *  re-evaluate `$()` inside the already-read value), so arbitrary values are safe and inert. */
-function envSourceSteps(o: ServiceDeployOpts): { steps: string[]; envFlags: string[] } {
+ *  - create: export the vars, then `--env KEY` (NAME only) so values load from the environment, never argv.
+ *  - update: `docker service update` has no name-only env form, so build `--env-add "$k=$v"` args via
+ *    `set --` (a proper arg array that survives values with spaces). Those values touch argv briefly, but
+ *    they already live in the swarm Raft store — no additional secret exposure. Re-applying env on update
+ *    is what makes an env CHANGE actually take effect (update only mutates the fields you name).
+ */
+function envHelpers(o: ServiceDeployOpts): {
+  writeSteps: string[];
+  createLoad: string[];
+  createFlags: string[];
+  updateBuild: string[];
+} {
   const env = o.env && typeof o.env === "object" ? o.env : {};
   const keys = Object.keys(env);
-  if (keys.length === 0) return { steps: [], envFlags: [] };
+  if (keys.length === 0) return { writeSteps: [], createLoad: [], createFlags: [], updateBuild: [`set --`] };
   const path = envFilePath({ id: o.serviceName });
+  // `|| [ -n "$TUGRA_K" ]` also processes a final line with no trailing newline; IFS='=' splits on the FIRST
+  // '=' only (values may contain further '=').
+  const readHead = `while IFS='=' read -r TUGRA_K TUGRA_V || [ -n "$TUGRA_K" ]; do [ -n "$TUGRA_K" ] &&`;
   return {
-    steps: [
+    writeSteps: [
       `mkdir -p ${ENV_DIR}`,
       `printf %s ${shq(envFileB64(env))} | base64 -d > ${path}`,
       `chmod 600 ${path}`,
-      // `|| [ -n "$TUGRA_K" ]` also processes a final line with no trailing newline. IFS='=' splits on the
-      // FIRST '=' only (values may contain further '='). Never `.`/`source` this file (see the note above).
-      `while IFS='=' read -r TUGRA_K TUGRA_V || [ -n "$TUGRA_K" ]; do [ -n "$TUGRA_K" ] && export "$TUGRA_K=$TUGRA_V"; done < ${path}`,
     ],
-    // Passing the NAME only makes docker read the value from the exported shell env, never from argv (`ps`).
-    envFlags: keys.map((k) => `--env ${shq(k)}`),
+    createLoad: [`${readHead} export "$TUGRA_K=$TUGRA_V"; done < ${path}`],
+    createFlags: keys.map((k) => `--env ${shq(k)}`),
+    updateBuild: [`set --`, `${readHead} set -- "$@" --env-add "$TUGRA_K=$TUGRA_V"; done < ${path}`],
   };
 }
 
@@ -146,9 +157,10 @@ function commonServiceFlags(o: ServiceDeployOpts): string[] {
  */
 export function buildServiceDeployScript(o: ServiceDeployOpts): string {
   const q = shq(o.serviceName);
-  const { steps: envSteps, envFlags } = envSourceSteps(o);
-  const labelFlags = (o.labels ?? []).map((l) => `--label ${shq(l)}`);
-  const publishFlags = (o.publish ?? []).map((p) => `--publish ${shq(p)}`);
+  const env = envHelpers(o);
+  const health = healthFlags(o.healthCmd);
+  const labels = o.labels ?? [];
+  const publish = o.publish ?? [];
 
   const createFlags = [
     `--name ${q}`,
@@ -162,32 +174,41 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     `--restart-window 30s`,
     `--update-parallelism 1`,
     `--update-order start-first`,
-    ...healthFlags(o.healthCmd),
-    ...labelFlags,
-    ...publishFlags,
-    ...envFlags,
+    ...health,
+    ...labels.map((l) => `--label ${shq(l)}`),
+    ...publish.map((p) => `--publish ${shq(p)}`),
+    ...env.createFlags,
     shq(o.ref),
   ].join(" ");
 
-  // Update: image + monitor + failure-action every time (Swarm does NOT remember prior invocations'
-  // flags), plus replicas. Labels/env changes are handled by a full redeploy path in v1.
+  // Update RE-APPLIES the full desired state (`docker service update` only mutates the fields you name), so
+  // a domain/label/env/health/publish CHANGE on a redeploy actually takes effect — not just the image. Uses
+  // the -add variants + env args from `set --` (built by env.updateBuild). monitor+failure-action every time
+  // (Swarm does NOT remember prior invocations' flags). Note: removing a domain/env-key entirely leaves the
+  // stale label/var behind (v1) — a fresh recreate clears it.
   const updateFlags = [
     `--image ${shq(o.ref)}`,
     ...commonServiceFlags(o),
     `--replicas ${o.replicas}`,
+    ...health,
+    ...labels.map((l) => `--label-add ${shq(l)}`),
+    ...publish.map((p) => `--publish-add ${shq(p)}`),
+    `"$@"`, // --env-add args built by env.updateBuild
     q,
   ].join(" ");
 
   return [
     "set +e",
     ...registryLoginPrelude(o.registryAuth),
-    ...envSteps,
+    ...env.writeSteps,
     `if docker service inspect ${q} >/dev/null 2>&1; then`,
     `  TUGRA_MODE=update`,
+    ...env.updateBuild.map((s) => `  ${s}`),
     `  docker service update --detach ${updateFlags}`,
     `  TUGRA_RC=$?`,
     `else`,
     `  TUGRA_MODE=create`,
+    ...env.createLoad.map((s) => `  ${s}`),
     `  docker service create --detach ${createFlags}`,
     `  TUGRA_RC=$?`,
     `fi`,
