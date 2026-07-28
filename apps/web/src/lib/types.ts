@@ -116,6 +116,32 @@ export interface ClusterDetail extends Cluster {
   health: ClusterHealth;
 }
 
+// ── Docker Swarm formation (Phase2) ──
+export type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING";
+export type SwarmRole = "MANAGER" | "WORKER";
+export interface SwarmNodeView {
+  serverId: string;
+  name: string;
+  status: string;
+  swarmRole: SwarmRole | null;
+  swarmError: string | null;
+}
+export interface SwarmLiveNode {
+  id: string;
+  hostname: string;
+  role: string;
+  state: string;
+  availability: string;
+}
+export interface SwarmView {
+  clusterId: string;
+  swarmStatus: SwarmStatus;
+  managerServerId: string | null;
+  swarmLastError: string | null;
+  nodes: SwarmNodeView[];
+  live: SwarmLiveNode[] | null;
+}
+
 /** Public onboarding state (GET /instance/status) — read before login to gate the welcome flow. */
 export interface InstanceStatus {
   /** True once the first user has completed setup; false → a fresh install needs the owner account. */

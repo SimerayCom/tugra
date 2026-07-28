@@ -20,6 +20,23 @@ enum ServerStatus {
   OFFLINE
 }
 
+// Docker Swarm formation state of a Cluster (Phase2). NONE = plain group (Phase1). FORMING = a form/dissolve
+// op is in flight (concurrency guard via CAS). ACTIVE = manager + every intended worker joined. DEGRADED =
+// a real, working swarm short of its desired membership (re-run Form to reconcile). DISSOLVING = teardown.
+enum SwarmStatus {
+  NONE
+  FORMING
+  ACTIVE
+  DEGRADED
+  DISSOLVING
+}
+
+// A server's role in its cluster's swarm (null = not in a swarm).
+enum SwarmRole {
+  MANAGER
+  WORKER
+}
+
 model User {
   id            String                  @id @default(cuid())
   email         String                  @unique
@@ -263,6 +280,11 @@ model Server {
   // cluster frees its servers rather than removing them. A server belongs to at most one cluster.
   cluster              Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId            String?
+  // Docker Swarm formation (Phase2). Role in the cluster's swarm (null = not joined); the docker node id
+  // (for later promote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
+  swarmRole            SwarmRole?
+  swarmNodeId          String?
+  swarmError           String?
   tags                 String[]     @default([])
   // Granted agent capabilities the hub will sign commands for. Enforced verbatim; empty = none
   // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
@@ -296,6 +318,12 @@ model Cluster {
   name        String
   description String?
   servers     Server[]
+  // Docker Swarm formation (Phase2). swarmManagerId is a loose FK to the manager Server.id (resolved in
+  // service code, matching Application.serverId convention — no @relation to avoid a second Server↔Cluster
+  // relation). swarmLastError is a sanitized, human-readable last error — NEVER raw command output/tokens.
+  swarmStatus    SwarmStatus @default(NONE)
+  swarmManagerId String?
+  swarmLastError String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

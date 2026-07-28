@@ -176,6 +176,16 @@ describe("ServersService.deleteForUser (destroy VM)", () => {
     expect(destroyVm).not.toHaveBeenCalled();
     expect(prisma.server!.delete as jest.Mock).toHaveBeenCalled();
   });
+
+  it("refuses to delete a server still joined to a cluster's swarm, and never deletes the row", async () => {
+    const prisma = {
+      ...owner(),
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "teamA", swarmRole: "MANAGER", provider: null, providerServerId: null, cloudCredentialId: null }), delete: jest.fn().mockResolvedValue(undefined) },
+    } as unknown as PrismaService;
+    const { svc } = svcForDelete(prisma);
+    await expect(svc.deleteForUser("u1", "s1")).rejects.toThrow(/swarm/i);
+    expect(prisma.server!.delete as jest.Mock).not.toHaveBeenCalled();
+  });
 });
 
 describe("ServersService.enroll (token validation)", () => {

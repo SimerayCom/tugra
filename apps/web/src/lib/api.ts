@@ -9,6 +9,7 @@ import type {
   LicenseStatus,
   Cluster,
   ClusterDetail,
+  SwarmView,
   SavedView,
   Application,
   AppVolume,
@@ -392,6 +393,16 @@ export const api = {
   },
   setClusterServers(id: string, serverIds: string[]) {
     return apiFetch<ClusterDetail>(`/clusters/${id}/servers`, { method: "PUT", body: JSON.stringify({ serverIds }) });
+  },
+  // Docker Swarm formation (Phase2): form the swarm, read live status, dissolve it.
+  formSwarm(id: string, body: { managerServerId: string; advertiseAddr?: string }) {
+    return apiFetch<SwarmView>(`/clusters/${id}/swarm`, { method: "POST", body: JSON.stringify(body) });
+  },
+  getSwarmStatus(id: string) {
+    return apiFetch<SwarmView>(`/clusters/${id}/swarm`);
+  },
+  dissolveSwarm(id: string) {
+    return apiFetch<SwarmView>(`/clusters/${id}/swarm`, { method: "DELETE" });
   },
 
   getMetrics(id: string, limit = 60) {

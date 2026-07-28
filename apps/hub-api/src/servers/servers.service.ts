@@ -38,7 +38,10 @@ const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 // (interactive shell), which is opt-in (least privilege). Legacy servers were backfilled
 // to the full set by the migration, so an empty grant now safely means "deny all" (fail-safe).
 const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"];
-const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
+// "swarm" (Docker Swarm formation) is opt-in like "terminal": granted explicitly per server, NEVER in
+// DEFAULT_CAPABILITIES and never backfilled — joining a swarm changes a box's trust topology (it accepts
+// raft/gossip that can affect other nodes), a bigger step than deploying one app on it.
+const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs", "swarm"];
 
 export const ServerViewSchema = z.object({
   id: z.string(),
@@ -261,6 +264,12 @@ export class ServersService {
     const server = await this.prisma.server.findUnique({ where: { id } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
+    // Refuse to delete a server that is still a node in a cluster's Docker Swarm — that would leave a live
+    // swarm node running with no Tugra record (and dangle Cluster.swarmManagerId if it's the manager).
+    // Dissolve the swarm (or leave the node) first.
+    if (server.swarmRole) {
+      throw new ConflictException("this server is part of a cluster's swarm; dissolve it (or leave the node) first");
+    }
     // Release any Cloudflare Tunnel resources BEFORE the cascade drops the row, so a deleted
     // server never leaks a live CF tunnel + wildcard CNAME. Best-effort; lazy token avoids a cycle.
     await this.moduleRef

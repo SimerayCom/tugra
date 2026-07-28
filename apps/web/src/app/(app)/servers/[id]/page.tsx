@@ -488,7 +488,7 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
   );
 }
 
-const CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
+const CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs", "swarm"];
 
 function CapabilitiesCard({ id, server }: { id: string; server: ServerView }) {
   const t = useT();

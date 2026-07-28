@@ -28,5 +28,20 @@
   "delete": "Delete cluster",
   "deleteConfirm": "Delete this cluster? Its servers are kept (only the grouping is removed).",
   "deleteFailed": "Couldn't delete the cluster.",
-  "nodeCount": "{n} servers"
+  "nodeCount": "{n} servers",
+  "refresh": "Refresh",
+  "swarm": "Docker Swarm",
+  "swarmHint": "Turn this cluster into a Docker Swarm: one manager, the rest join as workers.",
+  "swarmNone": "No swarm yet. Form one to run multi-node workloads across these servers.",
+  "formSwarm": "Form swarm",
+  "formSwarmHint": "The chosen server becomes the swarm manager; every other online member joins as a worker.",
+  "dissolveSwarm": "Dissolve swarm",
+  "dissolveConfirm": "Dissolve this swarm? Every node leaves the swarm (your deployed apps are not removed).",
+  "swarmManager": "Manager",
+  "swarmLive": "Live nodes",
+  "swarmActionFailed": "The swarm operation failed.",
+  "noOnlineMembers": "No online members",
+  "advertiseAddr": "Advertise address (optional)",
+  "advertiseAddrPlaceholder": "auto (manager's private IP)",
+  "swarmPortsWarn": "Requires open ports between members: TCP 2377, TCP/UDP 7946, UDP 4789. Grant the 'swarm' capability to each server first."
 }
