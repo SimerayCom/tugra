@@ -45,6 +45,8 @@ export interface AppSpec {
   cpus?: number | null;
   /** docker `--gpus` value (e.g. "all", "1", "device=0,1"); requires the NVIDIA container runtime on the host. */
   gpus?: string | null;
+  /** Swarm service replica count (Phase3, only meaningful when deployed to a cluster). null = classic single container. */
+  replicas?: number | null;
   volumes?: AppVolume[] | null;
   gitToken?: string | null;
   registryAuth?: RegistryAuth | null;

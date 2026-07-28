@@ -59,6 +59,8 @@ import {
   SetHealthCheckSchema,
   SetBuildConfigInput,
   SetBuildConfigSchema,
+  SetClusterConfigInput,
+  SetClusterConfigSchema,
   SetDeploySettingsInput,
   SetDeploySettingsSchema,
   SetVolumesInput,
@@ -331,6 +333,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetBuildConfigSchema)) body: SetBuildConfigInput,
   ) {
     await this.apps.setBuildConfig(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/cluster-config")
+  @HttpCode(200)
+  @ApiZodBody(SetClusterConfigSchema)
+  async setClusterConfig(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetClusterConfigSchema)) body: SetClusterConfigInput,
+  ) {
+    await this.apps.setClusterConfig(user.userId, id, body);
     return { ok: true };
   }
 

@@ -263,6 +263,14 @@ export class SwarmService {
     const cluster = await this.requireWrite(userId, id);
     if (cluster.swarmStatus === "NONE") return this.view(id); // idempotent
 
+    // Dissolving destroys the swarm's Raft store → every `docker service` on it vanishes cluster-wide, but
+    // the Application rows would still point here (and still read RUNNING). Refuse until those apps are
+    // removed or moved back to a single server (Phase3 apps set Application.clusterId to this cluster).
+    const appCount = await this.prisma.application.count({ where: { clusterId: id } });
+    if (appCount > 0) {
+      throw new ConflictException(`remove or reassign the ${appCount} app(s) deployed to this cluster's swarm before dissolving`);
+    }
+
     const cas = await this.prisma.cluster.updateMany({
       where: { id, swarmStatus: { in: ["ACTIVE", "DEGRADED", "FORMING"] } },
       data: { swarmStatus: "DISSOLVING" },

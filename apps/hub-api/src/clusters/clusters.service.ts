@@ -22,6 +22,7 @@ export interface ClusterView {
   name: string;
   description: string | null;
   nodeCount: number;
+  swarmStatus: string;
   canWrite: boolean;
   createdAt: Date;
 }
@@ -60,6 +61,7 @@ export class ClustersService {
       name: r.name,
       description: r.description,
       nodeCount: r._count.servers,
+      swarmStatus: r.swarmStatus,
       canWrite: perms.get(r.teamId)?.has("servers:manage") ?? false,
       createdAt: r.createdAt,
     }));
@@ -83,6 +85,7 @@ export class ClustersService {
       name: cluster.name,
       description: cluster.description,
       nodeCount: servers.length,
+      swarmStatus: cluster.swarmStatus,
       canWrite: perms?.has("servers:manage") ?? false,
       createdAt: cluster.createdAt,
       servers,
@@ -104,7 +107,7 @@ export class ClustersService {
       throw e;
     }
     await this.audit.log({ actor: userId, action: "cluster.create", target: row.id });
-    return { id: row.id, teamId: row.teamId, name: row.name, description: row.description, nodeCount: 0, canWrite: true, createdAt: row.createdAt };
+    return { id: row.id, teamId: row.teamId, name: row.name, description: row.description, nodeCount: 0, swarmStatus: row.swarmStatus, canWrite: true, createdAt: row.createdAt };
   }
 
   async update(userId: string, id: string, dto: UpdateClusterInput): Promise<ClusterDetail> {

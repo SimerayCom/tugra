@@ -712,6 +712,9 @@ export const api = {
   setAppDeploySettings(id: string, cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/deploy-settings`, { method: "PUT", body: JSON.stringify(cfg) });
   },
+  setAppClusterConfig(id: string, cfg: { clusterId?: string | null; replicas?: number | null }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/cluster-config`, { method: "PUT", body: JSON.stringify(cfg) });
+  },
 
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {

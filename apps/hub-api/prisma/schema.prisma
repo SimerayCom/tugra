@@ -318,6 +318,7 @@ model Cluster {
   name        String
   description String?
   servers     Server[]
+  applications Application[] // apps deployed as swarm services onto this cluster (Phase3)
   // Docker Swarm formation (Phase2). swarmManagerId is a loose FK to the manager Server.id (resolved in
   // service code, matching Application.serverId convention — no @relation to avoid a second Server↔Cluster
   // relation). swarmLastError is a sanitized, human-readable last error — NEVER raw command output/tokens.
@@ -734,6 +735,13 @@ model Application {
   environmentId  String
   serverId       String
   buildServerId  String?      // optional separate build server (build+push there, pull+run on serverId)
+  // Swarm service deploy (Phase3): when clusterId is set the app deploys as a `docker service --replicas N`
+  // onto this cluster's swarm (commands target cluster.swarmManagerId, re-resolved fresh — never snapshotted).
+  // serverId stays required as the ingress/monitoring anchor. SetNull: deleting the cluster falls the app
+  // back to classic single-server deploy rather than deleting it.
+  cluster        Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  clusterId      String?
+  replicas       Int?         // swarm service replica count (null = classic single-server deploy)
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
   source         AppSource    @default(IMAGE)

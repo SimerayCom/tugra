@@ -126,6 +126,12 @@ function make(
       all: () => TEMPLATES,
     } as unknown as TemplateCatalogService,
     {
+      deploy: jest.fn().mockResolvedValue({ exitCode: 0, output: "", digest: null, registryRef: null }),
+      scale: jest.fn().mockResolvedValue(undefined),
+      restart: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
+      remove: jest.fn().mockResolvedValue(undefined),
+    } as unknown as import("../clusters/swarm-deploy.service").SwarmDeployService,
+    {
       get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
     } as unknown as import("@nestjs/core").ModuleRef,
   );

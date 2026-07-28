@@ -1,0 +1,149 @@
+import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
+import { SwarmDeployService, effectivePollSec } from "./swarm-deploy.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import type { Application } from "@prisma/client";
+import type { AppSpec } from "../deploy/deploy-script";
+
+function app(over: Partial<Application> = {}): Application {
+  return {
+    id: "abc",
+    clusterId: "c1",
+    source: "IMAGE",
+    image: "ghcr.io/org/app:1",
+    buildServerId: null,
+    hostPort: null,
+    replicas: 3,
+    healthCmd: null,
+    ...(over as object),
+  } as unknown as Application;
+}
+
+function spec(over: Partial<AppSpec> = {}): AppSpec {
+  return {
+    id: "abc",
+    source: "IMAGE",
+    image: "ghcr.io/org/app:1",
+    env: {},
+    containerPort: 80,
+    hostPort: null,
+    ...over,
+  } as AppSpec;
+}
+
+function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; sendImpl?: jest.Mock } = {}) {
+  const cluster = { swarmStatus: opts.swarmStatus ?? "ACTIVE", swarmManagerId: opts.swarmManagerId ?? "mgr" };
+  const prisma = {
+    cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
+    server: { findUnique: jest.fn().mockResolvedValue({ status: opts.managerStatus ?? "ONLINE" }) },
+  } as unknown as PrismaService;
+  const send =
+    opts.sendImpl ??
+    jest.fn(async (_serverId: string, _cmd: string, _cap: string) => ({ exitCode: 0, output: "TUGRA_ROLLOUT: converged\nTUGRA_SVC_DIGEST=ghcr.io/org/app@sha256:dd" }));
+  const agent = { sendCommand: send } as unknown as AgentWsServer;
+  return { svc: new SwarmDeployService(prisma, agent), send, prisma };
+}
+
+describe("SwarmDeployService.resolveManager", () => {
+  it("returns the manager id for an ACTIVE (or DEGRADED) swarm", async () => {
+    expect(await make({ swarmStatus: "ACTIVE" }).svc.resolveManager("c1")).toBe("mgr");
+    expect(await make({ swarmStatus: "DEGRADED" }).svc.resolveManager("c1")).toBe("mgr");
+  });
+  it("blocks NONE / FORMING / DISSOLVING", async () => {
+    for (const st of ["NONE", "FORMING", "DISSOLVING"]) {
+      await expect(make({ swarmStatus: st }).svc.resolveManager("c1")).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+  it("errors when the manager is offline", async () => {
+    await expect(make({ managerStatus: "OFFLINE" }).svc.resolveManager("c1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
+
+describe("SwarmDeployService.deploy", () => {
+  it("IMAGE: ensures the overlay + deploys the service on the MANAGER under the swarm capability", async () => {
+    const { svc, send } = make();
+    const r = await svc.deploy(app(), spec(), "dep1", { timeoutMs: 300_000 });
+    expect(send).toHaveBeenCalledTimes(1); // no separate build step for IMAGE
+    const [serverId, script, cap] = send.mock.calls[0];
+    expect(serverId).toBe("mgr");
+    expect(cap).toBe("swarm");
+    expect(script).toContain("docker network create -d overlay --attachable 'tugra-swarm'");
+    expect(script).toContain("docker service create --detach");
+    expect(script).toContain("'ghcr.io/org/app:1'");
+    expect(r).toMatchObject({ exitCode: 0, digest: "ghcr.io/org/app@sha256:dd", registryRef: null });
+  });
+
+  it("GIT: builds+pushes on the build target first, then deploys the pushed ref on the manager", async () => {
+    const send = jest.fn(async (serverId: string, _cmd: string, _cap: string) =>
+      serverId === "build1"
+        ? { exitCode: 0, output: "built" }
+        : { exitCode: 0, output: "TUGRA_ROLLOUT: converged" },
+    );
+    const { svc } = make({ sendImpl: send });
+    await svc.deploy(
+      app({ source: "GIT", buildServerId: "build1" }),
+      spec({ source: "GIT", registryPush: { auth: { user: "u", token: "t" }, tag: "reg/tugra_abc:dep1" } }),
+      "dep1",
+      { timeoutMs: 300_000 },
+    );
+    expect(send.mock.calls[0][0]).toBe("build1"); // build first
+    expect(send.mock.calls[0][2]).toBe("deploy");
+    expect(send.mock.calls[1][0]).toBe("mgr"); // then service on manager
+    expect(send.mock.calls[1][2]).toBe("swarm");
+    expect(send.mock.calls[1][1]).toContain("'reg/tugra_abc:dep1'"); // the pushed ref
+  });
+
+  it("GIT without a registry is rejected (a swarm needs an all-nodes-pullable image)", async () => {
+    const { svc } = make();
+    await expect(svc.deploy(app({ source: "GIT" }), spec({ source: "GIT" }), "dep1", { timeoutMs: 1000 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("propagates a build failure", async () => {
+    const send = jest.fn(async (_serverId: string, _cmd: string, _cap: string) => ({ exitCode: 1, output: "boom" }));
+    const { svc } = make({ sendImpl: send });
+    await expect(
+      svc.deploy(app({ source: "GIT" }), spec({ source: "GIT", registryPush: { auth: { user: "u", token: "t" }, tag: "reg/x:1" } }), "dep1", { timeoutMs: 1000 }),
+    ).rejects.toThrow(/build failed/);
+  });
+
+  it("publishes a routing-mesh port for a domain-less app with a host port", async () => {
+    const { svc, send } = make();
+    await svc.deploy(app({ hostPort: 8080 }), spec({ containerPort: 80 }), "dep1", { timeoutMs: 1000 });
+    expect(send.mock.calls[0][1]).toContain("--publish '8080:80'");
+  });
+});
+
+describe("SwarmDeployService.rollbackTo", () => {
+  it("updates the service to a prior ref on the manager WITHOUT rebuilding (single dispatch)", async () => {
+    const { svc, send } = make();
+    const r = await svc.rollbackTo(app({ source: "GIT" }), spec({ source: "GIT" }), "reg/tugra_abc:old", { user: "u", token: "t" }, {});
+    expect(send).toHaveBeenCalledTimes(1); // no build step — just the service update
+    const [serverId, script, cap] = send.mock.calls[0];
+    expect(serverId).toBe("mgr");
+    expect(cap).toBe("swarm");
+    expect(script).toContain("'reg/tugra_abc:old'");
+    expect(r.exitCode).toBe(0);
+  });
+});
+
+describe("effectivePollSec", () => {
+  it("scales with replica count (a flat timeout would falsely FAIL big rollouts)", () => {
+    expect(effectivePollSec(1, null)).toBeLessThan(effectivePollSec(5, null));
+    expect(effectivePollSec(3, "curl -f x")).toBeGreaterThan(effectivePollSec(3, null)); // health widens the monitor
+    expect(effectivePollSec(1000, null)).toBeLessThanOrEqual(900); // capped
+  });
+});
+
+describe("SwarmDeployService lifecycle", () => {
+  it("scale / remove / status / logs dispatch the right script to the manager under swarm cap", async () => {
+    const { svc, send } = make();
+    await svc.scale(app(), 0);
+    expect(send.mock.calls[0]).toEqual(["mgr", "docker service scale --detach 'tugra_abc'=0", "swarm"]);
+    await svc.remove(app());
+    expect(send.mock.calls[1][1]).toBe("docker service rm 'tugra_abc' 2>/dev/null || true");
+    await svc.status(app());
+    expect(send.mock.calls[2][1]).toContain("docker service ps 'tugra_abc'");
+    await svc.logs(app(), 50);
+    expect(send.mock.calls[3][1]).toBe("docker service logs --tail 50 'tugra_abc'");
+  });
+});
