@@ -12,7 +12,15 @@ import { TextInput } from "../../../../components/form";
 import { useConfirm } from "../../../../components/confirm";
 import { useToast } from "../../../../components/toast";
 import { BulkRunModal } from "../../../../components/bulk-run-modal";
-import type { ClusterDetail } from "../../../../lib/types";
+import type { ClusterDetail, SwarmStatus } from "../../../../lib/types";
+
+const SWARM_COLOR: Record<SwarmStatus, string> = {
+  NONE: "var(--c-tx3)",
+  FORMING: "var(--c-am)",
+  ACTIVE: "var(--c-g)",
+  DEGRADED: "var(--c-am)",
+  DISSOLVING: "var(--c-am)",
+};
 
 function StatCard({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
   return (
@@ -36,6 +44,17 @@ export default function ClusterDetailPage() {
   const [managing, setManaging] = useState(false);
   const [running, setRunning] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [forming, setForming] = useState(false);
+
+  const { data: swarm, isLoading: swarmLoading, refetch: refetchSwarm, isRefetching: swarmRefetching } = useQuery({
+    queryKey: ["swarm", id],
+    queryFn: () => api.getSwarmStatus(id),
+  });
+  const dissolve = useMutation({
+    mutationFn: () => api.dissolveSwarm(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["swarm", id] }); qc.invalidateQueries({ queryKey: ["cluster", id] }); },
+    onError: (e) => toast(e instanceof Error ? e.message : t("clusters.swarmActionFailed"), "error"),
+  });
 
   const del = useMutation({
     mutationFn: () => api.deleteCluster(id),
@@ -106,9 +125,79 @@ export default function ClusterDetailPage() {
         )}
       </Card>
 
+      <Card style={{ padding: 18, marginTop: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontWeight: 600 }}>{t("clusters.swarm")}</div>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 2 }}>{t("clusters.swarmHint")}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {swarm && swarm.swarmStatus !== "NONE" && (
+              <Btn variant="ghost" disabled={swarmRefetching} onClick={() => refetchSwarm()}>{t("clusters.refresh")}</Btn>
+            )}
+            {cluster.canWrite && swarm?.swarmStatus === "NONE" && memberIds.length > 0 && (
+              <Btn onClick={() => setForming(true)}>{t("clusters.formSwarm")}</Btn>
+            )}
+            {cluster.canWrite && swarm && swarm.swarmStatus !== "NONE" && (
+              <Btn
+                variant="danger"
+                disabled={dissolve.isPending}
+                onClick={async () => {
+                  if (await confirm({ body: t("clusters.dissolveConfirm"), danger: true })) dissolve.mutate();
+                }}
+              >
+                {t("clusters.dissolveSwarm")}
+              </Btn>
+            )}
+          </div>
+        </div>
+        {swarmLoading || !swarm ? (
+          <Spinner />
+        ) : swarm.swarmStatus === "NONE" ? (
+          <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("clusters.swarmNone")}</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: SWARM_COLOR[swarm.swarmStatus] }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: SWARM_COLOR[swarm.swarmStatus] }} />
+                {swarm.swarmStatus}
+              </span>
+              {swarm.managerServerId && (
+                <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+                  {t("clusters.swarmManager")}: {cluster.servers.find((s) => s.id === swarm.managerServerId)?.name ?? swarm.managerServerId}
+                </span>
+              )}
+            </div>
+            {swarm.swarmLastError && (
+              <div style={{ fontSize: 12, color: "var(--c-am)", background: "var(--c-bg2)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 10px" }}>
+                {swarm.swarmLastError}
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {swarm.nodes.map((n) => (
+                <div key={n.serverId} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: n.swarmRole === "MANAGER" ? "var(--c-a)" : n.swarmRole === "WORKER" ? "var(--c-tx2)" : "var(--c-tx3)", minWidth: 60 }}>
+                    {n.swarmRole ?? "—"}
+                  </span>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</span>
+                  {n.swarmError && <span style={{ fontSize: 12, color: "var(--c-r)" }}>{n.swarmError}</span>}
+                  <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--c-tx3)" }}>{n.status}</span>
+                </div>
+              ))}
+            </div>
+            {swarm.live && swarm.live.length > 0 && (
+              <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>
+                {t("clusters.swarmLive")}: {swarm.live.map((l) => `${l.hostname} (${l.role}/${l.state})`).join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
       {managing && <ManageMembersModal cluster={cluster} onClose={() => setManaging(false)} />}
       {renaming && <RenameModal cluster={cluster} onClose={() => setRenaming(false)} />}
       {running && <ClusterRunModal cluster={cluster} memberIds={memberIds} onClose={() => setRunning(false)} />}
+      {forming && <FormSwarmModal cluster={cluster} onClose={() => setForming(false)} />}
     </div>
   );
 }
@@ -184,4 +273,49 @@ function ClusterRunModal({ cluster, memberIds, onClose }: { cluster: ClusterDeta
     );
   }
   return <BulkRunModal servers={allServers.filter((s) => s.teamId === cluster.teamId)} selectedIds={memberIds} onClose={onClose} />;
+}
+
+/** Pick a manager (from the online members) and optionally override the advertise address, then form the
+ *  swarm. Every other online member joins as a worker. */
+function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose: () => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const online = cluster.servers.filter((s) => s.status === "ONLINE");
+  const [managerServerId, setManagerServerId] = useState(online[0]?.id ?? "");
+  const [advertiseAddr, setAdvertiseAddr] = useState("");
+  const form = useMutation({
+    mutationFn: () => api.formSwarm(cluster.id, { managerServerId, advertiseAddr: advertiseAddr.trim() || undefined }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
+      qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
+      onClose();
+    },
+  });
+  return (
+    <Modal onClose={onClose} cardStyle={{ width: 460, maxWidth: "92vw" }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("clusters.formSwarm")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("clusters.formSwarmHint")}</div>
+      <label style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.swarmManager")}</label>
+      <select
+        value={managerServerId}
+        onChange={(e) => setManagerServerId(e.target.value)}
+        style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)", background: "var(--c-bg)", color: "var(--c-tx)" }}
+      >
+        {online.length === 0 && <option value="">{t("clusters.noOnlineMembers")}</option>}
+        {online.map((s) => (
+          <option key={s.id} value={s.id}>{s.name}</option>
+        ))}
+      </select>
+      <div style={{ marginTop: 12 }}>
+        <label style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.advertiseAddr")}</label>
+        <TextInput value={advertiseAddr} onChange={(e) => setAdvertiseAddr(e.target.value)} placeholder={t("clusters.advertiseAddrPlaceholder")} />
+      </div>
+      <div style={{ fontSize: 11, color: "var(--c-am)", marginTop: 10 }}>{t("clusters.swarmPortsWarn")}</div>
+      {form.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{form.error instanceof Error ? form.error.message : t("clusters.swarmActionFailed")}</div>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+        <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
+        <Btn onClick={() => form.mutate()} disabled={form.isPending || !managerServerId}>{form.isPending ? "…" : t("clusters.formSwarm")}</Btn>
+      </div>
+    </Modal>
+  );
 }

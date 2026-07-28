@@ -1,0 +1,71 @@
+import {
+  buildSwarmInfoScript,
+  buildSwarmInitScript,
+  buildSwarmJoinTokenScript,
+  buildSwarmJoinScript,
+  buildSwarmLeaveScript,
+  buildNodeLsScript,
+  buildSwarmTokenRotateScript,
+  SWARM_JOIN_TIMEOUT_SEC,
+} from "./swarm-script";
+
+describe("swarm-script builders", () => {
+  it("info script queries the local swarm state as JSON", () => {
+    expect(buildSwarmInfoScript()).toBe("docker info --format '{{json .Swarm}}'");
+  });
+
+  it("init advertises a validated IP and pins the listen addr to the mgmt port", () => {
+    const s = buildSwarmInitScript("10.0.0.5");
+    expect(s).toContain("docker swarm init");
+    expect(s).toContain("--advertise-addr '10.0.0.5'");
+    expect(s).toContain("--listen-addr '0.0.0.0:2377'");
+  });
+
+  it("init accepts an IPv6 literal", () => {
+    expect(buildSwarmInitScript("2001:db8::1")).toContain("--advertise-addr '2001:db8::1'");
+  });
+
+  it("init THROWS on a non-IP advertise addr (injection / garbage) — before any agent sees it", () => {
+    expect(() => buildSwarmInitScript("10.0.0.1; rm -rf /")).toThrow(/IP literal/);
+    expect(() => buildSwarmInitScript("evil\nhost")).toThrow(/IP literal/);
+    expect(() => buildSwarmInitScript("notanip")).toThrow(/IP literal/);
+    expect(() => buildSwarmInitScript("")).toThrow(/IP literal/);
+  });
+
+  it("join-token requests exactly the role asked for (worker is what the service uses)", () => {
+    expect(buildSwarmJoinTokenScript("worker")).toBe("docker swarm join-token -q worker");
+    expect(buildSwarmJoinTokenScript("manager")).toBe("docker swarm join-token -q manager");
+  });
+
+  it("join is time-bounded, quotes the token, and dials manager:2377", () => {
+    const s = buildSwarmJoinScript("SWMTKN-1-abc", "10.0.0.5");
+    expect(s).toContain(`timeout ${SWARM_JOIN_TIMEOUT_SEC} docker swarm join`);
+    expect(s).toContain("--token 'SWMTKN-1-abc'");
+    expect(s).toContain("'10.0.0.5:2377'");
+  });
+
+  it("join never emits an unquoted token (shell-injection via a crafted token is neutralized)", () => {
+    const s = buildSwarmJoinScript("x'; rm -rf / #", "10.0.0.5");
+    // The single quote is escaped to '\'' — the token stays a single shell word; `; rm` never runs.
+    expect(s).toContain("--token 'x'\\''; rm -rf / #'");
+    expect(s).not.toContain("--token x'; rm");
+  });
+
+  it("join THROWS on a non-IP manager addr", () => {
+    expect(() => buildSwarmJoinScript("tok", "10.0.0.5 && evil")).toThrow(/IP literal/);
+    expect(() => buildSwarmJoinScript("tok", "")).toThrow(/IP literal/);
+  });
+
+  it("leave: plain for workers, --force for the manager", () => {
+    expect(buildSwarmLeaveScript(false)).toBe("docker swarm leave");
+    expect(buildSwarmLeaveScript(true)).toBe("docker swarm leave --force");
+  });
+
+  it("node ls emits one JSON object per line for reconcile", () => {
+    expect(buildNodeLsScript()).toBe("docker node ls --format '{{json .}}'");
+  });
+
+  it("token rotate invalidates the worker join token", () => {
+    expect(buildSwarmTokenRotateScript("worker")).toBe("docker swarm join-token --rotate -q worker");
+  });
+});

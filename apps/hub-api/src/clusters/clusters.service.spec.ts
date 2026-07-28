@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 
-const CLUSTER = { id: "c1", teamId: "t1", name: "eu-west", description: null, createdAt: new Date() };
+const CLUSTER = { id: "c1", teamId: "t1", name: "eu-west", description: null, swarmStatus: "NONE", createdAt: new Date() };
 
 function p2002() {
   return new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "6" });
@@ -107,10 +107,29 @@ describe("ClustersService", () => {
     expect(prisma.server!.updateMany).not.toHaveBeenCalled();
   });
 
+  it("setServers refuses to drop a swarm-joined node while a swarm is formed (409), assigns nothing", async () => {
+    const { svc, prisma } = make({
+      cluster: { findUnique: jest.fn().mockResolvedValue({ ...CLUSTER, swarmStatus: "ACTIVE" }) },
+      server: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([{ id: "joined1" }]), // a still-joined member being dropped
+        updateMany: jest.fn(),
+      },
+    });
+    await expect(svc.setServers("u1", "c1", { serverIds: ["other"] })).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.server!.updateMany).not.toHaveBeenCalled();
+  });
+
   it("remove deletes the cluster (members freed via SetNull)", async () => {
     const { svc, prisma } = make();
     await svc.remove("u1", "c1");
     expect(prisma.cluster!.delete).toHaveBeenCalledWith({ where: { id: "c1" } });
+  });
+
+  it("remove refuses (409) while a swarm is still formed, and never deletes", async () => {
+    const { svc, prisma } = make({ cluster: { findUnique: jest.fn().mockResolvedValue({ ...CLUSTER, swarmStatus: "ACTIVE" }), delete: jest.fn() } });
+    await expect(svc.remove("u1", "c1")).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.cluster!.delete).not.toHaveBeenCalled();
   });
 
   it("list is scoped to the user's teams", async () => {

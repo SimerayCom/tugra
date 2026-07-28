@@ -14711,6 +14711,111 @@
           "clusters"
         ]
       }
+    },
+    "/api/v1/clusters/{id}/swarm": {
+      "post": {
+        "operationId": "ClustersController_formSwarm",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "managerServerId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "advertiseAddr": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 45
+                  }
+                },
+                "required": [
+                  "managerServerId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      },
+      "get": {
+        "operationId": "ClustersController_swarmStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      },
+      "delete": {
+        "operationId": "ClustersController_dissolveSwarm",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      }
     }
   },
   "info": {

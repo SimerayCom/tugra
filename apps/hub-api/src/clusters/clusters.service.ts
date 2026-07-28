@@ -126,6 +126,12 @@ export class ClustersService {
 
   async remove(userId: string, id: string): Promise<void> {
     const cluster = await this.requireWrite(userId, id);
+    // Don't delete a cluster whose swarm is still formed: SetNull would free the members but keep their
+    // swarmRole, stranding a live swarm on boxes Tugra no longer groups (and dropping the only handle —
+    // swarmManagerId — to tear it down). Dissolve the swarm first.
+    if (cluster.swarmStatus !== "NONE") {
+      throw new ConflictException("dissolve the swarm before deleting the cluster");
+    }
     // onDelete: SetNull frees the member servers rather than deleting them.
     await this.prisma.cluster.delete({ where: { id: cluster.id } });
     await this.audit.log({ actor: userId, action: "cluster.remove", target: id });
@@ -140,6 +146,17 @@ export class ClustersService {
       const owned = await this.prisma.server.count({ where: { id: { in: ids }, teamId: cluster.teamId } });
       if (owned !== ids.length) throw new BadRequestException("all servers must belong to this cluster's team");
     }
+    // If a Docker Swarm is formed on this cluster, refuse to silently drop a joined node — that would strand
+    // a live swarm on a box Tugra no longer tracks. The swarm must be dissolved (or that node left) first.
+    if (cluster.swarmStatus !== "NONE") {
+      const stranded = await this.prisma.server.findMany({
+        where: { clusterId: id, swarmRole: { not: null }, id: { notIn: ids.length ? ids : ["__none__"] } },
+        select: { id: true },
+      });
+      if (stranded.length) {
+        throw new ConflictException("dissolve the swarm (or leave these nodes) before changing membership");
+      }
+    }
     await this.prisma.$transaction([
       // Release servers currently in the cluster that are no longer selected.
       this.prisma.server.updateMany({ where: { clusterId: id, id: { notIn: ids.length ? ids : ["__none__"] } }, data: { clusterId: null } }),
@@ -151,8 +168,8 @@ export class ClustersService {
   }
 
   /** Load a cluster and require servers:manage on its team; 404 for non-members. */
-  private async requireWrite(userId: string, id: string): Promise<{ id: string; teamId: string }> {
-    const cluster = await this.prisma.cluster.findUnique({ where: { id }, select: { id: true, teamId: true } });
+  private async requireWrite(userId: string, id: string): Promise<{ id: string; teamId: string; swarmStatus: string }> {
+    const cluster = await this.prisma.cluster.findUnique({ where: { id }, select: { id: true, teamId: true, swarmStatus: true } });
     if (!cluster || !(await this.access.teamIds(userId)).includes(cluster.teamId)) {
       throw new NotFoundException("cluster not found");
     }

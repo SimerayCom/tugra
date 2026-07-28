@@ -117,7 +117,8 @@ export type AgentCapability =
   | "terminal"
   | "schedule"
   | "patch"
-  | "logs";
+  | "logs"
+  | "swarm";
 
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
