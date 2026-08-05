@@ -173,6 +173,11 @@ type ServerMsg struct {
 	Follow   bool   `json:"follow"`
 	Since    string `json:"since"`  // docker --since window ("5m"/"1h"); "" = none
 	Search   string `json:"search"` // server-side grep -iF filter; "" = none
+	// Swarm apps: when true, Target is a `docker service` name and the agent follows `docker service logs`
+	// (aggregated across replicas) instead of `docker logs`. NOT part of CanonicalLogStart — Target (the
+	// sensitive value) is already signed, and this flag only toggles the subcommand on that same target, so
+	// it stays backward-compatible (an old agent ignores it and runs `docker logs`, failing gracefully).
+	Service bool `json:"service,omitempty"`
 	// Granted capabilities pushed by the hub (on enrolled/auth_ok and the "capabilities" message);
 	// the agent enforces them fail-closed (empty = deny all).
 	Capabilities []string `json:"capabilities"`

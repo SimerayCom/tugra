@@ -26,6 +26,7 @@ import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filter
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
+import { serviceName, parseServiceTasks } from "../deploy/service-script";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
@@ -1324,6 +1325,12 @@ export class ApplicationsService {
   /** List the app's docker containers (compose: all services) — for the terminal picker. */
   async listContainers(userId: string, id: string): Promise<{ containers: { name: string; state: string }[] }> {
     const app = await this.requireWrite(userId, id);
+    // Swarm app: the "containers" are the service's tasks, spread across the cluster — list them via the
+    // manager (`docker service ps`), not a single host's `docker ps`.
+    if (app.clusterId) {
+      const r = await this.swarmDeploy.status(app);
+      return { containers: parseServiceTasks(r.output) };
+    }
     const r = await this.agentWs.sendCommand(app.serverId, buildContainersScript(this.toSpec(app)), "deploy", 30_000);
     return { containers: parseContainers(r.output) };
   }
@@ -1331,6 +1338,11 @@ export class ApplicationsService {
   /** Tail the running container's logs — writer-only (output may contain secrets). */
   async appLogs(userId: string, id: string, tail?: number): Promise<{ output: string }> {
     const app = await this.requireWrite(userId, id);
+    // Swarm app: aggregate logs across replicas from the manager (`docker service logs`).
+    if (app.clusterId) {
+      const r = await this.swarmDeploy.logs(app, clampTail(tail));
+      return { output: r.output.slice(0, 65536) };
+    }
     const r = await this.agentWs.sendCommand(
       app.serverId,
       buildLogsScript(this.toSpec(app), tail),
@@ -1352,14 +1364,20 @@ export class ApplicationsService {
     opts: { container?: string; tail?: number; follow?: boolean; since?: string; search?: string },
   ): Promise<Observable<LogStreamEvent>> {
     const app = await this.requireWrite(userId, id);
+    const tail = clampTail(opts.tail);
+    const since = normalizeSince(opts.since);
+    const search = normalizeSearch(opts.search);
+    // Swarm app: live-follow the aggregated service logs from the manager (`docker service logs --follow`).
+    if (app.clusterId) {
+      const managerId = await this.swarmDeploy.resolveManager(app.clusterId); // throws if swarm not ACTIVE/manager offline
+      await this.audit.log({ actor: userId, action: "app.logs.stream", target: id });
+      return this.logStream.stream(managerId, serviceName(app), { tail, follow: opts.follow ?? true, since, search, service: true });
+    }
     const target = this.resolveLogTarget(app, opts.container);
     if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
     // tail/since/search are SIGNED fields (canonicalLogStart) that also reach docker/grep on the
     // agent — normalize a malformed value to a safe default here so the signature verifies and no
     // bad value hits the shell-less docker/grep argv.
-    const tail = clampTail(opts.tail);
-    const since = normalizeSince(opts.since);
-    const search = normalizeSearch(opts.search);
     await this.audit.log({ actor: userId, action: "app.logs.stream", target: id });
     return this.logStream.stream(app.serverId, target, { tail, follow: opts.follow ?? true, since, search });
   }
@@ -1375,9 +1393,15 @@ export class ApplicationsService {
     opts: { container?: string; tail?: number; since?: string },
   ): Promise<string> {
     const app = await this.requireWrite(userId, id);
+    const tail = clampTail(opts.tail, 10000);
+    // Swarm app: aggregated service logs from the manager (honor the since window + timestamps, like classic).
+    if (app.clusterId) {
+      const r = await this.swarmDeploy.logs(app, tail, normalizeSince(opts.since));
+      await this.audit.log({ actor: userId, action: "app.logs.download", target: id });
+      return r.output.slice(0, 5_000_000);
+    }
     const target = this.resolveLogTarget(app, opts.container);
     if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-    const tail = clampTail(opts.tail, 10000);
     const since = normalizeSince(opts.since);
     // Fixed command; target is prefix-validated + since is normalized (no shell metacharacters).
     const cmd = `docker logs --timestamps --tail ${tail}${since ? ` --since ${since}` : ""} ${target} 2>&1`;
@@ -1408,6 +1432,12 @@ export class ApplicationsService {
    */
   async containerMetrics(userId: string, id: string, range?: string): Promise<AppContainerMetrics> {
     const app = await this.require(userId, id);
+    // A swarm app's task containers are scattered across the cluster's member nodes (named
+    // tugra_<id>.<slot>.<taskid>), so query every member and match the `.` task suffix.
+    if (app.clusterId) {
+      const members = await this.prisma.server.findMany({ where: { clusterId: app.clusterId }, select: { id: true } });
+      return this.containerMetricsSvc.forApp(members.map((m) => m.id), composeProject(app), range, true);
+    }
     return this.containerMetricsSvc.forApp(app.serverId, composeProject(app), range);
   }
 

@@ -149,6 +149,45 @@ describe("effectivePollSec", () => {
   });
 });
 
+describe("SwarmDeployService.resolveTaskExec", () => {
+  function setup(o: { ps?: string; container?: string; members?: unknown[] } = {}) {
+    const cluster = { swarmStatus: "ACTIVE", swarmManagerId: "mgr" };
+    const send = jest.fn(async (_serverId: string, cmd: string, _cap: string) => {
+      if (cmd.includes("docker service ps")) {
+        return { exitCode: 0, output: o.ps ?? '{"Node":"host-mgr","CurrentState":"Running 2 seconds ago","Name":"tugra_abc.1"}' };
+      }
+      if (cmd.includes("docker ps --filter label=com.docker.swarm.service.name")) {
+        return { exitCode: 0, output: o.container ?? "tugra_abc.1.xyz\n" };
+      }
+      return { exitCode: 0, output: "" };
+    });
+    const prisma = {
+      cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
+      server: {
+        findUnique: jest.fn().mockResolvedValue({ status: "ONLINE" }),
+        findMany: jest.fn().mockResolvedValue(o.members ?? [{ id: "mgr", hostname: "host-mgr", status: "ONLINE", capabilities: ["terminal", "deploy"] }]),
+      },
+    } as unknown as PrismaService;
+    const svc = new SwarmDeployService(prisma, { sendCommand: send } as unknown as AgentWsServer, { ensure: jest.fn() } as unknown as import("./swarm-proxy.service").SwarmProxyService);
+    return { svc, send };
+  }
+
+  it("picks a running replica on a terminal-capable ONLINE node (prefers the manager) + its container", async () => {
+    const { svc } = setup();
+    expect(await svc.resolveTaskExec(app())).toEqual({ serverId: "mgr", container: "tugra_abc.1.xyz" });
+  });
+
+  it("errors when no node running a replica has the terminal capability granted", async () => {
+    const { svc } = setup({ members: [{ id: "mgr", hostname: "host-mgr", status: "ONLINE", capabilities: ["deploy"] }] });
+    await expect(svc.resolveTaskExec(app())).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("errors when there is no running replica", async () => {
+    const { svc } = setup({ ps: '{"Node":"host-mgr","CurrentState":"Failed 2 seconds ago","Name":"tugra_abc.1"}' });
+    await expect(svc.resolveTaskExec(app())).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
 describe("SwarmDeployService lifecycle", () => {
   it("scale / remove / status / logs dispatch the right script to the manager under swarm cap", async () => {
     const { svc, send } = make();
@@ -159,6 +198,6 @@ describe("SwarmDeployService lifecycle", () => {
     await svc.status(app());
     expect(send.mock.calls[2][1]).toContain("docker service ps 'tugra_abc'");
     await svc.logs(app(), 50);
-    expect(send.mock.calls[3][1]).toBe("docker service logs --tail 50 'tugra_abc'");
+    expect(send.mock.calls[3][1]).toBe("docker service logs --timestamps --tail 50 'tugra_abc'");
   });
 });

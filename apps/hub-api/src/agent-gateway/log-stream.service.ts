@@ -27,7 +27,7 @@ export class LogStreamService {
   stream(
     serverId: string,
     target: string,
-    opts: { tail: number; follow: boolean; since?: string; search?: string },
+    opts: { tail: number; follow: boolean; since?: string; search?: string; service?: boolean },
   ): Observable<LogStreamEvent> {
     return new Observable<LogStreamEvent>((subscriber) => {
       const active = this.perServer.get(serverId) ?? 0;
@@ -54,7 +54,7 @@ export class LogStreamService {
       durationTimer.unref?.();
 
       this.agentWs
-        .startLogStream(serverId, { target, tail: opts.tail, follow: opts.follow, since: opts.since, search: opts.search }, {
+        .startLogStream(serverId, { target, tail: opts.tail, follow: opts.follow, since: opts.since, search: opts.search, service: opts.service }, {
           onChunk: (chunk) => subscriber.next({ chunk }),
           onExit: (exitCode) => {
             subscriber.next({ exitCode });

@@ -251,7 +251,7 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 					continue
 				}
 				sid := m.StreamID
-				stream, err := logs.Start(m.Target, m.Tail, m.Since, m.Follow, m.Search,
+				stream, err := logs.Start(m.Target, m.Tail, m.Since, m.Follow, m.Search, m.Service,
 					func(line string) {
 						_ = send(protocol.LogChunk{Type: "log_chunk", StreamID: sid, Chunk: line})
 					},

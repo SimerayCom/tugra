@@ -367,7 +367,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
    */
   async startLogStream(
     serverId: string,
-    params: { target: string; tail: number; follow: boolean; since?: string; search?: string },
+    params: { target: string; tail: number; follow: boolean; since?: string; search?: string; service?: boolean },
     listener: LogListener,
   ): Promise<string> {
     if (!this.isOnline(serverId)) throw new Error("agent offline");
@@ -388,6 +388,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       follow: params.follow,
       since: params.since ?? "",
       search: params.search ?? "",
+      // Swarm apps: follow `docker service logs` (aggregated across replicas). Not signed — see LogStartMsg.
+      service: params.service ?? false,
       capability: "logs",
     });
     if (!delivered) {

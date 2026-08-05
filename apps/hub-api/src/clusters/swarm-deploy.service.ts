@@ -13,6 +13,7 @@ import {
   buildServiceRemoveScript,
   buildServiceRestartScript,
   buildServiceScaleScript,
+  buildServiceTaskContainerScript,
   parseServiceImageDigest,
   serviceName,
   updateMonitorSec,
@@ -193,8 +194,52 @@ export class SwarmDeployService {
     return this.agentWs.sendCommand(managerId, buildServicePsScript(serviceName(app)), "swarm");
   }
 
-  async logs(app: Application, tail = 200): Promise<{ exitCode: number; output: string }> {
+  async logs(app: Application, tail = 200, since?: string): Promise<{ exitCode: number; output: string }> {
     const managerId = await this.resolveManager(app.clusterId!);
-    return this.agentWs.sendCommand(managerId, buildServiceLogsScript(serviceName(app), tail), "swarm");
+    return this.agentWs.sendCommand(managerId, buildServiceLogsScript(serviceName(app), tail, since), "swarm");
+  }
+
+  /** Resolve a RUNNING replica to open a shell into: {serverId of the node hosting it, its container name}.
+   *  Picks a node that is ONLINE and has the "terminal" capability (opt-in), preferring the manager (one
+   *  round-trip). A swarm task can be rescheduled after this resolves (TOCTOU) — the exec just fails and the
+   *  user retries; that's the same graceful-degradation the deploy path already accepts. */
+  async resolveTaskExec(app: Application): Promise<{ serverId: string; container: string }> {
+    const managerId = await this.resolveManager(app.clusterId!);
+    const svc = serviceName(app);
+    const ps = await this.agentWs.sendCommand(managerId, buildServicePsScript(svc), "swarm");
+    if (ps.exitCode !== 0) throw new ServiceUnavailableException("could not list the service's tasks");
+    // Nodes (by hostname) currently running a task of this service.
+    const nodesRunning = new Set<string>();
+    for (const line of ps.output.split("\n").map((l) => l.trim()).filter(Boolean)) {
+      try {
+        const j = JSON.parse(line);
+        if (String(j.CurrentState ?? "").startsWith("Running") && j.Node) nodesRunning.add(String(j.Node));
+      } catch {
+        /* skip malformed line */
+      }
+    }
+    if (nodesRunning.size === 0) throw new BadRequestException("no running replica to open a shell into");
+
+    const members = await this.prisma.server.findMany({
+      where: { clusterId: app.clusterId! },
+      select: { id: true, hostname: true, status: true, capabilities: true },
+    });
+    // Candidate = a member whose hostname runs a task, is ONLINE, and has "terminal" granted (opt-in cap).
+    const candidates = members.filter(
+      (m) => m.hostname && nodesRunning.has(m.hostname) && m.status === "ONLINE" && m.capabilities.includes("terminal"),
+    );
+    if (candidates.length === 0) {
+      throw new BadRequestException("grant the 'terminal' capability to a node running this app's replicas to open a shell");
+    }
+    // Prefer the manager (single round-trip; likeliest to have terminal granted).
+    const pick = candidates.find((m) => m.id === managerId) ?? candidates[0];
+    // Use the "swarm" capability for the task-container lookup: it is GUARANTEED granted on any cluster
+    // member (joinWorker refuses a node lacking it), whereas "deploy" is revocable independent of swarm
+    // membership — using "deploy" here could fail with a confusing "deploy not granted" on a node an
+    // operator deliberately locked down to just terminal + swarm.
+    const r = await this.agentWs.sendCommand(pick.id, buildServiceTaskContainerScript(svc), "swarm");
+    const container = r.output.split("\n").map((l) => l.trim()).find(Boolean);
+    if (r.exitCode !== 0 || !container) throw new BadRequestException("could not resolve the replica's container");
+    return { serverId: pick.id, container };
   }
 }

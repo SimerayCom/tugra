@@ -27,8 +27,16 @@ type Session struct {
 // buildArgs assembles the fixed `docker logs` argv. --timestamps prefixes each line with an RFC3339
 // time; --tail bounds the backlog; --since bounds the window; --follow keeps streaming. target and
 // since are the external inputs and ride as single argv elements (no shell, no interpolation).
-func buildArgs(target string, tail int, since string, follow bool) []string {
-	args := []string{"logs", "--timestamps", "--tail", strconv.Itoa(tail)}
+// service=true → `docker service logs <service>` (aggregated across all swarm replicas) instead of
+// `docker logs <container>`. Both accept --timestamps/--tail/--since/--follow identically; only the
+// subcommand differs, so the rest of the streaming machinery is unchanged.
+func buildArgs(target string, tail int, since string, follow bool, service bool) []string {
+	var args []string
+	if service {
+		args = []string{"service", "logs", "--timestamps", "--tail", strconv.Itoa(tail)}
+	} else {
+		args = []string{"logs", "--timestamps", "--tail", strconv.Itoa(tail)}
+	}
 	if since != "" {
 		args = append(args, "--since", since)
 	}
@@ -42,9 +50,9 @@ func buildArgs(target string, tail int, since string, follow bool) []string {
 // receives each output line as it arrives; onExit fires exactly once when the stream ends (naturally
 // or via Close). search is passed to grep as a single argv element (`-F` fixed-string, `--` ends
 // options) — no shell, no flag/command injection regardless of its content.
-func Start(target string, tail int, since string, follow bool, search string, onLine func(string), onExit func(exitCode int)) (*Session, error) {
+func Start(target string, tail int, since string, follow bool, search string, service bool, onLine func(string), onExit func(exitCode int)) (*Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	docker := exec.CommandContext(ctx, "docker", buildArgs(target, tail, since, follow)...)
+	docker := exec.CommandContext(ctx, "docker", buildArgs(target, tail, since, follow, service)...)
 
 	if search == "" {
 		reader, err := docker.StdoutPipe()
