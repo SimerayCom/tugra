@@ -247,13 +247,42 @@ export function buildServicePsScript(name: string): string {
   return `docker service ps ${shq(name)} --format '{{json .}}'`;
 }
 
-/** One-shot aggregated logs across replicas (live-follow is a v1 non-goal — needs a Go agent change). */
-export function buildServiceLogsScript(name: string, tail = 200): string {
-  return `docker service logs --tail ${Math.max(0, Math.floor(tail))} ${shq(name)}`;
+/** One-shot aggregated logs across replicas (live-follow uses log_start with service=true). --timestamps
+ *  + optional --since match the classic download path (since must be pre-normalized to a safe value). */
+export function buildServiceLogsScript(name: string, tail = 200, since?: string): string {
+  const s = since ? ` --since ${shq(since)}` : "";
+  return `docker service logs --timestamps --tail ${Math.max(0, Math.floor(tail))}${s} ${shq(name)}`;
+}
+
+/** A RUNNING task container of this service ON THE HOST it's run on (for terminal exec). Matching by the
+ *  service-name label + status=running is robust — no fragile short/full task-id juggling; any running
+ *  replica on that node is a valid shell target. Returns one name per line (take the first). */
+export function buildServiceTaskContainerScript(name: string): string {
+  return `docker ps --filter label=com.docker.swarm.service.name=${shq(name)} --filter status=running --format '{{.Names}}'`;
 }
 
 /** Parse the swarm-resolved image digest (ref@sha256:…) echoed by the deploy script's convergence path. */
 export function parseServiceImageDigest(output: string): string | null {
   const m = output.match(/TUGRA_SVC_DIGEST=(\S+)/);
   return m ? m[1] : null;
+}
+
+/** Parse `docker service ps --format '{{json .}}'` (one JSON task per line) into a {name,state} list for
+ *  the app "containers" view — each task shows its slot name, node, and current state. */
+export function parseServiceTasks(output: string): { name: string; state: string }[] {
+  return output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        const j = JSON.parse(line);
+        const name = String(j.Name ?? "");
+        const node = j.Node ? ` on ${String(j.Node)}` : "";
+        return { name: `${name}${node}`, state: String(j.CurrentState ?? j.DesiredState ?? "") };
+      } catch {
+        return null;
+      }
+    })
+    .filter((t): t is { name: string; state: string } => t !== null);
 }

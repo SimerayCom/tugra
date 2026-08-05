@@ -150,6 +150,29 @@ describe("ContainerMetricsService", () => {
     expect(out.containers[0].samples[999].ts).toBe(1_700_000_000_000 + 1199 * 1000);
   });
 
+  it("forApp (swarm): queries ALL member serverIds + matches the `.` task suffix, airtight against sibling ids", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      row({ containerName: "tugra_app1.1.aaa" }),
+      row({ containerName: "tugra_app1.2.bbb" }),
+    ]);
+    const { svc } = make(findMany);
+    const out = await svc.forApp(["m1", "m2"], "tugra_app1", "1h", true);
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.serverId).toEqual({ in: ["m1", "m2"] }); // all cluster members, not one
+    // the `.` suffix (not a bare startsWith) keeps it airtight vs a sibling app tugra_app1x / tugra_app1234
+    expect(where.OR).toContainEqual({ containerName: { startsWith: "tugra_app1." } });
+    expect(out.containers.map((c) => c.name).sort()).toEqual(["tugra_app1.1.aaa", "tugra_app1.2.bbb"]); // one series per task
+  });
+
+  it("forApp (classic, non-swarm) is unchanged: single serverId, no `.` match branch", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const { svc } = make(findMany);
+    await svc.forApp("s1", "tugra_app1", "1h");
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.serverId).toBe("s1");
+    expect(where.OR).toEqual([{ containerName: "tugra_app1" }, { containerName: { startsWith: "tugra_app1-" } }]);
+  });
+
   it("forServer: latest sample per container (all containers, live 90s window), sorted by name", async () => {
     const now = 1_700_000_000_000;
     const findMany = jest.fn().mockResolvedValue([

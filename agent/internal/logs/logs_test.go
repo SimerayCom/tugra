@@ -11,14 +11,18 @@ import (
 )
 
 func TestBuildArgs(t *testing.T) {
-	if got := buildArgs("tugra_app1", 200, "", true); !reflect.DeepEqual(got, []string{"logs", "--timestamps", "--tail", "200", "--follow", "tugra_app1"}) {
+	if got := buildArgs("tugra_app1", 200, "", true, false); !reflect.DeepEqual(got, []string{"logs", "--timestamps", "--tail", "200", "--follow", "tugra_app1"}) {
 		t.Errorf("follow args = %v", got)
 	}
-	if got := buildArgs("c", 50, "", false); !reflect.DeepEqual(got, []string{"logs", "--timestamps", "--tail", "50", "c"}) {
+	if got := buildArgs("c", 50, "", false, false); !reflect.DeepEqual(got, []string{"logs", "--timestamps", "--tail", "50", "c"}) {
 		t.Errorf("no-follow args = %v", got)
 	}
-	if got := buildArgs("c", 100, "1h", true); !reflect.DeepEqual(got, []string{"logs", "--timestamps", "--tail", "100", "--since", "1h", "--follow", "c"}) {
+	if got := buildArgs("c", 100, "1h", true, false); !reflect.DeepEqual(got, []string{"logs", "--timestamps", "--tail", "100", "--since", "1h", "--follow", "c"}) {
 		t.Errorf("since args = %v", got)
+	}
+	// service=true → `docker service logs <service>` (aggregated across swarm replicas)
+	if got := buildArgs("tugra_app1", 100, "5m", true, true); !reflect.DeepEqual(got, []string{"service", "logs", "--timestamps", "--tail", "100", "--since", "5m", "--follow", "tugra_app1"}) {
+		t.Errorf("service args = %v", got)
 	}
 }
 

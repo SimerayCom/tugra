@@ -135,7 +135,8 @@ describe("service-script builders", () => {
     expect(restart).toContain("TUGRA_ROLLOUT"); // restart is async → same poll machinery
     expect(buildServiceRemoveScript("tugra_abc")).toBe("docker service rm 'tugra_abc' 2>/dev/null || true");
     expect(buildServicePsScript("tugra_abc")).toBe("docker service ps 'tugra_abc' --format '{{json .}}'");
-    expect(buildServiceLogsScript("tugra_abc", 50)).toBe("docker service logs --tail 50 'tugra_abc'");
+    expect(buildServiceLogsScript("tugra_abc", 50)).toBe("docker service logs --timestamps --tail 50 'tugra_abc'");
+    expect(buildServiceLogsScript("tugra_abc", 50, "1h")).toBe("docker service logs --timestamps --tail 50 --since '1h' 'tugra_abc'");
   });
 
   it("parseServiceImageDigest extracts the swarm-pinned ref@sha256", () => {

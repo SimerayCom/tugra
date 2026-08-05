@@ -101,11 +101,17 @@ export class ContainerMetricsService {
    * LTTB down-sampled to keep the visual shape. Metrics carry no secrets, so this is a read-level
    * query (any team member); BigInt byte fields widen to Number for the JSON wire.
    */
-  async forApp(serverId: string, namePrefix: string, range?: string): Promise<AppContainerMetrics> {
+  async forApp(serverId: string | string[], namePrefix: string, range?: string, swarm = false): Promise<AppContainerMetrics> {
     const { sinceMs, useRollup } = rangeToMs(range);
+    // Swarm apps run as `docker service tugra_<id>`; their task containers are named
+    // `tugra_<id>.<slot>.<taskid>` and scattered across the cluster's member nodes, so we match the `.`
+    // task-suffix too and query ALL member serverIds. The delimiter (`.`/`-`) keeps the prefix airtight
+    // against a sibling app whose id merely starts with this one's (a bare startsWith would over-match).
+    const serverWhere = Array.isArray(serverId) ? { in: serverId } : serverId;
     const nameMatch = [
       { containerName: namePrefix },
       { containerName: { startsWith: `${namePrefix}-` } },
+      ...(swarm ? [{ containerName: { startsWith: `${namePrefix}.` } }] : []),
     ];
     const byName = new Map<string, ContainerMetricSample[]>();
     const push = (name: string, s: ContainerMetricSample) => {
@@ -116,7 +122,7 @@ export class ContainerMetricsService {
 
     if (useRollup) {
       const rows = await this.prisma.containerMetricRollup.findMany({
-        where: { serverId, bucket: { gte: new Date(sinceMs) }, OR: nameMatch },
+        where: { serverId: serverWhere, bucket: { gte: new Date(sinceMs) }, OR: nameMatch },
         orderBy: { bucket: "asc" },
       });
       for (const r of rows) {
@@ -134,7 +140,7 @@ export class ContainerMetricsService {
       }
     } else {
       const rows = await this.prisma.containerMetric.findMany({
-        where: { serverId, ts: { gte: new Date(sinceMs) }, OR: nameMatch },
+        where: { serverId: serverWhere, ts: { gte: new Date(sinceMs) }, OR: nameMatch },
         orderBy: { ts: "asc" },
       });
       for (const r of rows) {

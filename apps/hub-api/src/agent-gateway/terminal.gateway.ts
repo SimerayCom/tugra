@@ -5,7 +5,7 @@ import {
   OnModuleDestroy,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { HttpAdapterHost } from "@nestjs/core";
+import { HttpAdapterHost, ModuleRef } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -25,6 +25,7 @@ import type { AccessTokenPayload } from "../auth/strategies/jwt.strategy";
 import { containerName } from "../deploy/deploy-script";
 import { dbContainerName } from "../databases/database-script";
 import { AgentWsServer, type TerminalDelegate } from "./agent-ws.server";
+import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 
 const SUBPROTOCOL = "tugra.bearer";
 
@@ -59,6 +60,7 @@ export class TerminalGateway
     private readonly apiTokens: ApiTokensService,
     private readonly audit: AuditService,
     private readonly instance: InstanceSettingsService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -113,7 +115,19 @@ export class TerminalGateway
         if (!app) return ws.close(1008, "not found");
         await this.access.requirePermission(userId, app.teamId, 'terminal');
         serverId = app.serverId;
-        if (app.source === "COMPOSE") {
+        if (app.clusterId) {
+          // Swarm app: exec into a RUNNING replica on whichever node hosts it (resolved via the manager) —
+          // NOT app.serverId (only an anchor). resolveTaskExec picks an ONLINE node with "terminal" granted.
+          const swarmDeploy = this.moduleRef.get(SwarmDeployService, { strict: false });
+          try {
+            const picked = await swarmDeploy.resolveTaskExec(app);
+            serverId = picked.serverId;
+            target = picked.container;
+          } catch (e) {
+            // Surface the specific reason (e.g. "grant 'terminal' to a node…") instead of a generic close.
+            return ws.close(1011, (e instanceof Error ? e.message : "could not resolve a replica").slice(0, 120));
+          }
+        } else if (app.source === "COMPOSE") {
           // Compose stacks have multiple containers — the caller picks one.
           // Validate it belongs to THIS app's project (can't exec into others).
           const container = url.searchParams.get("container") ?? "";

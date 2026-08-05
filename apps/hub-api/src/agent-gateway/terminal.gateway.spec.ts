@@ -36,7 +36,8 @@ function make(over: {
   const instance = {
     get: jest.fn().mockResolvedValue({ apiEnabled: over.apiEnabled ?? true, apiAllowedIps: over.apiAllowedIps ?? [] }),
   } as any;
-  const gw = new TerminalGateway({} as any, agentWs, jwt, config, prisma, access, apiTokens, audit, instance);
+  const moduleRef = { get: () => ({ resolveTaskExec: (over as any).resolveTaskExec ?? jest.fn() }) } as any;
+  const gw = new TerminalGateway({} as any, agentWs, jwt, config, prisma, access, apiTokens, audit, instance, moduleRef);
   return { gw, agentWs, audit };
 }
 
@@ -259,7 +260,7 @@ describe("TerminalGateway", () => {
   describe("originAllowed", () => {
     function gw(webUrl = "http://localhost:3001") {
       const config = { get: jest.fn().mockReturnValue(webUrl) } as any;
-      return new TerminalGateway({} as any, {} as any, {} as any, config, {} as any, {} as any, {} as any, {} as any, {} as any);
+      return new TerminalGateway({} as any, {} as any, {} as any, config, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     }
     const check = (g: TerminalGateway, origin?: string) =>
       (g as any).originAllowed({ headers: origin ? { origin } : {} });

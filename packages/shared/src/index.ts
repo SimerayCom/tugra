@@ -337,6 +337,9 @@ export interface LogStartMsg {
   follow: boolean;
   since?: string; // docker --since window (e.g. "5m", "1h"); "" = from the tail
   search?: string; // server-side grep -iF filter; "" = no filter
+  /** Swarm apps: target is a `docker service` name → follow `docker service logs` (aggregated across
+   *  replicas). NOT part of canonicalLogStart (target is already signed; this only toggles the subcommand). */
+  service?: boolean;
   capability?: "logs";
   /** base64(ed25519 signature over canonicalLogStart) — agent rejects if invalid. */
   sig?: string;
