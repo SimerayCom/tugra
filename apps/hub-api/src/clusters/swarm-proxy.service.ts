@@ -1,13 +1,25 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { envFileB64 } from "../deploy/deploy-script";
 import {
   buildClassicProxyRunningScript,
   buildSwarmProxyEnsureScript,
   buildSwarmProxyStatusScript,
   buildSwarmProxyTeardownScript,
+  type SwarmProxyDns,
 } from "../deploy/swarm-proxy-script";
+
+interface ManagerRow {
+  id: string;
+  swarmNodeId: string | null;
+  certMode: string;
+  dnsProvider: string | null;
+  dnsCredsEnc: string | null;
+}
 
 /**
  * Ensures the swarm-mode Traefik that fronts a cluster's swarm services (Phase3-B). One service per cluster,
@@ -21,10 +33,11 @@ export class SwarmProxyService {
     private readonly prisma: PrismaService,
     private readonly agentWs: AgentWsServer,
     private readonly config: ConfigService,
+    private readonly crypto: CryptoService,
   ) {}
 
-  /** Resolve the cluster's ONLINE manager (id + swarm node id), or throw. */
-  private async manager(clusterId: string): Promise<{ id: string; swarmNodeId: string | null }> {
+  /** Resolve the cluster's ONLINE manager (id + swarm node id + its cert/DNS config), or throw. */
+  private async manager(clusterId: string): Promise<ManagerRow> {
     const cluster = await this.prisma.cluster.findUnique({
       where: { id: clusterId },
       select: { swarmStatus: true, swarmManagerId: true },
@@ -36,10 +49,21 @@ export class SwarmProxyService {
     if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
     const mgr = await this.prisma.server.findUnique({
       where: { id: cluster.swarmManagerId },
-      select: { id: true, status: true, swarmNodeId: true },
+      select: { id: true, status: true, swarmNodeId: true, certMode: true, dnsProvider: true, dnsCredsEnc: true },
     });
     if (!mgr || mgr.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
-    return { id: mgr.id, swarmNodeId: mgr.swarmNodeId };
+    return { id: mgr.id, swarmNodeId: mgr.swarmNodeId, certMode: mgr.certMode, dnsProvider: mgr.dnsProvider, dnsCredsEnc: mgr.dnsCredsEnc };
+  }
+
+  /** The manager's DNS-01 provider + decrypted creds, when certMode is "le-dns" (else null). Mirrors
+   *  ProxyService.dnsConfig — unreadable creds fail SAFE (proxy comes up with HTTP-01 only). */
+  private dnsConfig(mgr: ManagerRow): { dnsProvider: string; dnsCreds: Record<string, string> } | null {
+    if (mgr.certMode !== "le-dns" || !mgr.dnsProvider || !mgr.dnsCredsEnc) return null;
+    try {
+      return { dnsProvider: mgr.dnsProvider, dnsCreds: JSON.parse(this.crypto.decrypt(mgr.dnsCredsEnc)) };
+    } catch {
+      return null;
+    }
   }
 
   /** Idempotently ensure the overlay + swarm-Traefik are up on the manager, refusing if a classic proxy
@@ -67,9 +91,22 @@ export class SwarmProxyService {
     }
 
     const email = this.config.get<string>("ACME_EMAIL") ?? null;
+    // DNS-01 wildcard when the manager has le-dns configured. Creds ride an immutable, hash-named Docker
+    // secret; the confighash label reconciles the proxy (skip if unchanged → no flap on ordinary deploys).
+    const secretPrefix = `tugra-swarm-dns-${clusterId}`;
+    const dnsCfg = this.dnsConfig(mgr);
+    let dns: SwarmProxyDns | null = null;
+    let confighash: string;
+    if (dnsCfg) {
+      const credsB64 = envFileB64(dnsCfg.dnsCreds);
+      confighash = createHash("sha256").update(`${email}|${dnsCfg.dnsProvider}|${credsB64}|ledns`).digest("hex").slice(0, 12);
+      dns = { provider: dnsCfg.dnsProvider, credsB64, secretName: `${secretPrefix}-${confighash}` };
+    } else {
+      confighash = createHash("sha256").update(`${email}|http`).digest("hex").slice(0, 12);
+    }
     await this.agentWs.sendCommand(
       mgr.id,
-      buildSwarmProxyEnsureScript({ managerNodeId: mgr.swarmNodeId, acmeEmail: email }),
+      buildSwarmProxyEnsureScript({ managerNodeId: mgr.swarmNodeId, acmeEmail: email, confighash, secretPrefix, dns }),
       "swarm",
       60_000,
     );
@@ -91,8 +128,11 @@ export class SwarmProxyService {
   /** Teardown the swarm proxy (on dissolve) and CONFIRM it's gone. Returns true only when the manager
    *  reported GONE — a masked failure / offline manager returns false so the caller can warn instead of
    *  silently leaving an orphaned proxy bound to :80/:443. */
-  async teardown(managerId: string): Promise<boolean> {
-    const r = await this.agentWs.sendCommand(managerId, buildSwarmProxyTeardownScript(), "swarm").catch(() => ({ exitCode: 1, output: "" }));
+  async teardown(managerId: string, clusterId?: string): Promise<boolean> {
+    const secretPrefix = clusterId ? `tugra-swarm-dns-${clusterId}` : undefined;
+    const r = await this.agentWs
+      .sendCommand(managerId, buildSwarmProxyTeardownScript(secretPrefix), "swarm")
+      .catch(() => ({ exitCode: 1, output: "" }));
     return r.exitCode === 0 && /(^|\s)GONE(\s|$)/.test(r.output);
   }
 }

@@ -306,7 +306,7 @@ export class SwarmService {
         // Tear down the swarm-mode Traefik (ingress) BEFORE leaving the swarm. If removal isn't CONFIRMED,
         // the proxy may still be bound to :80/:443 on this box — which will later look like a free classic
         // target (the ProxyService guard only knows swarm MANAGERS) — so warn loudly instead of silently.
-        const proxyGone = await this.swarmProxy.teardown(manager.id);
+        const proxyGone = await this.swarmProxy.teardown(manager.id, id);
         if (!proxyGone) abandoned = true;
         const proxyWarn = proxyGone
           ? null

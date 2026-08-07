@@ -2237,6 +2237,98 @@ describe("ApplicationsService", () => {
   });
 });
 
+describe("ApplicationsService.setClusterConfig le-dns re-home", () => {
+  const magicApp = { ...app, source: "IMAGE", exposeMode: "magic", domainKind: "magic", domain: "web-a1b2c3.old.example", certType: "http", https: false };
+
+  function deps(appRow: object, managerServer: object, clusterRow: object = { teamId: "t1", swarmStatus: "ACTIVE", swarmManagerId: "mgr1" }) {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(appRow), update },
+      cluster: { findUnique: jest.fn().mockResolvedValue(clusterRow) },
+      server: { findUnique: jest.fn().mockResolvedValue(managerServer) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    return { prisma, access, update };
+  }
+
+  it("re-homes a magic app onto the manager's le-dns wildcard, preserving the label", async () => {
+    const { prisma, access, update } = deps(magicApp, {
+      id: "mgr1", publicIp: "203.0.113.9", publicIpv6: null, wildcardDomain: "swarm.example.com", magicSuffix: null, certMode: "le-dns",
+    });
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.clusterId).toBe("c1");
+    expect(data.domain).toBe("web-a1b2c3.swarm.example.com"); // label kept, wildcard swapped to manager's
+    expect(data.certType).toBe("le-dns");
+    expect(data.https).toBe(true);
+    expect(data.domainKind).toBe("magic");
+  });
+
+  it("re-homes onto a plain-HTTP manager (no wildcard) as certType http", async () => {
+    const { prisma, access, update } = deps(magicApp, {
+      id: "mgr1", publicIp: "203.0.113.9", publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http",
+    });
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.certType).toBe("http");
+    expect(data.https).toBe(false);
+    expect(data.domain).toMatch(/^web-a1b2c3\.203-0-113-9\.sslip\.io$/); // manager IP magic
+  });
+
+  it("leaves a custom-domain app's cert untouched (server-agnostic le-http)", async () => {
+    const customApp = { ...magicApp, exposeMode: "custom", domainKind: "custom", domain: "app.acme.com", certType: "le-http" };
+    const { prisma, access, update } = deps(customApp, { id: "mgr1", publicIp: "203.0.113.9", publicIpv6: null, wildcardDomain: "swarm.example.com", magicSuffix: null, certMode: "le-dns" });
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.clusterId).toBe("c1");
+    expect(data.domain).toBeUndefined(); // no re-resolve
+    expect(data.certType).toBeUndefined();
+  });
+
+  it("re-homes back onto the app's own server when leaving the cluster", async () => {
+    const clustered = { ...magicApp, clusterId: "c1", certType: "le-dns", https: true, domain: "web-a1b2c3.swarm.example.com" };
+    const { prisma, access, update } = deps(clustered, {
+      id: "s1", publicIp: "198.51.100.4", publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http",
+    });
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: null });
+    const data = update.mock.calls[0][0].data;
+    expect(data.clusterId).toBeNull();
+    expect(data.certType).toBe("http"); // own server has no wildcard → drops to plain HTTP magic
+    expect(data.domain).toBe("web-a1b2c3.198-51-100-4.sslip.io");
+  });
+});
+
+describe("ApplicationsService.hydrateCertSpec cluster-aware", () => {
+  it("pulls wildcardDomain from the MANAGER's server for a clustered le-dns app", async () => {
+    const findUnique = jest.fn().mockResolvedValue({ wildcardDomain: "swarm.example.com", customCertResolver: null });
+    const prisma = {
+      cluster: { findUnique: jest.fn().mockResolvedValue({ swarmManagerId: "mgr1" }) },
+      server: { findUnique },
+    } as unknown as PrismaService;
+    const svc = make(prisma, {}, {});
+    const spec: { wildcardDomain?: string | null; customCertResolver?: string | null } = {};
+    await (svc as unknown as { hydrateCertSpec: (a: object, s: object) => Promise<void> }).hydrateCertSpec(
+      { ...app, clusterId: "c1", serverId: "s1", certType: "le-dns" },
+      spec,
+    );
+    expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "mgr1" } })); // manager, not s1
+    expect(spec.wildcardDomain).toBe("swarm.example.com");
+  });
+
+  it("falls back to the app's own server when it is not clustered", async () => {
+    const findUnique = jest.fn().mockResolvedValue({ wildcardDomain: "own.example.com", customCertResolver: null });
+    const prisma = { server: { findUnique } } as unknown as PrismaService;
+    const svc = make(prisma, {}, {});
+    const spec: { wildcardDomain?: string | null } = {};
+    await (svc as unknown as { hydrateCertSpec: (a: object, s: object) => Promise<void> }).hydrateCertSpec(
+      { ...app, clusterId: null, serverId: "s1", certType: "le-dns" },
+      spec,
+    );
+    expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "s1" } }));
+    expect(spec.wildcardDomain).toBe("own.example.com");
+  });
+});
+
 describe("ApplicationsService.listDomains", () => {
   it("returns domained apps with appId + appStatus for deep-linking", async () => {
     const svc = make({}, {}, {});

@@ -159,7 +159,7 @@
   "clusterTarget": "Target cluster",
   "clusterNone": "Single server (no cluster)",
   "replicas": "Replicas",
-  "clusterDeployNote": "Routed via the cluster's swarm Traefik (custom domain + HTTP-01 TLS), or reachable on any node's host port when domainless. The manager node must be dedicated to the swarm (no classic apps on :80/:443). Logs are aggregated across replicas; the terminal opens a shell into one running replica (the node needs the 'terminal' capability); metrics show every task. Wildcard (DNS-01) certs are not available for swarm apps yet.",
+  "clusterDeployNote": "Routed via the cluster's swarm Traefik (custom domain over TLS, or a wildcard DNS-01 magic domain when the manager node is configured with le-dns), or reachable on any node's host port when domainless. The manager node must be dedicated to the swarm (no classic apps on :80/:443). Logs are aggregated across replicas; the terminal opens a shell into one running replica (the node needs the 'terminal' capability); metrics show every task.",
   "clusterNoSwarms": "No cluster with a formed swarm in this team. Form a swarm on a cluster first.",
   "clusterSaveFailed": "Couldn't update the cluster deploy settings.",
   "buildConfig": "Build & registry",
