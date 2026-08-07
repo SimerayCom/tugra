@@ -1625,12 +1625,13 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
     if (cfg.clusterId !== undefined) {
+      let managerId: string | null = null;
       if (cfg.clusterId) {
         if (app.source === "COMPOSE") throw new BadRequestException("compose apps can't be deployed as swarm services yet");
         // Named volumes / GPUs are node-local — replicas would diverge (data) or fail to schedule (device).
         if (this.appVolumes(app).length > 0) throw new BadRequestException("remove named volumes before deploying to a swarm — replica data would diverge per node");
         if (app.gpus) throw new BadRequestException("GPU apps can't be deployed as swarm services");
-        const cluster = await this.prisma.cluster.findUnique({ where: { id: cfg.clusterId }, select: { teamId: true, swarmStatus: true } });
+        const cluster = await this.prisma.cluster.findUnique({ where: { id: cfg.clusterId }, select: { teamId: true, swarmStatus: true, swarmManagerId: true } });
         if (!cluster || cluster.teamId !== app.teamId) throw new BadRequestException("cluster not found in this team");
         if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
           throw new BadRequestException("form the cluster's swarm before deploying to it");
@@ -1639,8 +1640,41 @@ export class ApplicationsService {
           if (!app.registryId) throw new BadRequestException("a GIT app deployed to a swarm needs a registry (the image must be pullable by every node)");
           data.pushToRegistry = true; // every node pulls the built image from the registry
         }
+        managerId = cluster.swarmManagerId;
       }
       data.clusterId = cfg.clusterId;
+      // A magic app is served by the CLUSTER's swarm-Traefik (on the manager), not its own server — so
+      // re-home its magic domain + cert onto the manager when it joins a cluster, and back onto its own
+      // server when it leaves. The existing {slug}-{hash} label is preserved so the URL only moves its
+      // IP/wildcard part (stable across re-home). Custom domains are server-agnostic (le-http) → untouched.
+      if (app.exposeMode === "magic" && app.domainKind !== "custom") {
+        const srvId = cfg.clusterId ? managerId : app.serverId;
+        const server = srvId
+          ? await this.prisma.server.findUnique({
+              where: { id: srvId },
+              select: { publicIp: true, publicIpv6: true, wildcardDomain: true, magicSuffix: true, certMode: true },
+            })
+          : null;
+        if (server) {
+          const label = (app.domain ?? "").split(".")[0] || undefined; // keep the URL stable across re-home
+          const domain = magicDomain({
+            name: app.name,
+            label,
+            publicIp: server.publicIp,
+            publicIpv6: server.publicIpv6,
+            wildcardDomain: server.wildcardDomain,
+            suffix: server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io",
+          });
+          if (domain) {
+            // A wildcard DNS-01 cert (le-dns) on the target gives the magic app HTTPS under one cert; else plain HTTP.
+            const le = server.certMode === "le-dns" && !!server.wildcardDomain;
+            data.domain = domain;
+            data.https = le;
+            data.certType = le ? "le-dns" : "http";
+            data.domainKind = "magic";
+          }
+        }
+      }
     }
     if (cfg.replicas !== undefined) {
       data.replicas = cfg.replicas === null ? null : Math.max(1, Math.floor(cfg.replicas));
@@ -1841,8 +1875,17 @@ export class ApplicationsService {
    */
   private async hydrateCertSpec(app: Application, spec: AppSpec): Promise<void> {
     if (app.certType !== "le-dns" && app.certType !== "custom") return;
+    // A clustered app is fronted by the manager's swarm-Traefik, so its wildcard / custom resolver
+    // must come from the MANAGER's server config — not the app's own server (which isn't in the route).
+    let srvId = app.serverId;
+    if (app.clusterId) {
+      const cluster = await this.prisma.cluster
+        .findUnique({ where: { id: app.clusterId }, select: { swarmManagerId: true } })
+        .catch(() => null);
+      if (cluster?.swarmManagerId) srvId = cluster.swarmManagerId;
+    }
     const srv = await this.prisma.server
-      .findUnique({ where: { id: app.serverId }, select: { wildcardDomain: true, customCertResolver: true } })
+      .findUnique({ where: { id: srvId }, select: { wildcardDomain: true, customCertResolver: true } })
       .catch(() => null);
     spec.wildcardDomain = srv?.wildcardDomain ?? null;
     spec.customCertResolver = srv?.customCertResolver ?? null;

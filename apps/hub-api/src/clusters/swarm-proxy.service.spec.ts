@@ -12,11 +12,24 @@ function make(opts: {
   classicDomainApps?: number;
   classicProxyOutput?: string; // buildClassicProxyRunningScript output
   proxyReplicas?: string; // buildSwarmProxyStatusScript output
+  certMode?: string;
+  dnsProvider?: string | null;
+  dnsCredsEnc?: string | null;
+  decrypt?: string; // what crypto.decrypt returns (the dnsCreds JSON), or throw if undefined+dnsCredsEnc set
 } = {}) {
   const cluster = { swarmStatus: opts.swarmStatus ?? "ACTIVE", swarmManagerId: opts.swarmManagerId ?? "mgr" };
   const prisma = {
     cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
-    server: { findUnique: jest.fn().mockResolvedValue({ id: "mgr", status: opts.managerStatus ?? "ONLINE", swarmNodeId: opts.swarmNodeId ?? "node_1" }) },
+    server: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: "mgr",
+        status: opts.managerStatus ?? "ONLINE",
+        swarmNodeId: opts.swarmNodeId ?? "node_1",
+        certMode: opts.certMode ?? "http",
+        dnsProvider: opts.dnsProvider ?? null,
+        dnsCredsEnc: opts.dnsCredsEnc ?? null,
+      }),
+    },
     application: { count: jest.fn().mockResolvedValue(opts.classicDomainApps ?? 0) },
   } as unknown as PrismaService;
   const send = jest.fn(async (_serverId: string, cmd: string, _cap: string) => {
@@ -26,7 +39,13 @@ function make(opts: {
   });
   const agent = { sendCommand: send } as unknown as AgentWsServer;
   const config = { get: () => "ops@x.io" } as unknown as ConfigService;
-  return { svc: new SwarmProxyService(prisma, agent, config), send };
+  const crypto = {
+    decrypt: jest.fn(() => {
+      if (opts.decrypt === undefined) throw new Error("decrypt failed");
+      return opts.decrypt;
+    }),
+  } as unknown as import("../crypto/crypto.service").CryptoService;
+  return { svc: new SwarmProxyService(prisma, agent, config, crypto), send };
 }
 
 describe("SwarmProxyService.ensure", () => {
@@ -38,6 +57,24 @@ describe("SwarmProxyService.ensure", () => {
     expect(ensureCall![0]).toBe("mgr");
     expect(ensureCall![2]).toBe("swarm");
     expect(ensureCall![1]).toContain("docker node update --label-add tugra.proxy=true 'node_1'");
+  });
+
+  it("with a le-dns manager: adds the le-dns resolver + a hash-named DNS-creds secret (creds never plaintext)", async () => {
+    const { svc, send } = make({ certMode: "le-dns", dnsProvider: "cloudflare", dnsCredsEnc: "enc", decrypt: JSON.stringify({ CF_DNS_API_TOKEN: "s3cr3tTOKEN" }) });
+    await svc.ensure("c1");
+    const call = send.mock.calls.find((c) => (c[1] as string).includes("docker service create --detach"));
+    expect(call![1]).toContain("--certificatesresolvers.le-dns.acme.dnschallenge.provider='cloudflare'");
+    expect(call![1]).toContain("--secret source='tugra-swarm-dns-c1-"); // hash-named, cluster-scoped
+    expect(call![1]).toContain("docker secret create");
+    expect(call![1]).not.toContain("s3cr3tTOKEN"); // base64'd into the secret body, never plaintext in the script
+  });
+
+  it("with a le-dns manager but UNREADABLE creds: falls back to HTTP-01 only (fail-safe, no le-dns/secret)", async () => {
+    const { svc, send } = make({ certMode: "le-dns", dnsProvider: "cloudflare", dnsCredsEnc: "enc" }); // decrypt throws
+    await svc.ensure("c1");
+    const call = send.mock.calls.find((c) => (c[1] as string).includes("docker service create --detach"));
+    expect(call![1]).not.toContain("le-dns");
+    expect(call![1]).not.toContain("--secret ");
   });
 
   it("refuses when the manager also hosts classic domain-routed apps (:80/:443 collision)", async () => {
