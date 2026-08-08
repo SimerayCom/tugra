@@ -286,3 +286,39 @@ export function parseServiceTasks(output: string): { name: string; state: string
     })
     .filter((t): t is { name: string; state: string } => t !== null);
 }
+
+/** One swarm task as shown in the live replica panel: its slot name, the node it landed on, and its
+ *  desired vs current state (+ any scheduling error). */
+export interface SwarmTask {
+  slot: string;
+  node: string;
+  desiredState: string;
+  currentState: string;
+  error: string;
+}
+
+/** Parse `docker service ps --format '{{json .}}'` (one JSON task per line) into structured {@link SwarmTask}s
+ *  for the live replica panel. Unlike {@link parseServiceTasks} (which flattens name+node+state for the
+ *  terminal picker) this keeps the fields separate so the UI can render a slot/node/state table and count
+ *  running replicas. Malformed lines are skipped. */
+export function parseSwarmTasks(output: string): SwarmTask[] {
+  return output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line): SwarmTask | null => {
+      try {
+        const j = JSON.parse(line);
+        return {
+          slot: String(j.Name ?? ""),
+          node: String(j.Node ?? ""),
+          desiredState: String(j.DesiredState ?? ""),
+          currentState: String(j.CurrentState ?? ""),
+          error: String(j.Error ?? ""),
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((t): t is SwarmTask => t !== null);
+}

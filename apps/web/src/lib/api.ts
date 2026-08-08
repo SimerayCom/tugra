@@ -9,6 +9,7 @@ import type {
   LicenseStatus,
   Cluster,
   ClusterDetail,
+  AppClusterStatus,
   SwarmView,
   SavedView,
   Application,
@@ -836,6 +837,9 @@ export const api = {
   },
   listAppContainers(id: string) {
     return apiFetch<{ containers: { name: string; state: string }[] }>(`/apps/${id}/containers`);
+  },
+  getAppClusterStatus(id: string) {
+    return apiFetch<AppClusterStatus>(`/apps/${id}/cluster-status`);
   },
   renameApp(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });

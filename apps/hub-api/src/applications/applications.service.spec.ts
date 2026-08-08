@@ -130,6 +130,7 @@ function make(
       scale: jest.fn().mockResolvedValue(undefined),
       restart: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
       remove: jest.fn().mockResolvedValue(undefined),
+      status: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
     } as unknown as import("../clusters/swarm-deploy.service").SwarmDeployService,
     {
       get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
@@ -2326,6 +2327,64 @@ describe("ApplicationsService.hydrateCertSpec cluster-aware", () => {
     );
     expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "s1" } }));
     expect(spec.wildcardDomain).toBe("own.example.com");
+  });
+});
+
+describe("ApplicationsService.clusterStatus", () => {
+  type WithSwarm = { swarmDeploy: { status: jest.Mock } };
+  const ps = (tasks: object[]) => tasks.map((t) => JSON.stringify(t)).join("\n");
+
+  it("returns desired vs running + the current-generation tasks for a clustered app", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1", replicas: 3 }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    (svc as unknown as WithSwarm).swarmDeploy.status.mockResolvedValue({
+      exitCode: 0,
+      output: ps([
+        { Name: "tugra_app1.1", Node: "eu-1", DesiredState: "Running", CurrentState: "Running 4 minutes ago", Error: "" },
+        { Name: "tugra_app1.2", Node: "eu-2", DesiredState: "Running", CurrentState: "Preparing", Error: "" },
+        { Name: "tugra_app1.2", Node: "eu-2", DesiredState: "Shutdown", CurrentState: "Failed", Error: "boom" }, // old generation → filtered out
+      ]),
+    });
+    const res = await svc.clusterStatus("u1", "app1");
+    expect(res.reachable).toBe(true);
+    expect(res.desired).toBe(3);
+    expect(res.running).toBe(1); // only the "Running ..." task counts
+    expect(res.tasks).toHaveLength(2); // both Running-desired tasks; the Shutdown-desired one dropped
+    expect(res.tasks[0]).toMatchObject({ slot: "tugra_app1.1", node: "eu-1", currentState: "Running 4 minutes ago" });
+  });
+
+  it("desired defaults to 1 when replicas is null", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1", replicas: null }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    (svc as unknown as WithSwarm).swarmDeploy.status.mockResolvedValue({ exitCode: 0, output: "" });
+    const res = await svc.clusterStatus("u1", "app1");
+    expect(res.desired).toBe(1);
+    expect(res.tasks).toEqual([]);
+  });
+
+  it("degrades gracefully (reachable:false) when the manager errors — never throws for the polling panel", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1", replicas: 2 }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    (svc as unknown as WithSwarm).swarmDeploy.status.mockRejectedValue(new Error("manager offline"));
+    const res = await svc.clusterStatus("u1", "app1");
+    expect(res).toEqual({ desired: 2, running: 0, reachable: false, tasks: [] });
+  });
+
+  it("rejects an app that is not deployed to a cluster", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: null }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).clusterStatus("u1", "app1")).rejects.toThrow(/not deployed to a cluster/);
   });
 });
 
