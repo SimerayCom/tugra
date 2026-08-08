@@ -8,6 +8,7 @@ import {
   buildServicePsScript,
   buildServiceLogsScript,
   parseServiceImageDigest,
+  parseSwarmTasks,
   type ServiceDeployOpts,
 } from "./service-script";
 
@@ -142,5 +143,24 @@ describe("service-script builders", () => {
   it("parseServiceImageDigest extracts the swarm-pinned ref@sha256", () => {
     expect(parseServiceImageDigest("noise\nTUGRA_SVC_DIGEST=ghcr.io/org/app@sha256:abcd\nmore")).toBe("ghcr.io/org/app@sha256:abcd");
     expect(parseServiceImageDigest("no marker here")).toBeNull();
+  });
+
+  it("parseSwarmTasks maps each `docker service ps` JSON line to a structured task (slot/node/state)", () => {
+    const out = [
+      JSON.stringify({ Name: "tugra_abc.1", Node: "eu-1", DesiredState: "Running", CurrentState: "Running 4 minutes ago", Error: "" }),
+      JSON.stringify({ Name: "tugra_abc.2", Node: "eu-2", DesiredState: "Running", CurrentState: "Preparing", Error: "" }),
+      JSON.stringify({ Name: "tugra_abc.3", Node: "eu-3", DesiredState: "Shutdown", CurrentState: "Failed 2 minutes ago", Error: "task: non-zero exit (1)" }),
+    ].join("\n");
+    expect(parseSwarmTasks(out)).toEqual([
+      { slot: "tugra_abc.1", node: "eu-1", desiredState: "Running", currentState: "Running 4 minutes ago", error: "" },
+      { slot: "tugra_abc.2", node: "eu-2", desiredState: "Running", currentState: "Preparing", error: "" },
+      { slot: "tugra_abc.3", node: "eu-3", desiredState: "Shutdown", currentState: "Failed 2 minutes ago", error: "task: non-zero exit (1)" },
+    ]);
+  });
+
+  it("parseSwarmTasks skips malformed lines and tolerates missing fields", () => {
+    const out = ["not json", "", JSON.stringify({ Name: "tugra_abc.1" }), "  "].join("\n");
+    expect(parseSwarmTasks(out)).toEqual([{ slot: "tugra_abc.1", node: "", desiredState: "", currentState: "", error: "" }]);
+    expect(parseSwarmTasks("")).toEqual([]);
   });
 });

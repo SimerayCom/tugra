@@ -154,6 +154,11 @@ export class ApplicationsController {
     return this.apps.listContainers(user.userId, id);
   }
 
+  @Get(":id/cluster-status")
+  clusterStatus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.clusterStatus(user.userId, id);
+  }
+
   @Get(":id/logs")
   appLogs(
     @CurrentUser() user: AuthUser,

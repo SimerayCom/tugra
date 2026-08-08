@@ -5430,6 +5430,34 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/cluster-status": {
+      "get": {
+        "operationId": "ApplicationsController_clusterStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/logs": {
       "get": {
         "operationId": "ApplicationsController_appLogs",

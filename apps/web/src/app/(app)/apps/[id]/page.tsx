@@ -26,6 +26,7 @@ import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
 import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
+import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
@@ -848,50 +849,6 @@ function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure }: { id: str
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}
-      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
-  );
-}
-
-function ClusterDeployCard({ id, teamId, clusterId, replicas }: { id: string; teamId: string; clusterId: string | null; replicas: number | null }) {
-  const t = useT();
-  const qc = useQueryClient();
-  const { data: clusters = [] } = useQuery({ queryKey: ["clusters"], queryFn: () => api.listClusters() });
-  // Only a formed swarm (ACTIVE/DEGRADED) in this team can host swarm services.
-  const swarmClusters = clusters.filter((c) => c.teamId === teamId && (c.swarmStatus === "ACTIVE" || c.swarmStatus === "DEGRADED"));
-  const [cluster, setCluster] = useState(clusterId ?? "");
-  const [reps, setReps] = useState(String(replicas ?? 1));
-  const save = useMutation({
-    mutationFn: () => api.setAppClusterConfig(id, { clusterId: cluster || null, replicas: cluster ? Math.max(1, parseInt(reps, 10) || 1) : null }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
-  });
-  return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.clusterDeploy")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.clusterDeployDesc")}</p>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select style={{ ...envField, width: 240 }} value={cluster} onChange={(e) => setCluster(e.target.value)} aria-label={t("apps.clusterTarget")}>
-          <option value="">{t("apps.clusterNone")}</option>
-          {swarmClusters.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        {cluster && (
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={reps}
-            onChange={(e) => setReps(e.target.value)}
-            aria-label={t("apps.replicas")}
-            style={{ ...envField, width: 90 }}
-          />
-        )}
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
-      </div>
-      {cluster && <div style={{ fontSize: 11, color: "var(--c-am)", marginTop: 8 }}>{t("apps.clusterDeployNote")}</div>}
-      {swarmClusters.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.clusterNoSwarms")}</div>}
-      {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{save.error instanceof Error ? save.error.message : t("apps.clusterSaveFailed")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );

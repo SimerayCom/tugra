@@ -26,7 +26,7 @@ import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filter
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
-import { serviceName, parseServiceTasks } from "../deploy/service-script";
+import { serviceName, parseServiceTasks, parseSwarmTasks, type SwarmTask } from "../deploy/service-script";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
@@ -1333,6 +1333,29 @@ export class ApplicationsService {
     }
     const r = await this.agentWs.sendCommand(app.serverId, buildContainersScript(this.toSpec(app)), "deploy", 30_000);
     return { containers: parseContainers(r.output) };
+  }
+
+  /**
+   * Live replica status for a swarm-deployed app — the desired replica count vs how many tasks are actually
+   * running, plus each task's slot/node/state (for the app's cluster-deploy panel). Read via the swarm
+   * manager (`docker service ps`). Degrades gracefully: a missing/offline manager (or any status error)
+   * returns `reachable: false` with an empty task list rather than throwing, so the polling panel shows an
+   * "unavailable" hint instead of erroring out.
+   */
+  async clusterStatus(
+    userId: string,
+    id: string,
+  ): Promise<{ desired: number; running: number; reachable: boolean; tasks: SwarmTask[] }> {
+    const app = await this.requireWrite(userId, id);
+    if (!app.clusterId) throw new BadRequestException("app is not deployed to a cluster");
+    const desired = app.replicas ?? 1;
+    const r = await this.swarmDeploy.status(app).catch(() => ({ exitCode: 1, output: "" }));
+    if (r.exitCode !== 0) return { desired, running: 0, reachable: false, tasks: [] };
+    // Keep only the current generation (desired-state Running) — `docker service ps` also lists shut-down
+    // history tasks, which would inflate the table and confuse the running/desired count.
+    const tasks = parseSwarmTasks(r.output).filter((t) => t.desiredState === "Running");
+    const running = tasks.filter((t) => t.currentState.startsWith("Running")).length;
+    return { desired, running, reachable: true, tasks };
   }
 
   /** Tail the running container's logs — writer-only (output may contain secrets). */

@@ -119,6 +119,22 @@ export interface ClusterDetail extends Cluster {
 
 // ── Docker Swarm formation (Phase2) ──
 export type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING";
+
+/** One swarm task (replica) in the live cluster-deploy panel. */
+export interface SwarmTask {
+  slot: string;
+  node: string;
+  desiredState: string;
+  currentState: string;
+  error: string;
+}
+/** Live replica status for a swarm-deployed app. `reachable:false` = the manager could not be queried. */
+export interface AppClusterStatus {
+  desired: number;
+  running: number;
+  reachable: boolean;
+  tasks: SwarmTask[];
+}
 export type SwarmRole = "MANAGER" | "WORKER";
 export interface SwarmNodeView {
   serverId: string;
