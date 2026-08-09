@@ -93,6 +93,42 @@ describe("validateEnv — remote catalog", () => {
   });
 });
 
+describe("validateEnv — blank values are treated as UNSET", () => {
+  // An operator who copies .env.example (which ships blank optional keys) — or forwards the whole .env
+  // into the hub container via compose env_file — must not trip the optional .email()/.url()/base64
+  // validators, which would reject "" instead of skipping it.
+  it("treats blank/whitespace-only optional keys as unset (no .email()/.url()/base64 failure)", () => {
+    const env = validateEnv({
+      ...base,
+      NODE_ENV: "development",
+      ACME_EMAIL: "",
+      UPDATE_MANIFEST_URL: "  ",
+      UPDATE_PUBLISHER_KEY: "",
+      GITHUB_OAUTH_CLIENT_ID: "",
+      GITHUB_OAUTH_CLIENT_SECRET: "",
+      MAIL_HOST: "",
+      CATALOG_SOURCE_URL: "",
+      TUGRA_LICENSE: "",
+      AGENT_IMAGE: "",
+    });
+    expect(env.ACME_EMAIL).toBeUndefined();
+    expect(env.UPDATE_MANIFEST_URL).toBeUndefined();
+    expect(env.GITHUB_OAUTH_CLIENT_ID).toBeUndefined();
+    expect(env.MAIL_HOST).toBeUndefined();
+    expect(env.CATALOG_SOURCE_URL).toBeUndefined();
+    expect(env.TUGRA_LICENSE).toBeUndefined();
+  });
+
+  it("still honors non-blank optional values", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development", ACME_EMAIL: "ops@example.com" });
+    expect(env.ACME_EMAIL).toBe("ops@example.com");
+  });
+
+  it("a blank REQUIRED key still fails closed (blank ≠ a valid value)", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", DATABASE_URL: "" })).toThrow(/DATABASE_URL/);
+  });
+});
+
 describe("validateEnv — MAGIC_DOMAIN_SUFFIX", () => {
   it("defaults to sslip.io when unset", () => {
     expect(validateEnv({ ...base, NODE_ENV: "development" }).MAGIC_DOMAIN_SUFFIX).toBe("sslip.io");

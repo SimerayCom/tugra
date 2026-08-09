@@ -15,7 +15,6 @@ import { CommandPalette, type CommandDest } from "./command-palette";
 import { TeamScopeSelect } from "./team-scope";
 import {
   Activity,
-  ArrowLeftRight,
   Bell,
   ChevronsLeft,
   ChevronsRight,
@@ -76,7 +75,8 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
       { key: "sharedVars", href: "/shared-variables", icon: Variable, impl: true },
       { key: "domains", href: "/domains", icon: Globe, impl: true },
-      { key: "migration", href: "/coming-soon?f=Migration", icon: ArrowLeftRight },
+      // Migration (discover + adopt foreign containers) lives per-server under a server's Maintenance
+      // tab (discover-adopt-card), so there's no standalone page — no top-level nav entry for it.
     ],
   },
   {

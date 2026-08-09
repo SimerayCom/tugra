@@ -17,7 +17,7 @@ Self-hostable platform to deploy, monitor, back up & orchestrate your servers �
 
 ---
 
-> **Status:** Early development. Things will change fast and break often. Stars and feedback are welcome — production use is not recommended yet.
+> **Status:** Beta. Under active development and dogfooded on real servers — expect rough edges and the occasional breaking change. Stars, issues and feedback are very welcome.
 
 ## What is Tugra?
 
