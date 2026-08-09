@@ -45,6 +45,16 @@ services:
     restart: unless-stopped
     # The hub image self-runs `prisma migrate deploy` before boot (see deploy/Dockerfile.hub), so no
     # separate migration step is needed — only a healthy database first.
+    #
+    # Forward the whole repo-root .env into the container so OPTIONAL operator config actually reaches the
+    # hub: ACME_EMAIL, GITHUB_OAUTH_*, MAIL_*, UPDATE_MANIFEST_URL/PUBLISHER_KEY, CATALOG_*, TUGRA_LICENSE,
+    # AGENT_IMAGE, NOTIFY_ALLOW_PRIVATE_TARGETS, ANTHROPIC_* … Without this, values set in .env are only
+    # used for compose interpolation and never seen by the app. The explicit `environment:` block below
+    # still wins (documents + forces the required keys); blank keys are treated as unset by validateEnv,
+    # and unknown keys are ignored by the env schema. (Path is relative to this compose file's directory.)
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       DATABASE_URL: "${DATABASE_URL}"
       REDIS_URL: "${REDIS_URL}"

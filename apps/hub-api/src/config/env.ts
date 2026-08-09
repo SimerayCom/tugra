@@ -167,7 +167,17 @@ export const envSchema = z
 export type Env = z.infer<typeof envSchema>;
 
 export function validateEnv(config: Record<string, unknown>): Env {
-  const parsed = envSchema.safeParse(config);
+  // Treat blank / whitespace-only values as UNSET before validation. An operator who copies
+  // .env.example (which ships blank optional keys like ACME_EMAIL="" or UPDATE_MANIFEST_URL="") — or
+  // forwards the whole .env into the container via compose `env_file` — would otherwise trip the
+  // optional .email()/.url()/base64 validators, which reject "" instead of skipping it. A blank env
+  // var universally means "not set" here; a blank REQUIRED key still fails closed (it becomes missing).
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (typeof v === "string" && v.trim() === "") continue;
+    cleaned[k] = v;
+  }
+  const parsed = envSchema.safeParse(cleaned);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
