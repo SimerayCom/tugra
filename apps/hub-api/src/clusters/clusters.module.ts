@@ -14,6 +14,6 @@ import { SwarmProxyService } from "./swarm-proxy.service";
   imports: [AgentGatewayModule, CryptoModule],
   controllers: [ClustersController],
   providers: [ClustersService, SwarmService, SwarmDeployService, SwarmProxyService],
-  exports: [SwarmDeployService, SwarmProxyService],
+  exports: [SwarmDeployService, SwarmProxyService, ClustersService, SwarmService],
 })
 export class ClustersModule {}

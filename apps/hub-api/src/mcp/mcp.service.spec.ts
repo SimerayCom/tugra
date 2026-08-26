@@ -1,0 +1,93 @@
+import { McpService, type McpAuthCtx } from "./mcp.service";
+import type { AuditService } from "../audit/audit.service";
+import type { McpTool } from "./mcp-tools";
+
+function make() {
+  const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
+  const empty = {} as never;
+  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, audit);
+  return { svc, audit };
+}
+
+const ctx = (scopes: string[]): McpAuthCtx => ({ userId: "u1", scopes, tokenId: "t1" });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const rpc = (method: string, params?: any, id: number | null = 1) => ({ jsonrpc: "2.0", id, method, params });
+
+function toolStub(name: string, scope: McpTool["scope"], execute: McpTool["execute"]): McpTool {
+  return { name, description: name, scope, inputSchema: { type: "object", properties: {} }, execute };
+}
+
+describe("McpService.handle", () => {
+  it("initialize returns protocolVersion + tools capability + serverInfo", async () => {
+    const { svc } = make();
+    const res = (await svc.handle(ctx(["read"]), rpc("initialize", {}))) as { result: Record<string, unknown> };
+    expect(res.result.protocolVersion).toBe("2025-06-18");
+    expect(res.result.capabilities).toEqual({ tools: {} });
+    expect(res.result.serverInfo).toMatchObject({ name: "tugra-hub" });
+  });
+
+  it("ping → {}, notifications → null (no body)", async () => {
+    const { svc } = make();
+    expect((await svc.handle(ctx(["read"]), rpc("ping"))) as { result: unknown }).toMatchObject({ result: {} });
+    expect(await svc.handle(ctx(["read"]), { jsonrpc: "2.0", method: "notifications/initialized" })).toBeNull();
+  });
+
+  it("rejects a malformed request (-32600) and an unknown method (-32601)", async () => {
+    const { svc } = make();
+    expect((await svc.handle(ctx(["read"]), { jsonrpc: "1.0", method: "x", id: 1 })) as { error: { code: number } }).toMatchObject({ error: { code: -32600 } });
+    expect((await svc.handle(ctx(["read"]), rpc("does/not/exist"))) as { error: { code: number } }).toMatchObject({ error: { code: -32601 } });
+    // unknown NOTIFICATION (no id) is ignored, not errored
+    expect(await svc.handle(ctx(["read"]), { jsonrpc: "2.0", method: "notifications/unknown" })).toBeNull();
+  });
+
+  it("tools/list advertises only the tools the token's scopes satisfy (#8)", async () => {
+    const { svc } = make();
+    svc.tools = [
+      toolStub("read_tool", "read", async () => ({})),
+      toolStub("deploy_tool", "deploy", async () => ({})),
+    ];
+    const res = (await svc.handle(ctx(["read"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } };
+    const names = res.result.tools.map((t) => t.name);
+    expect(names).toEqual(["read_tool"]); // deploy_tool hidden from a read-only token
+  });
+
+  it("tools/call: unknown tool → -32602", async () => {
+    const { svc } = make();
+    const res = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "nope" }))) as { error: { code: number } };
+    expect(res.error.code).toBe(-32602);
+  });
+
+  it("tools/call: insufficient scope → -32001 (never executes)", async () => {
+    const { svc } = make();
+    const execute = jest.fn();
+    svc.tools = [toolStub("deploy_tool", "deploy", execute)];
+    const res = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "deploy_tool" }))) as { error: { code: number } };
+    expect(res.error.code).toBe(-32001);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("tools/call: success wraps the sanitized result in MCP content + audits", async () => {
+    const { svc, audit } = make();
+    svc.tools = [toolStub("get_thing", "read", async (_d, userId) => ({ userId, password: "leak", ok: 1 }))];
+    const res = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "get_thing", arguments: { id: "x" } }))) as {
+      result: { content: { type: string; text: string }[] };
+    };
+    expect(res.result.content[0].type).toBe("text");
+    const payload = JSON.parse(res.result.content[0].text);
+    expect(payload.userId).toBe("u1"); // caller userId flowed through
+    expect(payload.password).toBeNull(); // sanitizer redacted the secret field
+    expect(payload.ok).toBe(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.tools_call", target: "get_thing", actor: "u1" }));
+  });
+
+  it("tools/call: an executing tool that throws → isError content (not a JSON-RPC error) + audits", async () => {
+    const { svc, audit } = make();
+    svc.tools = [toolStub("boom", "read", async () => { throw new Error("kaboom"); })];
+    const res = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "boom" }))) as {
+      result: { content: { text: string }[]; isError: boolean };
+    };
+    expect(res.result.isError).toBe(true);
+    expect(res.result.content[0].text).toContain("kaboom");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ target: "boom", meta: expect.objectContaining({ outcome: "error" }) }));
+  });
+});

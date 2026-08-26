@@ -14966,6 +14966,32 @@
           "Webhooks"
         ]
       }
+    },
+    "/api/v1/mcp": {
+      "post": {
+        "operationId": "McpController_handle",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Mcp"
+        ]
+      },
+      "get": {
+        "operationId": "McpController_getNotSupported",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Mcp"
+        ]
+      }
     }
   },
   "info": {
