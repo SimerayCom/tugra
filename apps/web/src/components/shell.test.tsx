@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { NAV, DESTS } from "./shell";
-import { navForMode } from "../lib/ui-mode";
+import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 
 describe("sidebar NAV", () => {
   it("defines an icon for every nav item (no bare text entries)", () => {
@@ -30,6 +30,18 @@ describe("home mode nav", () => {
     expect(keys).toContain("dashboard");
     expect(keys).toContain("servers");
     expect(keys).not.toContain("home");
+  });
+});
+
+describe("home mode route guard", () => {
+  // Two independent lists must not drift: a nav item shown in Home mode (home: true)
+  // whose route isn't allowed by isHomeAllowed() would render a sidebar link that the
+  // (app) layout immediately bounces back to /home — a silent dead-end. Guard it.
+  it("allows every home-mode nav item's route", () => {
+    for (const item of NAV.flatMap((g) => g.items).filter((i) => i.home)) {
+      const base = item.href.split("?")[0];
+      expect(isHomeAllowed(base), `${item.key} (${base}) is in Home nav but not home-allowed`).toBe(true);
+    }
   });
 });
 

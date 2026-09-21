@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -133,6 +133,16 @@ export default function ServerDetailPage() {
             <Info label={t("servers.team")} value={server.teamId.slice(0, 8)} />
             <Info label={t("servers.sealLabel")} value={server.seal ? t("servers.sealed") : "—"} />
             <Info label={t("servers.lastSeen")} value={server.lastSeenAt ? new Date(server.lastSeenAt).toLocaleTimeString() : "—"} />
+            {server.clusterId && (
+              <Info
+                label={t("servers.cluster")}
+                value={
+                  <Link href={`/clusters/${server.clusterId}`} style={{ color: "var(--c-a)", textDecoration: "none" }}>
+                    {server.clusterName ?? server.clusterId}
+                  </Link>
+                }
+              />
+            )}
           </Card>
           {(server.os || server.arch || server.cpuCores || server.agentVersion) && (
             <Card style={{ padding: 16, display: "flex", gap: 28, flexWrap: "wrap" }}>
@@ -841,7 +851,7 @@ const cleanupField: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 3 }}>{label}</div>

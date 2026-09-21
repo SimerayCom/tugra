@@ -7,6 +7,8 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   name: id,
   status: "ONLINE",
   teamId: "t",
+  clusterId: null,
+  clusterName: null,
   hostname: null,
   publicIp: null,
   publicIpv6: null,

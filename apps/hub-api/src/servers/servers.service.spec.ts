@@ -64,6 +64,30 @@ describe("ServersService.listForUser (cross-team, role-aware)", () => {
   });
 });
 
+describe("ServersService.getForUser (cluster membership exposed)", () => {
+  it("resolves clusterId + clusterName from the server's cluster relation", async () => {
+    const prisma = {
+      ...owner(),
+      server: {
+        findUnique: jest.fn().mockResolvedValue({ ...row("s1", "teamA"), clusterId: "c1", cluster: { name: "edge-eu" } }),
+      },
+    } as unknown as PrismaService;
+    const view = await svcWith(prisma).getForUser("u1", "s1");
+    expect(view.clusterId).toBe("c1");
+    expect(view.clusterName).toBe("edge-eu");
+  });
+
+  it("returns null cluster fields for a standalone server", async () => {
+    const prisma = {
+      ...owner(),
+      server: { findUnique: jest.fn().mockResolvedValue({ ...row("s2", "teamA"), clusterId: null, cluster: null }) },
+    } as unknown as PrismaService;
+    const view = await svcWith(prisma).getForUser("u1", "s2");
+    expect(view.clusterId).toBeNull();
+    expect(view.clusterName).toBeNull();
+  });
+});
+
 describe("ServersService.createServer (team role enforced)", () => {
   it("forbids a VIEWER from creating a server", async () => {
     const prisma = {

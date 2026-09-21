@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
@@ -116,7 +117,7 @@ export default function ClusterDetailPage() {
             {cluster.servers.map((s) => (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: s.status === "ONLINE" ? "var(--c-g)" : s.status === "OFFLINE" ? "var(--c-r)" : "var(--c-am)" }} />
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</span>
+                <Link href={`/servers/${s.id}`} style={{ fontWeight: 600, fontSize: 13, color: "inherit", textDecoration: "none" }}>{s.name}</Link>
                 {s.publicIp && <span className="mono" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{s.publicIp}</span>}
                 <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--c-tx3)" }}>{s.status}</span>
               </div>

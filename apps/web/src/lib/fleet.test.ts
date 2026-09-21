@@ -12,6 +12,8 @@ const s = (
   name: id,
   status,
   teamId,
+  clusterId: null,
+  clusterName: null,
   hostname: null,
   publicIp: null,
   publicIpv6: null,
