@@ -7,6 +7,7 @@ control plane for your servers. New here? Start with the [project overview](../R
 
 - [Install](install.md) — prerequisites, the one-line installer, and a production TLS setup.
 - [Upgrade](upgrade.md) — in-app updates, manual upgrades, and how the signed update flow works.
+- [Disaster recovery](disaster-recovery.md) — backing up + restoring the Tugra hub's own state (control plane).
 
 ## Using Tugra
 
