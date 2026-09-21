@@ -825,6 +825,17 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { dockerOptions: null } }));
   });
 
+  it("rejects dockerOptions with an unterminated quote (early 400, not a failed deploy later)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.setDockerOptions("u1", "app1", '--label "oops')).rejects.toThrow(/unterminated quote/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("stores build args encrypted on setBuildArgs", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

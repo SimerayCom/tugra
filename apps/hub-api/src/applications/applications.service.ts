@@ -51,6 +51,7 @@ import {
   type AppConfigMount,
   type RegistryAuth,
 } from "../deploy/deploy-script";
+import { assertSafeDockerOptions } from "../deploy/docker-options-safety";
 import {
   buildConfigSnapshot,
   diffSnapshots,
@@ -1512,6 +1513,10 @@ export class ApplicationsService {
 
   async setDockerOptions(userId: string, id: string, dockerOptions: string | null): Promise<void> {
     await this.requireWrite(userId, id);
+    // Validate at set-time (clear 400 now, not a failed deploy later): reject an unterminated quote AND any
+    // host-escaping flag (--privileged, docker.sock/host-path bind, host namespaces, host devices,
+    // non-allowlisted --cap-add). Shell-injection itself is neutralized at deploy time by dockerOptionsArgs.
+    assertSafeDockerOptions(dockerOptions);
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
   }

@@ -14,7 +14,7 @@ import { parse } from "yaml";
 // CAP_PERFMON were split out of CAP_SYS_ADMIN in Linux 5.8, and more will follow), so we permit only
 // a small set that is either already in Docker's default grant (adding it is a no-op) or is a common,
 // harmless addition. Anything else — including any future dangerous cap — is rejected.
-const SAFE_CAPS = new Set([
+export const SAFE_CAPS = new Set([
   // Docker default set (adding these via cap_add is a no-op):
   "CHOWN", "DAC_OVERRIDE", "FSETID", "FOWNER", "MKNOD", "NET_RAW", "SETGID", "SETUID", "SETFCAP",
   "SETPCAP", "NET_BIND_SERVICE", "SYS_CHROOT", "KILL", "AUDIT_WRITE",
@@ -59,7 +59,7 @@ function toArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : v == null ? [] : [v];
 }
 
-function isSensitivePath(raw: string): boolean {
+export function isSensitivePath(raw: string): boolean {
   const src = raw.trim();
   // An env-interpolated source (`${VAR}` / `$VAR`) could smuggle a sensitive path via envOverride at
   // deploy time — a bind source must be a literal path, so reject any interpolation outright.

