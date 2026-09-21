@@ -64,6 +64,8 @@ function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
     grantProjectAccess: jest.fn().mockResolvedValue(undefined),
     membershipAccess: jest.fn().mockResolvedValue(null),
     accessByTeam: jest.fn().mockResolvedValue(new Map()),
+    // requireWrite() gates on requirePermission — default to a permissive member; denial tests override.
+    requirePermission: jest.fn().mockResolvedValue(undefined),
     // require() still uses teamRole for a plain membership check; canWrite/list now derive
     // from the granular permission sets. Default to a full-access member; tests override.
     teamRole: jest.fn().mockResolvedValue(Role.OWNER),
@@ -494,6 +496,12 @@ describe("ApplicationsService", () => {
     // oldest deploy has no previous snapshot → no changes; raw snapshot not leaked
     expect(list[1].configChanges).toEqual([]);
     expect(list[0]).not.toHaveProperty("configSnapshot");
+  });
+
+  it("deployments() is writer-only (rows carry secret-bearing build logs → VIEWER is denied)", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).deployments("u1", "app1")).rejects.toThrow(/nope/);
   });
 
   it("deployments() marks a digest-only IMAGE deploy rollbackable (byte-exact repull after prune)", async () => {

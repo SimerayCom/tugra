@@ -135,6 +135,7 @@ export class ApplicationsController {
   }
 
   @Get(":id/deployments")
+  @RequireScopes("read:secrets") // rows carry raw build/deploy logs (may contain secrets)
   deployments(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.deployments(user.userId, id);
   }
@@ -160,6 +161,7 @@ export class ApplicationsController {
   }
 
   @Get(":id/logs")
+  @RequireScopes("read:secrets") // container logs may contain secrets
   appLogs(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -180,6 +182,7 @@ export class ApplicationsController {
 
   /** Live build-log stream (SSE). Completes when no deploy is active. */
   @Sse(":id/deployments/stream")
+  @RequireScopes("read:secrets") // live build logs may contain secrets
   streamLogs(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -196,6 +199,7 @@ export class ApplicationsController {
    * 503) — NestJS only starts the SSE stream after the handler promise resolves.
    */
   @Sse(":id/logs/stream")
+  @RequireScopes("read:secrets") // live container logs may contain secrets
   async streamContainerLogs(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -217,6 +221,7 @@ export class ApplicationsController {
 
   /** One-shot log export (writer-only) — returns the collected logs as a downloadable text file. */
   @Get(":id/logs/download")
+  @RequireScopes("read:secrets") // exported logs may contain secrets
   @Header("Content-Type", "text/plain; charset=utf-8")
   @Header("Content-Disposition", 'attachment; filename="container.log"')
   downloadLogs(
