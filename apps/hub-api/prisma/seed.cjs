@@ -65,6 +65,15 @@ async function main() {
     data: { email: "teammate@tugra.local", password: pwHash, name: "Ada Teammate" },
   });
 
+  // Mark the instance as already bootstrapped. The real first-user registration claims
+  // InstanceSettings.initializedAt; the seed creates users directly, so set it here too —
+  // otherwise the UI treats the instance as a fresh install and bounces /login → /welcome.
+  await prisma.instanceSettings.upsert({
+    where: { id: "singleton" },
+    update: { initializedAt: new Date() },
+    create: { id: "singleton", initializedAt: new Date() },
+  });
+
   let tokenN = 0;
   const newToken = () => `seed-${Date.now()}-${tokenN++}-${Math.floor(performance.now())}`;
 
