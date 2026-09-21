@@ -233,6 +233,8 @@ export interface ServerView {
   name: string;
   status: ServerStatus;
   teamId: string;
+  clusterId: string | null; // the cluster this server belongs to (null = standalone)
+  clusterName: string | null; // resolved on the detail view; null in list views
   hostname: string | null;
   publicIp: string | null;
   publicIpv6: string | null;

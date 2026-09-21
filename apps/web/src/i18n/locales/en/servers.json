@@ -29,6 +29,7 @@
   "noMatch": "No servers match this filter.",
   "server": "Server",
   "team": "Team",
+  "cluster": "Cluster",
   "role": "Role",
   "lastSeen": "Last seen",
   "view": "View →",

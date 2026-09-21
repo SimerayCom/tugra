@@ -1228,6 +1228,14 @@
                       "teamId": {
                         "type": "string"
                       },
+                      "clusterId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "clusterName": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "hostname": {
                         "type": "string",
                         "nullable": true
@@ -1354,6 +1362,8 @@
                       "name",
                       "status",
                       "teamId",
+                      "clusterId",
+                      "clusterName",
                       "hostname",
                       "publicIp",
                       "publicIpv6",
@@ -1482,6 +1492,14 @@
                     "teamId": {
                       "type": "string"
                     },
+                    "clusterId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "clusterName": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "hostname": {
                       "type": "string",
                       "nullable": true
@@ -1608,6 +1626,8 @@
                     "name",
                     "status",
                     "teamId",
+                    "clusterId",
+                    "clusterName",
                     "hostname",
                     "publicIp",
                     "publicIpv6",

@@ -48,6 +48,8 @@ export const ServerViewSchema = z.object({
   name: z.string(),
   status: z.nativeEnum(ServerStatus),
   teamId: z.string(),
+  clusterId: z.string().nullable(), // the cluster this server belongs to (null = standalone)
+  clusterName: z.string().nullable(), // resolved for the detail view; null in list views
   hostname: z.string().nullable(),
   publicIp: z.string().nullable(),
   publicIpv6: z.string().nullable(),
@@ -253,7 +255,10 @@ export class ServersService {
   }
 
   async getForUser(userId: string, id: string): Promise<ServerView> {
-    const server = await this.prisma.server.findUnique({ where: { id } });
+    const server = await this.prisma.server.findUnique({
+      where: { id },
+      include: { cluster: { select: { name: true } } },
+    });
     if (!server) throw new NotFoundException("server not found");
     const perms = await this.access.membershipPermissions(userId, server.teamId);
     if (!perms) throw new ForbiddenException("not a member of this team");
@@ -553,6 +558,8 @@ export class ServersService {
       name: string;
       status: ServerStatus;
       teamId: string;
+      clusterId?: string | null;
+      cluster?: { name: string } | null;
       hostname: string | null;
       publicIp?: string | null;
       publicIpv6?: string | null;
@@ -590,6 +597,8 @@ export class ServersService {
       name: s.name,
       status: s.status,
       teamId: s.teamId,
+      clusterId: s.clusterId ?? null,
+      clusterName: s.cluster?.name ?? null,
       hostname: s.hostname,
       publicIp: s.publicIp ?? null,
       publicIpv6: s.publicIpv6 ?? null,
