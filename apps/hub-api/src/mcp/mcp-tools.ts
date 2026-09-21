@@ -72,15 +72,20 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "list_deployments",
-    description: "List the deployment history (status, image, timestamps) of an application.",
+    description: "List the deployment history (status, image, timestamps, config changes) of an application.",
     scope: "read",
     inputSchema: idSchema,
-    execute: (d, userId, a) => d.apps.deployments(userId, reqStr(a, "id")),
+    // Strip the raw build `logs` blob — deployment logs can hold secrets and must never reach the LLM
+    // context; the metadata (status/image/timestamps/configChanges/rollbackable) is what a list needs.
+    execute: async (d, userId, a) => {
+      const rows = (await d.apps.deployments(userId, reqStr(a, "id"))) as Array<Record<string, unknown>>;
+      return rows.map(({ logs: _logs, ...rest }) => rest);
+    },
   },
   {
     name: "get_app_logs",
-    description: "Tail the running application's aggregated container logs. Requires write access to the app.",
-    scope: "read",
+    description: "Tail the running application's aggregated container logs. Requires write access + read:secrets (logs may contain secrets).",
+    scope: "read:secrets",
     inputSchema: { type: "object", properties: { id: { type: "string" }, tail: { type: "integer", minimum: 1, maximum: 1000 } }, required: ["id"] },
     execute: (d, userId, a) => d.apps.appLogs(userId, reqStr(a, "id"), clampInt(a.tail, 1, 1000, 200)),
   },

@@ -7,13 +7,29 @@ function tool(name: string) {
 }
 
 describe("MCP_TOOLS catalog", () => {
-  it("every tool is read-scoped and has a name/description/inputSchema", () => {
+  it("every tool is read-only-scoped (read or read:secrets) with a name/description/inputSchema", () => {
     for (const t of MCP_TOOLS) {
-      expect(t.scope).toBe("read");
+      expect(["read", "read:secrets"]).toContain(t.scope); // Phase1 is read-only; no write/deploy/admin tools
       expect(t.name).toMatch(/^[a-z_]+$/);
       expect(typeof t.description).toBe("string");
       expect(t.inputSchema).toBeTruthy();
     }
+  });
+
+  it("secret-bearing log tool (get_app_logs) requires read:secrets, not plain read", () => {
+    expect(tool("get_app_logs").scope).toBe("read:secrets");
+  });
+
+  it("list_deployments strips the raw logs blob (metadata only — never leaks build secrets to the LLM)", async () => {
+    const deployments = jest.fn().mockResolvedValue([
+      { id: "d1", status: "SUCCESS", image: "nginx", logs: "DATABASE_URL=postgres://u:secret@h/db\n...", rollbackable: true },
+    ]);
+    const deps = { apps: { deployments } } as unknown as McpDeps;
+    const res = (await tool("list_deployments").execute(deps, "u1", { id: "app1" })) as Array<Record<string, unknown>>;
+    expect(deployments).toHaveBeenCalledWith("u1", "app1");
+    expect(res[0].logs).toBeUndefined();
+    expect(res[0].status).toBe("SUCCESS");
+    expect(JSON.stringify(res)).not.toContain("secret");
   });
 
   it("passes the caller userId straight through to the service (team scoping stays server-side)", async () => {

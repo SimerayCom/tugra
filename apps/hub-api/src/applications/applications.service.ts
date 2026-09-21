@@ -1285,7 +1285,9 @@ export class ApplicationsService {
   }
 
   async deployments(userId: string, id: string) {
-    const app = await this.require(userId, id);
+    // Writer-only: each row carries the raw build/deploy `logs`, which can contain secrets (DSN, tokens,
+    // .env dumps in build output) — same rationale as appLogs/listContainers. A VIEWER must not read them.
+    const app = await this.requireWrite(userId, id);
     const isCompose = app.source === "COMPOSE";
     const rows = await this.prisma.deployment.findMany({
       where: { appId: id },
