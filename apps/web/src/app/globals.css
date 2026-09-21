@@ -85,6 +85,32 @@ body {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
 }
 
+/* Skeleton loading shimmer: a moving sheen layered over a var(--c-el) base.
+   Used by components/skeleton.tsx (the `.skeleton-shimmer` class on the base
+   Skeleton block). Respects prefers-reduced-motion by freezing to a flat,
+   muted block instead of animating. */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+.skeleton-shimmer {
+  background-color: var(--c-el);
+  background-image: linear-gradient(100deg, transparent 30%, var(--c-bd) 50%, transparent 70%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+    background-image: none;
+  }
+}
+
 /* Category chips: wrap on desktop, horizontal-scroll on narrow screens so they never push the grid down. */
 .tpl-chips {
   display: flex;

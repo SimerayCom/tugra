@@ -11,7 +11,8 @@ import type { AppStatus, DbStatus, Environment, ProjectResource } from "../../..
 import { appColor } from "../../../../lib/apps";
 import { dbColor } from "../../../../lib/databases";
 import { useT } from "../../../../i18n/provider";
-import { Badge, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
+import { Badge, Btn, Card, StatusPill } from "../../../../components/ui";
+import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import { PageHeader } from "../../../../components/page-header";
 import { TagChips } from "../../../../components/tags";
 import { useConfirm } from "../../../../components/confirm";
@@ -53,7 +54,7 @@ export default function ProjectDetailPage() {
   });
 
   if (isError && !project) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
-  if (isLoading || !project) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
+  if (isLoading || !project) return <ProjectDetailSkeleton />;
   const empty = project.environments.every((e) => e.appCount + e.dbCount === 0);
 
   return (
@@ -99,6 +100,56 @@ export default function ProjectDetailPage() {
           </form>
         </Card>
       )}
+    </div>
+  );
+}
+
+/** Page-shaped shimmer shown while the project query is loading — mirrors the header, the
+ * environments label, and each environment card (name/badges + Applications/Databases
+ * resource grids) so the skeleton→content swap doesn't jump. */
+function ProjectDetailSkeleton() {
+  return (
+    <div style={{ padding: "var(--page-pad)" }}>
+      <div style={{ marginBottom: 20 }}>
+        <Skeleton height={11} width={90} style={{ marginBottom: 10 }} />
+        <Skeleton height={24} width={220} />
+      </div>
+
+      <Skeleton height={11} width={110} style={{ marginBottom: 12 }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {Array.from({ length: 2 }).map((_, i) => (
+          <SkeletonCard key={i}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+              <Skeleton height={14} width={110} />
+              <Skeleton height={20} width={62} />
+              <Skeleton height={20} width={58} />
+            </div>
+            <SkeletonResourceGroup />
+            <SkeletonResourceGroup />
+          </SkeletonCard>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** One resource-group placeholder — a label plus a grid of resource-tile shimmers, matching
+ * ResourceGroup's own grid (gridTemplateColumns: repeat(auto-fill, minmax(300px, 1fr))). */
+function SkeletonResourceGroup() {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <Skeleton height={11} width={90} style={{ marginBottom: 8 }} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 8 }}>
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)" }}>
+            <Skeleton width={36} height={36} radius={8} style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Skeleton height={13} width="55%" style={{ marginBottom: 6 }} />
+              <Skeleton height={11} width="35%" />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

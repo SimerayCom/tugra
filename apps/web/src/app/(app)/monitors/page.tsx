@@ -9,11 +9,12 @@ import { scopeByTeam } from "../../../lib/team-scope";
 import { writableIds } from "../../../lib/fleet";
 import { monitorColor } from "../../../lib/monitors";
 import { useT } from "../../../i18n/provider";
-import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { Btn, Card, EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Field, Select, TextInput } from "../../../components/form";
 import { MonitorFavicon } from "../../../components/monitor-favicon";
 import { MonitorChannelsBulkModal } from "../../../components/monitor-channels-bulk-modal";
+import { SkeletonTable } from "../../../components/skeleton";
 
 const formGrid: React.CSSProperties = {
   display: "grid",
@@ -192,7 +193,7 @@ export default function MonitorsPage() {
       {isError && monitors.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <Spinner />
+        <SkeletonTable />
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
           {monitors.map((m) => (

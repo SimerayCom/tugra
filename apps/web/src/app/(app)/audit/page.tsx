@@ -6,10 +6,11 @@ import { Download, ScrollText } from "lucide-react";
 import { api } from "../../../lib/api";
 import { filterAudit, auditToCsv } from "../../../lib/audit";
 import { useT } from "../../../i18n/provider";
-import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { Btn, Card, EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TextInput } from "../../../components/form";
 import { useTeamScope } from "../../../components/team-scope";
+import { Skeleton, SkeletonTable } from "../../../components/skeleton";
 
 function fmt(iso: string) {
   const d = new Date(iso);
@@ -54,7 +55,16 @@ export default function AuditPage() {
       {isError && entries.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <Spinner />
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <Skeleton height={33} />
+            </div>
+            <Skeleton width={50} height={14} />
+            <Skeleton width={110} height={33} />
+          </div>
+          <SkeletonTable rows={8} />
+        </>
       ) : entries.length === 0 ? (
         <EmptyState icon={ScrollText} title={t("audit.emptyTitle")}>{t("audit.empty")}</EmptyState>
       ) : (

@@ -7,10 +7,11 @@ import { Store } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
-import { EmptyState, Spinner } from "../../../components/ui";
+import { EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TemplateGrid } from "../../../components/template-grid";
 import { InstallModal } from "../../../components/install-modal";
+import { Skeleton, SkeletonText } from "../../../components/skeleton";
 import type { Template } from "../../../lib/types";
 
 export default function AppStorePage() {
@@ -31,7 +32,22 @@ export default function AppStorePage() {
       {isError && templates.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <Spinner />
+        <>
+          <div style={{ maxWidth: 480, marginBottom: 10 }}>
+            <Skeleton height={38} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+            {Array.from({ length: 9 }).map((_, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, borderRadius: "var(--r1)", border: "1px solid var(--c-bd)" }}>
+                <Skeleton width={56} height={56} radius={12} style={{ flexShrink: 0 }} />
+                <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <Skeleton height={14} width="60%" />
+                  <SkeletonText lines={2} width="90%" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       ) : templates.length === 0 ? (
         <EmptyState icon={Store} title={t("resources.storeTitle")}>{t("resources.noMatches")}</EmptyState>
       ) : (
