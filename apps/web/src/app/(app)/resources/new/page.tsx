@@ -248,7 +248,7 @@ function Wizard() {
             )}
           </div>
 
-          {(() => {
+          {projectId && (() => {
             const cur = wizardStep(sel !== null, !!serverId);
             const steps = [t("resources.stepType"), t("resources.stepServer"), t("resources.stepConfigure")];
             const goto = (n: number) => { if (n === 1) setSel(null); else if (n === 2) setServerId(""); };
@@ -277,7 +277,9 @@ function Wizard() {
             );
           })()}
 
-          {sel === null ? (
+          {!projectId ? (
+            <Card style={{ padding: 16, fontSize: 13, color: "var(--c-tx3)" }}>{t("resources.pickProjectFirst")}</Card>
+          ) : sel === null ? (
             <>
               {kindFilter && (
                 <button type="button" onClick={() => setKindFilter(null)} style={{ ...backLinkBtn, marginBottom: 14 }}>← {t("resources.allTypes")}</button>
