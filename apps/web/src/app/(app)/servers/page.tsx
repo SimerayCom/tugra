@@ -8,11 +8,12 @@ import { useT } from "../../../i18n/provider";
 import { ServerTable } from "../../../components/server-table";
 import { SavedViewsBar } from "../../../components/saved-views-bar";
 import { TagFilter } from "../../../components/tags";
-import { Btn, Spinner } from "../../../components/ui";
+import { Btn } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
+import { SkeletonTable } from "../../../components/skeleton";
 
 export default function ServersPage() {
   const t = useT();
@@ -36,7 +37,7 @@ export default function ServersPage() {
           <Btn>{t("servers.add")}</Btn>
         </Link>
       </div>
-      {isLoading && <Spinner />}
+      {isLoading && <SkeletonTable rows={6} />}
       {isError && !servers && <ErrorState onRetry={() => refetch()} />}
       {servers && (
         <>

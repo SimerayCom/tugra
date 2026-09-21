@@ -22,6 +22,7 @@ import { Modal } from "../../../../components/modal";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
+import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
@@ -76,7 +77,7 @@ export default function ServerDetailPage() {
   }, [server?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isError && !server) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
-  if (isLoading || !server) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
+  if (isLoading || !server) return <ServerDetailSkeleton />;
 
   const cpu = metrics.map((m) => m.cpu);
   const ram = metrics.map((m) => pct(m.memUsed, m.memTotal));
@@ -210,6 +211,47 @@ export default function ServerDetailPage() {
           onClose={() => setShellOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** Page-shaped shimmer shown while the server query is loading — mirrors header, tabs,
+ * overview info card, and the monitoring charts grid so the skeleton→content swap doesn't jump. */
+function ServerDetailSkeleton() {
+  return (
+    <div style={{ padding: "var(--page-pad)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 180 }}>
+          <Skeleton height={11} width={130} style={{ marginBottom: 10 }} />
+          <Skeleton height={24} width={200} style={{ marginBottom: 8 }} />
+          <Skeleton height={13} width={140} />
+        </div>
+        <Skeleton height={32} width={130} />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} height={30} width={92} />
+        ))}
+      </div>
+
+      <SkeletonCard style={{ marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i}>
+            <Skeleton height={11} width={64} style={{ marginBottom: 8 }} />
+            <Skeleton height={16} width={84} />
+          </div>
+        ))}
+      </SkeletonCard>
+
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <SkeletonCard key={i}>
+            <Skeleton height={12} width={80} style={{ marginBottom: 12 }} />
+            <Skeleton height={120} />
+          </SkeletonCard>
+        ))}
+      </div>
     </div>
   );
 }

@@ -12,6 +12,7 @@ import type { ServerStatus } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, StatusPill } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
+import { Skeleton, SkeletonCard, SkeletonStat, SkeletonTable } from "../../../components/skeleton";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -48,6 +49,51 @@ export default function DashboardPage() {
   // invite "Add server" — surface the error in the Servers section and neutralize the
   // counts instead of contradicting ourselves with a green banner next to a red error.
   const serversDown = serversError && allServers.length === 0;
+
+  if (isLoading) {
+    return (
+      <div style={{ padding: "var(--page-pad)" }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("dashboard.title")}</h1>
+        <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("dashboard.subtitle")}</p>
+
+        <div style={sectionTitle}>{t("dashboard.resources")}</div>
+        <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
+          <SkeletonStat /><SkeletonStat /><SkeletonStat /><SkeletonStat />
+        </div>
+
+        <div style={sectionTitle}>{t("dashboard.fleet")}</div>
+        <div style={{ display: "flex", gap: 14, marginBottom: 28, flexWrap: "wrap" }}>
+          <SkeletonStat /><SkeletonStat /><SkeletonStat />
+        </div>
+
+        <div style={sectionTitle}>{t("dashboard.attention")}</div>
+        <div style={{ marginBottom: 28 }}>
+          <SkeletonTable rows={2} />
+        </div>
+
+        <div style={sectionTitle}>{t("dashboard.projects")}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12, marginBottom: 28 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonCard key={i} style={{ padding: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Skeleton width={40} height={40} radius={9} style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Skeleton height={14} width="55%" style={{ marginBottom: 8 }} />
+                  <Skeleton height={18} width="80%" />
+                </div>
+              </div>
+            </SkeletonCard>
+          ))}
+        </div>
+
+        <div style={sectionTitle}>{t("dashboard.servers")}</div>
+        <SkeletonTable rows={4} />
+
+        <div style={{ ...sectionTitle, marginTop: 28 }}>{t("dashboard.recentActivity")}</div>
+        <SkeletonTable rows={5} />
+      </div>
+    );
+  }
 
   const stat = (label: string, value: number | string, color = "var(--c-tx)") => (
     <Card style={{ padding: 18, flex: 1, minWidth: 130 }}>
