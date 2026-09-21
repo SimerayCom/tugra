@@ -43,12 +43,18 @@ describe("volume-backup-script", () => {
     expect(s).toContain("gpg --batch --yes --passphrase 'pass' --symmetric --cipher-algo AES256");
   });
 
-  it("restore clears the volume then extracts the tar", () => {
+  it("restore stages the archive to a temp file first, THEN wipes+extracts (a failed fetch never destroys data)", () => {
     const s = buildVolumeRestoreScript("a1", "data", "tugra_appv_a1_data", "20260101.tar.gz", LOCAL);
     expect(s).toContain("gunzip");
+    expect(s).toContain("TMP=$(mktemp)");
+    expect(s).toContain('> "$TMP"'); // decode staged to temp BEFORE the volume is touched
+    expect(s).toContain("set -o pipefail"); // a failed source aborts (set -e) before the wipe
     expect(s).toContain(`docker run --rm -i -v 'tugra_appv_a1_data':/data ${BACKUP_HELPER_IMAGE} sh -c`);
     expect(s).toContain("find . -mindepth 1 -delete");
     expect(s).toContain("tar -xf -");
+    expect(s).toContain('< "$TMP"'); // extract reads the staged temp, not a live pipe
+    // the stage-to-temp MUST come before the destructive wipe — the whole point of the fix
+    expect(s.indexOf('> "$TMP"')).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
   });
 
   it("delete removes the local file or the S3 object", () => {

@@ -91,9 +91,22 @@ export function buildVolumeRestoreScript(
   if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
   decode.push("gunzip");
 
-  // Clear the volume then extract (clean restore, including dotfiles).
-  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq("cd /data && find . -mindepth 1 -delete 2>/dev/null; tar -xf -")}`;
-  return ["set -e", "set -o pipefail", `${decode.join(" | ")} | ${extract}`].join("\n");
+  // Stage the decoded archive to a temp file FIRST (like buildVolumeImportScript). With `set -e` +
+  // `set -o pipefail`, a failed/expired source (S3 fetch, wrong decryption key, gzip mismatch, truncated
+  // stream) aborts HERE — before the volume is touched — so a failed restore NEVER destroys existing data.
+  // Only once a full archive is staged do we wipe + extract (clean restore, including dotfiles). Unlike
+  // the untrusted-import path this restores OUR OWN backup, so ownership is preserved (no --no-same-owner).
+  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq(
+    "cd /data && find . -mindepth 1 -delete 2>/dev/null; tar -xf -",
+  )} < "$TMP"`;
+  return [
+    "set -e",
+    "set -o pipefail",
+    "TMP=$(mktemp)",
+    `trap 'rm -f "$TMP"' EXIT`,
+    `${decode.join(" | ")} > "$TMP"`,
+    extract,
+  ].join("\n");
 }
 
 /**
