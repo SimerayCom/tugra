@@ -29,6 +29,7 @@ import { EnvironmentCard } from "../../../../components/environment-card";
 import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
+import { useToast } from "../../../../components/toast";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { AppLogo } from "../../../../components/app-logo";
@@ -730,6 +731,7 @@ function BuildArgsCard({ id }: { id: string }) {
 function LimitsCard({ id, memoryMb, cpus, gpus, deployTimeoutSec }: { id: string; memoryMb: number | null; cpus: number | null; gpus: string | null; deployTimeoutSec: number | null }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
   const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
   const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
   const [gpu, setGpu] = useState(gpus ?? "");
@@ -743,7 +745,7 @@ function LimitsCard({ id, memoryMb, cpus, gpus, deployTimeoutSec }: { id: string
         deployTimeoutSec: timeout ? Number(timeout) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
-    onError: (e) => alert(e instanceof Error ? e.message : t("apps.limitsSaveFailed")),
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.limitsSaveFailed"), "error"),
   });
 
   return (

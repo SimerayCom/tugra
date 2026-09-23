@@ -94,6 +94,7 @@
   "licenseActivate": "Activate license",
   "licenseRemove": "Remove",
   "licenseActivateFailed": "Couldn't activate the license.",
+  "licenseProUnavailable": "Pro licensing isn't available yet.",
   "sso": "Single sign-on (SSO)",
   "ssoDesc": "Let your team sign in with your OIDC identity provider (Okta, Entra ID, Keycloak, Auth0, …). Accounts are created automatically on first sign-in.",
   "ssoEnabled": "Enable SSO",
