@@ -100,7 +100,9 @@ export class WebhooksService {
       where: { webhookToken: token },
     });
     if (!app || !app.webhookSecret) {
-      throw new NotFoundException("webhook not found");
+      // A bad/unknown deploy token is an auth failure, not a routing 404 — this keeps the bare
+      // (un-prefixed) webhook route provably mounted and doesn't leak whether a token exists.
+      throw new UnauthorizedException("invalid webhook token");
     }
     const secret = this.crypto.decrypt(app.webhookSecret);
 

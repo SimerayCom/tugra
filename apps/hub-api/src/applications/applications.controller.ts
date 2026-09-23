@@ -26,6 +26,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ApplicationsService, AppViewSchema, DomainViewSchema } from "./applications.service";
+import { ContainerLogStreamGuard } from "./log-stream.guard";
 import {
   CreateAppInput,
   CreateAppSchema,
@@ -200,6 +201,7 @@ export class ApplicationsController {
    */
   @Sse(":id/logs/stream")
   @RequireScopes("read:secrets") // live container logs may contain secrets
+  @UseGuards(ContainerLogStreamGuard) // authorize BEFORE @Sse commits a 200 stream (real 403/503)
   async streamContainerLogs(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

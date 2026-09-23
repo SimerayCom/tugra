@@ -98,7 +98,7 @@ describe("Monitors + Channels (e2e)", () => {
     await request(app.getHttpServer())
       .post("/channels")
       .set("Authorization", `Bearer ${token}`)
-      .send({ name: "hook", type: "webhook", teamId, config: { url: "http://example.test/hook" } })
+      .send({ name: "hook", type: "webhook", teamId, config: { url: "https://example.com/hook" } })
       .expect(201);
 
     const res = await request(app.getHttpServer())

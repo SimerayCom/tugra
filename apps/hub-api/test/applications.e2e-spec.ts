@@ -1044,16 +1044,18 @@ describe("Applications / deploy (e2e)", () => {
       .expect(503);
   });
 
-  it("rejects rollback for a compose app", async () => {
+  it("404s rollback to an unknown deployment for a compose app", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "stack2", serverId, source: "COMPOSE", composeFile: "services: {}" })
       .expect(201);
+    // Compose rollback IS supported (restores the target deploy's captured YAML snapshot), so an
+    // unknown deployment id is a 404 ("no rollbackable compose configuration"), not a 400.
     await request(app.getHttpServer())
       .post(`/apps/${appRes.body.id}/rollback/whatever`)
       .set("Authorization", `Bearer ${token}`)
-      .expect(400);
+      .expect(404);
   });
 
   it("generates an instantly-reachable magic domain when the server has a public IP", async () => {

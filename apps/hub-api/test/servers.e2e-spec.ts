@@ -247,7 +247,7 @@ describe("Servers + Agent (e2e)", () => {
             type: "command_result",
             reqId: msg.reqId,
             exitCode: 0,
-            output: "TUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\nTUGRA_REBOOT\n",
+            output: "TUGRA_MGR=apt\nTUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\nTUGRA_REBOOT\n",
           }),
         );
       }

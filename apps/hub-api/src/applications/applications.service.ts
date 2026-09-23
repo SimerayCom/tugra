@@ -1409,6 +1409,21 @@ export class ApplicationsService {
   }
 
   /**
+   * Pre-flight access check for the container-log SSE endpoint, run from a guard so the HTTP status is
+   * real. `@Sse` commits a 200 + text/event-stream response the moment the handler is invoked, so a
+   * throw from inside the handler can no longer set 403/503 — a guard runs first (canActivate) and its
+   * ForbiddenException / ServiceUnavailableException becomes the actual response status.
+   */
+  async assertContainerLogStreamAccess(userId: string, id: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.clusterId) {
+      await this.swarmDeploy.resolveManager(app.clusterId); // throws if the swarm isn't ACTIVE / the manager is offline
+      return;
+    }
+    if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
+  }
+
+  /**
    * One-shot log export for download (writer-only). Not a stream — collects `docker logs` output in
    * a single request/response so the browser can save it as a file. No `search` (that's a live-view
    * filter); `since` + a larger tail cap are supported.
