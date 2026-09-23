@@ -42,7 +42,6 @@
   "bulkUpdate": "Update all",
   "restart": "Restart",
   "deploy": "Deploy",
-  "bulkSoon": "{action}: bulk engine coming soon (Phase 2).",
   "loadFailed": "Failed to load: {msg}",
   "newTitle": "Add Server",
   "name": "Server name (e.g. web-1)",

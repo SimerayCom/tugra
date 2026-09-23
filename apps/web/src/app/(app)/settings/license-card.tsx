@@ -93,6 +93,7 @@ export function LicenseCard() {
           </Btn>
         )}
       </div>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("settings.licenseProUnavailable")}</p>
     </Card>
   );
 }

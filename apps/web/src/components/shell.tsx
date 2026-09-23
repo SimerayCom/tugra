@@ -46,7 +46,6 @@ interface NavItem {
   key: string; // i18n key under "nav"
   href: string;
   icon: LucideIcon;
-  impl?: boolean;
   home?: boolean; // shown in the simplified Home mode sidebar
   fleet?: boolean; // default true; set false for home-only items (hidden in fleet)
 }
@@ -55,9 +54,9 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Monitor",
     items: [
-      { key: "home", href: "/home", icon: Home, impl: true, home: true, fleet: false },
-      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard, impl: true },
-      { key: "uptime", href: "/monitors", icon: Activity, impl: true },
+      { key: "home", href: "/home", icon: Home, home: true, fleet: false },
+      { key: "dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { key: "uptime", href: "/monitors", icon: Activity },
     ],
   },
   {
@@ -65,16 +64,16 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       // Coolify-style: resources live under Projects → environment. Apps/Databases
       // aren't top-level nav; reach them via a project, the dashboard, or ⌘K.
-      { key: "projects", href: "/projects", icon: FolderTree, impl: true },
-      { key: "appStore", href: "/app-store", icon: Store, impl: true, home: true },
-      { key: "servers", href: "/servers", icon: Server, impl: true },
-      { key: "clusters", href: "/clusters", icon: Boxes, impl: true },
-      { key: "sources", href: "/sources", icon: GitBranch, impl: true },
-      { key: "registries", href: "/registries", icon: Package, impl: true },
-      { key: "cloudCredentials", href: "/cloud-credentials", icon: Cloud, impl: true },
-      { key: "destinations", href: "/destinations", icon: HardDrive, impl: true },
-      { key: "sharedVars", href: "/shared-variables", icon: Variable, impl: true },
-      { key: "domains", href: "/domains", icon: Globe, impl: true },
+      { key: "projects", href: "/projects", icon: FolderTree },
+      { key: "appStore", href: "/app-store", icon: Store, home: true },
+      { key: "servers", href: "/servers", icon: Server },
+      { key: "clusters", href: "/clusters", icon: Boxes },
+      { key: "sources", href: "/sources", icon: GitBranch },
+      { key: "registries", href: "/registries", icon: Package },
+      { key: "cloudCredentials", href: "/cloud-credentials", icon: Cloud },
+      { key: "destinations", href: "/destinations", icon: HardDrive },
+      { key: "sharedVars", href: "/shared-variables", icon: Variable },
+      { key: "domains", href: "/domains", icon: Globe },
       // Migration (discover + adopt foreign containers) lives per-server under a server's Maintenance
       // tab (discover-adopt-card), so there's no standalone page — no top-level nav entry for it.
     ],
@@ -82,10 +81,10 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Account",
     items: [
-      { key: "notifications", href: "/notifications", icon: Bell, impl: true },
-      { key: "audit", href: "/audit", icon: ScrollText, impl: true },
-      { key: "teams", href: "/teams", icon: Users, impl: true },
-      { key: "settings", href: "/settings", icon: Settings, impl: true, home: true },
+      { key: "notifications", href: "/notifications", icon: Bell },
+      { key: "audit", href: "/audit", icon: ScrollText },
+      { key: "teams", href: "/teams", icon: Users },
+      { key: "settings", href: "/settings", icon: Settings, home: true },
     ],
   },
 ];
