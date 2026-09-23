@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
     --build)    FORCE_BUILD=1; shift ;;
     --pull)     FORCE_PULL=1; shift ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
-    -h|--help)  sed -n '2,22p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,19p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
   esac
 done
@@ -87,7 +87,17 @@ if [ -n "$DOMAIN" ]; then
   HUB_TRUSTED_PROXY="true"
 elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
   # Quick start: plain http on this host's first IP (agents must be able to reach the hub port).
-  HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"; [ -n "$HOST_IP" ] || HOST_IP="localhost"
+  # Detect the IP PORTABLY — `hostname -I` is GNU/net-tools-only and ERRORS on macOS/BSD and on
+  # busybox/Alpine; guard every step (`{ … || true; }`) so `set -euo pipefail` can't kill the script
+  # silently when it's unavailable. Fall back to the default-route source IP, then to localhost.
+  HOST_IP="$( { hostname -I 2>/dev/null || true; } | awk '{print $1; exit}' )"
+  if [ -z "$HOST_IP" ]; then
+    HOST_IP="$( { ip route get 1.1.1.1 2>/dev/null || true; } | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' )"
+  fi
+  if [ -z "$HOST_IP" ]; then
+    HOST_IP="localhost"
+    warn "Could not auto-detect this host's IP; using 'localhost'. If agents run on other machines, re-run with --hub-url http://<host-ip>:$HUB_PORT --web-url http://<host-ip>:$WEB_PORT"
+  fi
   HUB_URL="${HUB_URL:-http://$HOST_IP:$HUB_PORT}"
   WEB_URL="${WEB_URL:-http://$HOST_IP:$WEB_PORT}"
   COOKIE_SECURE="false"   # http cannot carry Secure cookies; NODE_ENV=production would default it on
