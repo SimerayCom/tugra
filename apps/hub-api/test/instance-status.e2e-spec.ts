@@ -26,9 +26,10 @@ describe("GET /instance/status (e2e)", () => {
       initialized: expect.any(Boolean),
       allowRegistration: expect.any(Boolean),
       edition: expect.any(String),
+      ssoEnabled: expect.any(Boolean), // public: the login page needs to know whether to show the SSO button
     });
-    // never exposes any other settings field
-    expect(Object.keys(res.body).sort()).toEqual(["allowRegistration", "edition", "initialized"]);
+    // never exposes any other (secret) settings field
+    expect(Object.keys(res.body).sort()).toEqual(["allowRegistration", "edition", "initialized", "ssoEnabled"]);
   });
 
   it("is a normal API route — not exempt from the prefix", async () => {

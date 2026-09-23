@@ -13,6 +13,7 @@ import { ApplicationsService } from "./applications.service";
 import { ProxyService } from "./proxy.service";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
+import { ContainerLogStreamGuard } from "./log-stream.guard";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
@@ -23,6 +24,7 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     ProxyService,
     AiService,
     PortAllocatorService,
+    ContainerLogStreamGuard,
     // String-token alias so ServersService can resolve this lazily via ModuleRef
     // without a static module import (which would form a dependency cycle).
     { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },

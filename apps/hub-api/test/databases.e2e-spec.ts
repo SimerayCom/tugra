@@ -225,18 +225,18 @@ describe("Databases (e2e)", () => {
     expect(commands.join("\n")).toContain("mariadb:11");
   });
 
-  it("creates a ClickHouse database but refuses backup (provision-only)", async () => {
+  it("creates a ClickHouse database and supports backup", async () => {
     const res = await request(app.getHttpServer())
       .post("/databases")
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "ch1", serverId, engine: "CLICKHOUSE" })
       .expect(201);
     expect(res.body.engine).toBe("CLICKHOUSE");
-    expect(res.body.backupSupported).toBe(false);
+    expect(res.body.backupSupported).toBe(true);
 
     await request(app.getHttpServer())
       .post(`/databases/${res.body.id}/backups`)
       .set("Authorization", `Bearer ${token}`)
-      .expect(400);
+      .expect(201);
   });
 });
