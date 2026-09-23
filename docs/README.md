@@ -22,6 +22,7 @@ control plane for your servers. New here? Start with the [project overview](../R
 
 ## Operating & contributing
 
+- [Smoke test](smoke-test.md) — proving backup/restore, deploy and MCP against a real VM.
 - [Releasing](RELEASING.md) — cutting a signed release (maintainers).
 - [Contributing](../CONTRIBUTING.md) · [Code of conduct](../CODE_OF_CONDUCT.md) · [CLA](../CLA.md)
 - [Security policy](../SECURITY.md) · [License](../LICENSE)
