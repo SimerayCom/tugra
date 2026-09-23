@@ -47,12 +47,12 @@ It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, 
 
 ## What is Tugra?
 
-Tugra is a self-hostable, open-core control plane for deploying, monitoring and operating apps and databases across your own servers — the day-to-day of Heroku, Render or Railway, without handing your infrastructure to someone else's cloud. It's built where single-box self-hosted PaaS tools like Coolify and Dokploy stop: multi-server fleets, real Swarm clustering, and a native agent interface for AI-driven ops, all under a license you can actually read.
+Tugra is a self-hostable, open-core control plane for deploying, monitoring and operating apps and databases across your own servers — the day-to-day of Heroku, Render or Railway, without handing your infrastructure to someone else's cloud. Its focus is the **fleet**: real Docker Swarm clusters across your servers (not just one-box-at-a-time management), fleet-wide bulk operations, and a built-in MCP server for AI-driven ops — all under a license you can actually read.
 
 ## Why Tugra
 
-- **Agent-native control** — a built-in MCP server exposes 17 read-only tools over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
 - **Fleet-first, not single-box** — group servers into clusters, form a real Docker Swarm across them, and run one command across your whole fleet in a single bulk-ops call instead of SSH-ing into each box.
+- **Agent-native too** — a built-in MCP server exposes 17 read-only tools over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API (mutating tools are on the roadmap).
 - **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned, backed up and restored the same way.
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
@@ -65,12 +65,12 @@ A short, honest comparison — cells we couldn't verify with confidence are mark
 | | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
 |---|---|---|---|---|---|
 | Multi-node clustering | ✅ | Planned (v5, no date)¹ | ✅ Swarm-based | ✅ Swarm-based | via k3s scheduler |
-| MCP / agent control | ✅ built-in, 17 tools | ✅ built-in, read-only | ✅ official package | — | community project (early)² |
+| MCP / agent control | ✅ built-in (17 tools, read-only)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
 | Database engines | **9** (named above) | 8 | 5 | — | — |
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
 
-<sub>¹ Coolify's stable v4 manages servers individually; multi-server clustering was announced for a future v5 with no published date. ² Third-party project, not an official Dokku release, and marked early-stage by its own author. ³ Dokploy's core is Apache-2.0; a separate Source Available license covers its `proprietary/` enterprise directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an added appendix restricting modification/redistribution of paid features. Competitor facts change — please verify before repeating them.</sub>
+<sub>¹ Coolify's stable v4 manages servers individually; multi-server clustering was announced for a future v5 with no published date. ² Third-party project, not an official Dokku release, and marked early-stage by its own author. ³ Dokploy's core is Apache-2.0; a separate Source Available license covers its `proprietary/` enterprise directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an added appendix restricting modification/redistribution of paid features. ⁵ All three ship an MCP server today; Tugra's is read-only in this release (mutating tools are planned), while Coolify and Dokploy already expose write/mutate tools — so this is parity, not a Tugra-only feature. Competitor facts change — please verify before repeating them.</sub>
 
 ## Quick start
 
