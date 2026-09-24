@@ -66,7 +66,7 @@ A short, honest comparison — cells we couldn't verify with confidence are mark
 |---|---|---|---|---|---|
 | Multi-node clustering | ✅ | Planned (v5, no date)¹ | ✅ Swarm-based | ✅ Swarm-based | via k3s scheduler |
 | MCP / agent control | ✅ built-in (17 tools, read-only)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
-| Database engines | **9** (named above) | 8 | 5 | — | — |
+| Database engines | **9** (named above) | 8 | 6 | — | — |
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
 
