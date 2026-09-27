@@ -415,6 +415,13 @@ export const api = {
   setNodeLabels(clusterId: string, nodeId: string, body: { add: Record<string, string>; remove: string[] }) {
     return apiFetch<SwarmView>(`/clusters/${clusterId}/swarm/nodes/${encodeURIComponent(nodeId)}/labels`, { method: "PUT", body: JSON.stringify(body) });
   },
+  addManager(id: string, body: { serverId: string; acknowledgeEvenQuorum?: boolean }) {
+    return apiFetch<SwarmView>(`/clusters/${id}/swarm/managers`, { method: "POST", body: JSON.stringify(body) });
+  },
+  removeManager(clusterId: string, serverId: string, opts?: { acknowledgeEvenQuorum?: boolean }) {
+    const q = opts?.acknowledgeEvenQuorum ? "?acknowledgeEvenQuorum=true" : "";
+    return apiFetch<SwarmView>(`/clusters/${clusterId}/swarm/managers/${serverId}${q}`, { method: "DELETE" });
+  },
 
   getMetrics(id: string, limit = 60) {
     return apiFetch<MetricsSample[]>(`/servers/${id}/metrics?limit=${limit}`);

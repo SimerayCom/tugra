@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 
 const TOKEN = "SWMTKN-1-supersecret";
+const MGR_TOKEN = "SWMTKN-1-managersecret";
 
 function member(over: Record<string, unknown> = {}) {
   return {
@@ -27,6 +28,9 @@ function agentMock(opts: {
   infoState?: Record<string, string>; // serverId → LocalNodeState ("inactive"|"active")
   joinExit?: Record<string, number>; // worker serverId → join exit code
   tokenExit?: number;
+  managerTokenExit?: number; // `swarm join-token -q manager` exit (FLEET-G)
+  promoteExit?: number; // `docker node promote` exit (FLEET-G)
+  demoteExit?: number; // `docker node demote` exit (FLEET-G)
   drainExit?: number; // node-drain script exit (0 clean, 2 timeout)
   nodeRmExit?: number; // `docker node rm` exit
   nodeInspectOut?: string; // `docker node inspect` output (for status() live parsing)
@@ -41,8 +45,13 @@ function agentMock(opts: {
     if (command.includes("join-token -q worker")) {
       return { exitCode: opts.tokenExit ?? 0, output: opts.tokenExit ? "" : TOKEN };
     }
+    if (command.includes("join-token -q manager")) {
+      return { exitCode: opts.managerTokenExit ?? 0, output: opts.managerTokenExit ? "" : MGR_TOKEN };
+    }
     if (command.includes("swarm init")) return { exitCode: 0, output: "" };
     if (command.includes("swarm join ")) return { exitCode: opts.joinExit?.[serverId] ?? 0, output: "joined" };
+    if (command.includes("node promote")) return { exitCode: opts.promoteExit ?? 0, output: "" };
+    if (command.includes("node demote")) return { exitCode: opts.demoteExit ?? 0, output: "" };
     if (command.includes("node update --availability drain")) {
       return { exitCode: opts.drainExit ?? 0, output: opts.drainExit === 2 ? "TUGRA_DRAIN: timeout" : "TUGRA_DRAIN: clean" };
     }
@@ -76,6 +85,7 @@ function make(opts: {
   const clusterUpdate = jest.fn().mockResolvedValue(cluster);
   const clusterUpdateMany = jest.fn().mockResolvedValue({ count: opts.casCount ?? 1 });
   const serverUpdate = jest.fn().mockResolvedValue({});
+  const serverUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
   const appUpdate = jest.fn().mockResolvedValue({});
   const prisma = {
     cluster: {
@@ -87,6 +97,7 @@ function make(opts: {
       findMany: jest.fn().mockResolvedValue(opts.members ?? []),
       findUnique: jest.fn().mockResolvedValue({ swarmError: "join failed: exit 1" }),
       update: serverUpdate,
+      updateMany: serverUpdateMany,
       count: jest.fn().mockResolvedValue(opts.otherOnline ?? 0),
     },
     application: {
@@ -103,7 +114,7 @@ function make(opts: {
   const agent = opts.agent ?? agentMock();
   const swarmProxy = { teardown: jest.fn().mockResolvedValue(true) } as unknown as import("./swarm-proxy.service").SwarmProxyService;
   const svc = new SwarmService(prisma, access, audit, agent, swarmProxy);
-  return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate, appUpdate };
+  return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate, serverUpdateMany, appUpdate };
 }
 
 /** Every arg passed to a jest.fn, flattened to a string — for leak assertions. */
@@ -399,10 +410,10 @@ describe("SwarmService.leaveNode", () => {
     await expect(svc.leaveNode("u1", "c1", "s2")).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it("always refuses removing the MANAGER (points at FLEET-G), no docker command", async () => {
+  it("refuses removing a MANAGER directly, pointing at Demote first, no docker command", async () => {
     const { svc, agent } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()] });
     await expect(svc.leaveNode("u1", "c1", "mgr")).rejects.toThrow(/manager/i);
-    await expect(svc.leaveNode("u1", "c1", "mgr")).rejects.toThrow(/FLEET-G/);
+    await expect(svc.leaveNode("u1", "c1", "mgr")).rejects.toThrow(/demote/i);
     expect(sc(agent)).not.toHaveBeenCalled();
   });
 
@@ -545,5 +556,418 @@ describe("SwarmService status() live-parse + setNodeLabels (FLEET-D)", () => {
   it("setNodeLabels 503s when the manager is offline", async () => {
     const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", status: "OFFLINE" })] });
     await expect(svc.setNodeLabels("u1", "c1", "node_mgr", { add: { a: "b" }, remove: [] })).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
+
+describe("SwarmService.addManager (FLEET-G)", () => {
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+  // 2 existing managers so adding a 3rd is an ODD (quorum-safe) count that skips the even-guard.
+  const twoManagers = () => [
+    member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr", reportedIps: ["10.0.0.5"] }),
+    member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+  ];
+
+  it("promotes an ONLINE worker via docker node promote dispatched to another online manager, sets MANAGER", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdateMany, audit } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [...twoManagers(), member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1" })],
+      agent,
+    });
+    await svc.addManager("u1", "c1", { serverId: "w1" });
+    const promote = sc(agent).mock.calls.find((c) => (c[1] as string).includes("node promote"));
+    expect(promote?.[0]).toBe("mgr"); // dispatched THROUGH an existing manager
+    expect(promote?.[1] as string).toContain("node promote 'node_w1'");
+    expect(serverUpdateMany).toHaveBeenCalledWith({ where: { id: "w1", clusterId: "c1" }, data: { swarmRole: "MANAGER", swarmError: null } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.addManager", meta: expect.objectContaining({ serverId: "w1", managerCount: 3 }) }));
+  });
+
+  it("joins a fresh member directly as manager: fetch manager token → swarm join → rotate manager token → MANAGER", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdateMany } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [...twoManagers(), member({ id: "s3" })], // fresh: online, swarm-capable, not joined
+      agent,
+    });
+    await svc.addManager("u1", "c1", { serverId: "s3" });
+    const calls = sc(agent).mock.calls;
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("join-token -q manager"))).toBe(true);
+    expect(calls.some((c) => c[0] === "s3" && (c[1] as string).includes("swarm join "))).toBe(true);
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("join-token --rotate -q manager"))).toBe(true);
+    expect(serverUpdateMany).toHaveBeenCalledWith({ where: { id: "s3", clusterId: "c1" }, data: { swarmRole: "MANAGER", swarmNodeId: "node_s3", swarmError: null } });
+  });
+
+  it("is idempotent: an already-MANAGER target returns without any agent contact", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: twoManagers(), agent });
+    await svc.addManager("u1", "c1", { serverId: "m2" });
+    expect(sc(agent)).not.toHaveBeenCalled();
+    expect(serverUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-member / offline / no-swarm-capability target and a non-ACTIVE cluster, all BEFORE any agent call", async () => {
+    // non-member
+    let r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: twoManagers() });
+    await expect(r.svc.addManager("u1", "c1", { serverId: "nope" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(sc(r.agent)).not.toHaveBeenCalled();
+    // offline target
+    r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [...twoManagers(), member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1", status: "OFFLINE" })] });
+    await expect(r.svc.addManager("u1", "c1", { serverId: "w1" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(sc(r.agent)).not.toHaveBeenCalled();
+    // no swarm capability
+    r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [...twoManagers(), member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1", capabilities: ["deploy"] })] });
+    await expect(r.svc.addManager("u1", "c1", { serverId: "w1" })).rejects.toThrow(/swarm.*capability/i);
+    expect(sc(r.agent)).not.toHaveBeenCalled();
+    // non-ACTIVE/DEGRADED cluster
+    r = make({ swarmStatus: "NONE", members: twoManagers() });
+    await expect(r.svc.addManager("u1", "c1", { serverId: "m2" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(sc(r.agent)).not.toHaveBeenCalled();
+  });
+
+  it("refuses an even resulting manager count without acknowledgeEvenQuorum, succeeds with it set", async () => {
+    // 1 existing manager + promote a worker → 2 (even) → refuse without ack.
+    const oneMgr = () => [
+      member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr", reportedIps: ["10.0.0.5"] }),
+      member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1" }),
+    ];
+    let r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: oneMgr() });
+    await expect(r.svc.addManager("u1", "c1", { serverId: "w1" })).rejects.toThrow(/even manager count/i);
+    expect(sc(r.agent)).not.toHaveBeenCalled();
+    // With acknowledgeEvenQuorum the same promote proceeds.
+    const agent = agentMock();
+    r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: oneMgr(), agent });
+    await r.svc.addManager("u1", "c1", { serverId: "w1", acknowledgeEvenQuorum: true });
+    expect(sc(agent).mock.calls.some((c) => (c[1] as string).includes("node promote"))).toBe(true);
+    expect(r.serverUpdateMany).toHaveBeenCalledWith({ where: { id: "w1", clusterId: "c1" }, data: { swarmRole: "MANAGER", swarmError: null } });
+  });
+
+  it("503s when no existing manager is ONLINE to dispatch through", async () => {
+    const agent = agentMock();
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [
+        member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr", status: "OFFLINE" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2", status: "OFFLINE" }),
+        member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1" }),
+      ],
+      agent,
+    });
+    await expect(svc.addManager("u1", "c1", { serverId: "w1" })).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("a failed promote leaves swarmRole untouched and records a SANITIZED error (never raw output)", async () => {
+    const agent = agentMock({ promoteExit: 1 });
+    const { svc, serverUpdateMany } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [...twoManagers(), member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1" })],
+      agent,
+    });
+    await expect(svc.addManager("u1", "c1", { serverId: "w1" })).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const w1 = (serverUpdateMany as unknown as jest.Mock).mock.calls.find((c) => c[0].where.id === "w1");
+    expect(w1![0].data.swarmError).toEqual(expect.any(String));
+    expect(w1![0].data.swarmRole).toBeUndefined(); // role NOT flipped on failure
+    // no success write ever set MANAGER for w1
+    expect((serverUpdateMany as unknown as jest.Mock).mock.calls.some((c) => c[0].where.id === "w1" && c[0].data.swarmRole === "MANAGER")).toBe(false);
+  });
+
+  it("NEVER lets the manager join-token reach the DB or audit log", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdate, serverUpdateMany, clusterUpdate, clusterUpdateMany, audit } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [...twoManagers(), member({ id: "s3" })],
+      agent,
+    });
+    await svc.addManager("u1", "c1", { serverId: "s3" });
+    for (const fn of [serverUpdate, serverUpdateMany, clusterUpdate, clusterUpdateMany, audit.log]) {
+      expect(allArgs(fn as unknown as jest.Mock)).not.toContain("SWMTKN");
+    }
+  });
+
+  it("join-as-manager persists swarmRole=MANAGER even if the post-join node-id lookup fails (F2)", async () => {
+    // The target genuinely joins as a manager (swarm join exit 0), but the FOLLOW-UP `docker info` (node-id
+    // lookup) throws (WS timeout right after a Raft membership change). The role MUST still be persisted, with
+    // swarmNodeId left null — otherwise the DB permanently understates a real Raft manager.
+    let s3InfoCalls = 0;
+    const sendCommand = jest.fn(async (serverId: string, command: string) => {
+      if (command.includes("docker info")) {
+        if (serverId === "s3") {
+          s3InfoCalls++;
+          if (s3InfoCalls === 1) return { exitCode: 0, output: JSON.stringify({ LocalNodeState: "inactive", NodeID: null }) }; // preflight OK
+          throw new Error("agent ws timeout"); // post-join node-id lookup fails
+        }
+        return { exitCode: 0, output: JSON.stringify({ LocalNodeState: "inactive", NodeID: `node_${serverId}` }) };
+      }
+      if (command.includes("join-token --rotate")) return { exitCode: 0, output: "SWMTKN-ROTATED" };
+      if (command.includes("join-token -q manager")) return { exitCode: 0, output: MGR_TOKEN };
+      if (command.includes("swarm join ")) return { exitCode: 0, output: "joined" };
+      return { exitCode: 0, output: "" };
+    });
+    const agent = { sendCommand } as unknown as AgentWsServer;
+    const { svc, serverUpdateMany, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [...twoManagers(), member({ id: "s3" })], agent });
+    await svc.addManager("u1", "c1", { serverId: "s3" });
+    expect(serverUpdateMany).toHaveBeenCalledWith({ where: { id: "s3", clusterId: "c1" }, data: { swarmRole: "MANAGER", swarmNodeId: null, swarmError: null } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.addManager" }));
+  });
+
+  it("surfaces a ConflictException when the target left the cluster mid-flight (markMember no-op) (F3)", async () => {
+    const agent = agentMock();
+    const r = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [...twoManagers(), member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1" })],
+      agent,
+    });
+    (r.serverUpdateMany as unknown as jest.Mock).mockResolvedValue({ count: 0 }); // concurrent setServers moved the row away
+    await expect(r.svc.addManager("u1", "c1", { serverId: "w1" })).rejects.toBeInstanceOf(ConflictException);
+    // the op must NOT be audited as having happened
+    expect((r.audit.log as unknown as jest.Mock)).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.addManager" }));
+  });
+});
+
+describe("SwarmService.removeManager (FLEET-G)", () => {
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+
+  it("demotes a non-primary MANAGER via docker node demote dispatched to a DIFFERENT online manager, sets WORKER", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdateMany, audit } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [
+        member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+      ],
+      agent,
+    });
+    await svc.removeManager("u1", "c1", { serverId: "m2" });
+    const demote = sc(agent).mock.calls.find((c) => (c[1] as string).includes("node demote"));
+    expect(demote?.[0]).toBe("mgr"); // a DIFFERENT manager runs the demotion
+    expect(demote?.[1] as string).toContain("node demote 'node_m2'");
+    expect(serverUpdateMany).toHaveBeenCalledWith({ where: { id: "m2", clusterId: "c1" }, data: { swarmRole: "WORKER", swarmError: null } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.removeManager", meta: expect.objectContaining({ serverId: "m2", managerCount: 1 }) }));
+  });
+
+  it("is idempotent when the target is not currently a MANAGER (no agent contact)", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdateMany } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [member({ id: "mgr", swarmRole: "MANAGER" }), member({ id: "w1", swarmRole: "WORKER" })],
+      agent,
+    });
+    await svc.removeManager("u1", "c1", { serverId: "w1" });
+    expect(sc(agent)).not.toHaveBeenCalled();
+    expect(serverUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses to demote the primary manager (cluster.swarmManagerId)", async () => {
+    const agent = agentMock();
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" }), member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" })],
+      agent,
+    });
+    await expect(svc.removeManager("u1", "c1", { serverId: "mgr" })).rejects.toThrow(/primary manager/i);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("refuses to demote the only remaining manager", async () => {
+    const agent = agentMock();
+    // swarmManagerId=null (no recorded primary) so we reach the only-manager guard, not the primary guard.
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: null,
+      members: [member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" })],
+      agent,
+    });
+    await expect(svc.removeManager("u1", "c1", { serverId: "m2" })).rejects.toThrow(/only manager/i);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("refuses an even resulting count without acknowledgeEvenQuorum, succeeds with it set", async () => {
+    const threeManagers = () => [
+      member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" }),
+      member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+      member({ id: "m3", swarmRole: "MANAGER", swarmNodeId: "node_m3" }),
+    ];
+    let r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: threeManagers() });
+    await expect(r.svc.removeManager("u1", "c1", { serverId: "m2" })).rejects.toThrow(/even manager count/i);
+    expect(sc(r.agent)).not.toHaveBeenCalled();
+    const agent = agentMock();
+    r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: threeManagers(), agent });
+    await r.svc.removeManager("u1", "c1", { serverId: "m2", acknowledgeEvenQuorum: true });
+    expect(sc(agent).mock.calls.some((c) => (c[1] as string).includes("node demote 'node_m2'"))).toBe(true);
+    expect(r.serverUpdateMany).toHaveBeenCalledWith({ where: { id: "m2", clusterId: "c1" }, data: { swarmRole: "WORKER", swarmError: null } });
+  });
+
+  it("falls back to self-dispatch when no OTHER manager is online", async () => {
+    const agent = agentMock();
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [
+        member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr", status: "OFFLINE" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }), // only online manager = the target
+      ],
+      agent,
+    });
+    await svc.removeManager("u1", "c1", { serverId: "m2" });
+    const demote = sc(agent).mock.calls.find((c) => (c[1] as string).includes("node demote"));
+    expect(demote?.[0]).toBe("m2"); // self-demote (Docker supports it) when no other manager is online
+  });
+
+  it("audit.log records cluster.swarm.removeManager and never a token", async () => {
+    const agent = agentMock();
+    const { svc, audit } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" }), member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" })],
+      agent,
+    });
+    await svc.removeManager("u1", "c1", { serverId: "m2" });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.removeManager" }));
+    expect(allArgs(audit.log as unknown as jest.Mock)).not.toContain("SWMTKN");
+  });
+});
+
+describe("SwarmService quorum + status failover (FLEET-G)", () => {
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+  const nodeLine = (id: string, role: string, state: string) =>
+    JSON.stringify({ ID: id, Description: { Hostname: id }, Spec: { Role: role, Availability: "active", Labels: {} }, Status: { State: state } });
+  const readyLine = (id: string, role: string) => nodeLine(id, role, "ready");
+
+  it("quorum is null when swarmStatus is NONE", async () => {
+    const { svc } = make({ swarmStatus: "NONE", members: [] });
+    const view = await svc.status("u1", "c1");
+    expect(view.quorum).toBeNull();
+  });
+
+  it("reports hasQuorum true for 1/1 online (from live docker node inspect)", async () => {
+    const agent = agentMock({ nodeInspectOut: readyLine("node_mgr", "manager") });
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" })], agent });
+    const view = await svc.status("u1", "c1");
+    expect(view.quorum).toEqual({ managers: 1, managersOnline: 1, hasQuorum: true });
+  });
+
+  it("computes quorum from LIVE managers: false for 1/3 ready, true for 2/3 and 3/3 (Raft majority = floor(N/2)+1)", async () => {
+    const members3 = () => [
+      member({ id: "m1", swarmRole: "MANAGER", swarmNodeId: "node_m1" }),
+      member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+      member({ id: "m3", swarmRole: "MANAGER", swarmNodeId: "node_m3" }),
+    ];
+    const mk = (readyCount: number) =>
+      make({
+        swarmStatus: "ACTIVE", swarmManagerId: "m1", members: members3(),
+        agent: agentMock({
+          nodeInspectOut: [
+            nodeLine("node_m1", "manager", readyCount >= 1 ? "ready" : "down"),
+            nodeLine("node_m2", "manager", readyCount >= 2 ? "ready" : "down"),
+            nodeLine("node_m3", "manager", readyCount >= 3 ? "ready" : "down"),
+          ].join("\n"),
+        }),
+      });
+    expect((await mk(1).svc.status("u1", "c1")).quorum).toEqual({ managers: 3, managersOnline: 1, hasQuorum: false });
+    expect((await mk(2).svc.status("u1", "c1")).quorum).toEqual({ managers: 3, managersOnline: 2, hasQuorum: true });
+    expect((await mk(3).svc.status("u1", "c1")).quorum).toEqual({ managers: 3, managersOnline: 3, hasQuorum: true });
+  });
+
+  it("falls back to the cached (DB-derived) quorum when no live data is available", async () => {
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "m1",
+      members: [
+        member({ id: "m1", swarmRole: "MANAGER", swarmNodeId: "node_m1" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2", status: "OFFLINE" }),
+        member({ id: "m3", swarmRole: "MANAGER", swarmNodeId: "node_m3", status: "OFFLINE" }),
+      ],
+      agent: agentMock({ nodeInspectOut: "" }), // empty inspect → live[] empty → cached quorum
+    });
+    expect((await svc.status("u1", "c1")).quorum).toEqual({ managers: 3, managersOnline: 1, hasQuorum: false });
+  });
+
+  it("does NOT count a ghost dead-manager row from a prior incarnation: live-only managers drive quorum (F1)", async () => {
+    // DB still carries m_ghost as swarmRole=MANAGER (dissolve()'s abandon path keeps it), but the freshly
+    // re-formed swarm's live inspect only knows the real manager m1 → quorum must be healthy 1/1, not 1/2. This
+    // is the FLEET-G fix: the scary "Quorum lost" signal must NOT fire because of a stale prior-incarnation row.
+    // (The pre-existing readyCount<joinedCount self-heal may still flag the un-cleared ghost as a generic
+    // DEGRADED anomaly worth the operator's attention — that behavior predates this slice and is out of scope.)
+    const inspect = readyLine("node_m1", "manager");
+    const agent = agentMock({ nodeInspectOut: inspect });
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "m1",
+      members: [
+        member({ id: "m1", swarmRole: "MANAGER", swarmNodeId: "node_m1" }),
+        member({ id: "m_ghost", swarmRole: "MANAGER", swarmNodeId: "node_ghost_old", status: "OFFLINE" }),
+      ],
+      agent,
+    });
+    const view = await svc.status("u1", "c1");
+    expect(view.quorum).toEqual({ managers: 1, managersOnline: 1, hasQuorum: true });
+  });
+
+  it("status() downgrades ACTIVE→DEGRADED when the LIVE manager quorum is lost", async () => {
+    // 1 of 3 managers ready in the live Raft view → quorum lost → self-heal downgrades + persists DEGRADED.
+    const inspect = [nodeLine("node_m1", "manager", "ready"), nodeLine("node_m2", "manager", "down"), nodeLine("node_m3", "manager", "down")].join("\n");
+    const agent = agentMock({ nodeInspectOut: inspect });
+    const { svc, clusterUpdate } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "m1",
+      members: [
+        member({ id: "m1", swarmRole: "MANAGER", swarmNodeId: "node_m1" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+        member({ id: "m3", swarmRole: "MANAGER", swarmNodeId: "node_m3" }),
+      ],
+      agent,
+    });
+    const view = await svc.status("u1", "c1");
+    expect(view.swarmStatus).toBe("DEGRADED");
+    expect(view.quorum).toEqual({ managers: 3, managersOnline: 1, hasQuorum: false });
+    expect(clusterUpdate).toHaveBeenCalledWith({ where: { id: "c1" }, data: { swarmStatus: "DEGRADED" } });
+  });
+
+  it("status() fails over: primary OFFLINE but a secondary manager ONLINE → dispatches node inspect to the secondary and returns live data", async () => {
+    const agent = agentMock({ nodeInspectOut: readyLine("node_m2", "manager") });
+    const { svc } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [
+        member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr", status: "OFFLINE" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+      ],
+      agent,
+    });
+    const view = await svc.status("u1", "c1");
+    const inspect = sc(agent).mock.calls.find((c) => (c[1] as string).includes("node inspect"));
+    expect(inspect?.[0]).toBe("m2"); // dispatched to the online backup, not the offline primary
+    expect(view.live?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("SwarmService.dissolve multi-manager (FLEET-G)", () => {
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+
+  it("two online managers: teardown dispatched once, then BOTH leave --force", async () => {
+    const agent = agentMock();
+    const { svc, swarmProxy, serverUpdate } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "m1",
+      members: [member({ id: "m1", swarmRole: "MANAGER", swarmNodeId: "node_m1" }), member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" })],
+      agent,
+    });
+    await svc.dissolve("u1", "c1");
+    expect((swarmProxy.teardown as unknown as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect((swarmProxy.teardown as unknown as jest.Mock)).toHaveBeenCalledWith("m1", "c1"); // via the first online manager
+    expect(sc(agent).mock.calls.some((c) => c[0] === "m1" && (c[1] as string).includes("swarm leave --force"))).toBe(true);
+    expect(sc(agent).mock.calls.some((c) => c[0] === "m2" && (c[1] as string).includes("swarm leave --force"))).toBe(true);
+    // both managers get their role cleared
+    expect(serverUpdate).toHaveBeenCalledWith({ where: { id: "m1" }, data: expect.objectContaining({ swarmRole: null }) });
+    expect(serverUpdate).toHaveBeenCalledWith({ where: { id: "m2" }, data: expect.objectContaining({ swarmRole: null }) });
+  });
+
+  it("primary OFFLINE + secondary ONLINE: teardown STILL runs (via the secondary); the offline primary keeps its role and gets the live-HTTPS marker", async () => {
+    const agent = agentMock();
+    const { svc, swarmProxy, serverUpdate } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "m1",
+      members: [
+        member({ id: "m1", swarmRole: "MANAGER", swarmNodeId: "node_m1", status: "OFFLINE" }),
+        member({ id: "m2", swarmRole: "MANAGER", swarmNodeId: "node_m2" }),
+      ],
+      agent,
+    });
+    await svc.dissolve("u1", "c1");
+    expect((swarmProxy.teardown as unknown as jest.Mock)).toHaveBeenCalledWith("m2", "c1"); // dispatched via the online secondary
+    const m1 = (serverUpdate as unknown as jest.Mock).mock.calls.find((c) => c[0].where.id === "m1");
+    expect(m1![0].data.swarmError).toMatch(/live HTTPS/i);
+    expect(m1![0].data.swarmRole).toBeUndefined(); // dead primary keeps its role for the next Form's preflight
   });
 });

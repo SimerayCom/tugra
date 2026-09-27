@@ -38,6 +38,15 @@ export const JoinNodeSchema = z.object({
 });
 export type JoinNodeInput = z.infer<typeof JoinNodeSchema>;
 
+/** Add ONE more MANAGER to an already-formed swarm (FLEET-G): promote an existing worker or have a fresh
+ *  member join directly as a manager. `acknowledgeEvenQuorum` bypasses the guardrail that refuses a promote
+ *  which would leave an even total manager count (buys no extra Raft fault-tolerance, raises split-vote risk). */
+export const AddManagerSchema = z.object({
+  serverId: z.string().min(1),
+  acknowledgeEvenQuorum: z.boolean().optional(),
+});
+export type AddManagerInput = z.infer<typeof AddManagerSchema>;
+
 // Docker node/service label charset (defence-in-depth; shq() at the shell boundary is the real safety net,
 // same convention as applications/dto.ts's GPU_RE). Exported for reuse by applications/dto.ts's placement schema.
 export const LABEL_KEY_RE = /^[a-z0-9]([a-z0-9_.-]{0,62})?$/i;

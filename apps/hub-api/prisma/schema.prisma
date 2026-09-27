@@ -282,7 +282,9 @@ model Server {
   cluster              Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId            String?
   // Docker Swarm formation (Phase2). Role in the cluster's swarm (null = not joined); the docker node id
-  // (for later promote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
+  // (for promote/demote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
+  // FLEET-G: multiple MANAGER rows per cluster are now expected (multi-manager Raft HA) — the manager SET is
+  // derived live from every swarmRole=MANAGER row, NOT just Cluster.swarmManagerId (which is only the PRIMARY).
   swarmRole            SwarmRole?
   swarmNodeId          String?
   swarmError           String?
@@ -320,9 +322,12 @@ model Cluster {
   description String?
   servers     Server[]
   applications Application[] // apps deployed as swarm services onto this cluster (Phase3)
-  // Docker Swarm formation (Phase2). swarmManagerId is a loose FK to the manager Server.id (resolved in
-  // service code, matching Application.serverId convention — no @relation to avoid a second Server↔Cluster
-  // relation). swarmLastError is a sanitized, human-readable last error — NEVER raw command output/tokens.
+  // Docker Swarm formation (Phase2). swarmManagerId is a loose FK to the PRIMARY manager Server.id — the node
+  // the swarm-mode ingress is pinned to (by node label) and the default/fast-path dispatch target. FLEET-G:
+  // the FULL manager set is every Server with swarmRole=MANAGER for this cluster, not necessarily just this one
+  // row (multi-manager Raft HA); this FK is NOT renamed, for API back-compat (SwarmView.managerServerId keeps
+  // its meaning). Resolved in service code (matching Application.serverId convention — no @relation to avoid a
+  // second Server↔Cluster relation). swarmLastError is a sanitized last error — NEVER raw command output/tokens.
   swarmStatus    SwarmStatus @default(NONE)
   swarmManagerId String?
   swarmLastError String?

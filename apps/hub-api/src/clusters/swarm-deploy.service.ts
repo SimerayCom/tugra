@@ -69,8 +69,15 @@ export class SwarmDeployService {
     }
     if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
     const mgr = await this.prisma.server.findUnique({ where: { id: cluster.swarmManagerId }, select: { status: true } });
-    if (!mgr || mgr.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
-    return cluster.swarmManagerId;
+    if (mgr && mgr.status === "ONLINE") return cluster.swarmManagerId; // fast path: primary online (unchanged)
+    // FLEET-G failover: the primary is offline, but `docker service …` is cluster-wide from ANY manager — so
+    // fall back to any other ONLINE manager with the 'swarm' capability for this cluster before giving up.
+    const backup = await this.prisma.server.findFirst({
+      where: { clusterId, swarmRole: "MANAGER", status: "ONLINE", capabilities: { has: "swarm" }, NOT: { id: cluster.swarmManagerId } },
+      select: { id: true },
+    });
+    if (backup) return backup.id;
+    throw new ServiceUnavailableException("swarm manager is offline");
   }
 
   /**

@@ -15,9 +15,11 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
 import { isPrivateV4, normalizeIp } from "../common/observed-ip";
 import {
+  buildNodeDemoteScript,
   buildNodeDrainScript,
   buildNodeInspectAllScript,
   buildNodeLabelUpdateScript,
+  buildNodePromoteScript,
   buildNodeRemoveScript,
   buildSwarmInfoScript,
   buildSwarmInitScript,
@@ -69,6 +71,14 @@ export interface SwarmLiveNode {
   availability: string;
   labels: Record<string, string>;
 }
+/** Raft quorum health, derived live from Server.swarmRole/status (no persisted column). A swarm keeps its
+ *  control plane only while a MAJORITY of managers are online — `hasQuorum` mirrors that math so the UI can
+ *  warn before an operator loses the ability to deploy/scale/change managers. */
+export interface SwarmQuorum {
+  managers: number;
+  managersOnline: number;
+  hasQuorum: boolean;
+}
 export interface SwarmView {
   clusterId: string;
   swarmStatus: SwarmStatus;
@@ -76,6 +86,8 @@ export interface SwarmView {
   swarmLastError: string | null;
   nodes: SwarmNodeView[];
   live: SwarmLiveNode[] | null;
+  /** Manager-quorum health; null only when swarmStatus is NONE (no swarm formed). */
+  quorum: SwarmQuorum | null;
 }
 
 /** Local swarm state of one node, from `docker info` — best-effort preflight; the init/join exit code stays
@@ -259,28 +271,44 @@ export class SwarmService {
     const base = await this.view(id);
     if (base.swarmStatus === "NONE" || !base.managerServerId) return base;
     const members = await this.members(id);
-    const manager = members.find((m) => m.id === base.managerServerId);
-    if (!manager || manager.status !== "ONLINE") {
-      return { ...base, swarmLastError: base.swarmLastError ?? "manager offline — live status unavailable" };
+    const managers = members.filter((m) => m.swarmRole === "MANAGER");
+    // Dispatch the live `docker node inspect` (a cluster-wide Raft read any manager can answer) to the primary
+    // if it's online, else to ANY other online manager — so a dead primary no longer blacks out live status
+    // (FLEET-G). Single-manager clusters resolve to exactly the same node as before, so behavior is unchanged.
+    const primary = members.find((m) => m.id === base.managerServerId);
+    const dispatcher = primary && primary.status === "ONLINE" ? primary : managers.find((m) => m.status === "ONLINE");
+    if (!dispatcher) {
+      return { ...base, swarmLastError: base.swarmLastError ?? "no manager reachable — live status unavailable" };
     }
     let live: SwarmLiveNode[] = [];
     try {
-      const res = await this.run(manager.id, buildNodeInspectAllScript());
+      const res = await this.run(dispatcher.id, buildNodeInspectAllScript());
       if (res.exitCode === 0) live = parseNodeInspect(res.output);
     } catch {
       // manager unreachable mid-call — fall back to the cached view
     }
-    // Self-heal: if fewer nodes are Ready than the DB thinks are joined, downgrade ACTIVE → DEGRADED.
+    // Quorum + self-heal. When live Raft data is available it is AUTHORITATIVE — recompute quorum from the live
+    // manager set (role==="manager") rather than the cached Server.swarmRole rows. This is what stops a
+    // dead-manager 'abandon' row from a PRIOR swarm incarnation (dissolve() deliberately keeps its swarmRole=
+    // MANAGER for the operator to clear by hand) from being counted forever against a freshly re-formed swarm:
+    // that ghost is simply not a node in the current swarm's `docker node inspect`, so it never inflates the
+    // manager count or spuriously reports quorum loss. When live is unavailable we keep the cached quorum (best
+    // effort). Downgrade ACTIVE → DEGRADED when fewer nodes are Ready than the DB thinks joined, OR when the live
+    // manager quorum is lost — for a healthy single-manager cluster both are no-ops, so behavior is unchanged.
     let swarmStatus = base.swarmStatus;
+    let quorum = base.quorum;
     if (live.length) {
+      const liveManagers = live.filter((n) => n.role.toLowerCase() === "manager");
+      const managersOnline = liveManagers.filter((n) => n.state.toLowerCase() === "ready").length;
+      quorum = { managers: liveManagers.length, managersOnline, hasQuorum: liveManagers.length > 0 && managersOnline > liveManagers.length / 2 };
       const joinedCount = members.filter((m) => m.swarmRole).length;
       const readyCount = live.filter((n) => n.state.toLowerCase() === "ready").length;
-      if (readyCount < joinedCount && swarmStatus === "ACTIVE") {
+      if ((readyCount < joinedCount || !quorum.hasQuorum) && swarmStatus === "ACTIVE") {
         swarmStatus = "DEGRADED";
         await this.prisma.cluster.update({ where: { id }, data: { swarmStatus: "DEGRADED" } }).catch(() => undefined);
       }
     }
-    return { ...base, swarmStatus, live };
+    return { ...base, swarmStatus, live, quorum };
   }
 
   async status(userId: string, id: string): Promise<SwarmView> {
@@ -352,9 +380,9 @@ export class SwarmService {
     }
   }
 
-  /** Remove ONE node from a live swarm (drain → leave → rm) WITHOUT dissolving the rest of the cluster. Only
-   *  a WORKER can be removed in v1 (single-manager) — removing the manager always means removing the ONLY
-   *  manager, which is refused (use dissolve(), or wait for multi-manager / FLEET-G). The node's cluster
+  /** Remove ONE node from a live swarm (drain → leave → rm) WITHOUT dissolving the rest of the cluster. Only a
+   *  WORKER can be removed here — a MANAGER must be demoted to a worker first (FLEET-G's Demote / removeManager),
+   *  which keeps the Raft quorum honest and protects the ingress-pinned primary, then removed. The node's cluster
    *  membership is cleared too (this IS "Remove from cluster", not just "leave the swarm").
    *  swarmStatus is reused as a transitional busy-marker (CAS to "FORMING", restored to the prior ACTIVE/
    *  DEGRADED value on both success and failure) to avoid a migration for this slice; swarmLastError carries
@@ -369,9 +397,11 @@ export class SwarmService {
     if (!node) throw new NotFoundException("server not found in this cluster");
     if (!node.swarmRole) throw new BadRequestException("this server has not joined the cluster's swarm");
     if (node.swarmRole === "MANAGER") {
-      // v1 forms exactly one manager (see form()) — every manager removal IS the sole-manager case.
+      // A manager can't be drained+removed directly — demote it to a worker first (FLEET-G's Demote action), then
+      // remove it here; or dissolve the swarm. Demoting keeps the Raft quorum honest and can't strand the ingress
+      // pin (removeManager refuses the primary), which a blind drain+rm here would risk.
       throw new ConflictException(
-        "cannot remove the swarm manager — dissolve the swarm instead. Removing one manager out of several will be possible once multi-manager support ships (FLEET-G).",
+        "cannot remove a swarm manager directly — demote it to a worker first (Demote), then remove it, or dissolve the swarm.",
       );
     }
     if (!node.swarmNodeId) throw new ConflictException("this node's swarm identity is unknown — reconcile via Dissolve/Form");
@@ -429,6 +459,137 @@ export class SwarmService {
         .catch(() => undefined);
       throw e;
     }
+  }
+
+  /** Add ONE more MANAGER to an already-formed swarm (FLEET-G, multi-manager Raft HA) — either by PROMOTING an
+   *  existing worker member (`docker node promote`) or by having a fresh, not-yet-joined member JOIN directly as
+   *  a manager (manager join-token + `swarm join`). Grows the Raft quorum without dissolving/reforming; form()
+   *  stays the only path that creates the FIRST manager. Idempotent (an already-MANAGER target is a no-op).
+   *
+   *  Deliberately NOT wrapped in a cluster-wide CAS (unlike form()): promote/join are single-node operations, so
+   *  a cluster-wide lock would needlessly block unrelated concurrent deploys/proxy calls for the whole duration.
+   *  Two admins racing this on the SAME server is accepted as a rare, low-blast-radius risk, backstopped by
+   *  Docker's own idempotent `node promote` / `swarm join` semantics. */
+  async addManager(userId: string, id: string, dto: { serverId: string; acknowledgeEvenQuorum?: boolean }): Promise<SwarmView> {
+    const cluster = await this.requireWrite(userId, id);
+    if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
+      throw new BadRequestException("form the swarm before adding a manager");
+    }
+    const members = await this.members(id);
+    const target = members.find((m) => m.id === dto.serverId);
+    if (!target) throw new BadRequestException("server must be a member of this cluster");
+    if (target.swarmRole === "MANAGER") return this.view(id); // idempotent no-op — no agent call
+
+    // Quorum guardrail (before any agent call): an even manager count buys no extra Raft fault-tolerance over
+    // the odd count below it, while raising split-vote risk. Refuse unless the caller explicitly acknowledges.
+    const currentManagers = members.filter((m) => m.swarmRole === "MANAGER");
+    const newCount = currentManagers.length + 1;
+    if (newCount % 2 === 0 && !dto.acknowledgeEvenQuorum) {
+      throw new BadRequestException(
+        `adding this manager brings the total to ${newCount} — an even manager count adds no extra Raft fault-tolerance over ${newCount - 1} while raising the risk of a split vote; pass acknowledgeEvenQuorum to proceed anyway, or add one more manager instead`,
+      );
+    }
+
+    // Every promote/join is dispatched THROUGH an existing online manager (Raft membership changes must run on a
+    // manager). All preflight refusals below run BEFORE any this.run() — mirrors form()'s "never touches an agent".
+    const helper = currentManagers.find((m) => m.status === "ONLINE" && m.capabilities.includes("swarm"));
+    if (!helper) throw new ServiceUnavailableException("no online manager available to run this operation");
+    if (target.status !== "ONLINE") throw new BadRequestException("server is offline");
+    if (!target.capabilities.includes("swarm")) throw new BadRequestException("grant the 'swarm' capability to this server first");
+
+    try {
+      if (target.swarmRole === "WORKER") {
+        // PROMOTE an existing worker — a Raft membership change on the helper manager; no token involved.
+        if (!target.swarmNodeId) throw new BadRequestException("server's swarm node id is unknown — re-run Form to reconcile");
+        const res = await this.run(helper.id, buildNodePromoteScript(target.swarmNodeId));
+        if (res.exitCode !== 0) throw new ServiceUnavailableException(`promote failed (exit ${res.exitCode})`);
+        await this.markMember(target.id, id, { swarmRole: "MANAGER", swarmError: null });
+      } else {
+        // JOIN a fresh member (swarmRole === null) directly as a manager. Preflight against a foreign swarm.
+        const info = parseSwarmInfo((await this.run(target.id, buildSwarmInfoScript())).output);
+        if (info.localNodeState === "active") throw new ConflictException("server is already part of another swarm");
+        const dialAddr = this.pickAdvertiseAddr(helper);
+        if (!dialAddr) throw new ServiceUnavailableException("no manager has a usable IP to advertise");
+        const tokRes = await this.run(helper.id, buildSwarmJoinTokenScript("manager"));
+        const token = tokRes.output.trim();
+        if (tokRes.exitCode !== 0 || !token) throw new ServiceUnavailableException("could not fetch a manager join token");
+        const join = await this.run(target.id, buildSwarmJoinScript(token, dialAddr), JOIN_WS_TIMEOUT_MS);
+        // Rotate the manager token UNCONDITIONALLY (even on join failure) so anything that leaked into a process
+        // list / stray log stops working within seconds — mirrors form()'s worker-token rotation timing.
+        await this.run(helper.id, buildSwarmTokenRotateScript("manager")).catch(() => undefined);
+        if (join.exitCode !== 0) throw new ServiceUnavailableException(classifyJoinError(join.exitCode));
+        // The node has genuinely joined the swarm as a MANAGER at the docker level. Learn its node id
+        // best-effort — but if that follow-up info call fails (WS timeout right after a Raft membership change is
+        // realistic), we must STILL persist swarmRole=MANAGER, or the DB would permanently understate a real
+        // manager (and quorum math would be wrong) even though it IS in the Raft group. nodeId is reconciled on
+        // the next status() poll's live inspect regardless.
+        let nodeId: string | null = null;
+        try {
+          nodeId = parseSwarmInfo((await this.run(target.id, buildSwarmInfoScript())).output).nodeId;
+        } catch {
+          nodeId = null;
+        }
+        await this.markMember(target.id, id, { swarmRole: "MANAGER", swarmNodeId: nodeId, swarmError: null });
+      }
+    } catch (e) {
+      // A failed promote/join leaves swarmRole untouched and records only a SANITIZED message (never raw output
+      // or the token) — same guarantee as joinWorker's failure path.
+      await this.markMember(target.id, id, { swarmError: safeMessage(e) }).catch(() => undefined);
+      throw e;
+    }
+
+    await this.audit.log({ actor: userId, action: "cluster.swarm.addManager", target: id, meta: { serverId: target.id, managerCount: newCount } });
+    return this.view(id);
+  }
+
+  /** Remove a MANAGER from the swarm (FLEET-G) — DEMOTE it back to a worker (`docker node demote`), shrinking
+   *  the Raft quorum. Refuses to demote the PRIMARY manager (cluster.swarmManagerId — it hosts the swarm-mode
+   *  ingress, pinned by node label; moving that pin is out of scope, see swarm-proxy-script.ts) or the only
+   *  remaining manager. Idempotent (a non-MANAGER target is a no-op). Same no-cluster-wide-CAS rationale as
+   *  addManager. */
+  async removeManager(userId: string, id: string, dto: { serverId: string; acknowledgeEvenQuorum?: boolean }): Promise<SwarmView> {
+    const cluster = await this.requireWrite(userId, id);
+    if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
+      throw new BadRequestException("the swarm must be formed before demoting a manager");
+    }
+    const members = await this.members(id);
+    const target = members.find((m) => m.id === dto.serverId);
+    if (!target) throw new BadRequestException("server must be a member of this cluster");
+    if (target.swarmRole !== "MANAGER") return this.view(id); // idempotent no-op
+
+    if (target.id === cluster.swarmManagerId) {
+      throw new BadRequestException("cannot demote the primary manager — it hosts this cluster's swarm ingress; add another manager instead");
+    }
+    const currentManagers = members.filter((m) => m.swarmRole === "MANAGER");
+    if (currentManagers.length <= 1) {
+      throw new BadRequestException("cannot remove the only manager — dissolve the swarm instead, or add another manager first");
+    }
+    const newCount = currentManagers.length - 1;
+    if (newCount % 2 === 0 && !dto.acknowledgeEvenQuorum) {
+      throw new BadRequestException(
+        `removing this manager brings the total to ${newCount} — an even manager count adds no extra Raft fault-tolerance over ${newCount - 1} while raising the risk of a split vote; pass acknowledgeEvenQuorum to proceed anyway, or remove one more manager instead`,
+      );
+    }
+
+    // Prefer a DIFFERENT online manager to run the demotion; Docker also supports a manager demoting itself, so
+    // fall back to self-dispatch when no other manager is reachable.
+    const helper =
+      currentManagers.find((m) => m.id !== target.id && m.status === "ONLINE" && m.capabilities.includes("swarm")) ??
+      currentManagers.find((m) => m.status === "ONLINE" && m.capabilities.includes("swarm"));
+    if (!helper) throw new ServiceUnavailableException("no other online manager available to run this operation");
+    if (!target.swarmNodeId) throw new BadRequestException("server's swarm node id is unknown — re-run Form to reconcile");
+
+    try {
+      const res = await this.run(helper.id, buildNodeDemoteScript(target.swarmNodeId));
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`demote failed (exit ${res.exitCode})`);
+      await this.markMember(target.id, id, { swarmRole: "WORKER", swarmError: null });
+    } catch (e) {
+      await this.markMember(target.id, id, { swarmError: safeMessage(e) }).catch(() => undefined);
+      throw e;
+    }
+
+    await this.audit.log({ actor: userId, action: "cluster.swarm.removeManager", target: id, meta: { serverId: target.id, managerCount: newCount } });
+    return this.view(id);
   }
 
   /** Advisory-only precheck (never throws, never blocks): would removing `node` leave a swarm-deployed app
@@ -502,7 +663,7 @@ export class SwarmService {
     if (cas.count !== 1) throw new ConflictException("a swarm operation is already in progress");
 
     const members = await this.members(id);
-    const manager = members.find((m) => m.swarmRole === "MANAGER");
+    const managers = members.filter((m) => m.swarmRole === "MANAGER");
     const workers = members.filter((m) => m.swarmRole === "WORKER");
     let abandoned = false;
 
@@ -522,31 +683,47 @@ export class SwarmService {
       }
     }
 
-    // Manager last.
-    if (manager) {
-      if (manager.status === "ONLINE" && manager.capabilities.includes("swarm")) {
-        // Tear down the swarm-mode Traefik (ingress) BEFORE leaving the swarm. If removal isn't CONFIRMED,
-        // the proxy may still be bound to :80/:443 on this box — which will later look like a free classic
-        // target (the ProxyService guard only knows swarm MANAGERS) — so warn loudly instead of silently.
-        const proxyGone = await this.swarmProxy.teardown(manager.id, id);
-        if (!proxyGone) abandoned = true;
-        const proxyWarn = proxyGone
-          ? null
-          : "the swarm ingress proxy may STILL be bound to :80/:443 on this host — verify and 'docker service rm tugra-swarm-proxy'";
-        const res = await this.run(manager.id, buildSwarmLeaveScript(true)).catch(() => ({ exitCode: 1, output: "" }));
+    // Managers last. Tear down the swarm-mode Traefik (ingress) ONCE — `docker service rm` is a cluster-wide
+    // Raft operation any manager can run — via ANY online manager BEFORE any manager leaves. This is the
+    // multi-manager fix for the dissolve path: if the PRIMARY is offline but another manager is up, teardown
+    // still runs (single-manager code never attempted it when its one manager was down). If removal isn't
+    // CONFIRMED, the proxy may still be bound to :80/:443 — warn loudly instead of silently.
+    let proxyWarn: string | null = null;
+    if (managers.length > 0) {
+      const dispatcher = managers.find((m) => m.status === "ONLINE" && m.capabilities.includes("swarm"));
+      if (dispatcher) {
+        const proxyGone = await this.swarmProxy.teardown(dispatcher.id, id);
+        if (!proxyGone) {
+          abandoned = true;
+          proxyWarn = "the swarm ingress proxy may STILL be bound to :80/:443 on this host — verify and 'docker service rm tugra-swarm-proxy'";
+        }
+      } else {
+        abandoned = true; // no online manager could tear the ingress down — flagged on the primary's row below
+      }
+    }
+
+    // Each manager leaves with --force (Docker refuses a manager `swarm leave` without it regardless of how many
+    // managers remain). Only the PRIMARY's row carries the ingress warning — it's the node the proxy is pinned to.
+    for (const m of managers) {
+      const carriesProxyWarn = m.id === cluster.swarmManagerId ? proxyWarn : null;
+      if (m.status === "ONLINE" && m.capabilities.includes("swarm")) {
+        const res = await this.run(m.id, buildSwarmLeaveScript(true)).catch(() => ({ exitCode: 1, output: "" }));
         if (res.exitCode === 0) {
-          // Clear the role but preserve the proxy warning (a successful leave must not mask an orphaned proxy).
-          await this.markServer(manager.id, { swarmRole: null, swarmNodeId: null, swarmError: proxyWarn });
+          // Clear the role but preserve any proxy warning (a successful leave must not mask an orphaned proxy).
+          await this.markServer(m.id, { swarmRole: null, swarmNodeId: null, swarmError: carriesProxyWarn });
         } else {
-          await this.markServer(manager.id, { swarmError: proxyWarn ?? "manager leave failed; local swarm state may remain" });
+          await this.markServer(m.id, { swarmError: carriesProxyWarn ?? "manager leave failed; local swarm state may remain" });
           abandoned = true;
         }
       } else {
         // Dead-manager abandon path: KEEP its swarmRole/swarmNodeId so a later Form's preflight refuses to
-        // blindly re-add a box that may still be a live manager; the operator clears it by hand. If it hosted
-        // the ingress proxy, that box may STILL be terminating live HTTPS for customer domains — sharper warning.
-        await this.markServer(manager.id, {
-          swarmError: "manager unreachable during dissolve; it may STILL be serving live HTTPS for your domains — verify and run 'docker swarm leave --force' on it",
+        // blindly re-add a box that may still be a live manager; the operator clears it by hand. The PRIMARY
+        // (ingress-pinned) box may STILL be terminating live HTTPS for customer domains — sharper warning.
+        await this.markServer(m.id, {
+          swarmError:
+            m.id === cluster.swarmManagerId
+              ? "manager unreachable during dissolve; it may STILL be serving live HTTPS for your domains — verify and run 'docker swarm leave --force' on it"
+              : "manager unreachable during dissolve; local swarm state may remain — run 'docker swarm leave --force' on it",
         });
         abandoned = true;
       }
@@ -611,6 +788,20 @@ export class SwarmService {
     await this.prisma.server.update({ where: { id }, data });
   }
 
+  /** Cluster-scoped variant used by addManager/removeManager: `updateMany` with a clusterId re-check, so a
+   *  concurrent setServers() that moves this server to another cluster mid-flight can't corrupt an unrelated
+   *  cluster's row. (form/dissolve/joinWorker keep the bare markServer to minimize their diff.) Throws when zero
+   *  rows matched (the server left this cluster mid-flight) so the caller surfaces the race instead of reporting
+   *  a false success + auditing an op whose DB write silently no-op'd. Failure-path callers wrap this in .catch. */
+  private async markMember(
+    serverId: string,
+    clusterId: string,
+    data: { swarmRole?: SwarmRole | null; swarmNodeId?: string | null; swarmError?: string | null },
+  ): Promise<void> {
+    const res = await this.prisma.server.updateMany({ where: { id: serverId, clusterId }, data });
+    if (res.count === 0) throw new ConflictException("server left this cluster during the operation");
+  }
+
   /** Prefer a private LAN IP for swarm control/gossip; fall back to the public IP. */
   private pickAdvertiseAddr(server: MemberRow): string | null {
     const priv = server.reportedIps.map(normalizeIp).find((ip) => isIP(ip) !== 0 && isPrivateV4(ip));
@@ -644,9 +835,19 @@ export class SwarmService {
       select: { swarmStatus: true, swarmManagerId: true, swarmLastError: true },
     });
     const members = await this.members(id);
+    const swarmStatus = (cluster?.swarmStatus ?? "NONE") as SwarmStatus;
+    // Quorum is derived live from Server.swarmRole/status (no persisted column) — the manager SET is simply
+    // every MANAGER row for this cluster, not just cluster.swarmManagerId (the PRIMARY). A swarm keeps its
+    // control plane only while a strict majority of managers are online.
+    const managers = members.filter((m) => m.swarmRole === "MANAGER");
+    const managersOnline = managers.filter((m) => m.status === "ONLINE").length;
+    const quorum: SwarmQuorum | null =
+      swarmStatus === "NONE"
+        ? null
+        : { managers: managers.length, managersOnline, hasQuorum: managers.length > 0 && managersOnline > managers.length / 2 };
     return {
       clusterId: id,
-      swarmStatus: (cluster?.swarmStatus ?? "NONE") as SwarmStatus,
+      swarmStatus,
       managerServerId: cluster?.swarmManagerId ?? null,
       swarmLastError: cluster?.swarmLastError ?? null,
       nodes: members.map((m) => ({
@@ -659,6 +860,7 @@ export class SwarmService {
         swarmNodeId: m.swarmNodeId,
       })),
       live: null,
+      quorum,
     };
   }
 

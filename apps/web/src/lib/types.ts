@@ -164,6 +164,12 @@ export interface Placement {
   constraints: PlacementConstraint[];
   spreadLabelKey: string | null;
 }
+/** Raft manager-quorum health (FLEET-G), derived live from the manager nodes' roles/status. */
+export interface SwarmQuorum {
+  managers: number;
+  managersOnline: number;
+  hasQuorum: boolean;
+}
 export interface SwarmView {
   clusterId: string;
   swarmStatus: SwarmStatus;
@@ -171,6 +177,8 @@ export interface SwarmView {
   swarmLastError: string | null;
   nodes: SwarmNodeView[];
   live: SwarmLiveNode[] | null;
+  /** Manager-quorum health; null only when swarmStatus is NONE. */
+  quorum: SwarmQuorum | null;
 }
 
 /** Public onboarding state (GET /instance/status) — read before login to gate the welcome flow. */

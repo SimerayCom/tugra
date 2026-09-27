@@ -15,6 +15,7 @@ import {
 
 interface ManagerRow {
   id: string;
+  status: string;
   swarmNodeId: string | null;
   certMode: string;
   dnsProvider: string | null;
@@ -36,8 +37,11 @@ export class SwarmProxyService {
     private readonly crypto: CryptoService,
   ) {}
 
-  /** Resolve the cluster's ONLINE manager (id + swarm node id + its cert/DNS config), or throw. */
-  private async manager(clusterId: string): Promise<ManagerRow> {
+  /** Resolve the cluster's PRIMARY manager (id + status + swarm node id + its cert/DNS config). Unlike the old
+   *  manager() this NO LONGER throws when the primary is offline — callers decide (ensure() still needs it
+   *  online because the ingress container is pinned to THIS node's local ACME cert store via a node label, but
+   *  status() only needs any manager to answer a cluster-wide read, see dispatchManager()). */
+  private async primary(clusterId: string): Promise<ManagerRow> {
     const cluster = await this.prisma.cluster.findUnique({
       where: { id: clusterId },
       select: { swarmStatus: true, swarmManagerId: true },
@@ -51,8 +55,22 @@ export class SwarmProxyService {
       where: { id: cluster.swarmManagerId },
       select: { id: true, status: true, swarmNodeId: true, certMode: true, dnsProvider: true, dnsCredsEnc: true },
     });
-    if (!mgr || mgr.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
-    return { id: mgr.id, swarmNodeId: mgr.swarmNodeId, certMode: mgr.certMode, dnsProvider: mgr.dnsProvider, dnsCredsEnc: mgr.dnsCredsEnc };
+    if (!mgr) throw new ServiceUnavailableException("swarm manager server not found");
+    return { id: mgr.id, status: mgr.status, swarmNodeId: mgr.swarmNodeId, certMode: mgr.certMode, dnsProvider: mgr.dnsProvider, dnsCredsEnc: mgr.dnsCredsEnc };
+  }
+
+  /** Pick the manager to DISPATCH a cluster-wide read (`docker service …`) to: the primary if it's online, else
+   *  any other online manager with the 'swarm' capability (FLEET-G failover). The ~8-line backup query is
+   *  duplicated from SwarmDeployService by design — SwarmService already depends on SwarmProxyService, so
+   *  importing it back here would create a circular DI edge; each service re-queries prisma independently. */
+  private async dispatchManager(clusterId: string, primaryId: string, primaryStatus: string): Promise<string> {
+    if (primaryStatus === "ONLINE") return primaryId;
+    const backup = await this.prisma.server.findFirst({
+      where: { clusterId, swarmRole: "MANAGER", status: "ONLINE", capabilities: { has: "swarm" }, NOT: { id: primaryId } },
+      select: { id: true },
+    });
+    if (!backup) throw new ServiceUnavailableException("swarm manager is offline");
+    return backup.id;
   }
 
   /** The manager's DNS-01 provider + decrypted creds, when certMode is "le-dns" (else null). Mirrors
@@ -70,7 +88,11 @@ export class SwarmProxyService {
    *  would collide on :80/:443. Verifies the proxy task actually reached 1/1 (a task on a non-manager node
    *  would silently discover zero services). */
   async ensure(clusterId: string): Promise<void> {
-    const mgr = await this.manager(clusterId);
+    const mgr = await this.primary(clusterId);
+    // ensure() is UNCHANGED in behavior: the ingress container can only ever be scheduled on THIS node (pinned
+    // by a node label to its local ACME cert store — see swarm-proxy-script.ts), so there is no failover to give
+    // it. The online check that manager() used to bake in simply moves inline here.
+    if (mgr.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
 
     // Coexistence guard: the classic per-server Traefik and the swarm proxy both bind :80/:443 on the
     // manager. If either a classic domain app is assigned to the manager, or a classic tugra-proxy is
@@ -121,8 +143,11 @@ export class SwarmProxyService {
   }
 
   async status(clusterId: string): Promise<{ exitCode: number; output: string }> {
-    const mgr = await this.manager(clusterId);
-    return this.agentWs.sendCommand(mgr.id, buildSwarmProxyStatusScript(), "swarm");
+    // `docker service ls` is a cluster-wide read any manager can answer — so status() fails over to a backup
+    // online manager when the primary is down (FLEET-G), instead of blacking out like the old manager() did.
+    const mgr = await this.primary(clusterId);
+    const dispatchTo = await this.dispatchManager(clusterId, mgr.id, mgr.status);
+    return this.agentWs.sendCommand(dispatchTo, buildSwarmProxyStatusScript(), "swarm");
   }
 
   /** Teardown the swarm proxy (on dissolve) and CONFIRM it's gone. Returns true only when the manager

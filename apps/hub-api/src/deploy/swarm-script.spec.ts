@@ -10,6 +10,8 @@ import {
   buildNodeRemoveScript,
   buildNodeInspectAllScript,
   buildNodeLabelUpdateScript,
+  buildNodePromoteScript,
+  buildNodeDemoteScript,
   SWARM_JOIN_TIMEOUT_SEC,
 } from "./swarm-script";
 
@@ -99,5 +101,16 @@ describe("swarm-script builders", () => {
     expect(buildNodeLabelUpdateScript("nodeid1", { zone: "east" }, ["old"])).toBe("docker node update --label-add 'zone=east' --label-rm 'old' 'nodeid1'");
     // shell-safety: a value containing a quote is escaped
     expect(buildNodeLabelUpdateScript("n", { k: "a'b" }, [])).toContain("--label-add 'k=a'\\''b'");
+  });
+
+  it("node promote grows the Raft quorum by node id, quoted", () => {
+    expect(buildNodePromoteScript("nodeid1")).toBe("docker node promote 'nodeid1'");
+    // defence-in-depth: a quote-containing id can't break out of the single-quoted word
+    expect(buildNodePromoteScript("a'b")).toBe("docker node promote 'a'\\''b'");
+  });
+
+  it("node demote shrinks the Raft quorum by node id, quoted", () => {
+    expect(buildNodeDemoteScript("nodeid1")).toBe("docker node demote 'nodeid1'");
+    expect(buildNodeDemoteScript("a'b")).toBe("docker node demote 'a'\\''b'");
   });
 });

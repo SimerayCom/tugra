@@ -56,5 +56,18 @@
   "nodeLabelValue": "value",
   "nodeLabelAdd": "Add label",
   "nodeLabelRemove": "Remove label",
-  "nodeLabelFailed": "Couldn't update node labels."
+  "nodeLabelFailed": "Couldn't update node labels.",
+  "quorumLost": "Quorum lost — {online} of {total} managers online. The swarm can't process manager or service changes until a majority is back.",
+  "quorumHealthy": "{online}/{total} managers online",
+  "managersAdvanced": "Advanced",
+  "addManager": "Add manager",
+  "addManagerServer": "Server to promote or join",
+  "addManagerHint": "Promote an existing worker, or have a fresh server join directly as a manager. Requires an already-formed swarm and the 'swarm' capability.",
+  "addManagerFailed": "Couldn't add the manager.",
+  "noEligibleServers": "No eligible servers — must be online, have the 'swarm' capability, and not already be a manager.",
+  "demoteManager": "Demote",
+  "demoteConfirm": "Demote {name} back to a worker?",
+  "removeManagerFailed": "Couldn't demote the manager.",
+  "primaryManager": "Primary",
+  "acknowledgeAndRetry": "Proceed anyway"
 }
