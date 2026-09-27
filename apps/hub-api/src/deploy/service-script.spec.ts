@@ -10,6 +10,9 @@ import {
   buildServiceLogsScript,
   parseServiceImageDigest,
   parseSwarmTasks,
+  appEnvSecretPrefix,
+  buildInspectEntrypointScript,
+  parseImageEntrypointCmd,
   type ServiceDeployOpts,
 } from "./service-script";
 
@@ -153,7 +156,8 @@ describe("service-script builders", () => {
     const restart = buildServiceRestartScript("tugra_abc", 3, 60);
     expect(restart).toContain("docker service update --detach --force 'tugra_abc'");
     expect(restart).toContain("TUGRA_ROLLOUT"); // restart is async → same poll machinery
-    expect(buildServiceRemoveScript("tugra_abc")).toBe("docker service rm 'tugra_abc' 2>/dev/null || true");
+    expect(buildServiceRemoveScript("tugra_abc")).toContain("docker service rm 'tugra_abc' 2>/dev/null || true");
+    expect(buildServiceRemoveScript("tugra_abc")).toContain("docker secret ls --filter name='tugra-appenv-tugra_abc'"); // FLEET-F: prune env secrets too
     expect(buildServicePsScript("tugra_abc")).toBe("docker service ps 'tugra_abc' --format '{{json .}}'");
     expect(buildServiceLogsScript("tugra_abc", 50)).toBe("docker service logs --timestamps --tail 50 'tugra_abc'");
     expect(buildServiceLogsScript("tugra_abc", 50, "1h")).toBe("docker service logs --timestamps --tail 50 --since '1h' 'tugra_abc'");
@@ -245,5 +249,84 @@ describe("service-script builders", () => {
   it("emits no --mount flags for a stateless service (mounts omitted)", () => {
     const s = buildServiceDeployScript(opts({ memoryMb: 128 }));
     expect(s).not.toContain("--mount");
+  });
+
+  // ── FLEET-F env → docker secret ──
+  const es = { name: "tugra-appenv-tugra_abc-abc123def456", confighash: "abc123def456", credsB64: "Rk9PPWJhcg==" }; // envFileB64({FOO:"bar"})
+
+  it("appEnvSecretPrefix builds the per-app secret prefix", () => {
+    expect(appEnvSecretPrefix("tugra_abc")).toBe("tugra-appenv-tugra_abc");
+  });
+
+  it("no envSecret → no --secret / --entrypoint / envhash label (classic env path unchanged, ref last on create)", () => {
+    const s = buildServiceDeployScript(opts({ env: { FOO: "bar" } }));
+    expect(s).not.toContain("--secret ");
+    expect(s).not.toContain("tugra.app.envhash");
+    expect(s).not.toContain("--entrypoint");
+    expect(s).toContain("--env 'FOO'"); // classic name-only env still used
+  });
+
+  it("CREATE with envSecret mounts the secret, wraps the entrypoint, and re-supplies the image's real cmd", () => {
+    const s = buildServiceDeployScript(opts({ envSecret: es, imageEntrypoint: [], imageCmd: ["node", "server.js"] }));
+    expect(s).toContain(`--secret source='${es.name}',target=app_env`);
+    expect(s).toContain(`--label tugra.app.envhash='${es.confighash}'`);
+    expect(s).toContain("--entrypoint sh");
+    expect(s).toContain('exec "$@"'); // wrapper execs the real command
+    expect(s).toContain("read -r k v"); // wrapper loads /run/secrets file (never `. /run/secrets`)
+    expect(s).not.toContain(". /run/secrets");
+    expect(s).toContain(" app 'node' 'server.js'"); // $0 placeholder (literal "app") + real entrypoint+cmd, each shq'd
+    expect(s).toContain(es.credsB64); // base64 body present to MINT the secret
+    expect(s).not.toContain("FOO=bar"); // but never the raw plaintext value
+    expect(s).toContain(`docker secret inspect '${es.name}'`); // idempotent mint
+  });
+
+  it("UPDATE with envSecret scrubs plaintext env, reconciles the secret on hash change, and rewraps args", () => {
+    const s = buildServiceDeployScript(opts({ envSecret: es, imageEntrypoint: [], imageCmd: ["node", "server.js"] }));
+    expect(s).toContain("ContainerSpec.Env"); // scrub reads currently-attached env
+    expect(s).toContain('--env-rm "$TUGRA_EK"'); // and removes each
+    expect(s).toContain('index .Spec.Labels "tugra.app.envhash"'); // runtime confighash check
+    expect(s).toContain(`set -- "$@" --secret-add source='${es.name}',target=app_env --label-add tugra.app.envhash='${es.confighash}'`);
+    expect(s).toContain(`TUGRA_OLD_SECRET='tugra-appenv-tugra_abc'"-$TUGRA_CUR"`); // static prefix shq'd, runtime hash appended
+    expect(s).toContain(`set -- "$@" --secret-rm "$TUGRA_OLD_SECRET"`);
+    // review fix: the superseded secret OBJECT is deleted after the update (not just detached)
+    expect(s).toContain(`docker secret rm "$TUGRA_OLD_SECRET"`);
+    expect(s).toContain(`--args '`); // rewrapped entrypoint args on update
+  });
+
+  it("plaintext fallback for a shell-less image recreates a previously-wrapped service (review P1)", () => {
+    const s = buildServiceDeployScript(opts({ env: { FOO: "bar" }, envFallbackNoShell: true }));
+    expect(s).not.toContain("--secret source="); // no secret path
+    expect(s).toContain('TUGRA_WAS_WRAPPED=$(docker service inspect'); // detect a stale wrapper
+    expect(s).toContain('if [ -n "$TUGRA_WAS_WRAPPED" ]; then'); // and recreate instead of a broken update
+    expect(s).toContain("--env 'FOO'"); // classic plaintext env still applied
+  });
+
+  it("a plain no-env update stays byte-identical (no wrapped-recreate probe)", () => {
+    const s = buildServiceDeployScript(opts({ env: {} }));
+    expect(s).not.toContain("TUGRA_WAS_WRAPPED"); // no extra probe for classic/no-env apps
+    expect(s).not.toContain("tugra.app.envhash");
+  });
+
+  it("envSecret tokens are shq'd (injection-safe) in create and update", () => {
+    const evil = { name: "x'; rm -rf / #", confighash: "h'h", credsB64: "eA==" };
+    const s = buildServiceDeployScript(opts({ envSecret: evil, imageEntrypoint: ["a'b"], imageCmd: [] }));
+    expect(s).toContain("'x'\\''; rm -rf / #'"); // name escaped
+    expect(s).toContain("'a'\\''b'"); // entrypoint token escaped
+  });
+
+  it("buildInspectEntrypointScript pulls, reads entrypoint/cmd, and probes for a shell", () => {
+    const s = buildInspectEntrypointScript("ghcr.io/o/app:1", { user: "u", token: "t" });
+    expect(s).toContain("docker pull -q 'ghcr.io/o/app:1'");
+    expect(s).toContain("login -u 'u' --password-stdin"); // registryLoginPrelude when auth given
+    expect(s).toContain("TUGRA_ENTRYPOINT=$(docker inspect 'ghcr.io/o/app:1' --format '{{json .Config.Entrypoint}}')");
+    expect(s).toContain("TUGRA_CMD=$(docker inspect 'ghcr.io/o/app:1' --format '{{json .Config.Cmd}}')");
+    expect(s).toContain("--entrypoint /bin/sh 'ghcr.io/o/app:1' -c ':'"); // shell probe
+    expect(s).toContain("TUGRA_HAS_SHELL=yes");
+  });
+
+  it("parseImageEntrypointCmd handles null, arrays, shell flag, and malformed input", () => {
+    expect(parseImageEntrypointCmd('TUGRA_ENTRYPOINT=null\nTUGRA_CMD=["node","server.js"]\nTUGRA_HAS_SHELL=yes')).toEqual({ entrypoint: [], cmd: ["node", "server.js"], hasShell: true });
+    expect(parseImageEntrypointCmd('TUGRA_ENTRYPOINT=["/bin/tini","--"]\nTUGRA_CMD=["sh -c echo"]\nTUGRA_HAS_SHELL=no')).toEqual({ entrypoint: ["/bin/tini", "--"], cmd: ["sh -c echo"], hasShell: false });
+    expect(parseImageEntrypointCmd("garbage")).toEqual({ entrypoint: [], cmd: [], hasShell: false });
   });
 });

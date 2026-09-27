@@ -1,5 +1,5 @@
 import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
-import { SwarmDeployService, effectivePollSec } from "./swarm-deploy.service";
+import { SwarmDeployService, appEnvConfigHash, effectivePollSec } from "./swarm-deploy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import type { Application } from "@prisma/client";
@@ -221,10 +221,61 @@ describe("SwarmDeployService lifecycle", () => {
     expect(send.mock.calls[0][2]).toBe("swarm");
     expect(typeof send.mock.calls[0][3]).toBe("number");
     await svc.remove(app());
-    expect(send.mock.calls[1][1]).toBe("docker service rm 'tugra_abc' 2>/dev/null || true");
+    expect(send.mock.calls[1][1]).toContain("docker service rm 'tugra_abc' 2>/dev/null || true");
+    expect(send.mock.calls[1][1]).toContain("tugra-appenv-tugra_abc"); // FLEET-F: also prunes env secrets
     await svc.status(app());
     expect(send.mock.calls[2][1]).toContain("docker service ps 'tugra_abc'");
     await svc.logs(app(), 50);
     expect(send.mock.calls[3][1]).toBe("docker service logs --timestamps --tail 50 'tugra_abc'");
+  });
+});
+
+describe("SwarmDeployService FLEET-F — env secrets", () => {
+  it("appEnvConfigHash is order-independent and content-sensitive", () => {
+    expect(appEnvConfigHash({ FOO: "a", BAR: "b" })).toBe(appEnvConfigHash({ BAR: "b", FOO: "a" }));
+    expect(appEnvConfigHash({ FOO: "a" })).not.toBe(appEnvConfigHash({ FOO: "b" }));
+  });
+
+  it("no env → a single deploy call (no image-inspect round trip)", async () => {
+    const { svc, send } = make();
+    await svc.deploy(app(), spec({ env: {} }), "dep1", { timeoutMs: 1000 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("env + shell → inspect then deploy; env rides a secret, raw value never in the script", async () => {
+    const send = jest.fn(async (_s: string, cmd: string) =>
+      cmd.includes("TUGRA_ENTRYPOINT")
+        ? { exitCode: 0, output: 'TUGRA_ENTRYPOINT=null\nTUGRA_CMD=["node","server.js"]\nTUGRA_HAS_SHELL=yes' }
+        : { exitCode: 0, output: "TUGRA_ROLLOUT: converged" },
+    );
+    const { svc } = make({ sendImpl: send });
+    await svc.deploy(app(), spec({ env: { FOO: "bar" } }), "dep1", { timeoutMs: 1000 });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0][1]).toContain("docker pull -q"); // inspect first
+    const deployScript = send.mock.calls[1][1] as string;
+    expect(deployScript).toContain("--secret source="); // env via secret
+    expect(deployScript).not.toContain("FOO=bar"); // never plaintext
+  });
+
+  it("env + NO shell (distroless) → falls back to plaintext env, never breaks the app", async () => {
+    const send = jest.fn(async (_s: string, cmd: string) =>
+      cmd.includes("TUGRA_ENTRYPOINT")
+        ? { exitCode: 0, output: "TUGRA_ENTRYPOINT=null\nTUGRA_CMD=null\nTUGRA_HAS_SHELL=no" }
+        : { exitCode: 0, output: "TUGRA_ROLLOUT: converged" },
+    );
+    const { svc } = make({ sendImpl: send });
+    await svc.deploy(app(), spec({ env: { FOO: "bar" } }), "dep1", { timeoutMs: 1000 });
+    const deployScript = send.mock.calls[1][1] as string;
+    expect(deployScript).not.toContain("--secret source=");
+    expect(deployScript).toContain("--env 'FOO'"); // classic plaintext path — distroless app still runs
+  });
+
+  it("inspect failure aborts the deploy with a clear error (deploy script never dispatched)", async () => {
+    const send = jest.fn(async (_s: string, cmd: string) =>
+      cmd.includes("TUGRA_ENTRYPOINT") ? { exitCode: 1, output: "pull denied" } : { exitCode: 0, output: "TUGRA_ROLLOUT: converged" },
+    );
+    const { svc } = make({ sendImpl: send });
+    await expect(svc.deploy(app(), spec({ env: { FOO: "bar" } }), "dep1", { timeoutMs: 1000 })).rejects.toThrow(/pull\/inspect|protect/i);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

@@ -311,7 +311,7 @@ export default function AppDetailPage() {
             />
           )}
           <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />
-          <EnvCard id={id} />
+          <EnvCard id={id} clusterId={appData.clusterId} />
           {appData.source === "GIT" && <BuildArgsCard id={id} />}
         </>
       )}
@@ -595,7 +595,7 @@ const envField: React.CSSProperties = {
   fontFamily: "var(--font-mono, monospace)",
 };
 
-function EnvCard({ id }: { id: string }) {
+function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const { data: env } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
@@ -641,7 +641,7 @@ function EnvCard({ id }: { id: string }) {
           </button>
         )}
       </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.envDesc")}</p>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t(clusterId ? "apps.envDescSwarm" : "apps.envDesc")}</p>
       {bulk ? (
         <>
           <textarea
