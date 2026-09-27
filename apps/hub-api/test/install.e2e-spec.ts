@@ -25,7 +25,7 @@ describe("GET /install/agent.sh (e2e)", () => {
     expect(res.headers["content-type"]).toContain("text/x-shellscript");
     expect(res.text).toContain("#!/bin/sh");
     expect(res.text).toContain("docker run -d");
-    expect(res.text).toContain("ghcr.io/mrcandev/tugra-agent:");
+    expect(res.text).toContain("ghcr.io/simeraycom/tugra-agent:");
   });
 
   it("is EXEMPT from the /api/v1 prefix — the prefixed path 404s", async () => {

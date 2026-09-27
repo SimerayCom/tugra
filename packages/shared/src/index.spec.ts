@@ -59,8 +59,8 @@ describe("shared protocol", () => {
   it("builds a byte-stable canonicalAgentUpdate (must match the Go agent's CanonicalAgentUpdate)", () => {
     // Any drift from the Go builder → every signed agent_update is rejected. Keep this fixture identical
     // to protocol_test.go's CanonicalAgentUpdate assertion.
-    expect(canonicalAgentUpdate("r1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "deadbeef", "deploy")).toBe(
-      "aupd\nr1\n0.2.0\nghcr.io/mrcandev/tugra-agent:0.2.0\ndeadbeef\ndeploy",
+    expect(canonicalAgentUpdate("r1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "deadbeef", "deploy")).toBe(
+      "aupd\nr1\n0.2.0\nghcr.io/simeraycom/tugra-agent:0.2.0\ndeadbeef\ndeploy",
     );
   });
 
@@ -69,7 +69,7 @@ describe("shared protocol", () => {
       type: "agent_update",
       reqId: "r1",
       targetVersion: "0.2.0",
-      image: "ghcr.io/mrcandev/tugra-agent:0.2.0",
+      image: "ghcr.io/simeraycom/tugra-agent:0.2.0",
       sha256: "deadbeef",
       capability: "deploy",
       sig: "SIG",

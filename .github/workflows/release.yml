@@ -32,20 +32,20 @@ jobs:
           # hub/web/updater run on the control-plane host (typically amd64). amd64-only keeps releases
           # fast + reliable; a Pi/arm64 control plane uses `install.sh --build` to build natively.
           - name: hub
-            image: ghcr.io/mrcandev/tugra-hub
+            image: ghcr.io/simeraycom/tugra-hub
             dockerfile: deploy/Dockerfile.hub
             platforms: linux/amd64
           - name: web
-            image: ghcr.io/mrcandev/tugra-web
+            image: ghcr.io/simeraycom/tugra-web
             dockerfile: deploy/Dockerfile.web
             platforms: linux/amd64
           - name: updater
-            image: ghcr.io/mrcandev/tugra-updater
+            image: ghcr.io/simeraycom/tugra-updater
             dockerfile: deploy/Dockerfile.updater
             platforms: linux/amd64
           # The agent runs on managed servers of ANY arch, so it must be multi-arch.
           - name: agent
-            image: ghcr.io/mrcandev/tugra-agent
+            image: ghcr.io/simeraycom/tugra-agent
             dockerfile: deploy/Dockerfile.agent
             platforms: linux/amd64,linux/arm64
     steps:
@@ -143,10 +143,10 @@ jobs:
           arm64=$(jq -r '.arm64 // empty' digests/agent-digests.json)
           node scripts/sign-manifest.mjs \
             --version "$VERSION" --channel "$CHANNEL" \
-            --hub-image "ghcr.io/mrcandev/tugra-hub:$VERSION" \
-            --web-image "ghcr.io/mrcandev/tugra-web:$VERSION" \
+            --hub-image "ghcr.io/simeraycom/tugra-hub:$VERSION" \
+            --web-image "ghcr.io/simeraycom/tugra-web:$VERSION" \
             ${amd64:+--agent-amd64 "$amd64"} ${arm64:+--agent-arm64 "$arm64"} \
-            --changelog-url "https://github.com/mrcandev/tugra/releases/tag/v$VERSION" \
+            --changelog-url "https://github.com/SimerayCom/tugra/releases/tag/v$VERSION" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${MIN_UPGRADE_FROM:+--min-upgrade-from "$MIN_UPGRADE_FROM"} \
             $current_arg \

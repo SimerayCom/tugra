@@ -7,9 +7,9 @@
 //
 //   UPDATE_SIGNING_KEY=<base64 32-byte seed> node scripts/sign-manifest.mjs \
 //     --version 0.2.0 --channel stable \
-//     --hub-image ghcr.io/mrcandev/tugra-hub:0.2.0 --web-image ghcr.io/mrcandev/tugra-web:0.2.0 \
+//     --hub-image ghcr.io/simeraycom/tugra-hub:0.2.0 --web-image ghcr.io/simeraycom/tugra-web:0.2.0 \
 //     --agent-amd64 sha256:… --agent-arm64 sha256:… \
-//     --changelog-url https://github.com/mrcandev/tugra/releases/tag/v0.2.0 \
+//     --changelog-url https://github.com/SimerayCom/tugra/releases/tag/v0.2.0 \
 //     --published-at 2026-07-18T00:00:00Z [--min-upgrade-from 1.9.0] \
 //     [--current ./gh-pages/versions.json] --out-dir ./out
 

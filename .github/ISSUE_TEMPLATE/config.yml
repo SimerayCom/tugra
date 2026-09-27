@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/mrcandev/tugra/security/policy
+    url: https://github.com/SimerayCom/tugra/security/policy
     about: Please report security issues privately — do not open a public issue.
   - name: Questions & discussion
-    url: https://github.com/mrcandev/tugra/discussions
+    url: https://github.com/SimerayCom/tugra/discussions
     about: Ask questions and discuss ideas here.

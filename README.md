@@ -8,11 +8,11 @@
 
 **Open-core, self-hostable PaaS built for fleets and AI agents.**
 
-[![GitHub stars](https://img.shields.io/github/stars/mrcandev/tugra?style=flat&logo=github&label=stars)](https://github.com/mrcandev/tugra/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/SimerayCom/tugra?style=flat&logo=github&label=stars)](https://github.com/SimerayCom/tugra/stargazers)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/mrcandev/tugra?sort=semver&label=release)](https://github.com/mrcandev/tugra/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/mrcandev/tugra/ci.yml?branch=main&label=CI)](https://github.com/mrcandev/tugra/actions/workflows/ci.yml)
-[![Image: ghcr.io](https://img.shields.io/badge/image-ghcr.io%2Fmrcandev%2Ftugra--hub-blue?logo=docker&logoColor=white)](#quick-start)
+[![Release](https://img.shields.io/github/v/release/SimerayCom/tugra?sort=semver&label=release)](https://github.com/SimerayCom/tugra/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/SimerayCom/tugra/ci.yml?branch=main&label=CI)](https://github.com/SimerayCom/tugra/actions/workflows/ci.yml)
+[![Image: ghcr.io](https://img.shields.io/badge/image-ghcr.io%2Fsimeraycom%2Ftugra--hub-blue?logo=docker&logoColor=white)](#quick-start)
 
 <!-- TODO: docs/assets/deploy.gif — record a real deploy (connect a server → deploy an app) and embed it here -->
 <!-- TODO: docs/assets/screenshot-dashboard.png — add a real dashboard screenshot, linked here -->
@@ -77,7 +77,7 @@ A short, honest comparison — cells we couldn't verify with confidence are mark
 You need a Linux host with **Docker** (with the Compose v2 plugin) and `git`. From the host:
 
 ```bash
-git clone https://github.com/mrcandev/tugra.git
+git clone https://github.com/SimerayCom/tugra.git
 cd tugra
 ./scripts/install.sh
 ```
@@ -106,7 +106,7 @@ Notes:
 - **TLS is not bundled** — bring your own reverse proxy (Caddy, Traefik, nginx, …). `--domain` sets `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` for that setup.
 - **"Sign in with GitHub"** works only in this single-origin proxy deployment (the hub and web share a public origin so the session cookie is visible to the SPA); it isn't available in the plain two-port quick start.
 
-> Published images (`ghcr.io/mrcandev/tugra-*`) arrive with the first tagged release. Until then the installer automatically builds from your checkout — same command, no changes needed.
+> Published images (`ghcr.io/simeraycom/tugra-*`) arrive with the first tagged release. Until then the installer automatically builds from your checkout — same command, no changes needed.
 
 **MCP quick start.** Once Tugra is up, mint a personal access token (**Settings → API tokens**) and point any MCP client at it:
 
@@ -162,15 +162,15 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 ## Community & docs
 
 - [Full documentation](docs/README.md) — install, architecture, API, CLI, security, open-core
-- [Issues](https://github.com/mrcandev/tugra/issues) — bug reports & feature requests
-- [Discussions](https://github.com/mrcandev/tugra/discussions) — questions, ideas, show-and-tell
+- [Issues](https://github.com/SimerayCom/tugra/issues) — bug reports & feature requests
+- [Discussions](https://github.com/SimerayCom/tugra/discussions) — questions, ideas, show-and-tell
 - [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [CLA](CLA.md)
 - [Security policy](SECURITY.md)
 
 ## Contributors
 
-<a href="https://github.com/mrcandev/tugra/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=mrcandev/tugra" alt="Contributors" />
+<a href="https://github.com/SimerayCom/tugra/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SimerayCom/tugra" alt="Contributors" />
 </a>
 
 ## Sponsors
@@ -179,7 +179,7 @@ Tugra is built and maintained in the open. If it's useful to you or your team, c
 
 ## Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mrcandev/tugra&type=Date)](https://star-history.com/#mrcandev/tugra&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=SimerayCom/tugra&type=Date)](https://star-history.com/#SimerayCom/tugra&Date)
 
 ## License
 

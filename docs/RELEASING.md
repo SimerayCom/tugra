@@ -21,7 +21,7 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
 
 2. **GitHub Pages**: the manifest is published to the `gh-pages` branch. The first release creates the
    branch automatically; enable Pages for the repo (Settings → Pages → *Deploy from branch* → `gh-pages`).
-   The manifest is then served at `https://mrcandev.github.io/tugra/versions.json` (the `.sig` sits beside
+   The manifest is then served at `https://simeraycom.github.io/tugra/versions.json` (the `.sig` sits beside
    it). To use a custom domain later, add a `CNAME` file to `gh-pages` — `keep_files` preserves it and only
    the URL operators configure changes.
 
@@ -41,7 +41,7 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
    run the workflow manually (Actions → *Release* → *Run workflow*) with a `version` and an optional
    `min_upgrade_from` (the minimum version required to upgrade directly to this release).
 4. The workflow:
-   - builds + pushes `ghcr.io/mrcandev/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
+   - builds + pushes `ghcr.io/simeraycom/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
      The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`.
    - signs a merged `versions.json` (updating only the released channel, preserving the other) and pushes
      it + its `.sig` to `gh-pages`. The signer self-verifies against the real consumer verifier and refuses
@@ -57,8 +57,8 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
 - [ ] Smoke test the published artifacts:
 
   ```sh
-  docker run --rm ghcr.io/mrcandev/tugra-agent:<version> --version   # prints the real version, not 0.0.0-dev
-  curl -s https://mrcandev.github.io/tugra/versions.json | jq .tugra.stable.version
+  docker run --rm ghcr.io/simeraycom/tugra-agent:<version> --version   # prints the real version, not 0.0.0-dev
+  curl -s https://simeraycom.github.io/tugra/versions.json | jq .tugra.stable.version
   ```
 
 ## Notes & caveats

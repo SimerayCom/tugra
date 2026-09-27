@@ -120,7 +120,7 @@ describe("scripts/install.sh", () => {
 
     it("hub-api and web carry BOTH a registry image and a build block (pull or build-from-source)", () => {
       for (const s of ["hub-api", "web"]) {
-        expect(compose.services[s].image).toContain("ghcr.io/mrcandev/tugra-");
+        expect(compose.services[s].image).toContain("ghcr.io/simeraycom/tugra-");
         expect(compose.services[s].build).toBeTruthy();
       }
     });

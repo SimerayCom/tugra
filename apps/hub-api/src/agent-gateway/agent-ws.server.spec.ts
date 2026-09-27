@@ -137,13 +137,13 @@ describe("AgentWsServer terminal relay", () => {
   describe("sendAgentUpdate", () => {
     it("signs + sends an agent_update when the deploy capability is granted", async () => {
       const { server, lastSent } = harness();
-      const ok = await server.sendAgentUpdate("s1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "abc123");
+      const ok = await server.sendAgentUpdate("s1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "abc123");
       expect(ok).toBe(true);
       const sent = lastSent();
       expect(sent.type).toBe("agent_update");
       expect(sent).toMatchObject({
         targetVersion: "0.2.0",
-        image: "ghcr.io/mrcandev/tugra-agent:0.2.0",
+        image: "ghcr.io/simeraycom/tugra-agent:0.2.0",
         sha256: "abc123",
         capability: "deploy",
         sig: "SIG", // signOutbound stamped the hub signature over canonicalAgentUpdate

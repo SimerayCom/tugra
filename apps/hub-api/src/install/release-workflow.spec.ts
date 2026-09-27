@@ -36,10 +36,10 @@ describe(".github/workflows/release.yml", () => {
     }>;
     const byName = Object.fromEntries(include.map((e) => [e.name, e]));
     const expected: Record<string, string> = {
-      hub: "ghcr.io/mrcandev/tugra-hub",
-      web: "ghcr.io/mrcandev/tugra-web",
-      updater: "ghcr.io/mrcandev/tugra-updater",
-      agent: "ghcr.io/mrcandev/tugra-agent",
+      hub: "ghcr.io/simeraycom/tugra-hub",
+      web: "ghcr.io/simeraycom/tugra-web",
+      updater: "ghcr.io/simeraycom/tugra-updater",
+      agent: "ghcr.io/simeraycom/tugra-agent",
     };
     for (const [name, image] of Object.entries(expected)) {
       const entry = byName[name];

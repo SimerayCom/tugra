@@ -15,7 +15,7 @@ install reference; the [project README](../README.md) has the short version.
 From the host:
 
 ```bash
-git clone https://github.com/mrcandev/tugra.git
+git clone https://github.com/SimerayCom/tugra.git
 cd tugra
 ./scripts/install.sh
 ```
@@ -30,7 +30,7 @@ The installer:
 Open the printed Web UI URL and create the first account — it becomes the instance **owner** — then
 follow the onboarding wizard to connect your first server.
 
-Published images (`ghcr.io/mrcandev/tugra-*`) are used when available; until the first tagged release
+Published images (`ghcr.io/simeraycom/tugra-*`) are used when available; until the first tagged release
 the installer automatically builds from your checkout — the same command, no changes needed.
 
 ## Production: TLS + a domain

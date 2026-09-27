@@ -25,10 +25,10 @@ describe("manifest-merge", () => {
     const { seedB64, publicKeyB64 } = keypair();
     const entry = buildChannelEntry({
       version: "0.2.0",
-      hubImage: "ghcr.io/mrcandev/tugra-hub:0.2.0",
-      webImage: "ghcr.io/mrcandev/tugra-web:0.2.0",
+      hubImage: "ghcr.io/simeraycom/tugra-hub:0.2.0",
+      webImage: "ghcr.io/simeraycom/tugra-web:0.2.0",
       agentSha256: { amd64: "sha256:AABBCC", arm64: "ddeeff" },
-      changelogUrl: "https://github.com/mrcandev/tugra/releases/tag/v0.2.0",
+      changelogUrl: "https://github.com/SimerayCom/tugra/releases/tag/v0.2.0",
       publishedAt: PUBLISHED,
     });
     const { body, sig, publicKeyB64: pk } = signAndSelfVerify({ current: null, channel: "stable", entry, seedB64 });

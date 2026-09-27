@@ -41,11 +41,11 @@ describe("release build artifacts", () => {
     }
   });
 
-  it("published image names stay in the ghcr.io/mrcandev/tugra-* namespace", () => {
+  it("published image names stay in the ghcr.io/simeraycom/tugra-* namespace", () => {
     const expected: Record<string, string> = {
-      "hub-api": "ghcr.io/mrcandev/tugra-hub",
-      web: "ghcr.io/mrcandev/tugra-web",
-      "tugra-updater": "ghcr.io/mrcandev/tugra-updater",
+      "hub-api": "ghcr.io/simeraycom/tugra-hub",
+      web: "ghcr.io/simeraycom/tugra-web",
+      "tugra-updater": "ghcr.io/simeraycom/tugra-updater",
     };
     for (const [svc, repo] of Object.entries(expected)) {
       expect(services[svc]?.image).toContain(repo);

@@ -43,7 +43,7 @@ export function normalizeArch(arch: string | null | undefined): string | null {
 /** Build the target agent image ref at `version`, honoring an AGENT_IMAGE registry/repo override (its tag,
  *  if any, is replaced by the target version). The `@sha256:` digest is the real integrity anchor. */
 export function agentImageRef(agentImageEnv: string | undefined, version: string): string {
-  const base = (agentImageEnv ?? "ghcr.io/mrcandev/tugra-agent").replace(/:[^/]+$/, "");
+  const base = (agentImageEnv ?? "ghcr.io/simeraycom/tugra-agent").replace(/:[^/]+$/, "");
   return `${base}:${version}`;
 }
 
