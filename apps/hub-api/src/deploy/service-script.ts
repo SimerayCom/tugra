@@ -75,6 +75,7 @@ export interface ServiceDeployOpts {
   publish?: string[]; // routing-mesh published ports, e.g. "8080:80" (reachable on any node) — domain-less apps
   constraints?: string[]; // already-rendered `--constraint` expressions (e.g. "node.hostname==web-1") — FLEET-D
   placementPrefs?: string[]; // already-rendered `--placement-pref` expressions (e.g. "spread=node.labels.zone") — FLEET-D
+  mounts?: { source: string; target: string }[]; // named-volume mounts for a node-pinned stateful app — FLEET-E
   pollSec: number; // total rollout poll budget (effective timeout, sized by replica count)
 }
 
@@ -209,6 +210,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
   const publish = o.publish ?? [];
   const constraints = o.constraints ?? [];
   const placementPrefs = o.placementPrefs ?? [];
+  const mounts = o.mounts ?? [];
 
   const createFlags = [
     `--name ${q}`,
@@ -227,6 +229,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ...placementPrefs.map((p) => `--placement-pref ${shq(p)}`),
     ...labels.map((l) => `--label ${shq(l)}`),
     ...publish.map((p) => `--publish ${shq(p)}`),
+    ...mounts.map((m) => `--mount ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
     ...env.createFlags,
     shq(o.ref),
   ].join(" ");
@@ -243,6 +246,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ...health,
     ...labels.map((l) => `--label-add ${shq(l)}`),
     ...publish.map((p) => `--publish-add ${shq(p)}`),
+    ...mounts.map((m) => `--mount-add ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
     `"$@"`, // --env-add args built by env.updateBuild
     q,
   ].join(" ");

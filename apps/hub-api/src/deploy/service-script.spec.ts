@@ -234,4 +234,16 @@ describe("service-script builders", () => {
     expect(s).toContain(`--constraint 'node.labels.x==a'\\''b'`);
     expect(s).toContain(`--constraint-add 'node.labels.x==a'\\''b'`);
   });
+
+  // ── FLEET-E named-volume mounts ──
+  it("emits --mount on create and --mount-add on update for each named volume", () => {
+    const s = buildServiceDeployScript(opts({ mounts: [{ source: "tugra_appv_app1_data", target: "/var/lib/data" }] }));
+    expect(s).toContain("--mount 'type=volume,source=tugra_appv_app1_data,destination=/var/lib/data'");
+    expect(s).toContain("--mount-add 'type=volume,source=tugra_appv_app1_data,destination=/var/lib/data'");
+  });
+
+  it("emits no --mount flags for a stateless service (mounts omitted)", () => {
+    const s = buildServiceDeployScript(opts({ memoryMb: 128 }));
+    expect(s).not.toContain("--mount");
+  });
 });

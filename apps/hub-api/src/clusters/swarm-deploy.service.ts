@@ -3,7 +3,7 @@ import type { Application } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
-import { buildBuildOnlyScript, constraintExpr, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
+import { appVolumeName, buildBuildOnlyScript, constraintExpr, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
   SWARM_OVERLAY,
   buildOverlayEnsureScript,
@@ -130,7 +130,7 @@ export class SwarmDeployService {
 
   /** Assemble the overlay-ensure + service create/update script and dispatch it to the manager. Shared by
    *  deploy() (freshly built/resolved ref) and rollbackTo() (a prior ref, no build). */
-  private dispatchService(
+  private async dispatchService(
     managerId: string,
     app: Application,
     spec: AppSpec,
@@ -148,6 +148,19 @@ export class SwarmDeployService {
     // Structured placement → rendered docker expressions (FLEET-D). Shared by deploy() and rollbackTo().
     const constraints = (spec.placementConstraints ?? []).map(constraintExpr);
     const placementPrefs = spec.placementSpreadLabelKey ? [spreadPrefExpr(spec.placementSpreadLabelKey)] : [];
+    // FLEET-E: named-volume mounts for a stateful app, and a hard node-pin. The pin resolves the pinned
+    // Server's LIVE swarm node id and adds a node.id== constraint alongside any user placement, so the app's
+    // single replica always lands on the node holding its data.
+    const mounts = (spec.volumes ?? []).map((v) => ({ source: appVolumeName(app, v.name), target: v.path }));
+    if (app.constraintServerId) {
+      const pinned = await this.prisma.server.findUnique({ where: { id: app.constraintServerId }, select: { swarmNodeId: true } });
+      if (pinned?.swarmNodeId) {
+        // The auto-pin clears user placement when it's set, so `constraints` is normally empty here; dedupe
+        // defensively so we never emit the same node.id== flag twice.
+        const pin = constraintExpr({ type: "nodeId", op: "eq", value: pinned.swarmNodeId });
+        if (!constraints.includes(pin)) constraints.push(pin);
+      }
+    }
     const script = [
       buildOverlayEnsureScript(SWARM_OVERLAY),
       buildServiceDeployScript({
@@ -166,6 +179,7 @@ export class SwarmDeployService {
         publish,
         constraints,
         placementPrefs,
+        mounts,
         pollSec,
       }),
     ].join("\n");

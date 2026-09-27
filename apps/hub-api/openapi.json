@@ -3783,6 +3783,10 @@
                         ],
                         "additionalProperties": false
                       },
+                      "constraintServerId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "deployStrategy": {
                         "type": "string"
                       },
@@ -3958,6 +3962,7 @@
                       "clusterId",
                       "replicas",
                       "placement",
+                      "constraintServerId",
                       "deployStrategy",
                       "rollbackOnFailure",
                       "zeroDowntime",
@@ -4434,6 +4439,10 @@
                       ],
                       "additionalProperties": false
                     },
+                    "constraintServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -4609,6 +4618,7 @@
                     "clusterId",
                     "replicas",
                     "placement",
+                    "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -5070,6 +5080,10 @@
                       ],
                       "additionalProperties": false
                     },
+                    "constraintServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -5245,6 +5259,7 @@
                     "clusterId",
                     "replicas",
                     "placement",
+                    "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -5720,6 +5735,10 @@
                       ],
                       "additionalProperties": false
                     },
+                    "constraintServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -5895,6 +5914,7 @@
                     "clusterId",
                     "replicas",
                     "placement",
+                    "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -6952,7 +6972,7 @@
                         },
                         "path": {
                           "type": "string",
-                          "pattern": "^\\/.+"
+                          "pattern": "^\\/[A-Za-z0-9._/-]+$"
                         }
                       },
                       "required": [
@@ -7728,6 +7748,10 @@
                       ],
                       "additionalProperties": false
                     },
+                    "constraintServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -7903,6 +7927,7 @@
                     "clusterId",
                     "replicas",
                     "placement",
+                    "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -8317,6 +8342,10 @@
                         ],
                         "additionalProperties": false
                       },
+                      "constraintServerId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "deployStrategy": {
                         "type": "string"
                       },
@@ -8492,6 +8521,7 @@
                       "clusterId",
                       "replicas",
                       "placement",
+                      "constraintServerId",
                       "deployStrategy",
                       "rollbackOnFailure",
                       "zeroDowntime",
@@ -8936,6 +8966,10 @@
                       ],
                       "additionalProperties": false
                     },
+                    "constraintServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -9111,6 +9145,7 @@
                     "clusterId",
                     "replicas",
                     "placement",
+                    "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",

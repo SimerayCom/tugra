@@ -33,12 +33,16 @@ export function ClusterDeployCard({
   clusterId,
   replicas,
   placement,
+  volumes,
+  constraintServerId,
 }: {
   id: string;
   teamId: string;
   clusterId: string | null;
   replicas: number | null;
   placement: Placement;
+  volumes: { name: string; path: string }[];
+  constraintServerId: string | null;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -47,8 +51,13 @@ export function ClusterDeployCard({
   const swarmClusters = clusters.filter((c) => c.teamId === teamId && (c.swarmStatus === "ACTIVE" || c.swarmStatus === "DEGRADED"));
   const [cluster, setCluster] = useState(clusterId ?? "");
   const [reps, setReps] = useState(replicas ?? 1);
+  // A stateful app (named volumes) is hard-pinned to one node and locked to a single replica.
+  const hasVolumes = volumes.length > 0;
+  // Only show the "pinned to <node>" banner for the SAVED cluster (constraintServerId belongs to it); an
+  // unsaved dropdown switch would otherwise render the old cluster's node (or a raw id). Mirrors `live` below.
+  const pinnedHere = cluster !== "" && cluster === clusterId && !!constraintServerId;
   const save = useMutation({
-    mutationFn: () => api.setAppClusterConfig(id, { clusterId: cluster || null, replicas: cluster ? clampReplicas(reps) : null }),
+    mutationFn: () => api.setAppClusterConfig(id, { clusterId: cluster || null, replicas: cluster ? (hasVolumes ? 1 : clampReplicas(reps)) : null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
   });
 
@@ -84,7 +93,7 @@ export function ClusterDeployCard({
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        {cluster && (
+        {cluster && !hasVolumes && (
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button type="button" aria-label={t("apps.replicasDecrease")} onClick={() => setReps((r) => clampReplicas(r - 1))} style={{ ...field, cursor: "pointer", width: 32 }}>−</button>
             <input
@@ -99,6 +108,7 @@ export function ClusterDeployCard({
             <button type="button" aria-label={t("apps.replicasIncrease")} onClick={() => setReps((r) => clampReplicas(r + 1))} style={{ ...field, cursor: "pointer", width: 32 }}>+</button>
           </div>
         )}
+        {cluster && hasVolumes && <span style={{ ...field, color: "var(--c-tx3)" }}>{t("apps.clusterReplicasPinned")}</span>}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
 
@@ -139,6 +149,10 @@ export function ClusterDeployCard({
         </div>
       )}
       {cluster && cluster !== clusterId && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.clusterSaveToDeploy")}</div>}
+      {hasVolumes && pinnedHere && (
+        <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.clusterPinnedBanner", { node: detail?.servers.find((s) => s.id === constraintServerId)?.name ?? constraintServerId })}</div>
+      )}
+      {hasVolumes && cluster && !pinnedHere && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.clusterStatefulHint")}</div>}
 
       {cluster && <div style={{ fontSize: 11, color: "var(--c-am)", marginTop: 8 }}>{t("apps.clusterDeployNote")}</div>}
       {swarmClusters.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.clusterNoSwarms")}</div>}

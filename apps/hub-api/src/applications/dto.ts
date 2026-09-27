@@ -241,7 +241,9 @@ export const SetVolumesSchema = z.object({
     .array(
       z.object({
         name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/, "lowercase name, [a-z0-9_-]"),
-        path: z.string().regex(/^\/.+/, "absolute container path"),
+        // Absolute path, safe charset ONLY — no ','/'=' so it can never break docker `--mount`'s
+        // comma/equals-delimited grammar (e.g. turn a named-volume mount into a `type=bind,source=/` host mount).
+        path: z.string().regex(/^\/[A-Za-z0-9._/-]+$/, "absolute container path ([A-Za-z0-9._/-])"),
       }),
     )
     .max(20)

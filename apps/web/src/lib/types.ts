@@ -671,6 +671,7 @@ export interface Application {
   clusterId: string | null;
   replicas: number | null;
   placement: Placement;
+  constraintServerId: string | null;
   deployStrategy: string;
   rollbackOnFailure: boolean;
   zeroDowntime: boolean;
