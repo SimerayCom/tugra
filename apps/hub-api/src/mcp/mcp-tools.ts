@@ -40,10 +40,31 @@ function optStr(args: Record<string, unknown>, key: string): string | undefined 
   const v = args[key];
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
+function optBool(args: Record<string, unknown>, key: string): boolean {
+  return args[key] === true;
+}
+/** Machine-checkable destructive confirm: the caller must echo the resource's EXACT name in `confirmName`.
+ *  Stronger than a `confirm:true` rubber-stamp (which an LLM sets with no friction) — it forces the agent to
+ *  have actually looked the resource up, and the error names the exact value to pass so it can self-correct. */
+function requireConfirmName(args: Record<string, unknown>, actualName: string, what: string): void {
+  if (optStr(args, "confirmName") !== actualName) {
+    throw new Error(
+      `destructive action refused — pass "confirmName" exactly equal to the ${what}'s name ("${actualName}") to confirm this irreversible operation`,
+    );
+  }
+}
 function clampInt(v: unknown, min: number, max: number, def: number): number {
   const n = Math.trunc(Number(v));
   if (!Number.isFinite(n)) return def;
   return Math.min(max, Math.max(min, n));
+}
+/** Like reqStr but for a REQUIRED integer: throws on a missing/non-numeric value (never silently substitutes a
+ *  default the way clampInt does), then clamps an in-range-but-out-of-bounds valid number into [min,max]. Use for
+ *  a required, state-defining count (e.g. replicas) — clampInt's default-on-garbage is only for optional args. */
+function reqInt(args: Record<string, unknown>, key: string, min: number, max: number): number {
+  const v = args[key];
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`missing or invalid required argument: ${key} (expected an integer ${min}-${max})`);
+  return Math.min(max, Math.max(min, Math.trunc(v)));
 }
 
 const idSchema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] } as const;
@@ -261,5 +282,65 @@ export const MCP_TOOLS: McpTool[] = [
       action: "rollback",
       deployment: stripDeployment(await d.apps.rollback(userId, reqStr(a, "id"), reqStr(a, "deploymentId"))),
     }),
+  },
+
+  // ── mutate: cluster / swarm operation (Phase2b) ──────────────────────────────────────────────────
+  // Thin pass-throughs to the SwarmService methods the REST routes call — each self-enforces the
+  // 'servers:manage' team permission. Scope mirrors the route: formation/growth/config = 'deploy'
+  // (@RequireScopes("deploy")); the destructive dissolve = 'admin' (DELETE default) + an echo-name confirm.
+  {
+    name: "form_swarm",
+    description: "Form a Docker Swarm from a cluster's members: the chosen manager inits the swarm, every other online member joins as a worker. Idempotent (safe to re-run to reconcile a DEGRADED cluster).",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, managerServerId: { type: "string" }, advertiseAddr: { type: "string" } }, required: ["clusterId", "managerServerId"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "form_swarm", swarm: await d.swarm.form(userId, reqStr(a, "clusterId"), { managerServerId: reqStr(a, "managerServerId"), advertiseAddr: optStr(a, "advertiseAddr") }) }),
+  },
+  {
+    name: "join_swarm_node",
+    description: "Add one more online cluster member into an already-ACTIVE swarm as a worker, without dissolving the rest. Idempotent (an already-joined server is a no-op).",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, serverId: { type: "string" }, advertiseAddr: { type: "string" } }, required: ["clusterId", "serverId"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "join_swarm_node", swarm: await d.swarm.joinNode(userId, reqStr(a, "clusterId"), { serverId: reqStr(a, "serverId"), advertiseAddr: optStr(a, "advertiseAddr") }) }),
+  },
+  {
+    name: "add_swarm_manager",
+    description: "Promote an existing worker (or join a fresh member) as an additional swarm MANAGER for Raft HA. Idempotent. Refuses an even resulting manager count unless acknowledgeEvenQuorum=true (even counts add no extra fault tolerance).",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, serverId: { type: "string" }, acknowledgeEvenQuorum: { type: "boolean" } }, required: ["clusterId", "serverId"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "add_swarm_manager", swarm: await d.swarm.addManager(userId, reqStr(a, "clusterId"), { serverId: reqStr(a, "serverId"), acknowledgeEvenQuorum: optBool(a, "acknowledgeEvenQuorum") }) }),
+  },
+  {
+    name: "set_ingress_replicas",
+    description: "Set the swarm-ingress (Traefik) replica count for HA (1-3; 2+ requires DNS-01 / le-dns on the manager). Returns the resolved ingress pool (node names + IPs to point DNS at).",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, replicas: { type: "integer", minimum: 1, maximum: 3 } }, required: ["clusterId", "replicas"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "set_ingress_replicas", ingress: await d.swarm.setIngressReplicas(userId, reqStr(a, "clusterId"), reqInt(a, "replicas", 1, 3)) }),
+  },
+  {
+    name: "dissolve_swarm",
+    description: "DESTRUCTIVE + IRREVERSIBLE: tear down a cluster's entire Docker Swarm (every node leaves; the swarm-ingress is removed). Refuses unless every app has been moved off the cluster first. Requires confirmName to equal the cluster's exact name.",
+    scope: "admin",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, confirmName: { type: "string" } }, required: ["clusterId", "confirmName"] },
+    execute: async (d, userId, a) => {
+      const clusterId = reqStr(a, "clusterId");
+      const cluster = (await d.clusters.get(userId, clusterId)) as { name: string }; // read-gated; yields the name to confirm
+      requireConfirmName(a, cluster.name, "cluster");
+      return { ok: true, action: "dissolve_swarm", swarm: await d.swarm.dissolve(userId, clusterId) };
+    },
+  },
+
+  // ── mutate: application removal (Phase2b, destructive) ────────────────────────────────────────────
+  {
+    name: "remove_application",
+    description: "DESTRUCTIVE + IRREVERSIBLE: delete an application (tears down its containers/service and volumes, removes its monitor). Requires confirmName to equal the application's exact name.",
+    scope: "admin",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, confirmName: { type: "string" } }, required: ["id", "confirmName"] },
+    execute: async (d, userId, a) => {
+      const id = reqStr(a, "id");
+      const app = (await d.apps.get(userId, id)) as { name: string }; // read-gated; yields the name to confirm
+      requireConfirmName(a, app.name, "application");
+      await d.apps.remove(userId, id);
+      return { ok: true, action: "remove_application", id };
+    },
   },
 ];

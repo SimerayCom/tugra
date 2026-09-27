@@ -6,7 +6,9 @@ function tool(name: string) {
   return t;
 }
 
-const MUTATE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"];
+const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas"];
+const ADMIN_TOOLS = ["dissolve_swarm", "remove_application"];
 
 describe("MCP_TOOLS catalog", () => {
   it("every tool has a valid scope + name/description/inputSchema", () => {
@@ -18,16 +20,16 @@ describe("MCP_TOOLS catalog", () => {
     }
   });
 
-  it("read tools stay read-scoped; the only mutate tools (Phase2a) are the deploy-tier app-lifecycle ones", () => {
+  it("mutate tools carry the scope of their REST route: deploy-tier ops = deploy, destructive = admin; everything else read", () => {
     for (const t of MCP_TOOLS) {
-      if (MUTATE_TOOLS.includes(t.name)) {
-        expect(t.scope).toBe("deploy"); // mirrors the REST @RequireScopes("deploy") on the same routes
-      } else {
-        expect(["read", "read:secrets"]).toContain(t.scope); // everything else is still read-only
-      }
+      if (DEPLOY_TOOLS.includes(t.name)) expect(t.scope).toBe("deploy");
+      else if (ADMIN_TOOLS.includes(t.name)) expect(t.scope).toBe("admin");
+      else expect(["read", "read:secrets"]).toContain(t.scope);
     }
-    // no accidental write/admin-tier tools slipped in this slice
-    expect(MCP_TOOLS.filter((t) => t.scope === "write" || t.scope === "admin")).toEqual([]);
+    // we deliberately mirror the routes' effective scope (deploy / admin) — never plain "write"
+    expect(MCP_TOOLS.filter((t) => t.scope === "write")).toEqual([]);
+    // the destructive tier must not be reachable with a mere deploy token
+    for (const name of ADMIN_TOOLS) expect(tool(name).scope).toBe("admin");
   });
 
   describe("mutate: application lifecycle (Phase2a)", () => {
@@ -91,9 +93,86 @@ describe("MCP_TOOLS catalog", () => {
 
     it("every lifecycle tool throws on a missing id", async () => {
       const deps = { apps: { deploy: jest.fn(), restart: jest.fn(), stop: jest.fn(), start: jest.fn(), rollback: jest.fn() } } as unknown as McpDeps;
-      for (const name of MUTATE_TOOLS) {
+      for (const name of LIFECYCLE_TOOLS) {
         await expect(Promise.resolve().then(() => tool(name).execute(deps, "u1", {}))).rejects.toThrow(/missing required argument: id/);
       }
+    });
+  });
+
+  describe("mutate: cluster / swarm operation (Phase2b)", () => {
+    it("form_swarm delegates to swarm.form with the parsed manager + advertiseAddr", async () => {
+      const form = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
+      const deps = { swarm: { form } } as unknown as McpDeps;
+      const res = (await tool("form_swarm").execute(deps, "u1", { clusterId: "c1", managerServerId: "s1", advertiseAddr: "10.0.0.5" })) as Record<string, unknown>;
+      expect(form).toHaveBeenCalledWith("u1", "c1", { managerServerId: "s1", advertiseAddr: "10.0.0.5" });
+      expect(res).toMatchObject({ ok: true, action: "form_swarm", swarm: { swarmStatus: "ACTIVE" } });
+    });
+
+    it("join_swarm_node delegates to swarm.joinNode", async () => {
+      const joinNode = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
+      const deps = { swarm: { joinNode } } as unknown as McpDeps;
+      await tool("join_swarm_node").execute(deps, "u1", { clusterId: "c1", serverId: "s2" });
+      expect(joinNode).toHaveBeenCalledWith("u1", "c1", { serverId: "s2", advertiseAddr: undefined });
+    });
+
+    it("add_swarm_manager passes acknowledgeEvenQuorum through as a real boolean", async () => {
+      const addManager = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
+      const deps = { swarm: { addManager } } as unknown as McpDeps;
+      await tool("add_swarm_manager").execute(deps, "u1", { clusterId: "c1", serverId: "s2", acknowledgeEvenQuorum: true });
+      expect(addManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s2", acknowledgeEvenQuorum: true });
+      await tool("add_swarm_manager").execute(deps, "u1", { clusterId: "c1", serverId: "s2" });
+      expect(addManager).toHaveBeenLastCalledWith("u1", "c1", { serverId: "s2", acknowledgeEvenQuorum: false }); // default false, never undefined
+    });
+
+    it("set_ingress_replicas clamps an in-range-but-out-of-bounds valid count into 1..3", async () => {
+      const setIngressReplicas = jest.fn().mockResolvedValue({ replicas: 3, nodes: [] });
+      const deps = { swarm: { setIngressReplicas } } as unknown as McpDeps;
+      await tool("set_ingress_replicas").execute(deps, "u1", { clusterId: "c1", replicas: 99 });
+      expect(setIngressReplicas).toHaveBeenCalledWith("u1", "c1", 3);
+    });
+
+    it("set_ingress_replicas THROWS on a missing/garbage required replicas (never silently drops HA to 1) (#F1)", async () => {
+      const setIngressReplicas = jest.fn();
+      const deps = { swarm: { setIngressReplicas } } as unknown as McpDeps;
+      for (const bad of [{ clusterId: "c1" }, { clusterId: "c1", replicas: null }, { clusterId: "c1", replicas: "3" }, { clusterId: "c1", replicas: NaN }]) {
+        await expect(Promise.resolve().then(() => tool("set_ingress_replicas").execute(deps, "u1", bad as Record<string, unknown>))).rejects.toThrow(/replicas/);
+      }
+      expect(setIngressReplicas).not.toHaveBeenCalled(); // never proceeds on invalid input
+    });
+
+    it("dissolve_swarm requires confirmName == the cluster's exact name (reads it via clusters.get first)", async () => {
+      const dissolve = jest.fn().mockResolvedValue({ swarmStatus: "NONE" });
+      const get = jest.fn().mockResolvedValue({ id: "c1", name: "eu-west" });
+      const deps = { clusters: { get }, swarm: { dissolve } } as unknown as McpDeps;
+      // wrong name → refused, dissolve NEVER called
+      await expect(Promise.resolve().then(() => tool("dissolve_swarm").execute(deps, "u1", { clusterId: "c1", confirmName: "wrong" }))).rejects.toThrow(/confirmName.*eu-west/);
+      expect(dissolve).not.toHaveBeenCalled();
+      // exact name → proceeds
+      const res = (await tool("dissolve_swarm").execute(deps, "u1", { clusterId: "c1", confirmName: "eu-west" })) as Record<string, unknown>;
+      expect(get).toHaveBeenCalledWith("u1", "c1"); // read-gated name lookup happened first
+      expect(dissolve).toHaveBeenCalledWith("u1", "c1");
+      expect(res).toMatchObject({ ok: true, action: "dissolve_swarm" });
+    });
+  });
+
+  describe("mutate: application removal (Phase2b, destructive)", () => {
+    it("remove_application requires confirmName == the app's exact name; never removes on mismatch", async () => {
+      const remove = jest.fn().mockResolvedValue(undefined);
+      const get = jest.fn().mockResolvedValue({ id: "app1", name: "api" });
+      const deps = { apps: { get, remove } } as unknown as McpDeps;
+      await expect(Promise.resolve().then(() => tool("remove_application").execute(deps, "u1", { id: "app1", confirmName: "nope" }))).rejects.toThrow(/confirmName.*api/);
+      expect(remove).not.toHaveBeenCalled();
+      const res = (await tool("remove_application").execute(deps, "u1", { id: "app1", confirmName: "api" })) as Record<string, unknown>;
+      expect(remove).toHaveBeenCalledWith("u1", "app1");
+      expect(res).toMatchObject({ ok: true, action: "remove_application", id: "app1" });
+    });
+
+    it("remove_application requires confirmName even when omitted (undefined never matches a real name)", async () => {
+      const remove = jest.fn();
+      const get = jest.fn().mockResolvedValue({ id: "app1", name: "api" });
+      const deps = { apps: { get, remove } } as unknown as McpDeps;
+      await expect(Promise.resolve().then(() => tool("remove_application").execute(deps, "u1", { id: "app1" }))).rejects.toThrow(/confirmName/);
+      expect(remove).not.toHaveBeenCalled();
     });
   });
 
