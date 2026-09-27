@@ -3640,6 +3640,149 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "placement": {
+                        "type": "object",
+                        "properties": {
+                          "constraints": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "hostname"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 253,
+                                      "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "nodeId"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "pattern": "^[a-z0-9]{5,50}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "role"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "enum": [
+                                        "manager",
+                                        "worker"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "label"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "key": {
+                                      "type": "string",
+                                      "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "key",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          },
+                          "spreadLabelKey": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "constraints",
+                          "spreadLabelKey"
+                        ],
+                        "additionalProperties": false
+                      },
                       "deployStrategy": {
                         "type": "string"
                       },
@@ -3814,6 +3957,7 @@
                       "buildServerId",
                       "clusterId",
                       "replicas",
+                      "placement",
                       "deployStrategy",
                       "rollbackOnFailure",
                       "zeroDowntime",
@@ -4147,6 +4291,149 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "placement": {
+                      "type": "object",
+                      "properties": {
+                        "constraints": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "hostname"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "nodeId"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]{5,50}$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "role"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "enum": [
+                                      "manager",
+                                      "worker"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "label"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "key": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "key",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "spreadLabelKey": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "constraints",
+                        "spreadLabelKey"
+                      ],
+                      "additionalProperties": false
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -4321,6 +4608,7 @@
                     "buildServerId",
                     "clusterId",
                     "replicas",
+                    "placement",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -4639,6 +4927,149 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "placement": {
+                      "type": "object",
+                      "properties": {
+                        "constraints": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "hostname"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "nodeId"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]{5,50}$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "role"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "enum": [
+                                      "manager",
+                                      "worker"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "label"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "key": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "key",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "spreadLabelKey": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "constraints",
+                        "spreadLabelKey"
+                      ],
+                      "additionalProperties": false
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -4813,6 +5244,7 @@
                     "buildServerId",
                     "clusterId",
                     "replicas",
+                    "placement",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -5145,6 +5577,149 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "placement": {
+                      "type": "object",
+                      "properties": {
+                        "constraints": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "hostname"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "nodeId"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]{5,50}$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "role"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "enum": [
+                                      "manager",
+                                      "worker"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "label"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "key": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "key",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "spreadLabelKey": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "constraints",
+                        "spreadLabelKey"
+                      ],
+                      "additionalProperties": false
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -5319,6 +5894,7 @@
                     "buildServerId",
                     "clusterId",
                     "replicas",
+                    "placement",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -6411,6 +6987,186 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/placement": {
+      "put": {
+        "operationId": "ApplicationsController_setPlacement",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "constraints": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "hostname"
+                              ]
+                            },
+                            "op": {
+                              "type": "string",
+                              "enum": [
+                                "eq",
+                                "ne"
+                              ],
+                              "default": "eq"
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253,
+                              "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "nodeId"
+                              ]
+                            },
+                            "op": {
+                              "type": "string",
+                              "enum": [
+                                "eq",
+                                "ne"
+                              ],
+                              "default": "eq"
+                            },
+                            "value": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9]{5,50}$"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "role"
+                              ]
+                            },
+                            "op": {
+                              "type": "string",
+                              "enum": [
+                                "eq",
+                                "ne"
+                              ],
+                              "default": "eq"
+                            },
+                            "value": {
+                              "type": "string",
+                              "enum": [
+                                "manager",
+                                "worker"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "label"
+                              ]
+                            },
+                            "op": {
+                              "type": "string",
+                              "enum": [
+                                "eq",
+                                "ne"
+                              ],
+                              "default": "eq"
+                            },
+                            "key": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                            },
+                            "value": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "key",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "maxItems": 10
+                  },
+                  "spreadLabelKey": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "constraints",
+                  "spreadLabelKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/credentials": {
       "put": {
         "operationId": "ApplicationsController_setCredentials",
@@ -6829,6 +7585,149 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "placement": {
+                      "type": "object",
+                      "properties": {
+                        "constraints": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "hostname"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "nodeId"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]{5,50}$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "role"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "enum": [
+                                      "manager",
+                                      "worker"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "label"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "key": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "key",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "spreadLabelKey": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "constraints",
+                        "spreadLabelKey"
+                      ],
+                      "additionalProperties": false
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -7003,6 +7902,7 @@
                     "buildServerId",
                     "clusterId",
                     "replicas",
+                    "placement",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -7274,6 +8174,149 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "placement": {
+                        "type": "object",
+                        "properties": {
+                          "constraints": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "hostname"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 253,
+                                      "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "nodeId"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "pattern": "^[a-z0-9]{5,50}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "role"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "enum": [
+                                        "manager",
+                                        "worker"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "label"
+                                      ]
+                                    },
+                                    "op": {
+                                      "type": "string",
+                                      "enum": [
+                                        "eq",
+                                        "ne"
+                                      ],
+                                      "default": "eq"
+                                    },
+                                    "key": {
+                                      "type": "string",
+                                      "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                    },
+                                    "value": {
+                                      "type": "string",
+                                      "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "key",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          },
+                          "spreadLabelKey": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "constraints",
+                          "spreadLabelKey"
+                        ],
+                        "additionalProperties": false
+                      },
                       "deployStrategy": {
                         "type": "string"
                       },
@@ -7448,6 +8491,7 @@
                       "buildServerId",
                       "clusterId",
                       "replicas",
+                      "placement",
                       "deployStrategy",
                       "rollbackOnFailure",
                       "zeroDowntime",
@@ -7749,6 +8793,149 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "placement": {
+                      "type": "object",
+                      "properties": {
+                        "constraints": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "hostname"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 253,
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "nodeId"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]{5,50}$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "role"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "enum": [
+                                      "manager",
+                                      "worker"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "label"
+                                    ]
+                                  },
+                                  "op": {
+                                    "type": "string",
+                                    "enum": [
+                                      "eq",
+                                      "ne"
+                                    ],
+                                    "default": "eq"
+                                  },
+                                  "key": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "key",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "spreadLabelKey": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "constraints",
+                        "spreadLabelKey"
+                      ],
+                      "additionalProperties": false
+                    },
                     "deployStrategy": {
                       "type": "string"
                     },
@@ -7923,6 +9110,7 @@
                     "buildServerId",
                     "clusterId",
                     "replicas",
+                    "placement",
                     "deployStrategy",
                     "rollbackOnFailure",
                     "zeroDowntime",
@@ -8657,6 +9845,69 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      }
+    },
+    "/api/v1/clusters/{id}/swarm/nodes/{nodeId}/labels": {
+      "put": {
+        "operationId": "ClustersController_setNodeLabels",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nodeId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "add": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "default": {}
+                  },
+                  "remove": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": []
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": ""

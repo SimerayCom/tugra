@@ -21,6 +21,7 @@ function make() {
     dissolve: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     joinNode: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     leaveNode: jest.fn().mockResolvedValue({ clusterId: "c1" }),
+    setNodeLabels: jest.fn().mockResolvedValue({ clusterId: "c1" }),
   } as unknown as SwarmService;
   return { ctrl: new ClustersController(svc, swarm), svc, swarm };
 }
@@ -63,6 +64,12 @@ describe("ClustersController", () => {
     expect(swarm.joinNode).toHaveBeenCalledWith("u1", "c1", { serverId: "s2" });
     await ctrl.leaveSwarmNode(USER, "c1", "s2");
     expect(swarm.leaveNode).toHaveBeenCalledWith("u1", "c1", "s2");
+    await ctrl.setNodeLabels(USER, "c1", "node_x", { add: { zone: "east" }, remove: [] });
+    expect(swarm.setNodeLabels).toHaveBeenCalledWith("u1", "c1", "node_x", { add: { zone: "east" }, remove: [] });
+  });
+
+  it("PUT swarm/nodes/:nodeId/labels requires the elevated 'deploy' scope", () => {
+    expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.setNodeLabels)).toEqual(["deploy"]);
   });
 
   it("POST swarm requires the elevated 'deploy' scope (above the plain-write default)", () => {

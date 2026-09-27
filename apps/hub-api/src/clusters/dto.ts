@@ -37,3 +37,30 @@ export const JoinNodeSchema = z.object({
   advertiseAddr: z.string().trim().min(1).max(45).optional(),
 });
 export type JoinNodeInput = z.infer<typeof JoinNodeSchema>;
+
+// Docker node/service label charset (defence-in-depth; shq() at the shell boundary is the real safety net,
+// same convention as applications/dto.ts's GPU_RE). Exported for reuse by applications/dto.ts's placement schema.
+export const LABEL_KEY_RE = /^[a-z0-9]([a-z0-9_.-]{0,62})?$/i;
+export const LABEL_VALUE_RE = /^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$/;
+
+/** Add/remove docker node labels (FLEET-D). superRefine (not the 2-arg z.record form) keeps this robust across
+ *  zod versions; requires at least one of add/remove. */
+export const SetNodeLabelsSchema = z
+  .object({
+    add: z.record(z.string()).default({}),
+    remove: z.array(z.string()).default([]),
+  })
+  .strict()
+  .superRefine((d, ctx) => {
+    for (const [k, v] of Object.entries(d.add)) {
+      if (!LABEL_KEY_RE.test(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid label key: ${k}`, path: ["add", k] });
+      if (typeof v !== "string" || !LABEL_VALUE_RE.test(v)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid label value for ${k}`, path: ["add", k] });
+    }
+    for (const k of d.remove) {
+      if (!LABEL_KEY_RE.test(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid label key: ${k}`, path: ["remove"] });
+    }
+    if (Object.keys(d.add).length === 0 && d.remove.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "provide add and/or remove" });
+    }
+  });
+export type SetNodeLabelsInput = z.infer<typeof SetNodeLabelsSchema>;

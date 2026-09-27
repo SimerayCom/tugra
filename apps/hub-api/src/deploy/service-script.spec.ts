@@ -182,4 +182,56 @@ describe("service-script builders", () => {
     expect(parseSwarmTasks(out)).toEqual([{ slot: "tugra_abc.1", node: "", desiredState: "", currentState: "", error: "" }]);
     expect(parseSwarmTasks("")).toEqual([]);
   });
+
+  // ── FLEET-D placement ──
+  it("create embeds --constraint and --placement-pref for the given expressions", () => {
+    const s = buildServiceDeployScript(opts({ constraints: ["node.hostname==web-1", "node.labels.zone==east"], placementPrefs: ["spread=node.labels.zone"] }));
+    expect(s).toContain("docker service create --detach");
+    expect(s).toContain("--constraint 'node.hostname==web-1'");
+    expect(s).toContain("--constraint 'node.labels.zone==east'");
+    expect(s).toContain("--placement-pref 'spread=node.labels.zone'");
+  });
+
+  it("update does a FULL remove-then-add diff: inspect current, rm each, then add the desired set", () => {
+    const s = buildServiceDeployScript(opts({ constraints: ["node.hostname==web-2"], placementPrefs: ["spread=node.labels.zone"] }));
+    // inspect the live service's current constraints + preferences
+    expect(s).toContain("docker service inspect 'tugra_abc' --format '{{range .Spec.TaskTemplate.Placement.Constraints}}");
+    expect(s).toContain("docker service inspect 'tugra_abc' --format '{{range .Spec.TaskTemplate.Placement.Preferences}}");
+    // remove-every-current loops + add-desired
+    expect(s).toContain('set -- "$@" --constraint-rm "$TUGRA_X"');
+    expect(s).toContain('set -- "$@" --placement-pref-rm "$TUGRA_X"');
+    expect(s).toContain(`set -- "$@" --constraint-add 'node.hostname==web-2'`);
+    expect(s).toContain(`set -- "$@" --placement-pref-add 'spread=node.labels.zone'`);
+  });
+
+  it("update with an EMPTY desired set STILL strips the live service's stale constraints (no add)", () => {
+    const s = buildServiceDeployScript(opts({ constraints: [], placementPrefs: [] }));
+    expect(s).toContain('set -- "$@" --constraint-rm "$TUGRA_X"'); // remove loop still runs
+    expect(s).not.toContain("--constraint-add"); // nothing to add
+    expect(s).not.toContain("--placement-pref-add");
+  });
+
+  it("a changed pin never leaves BOTH constraints active (the AND-unschedulable regression)", () => {
+    // A→B change: the script removes whatever is live (via the inspect loop) before adding B; it never emits a
+    // hardcoded --constraint-add for the OLD value, so A and B can't both end up active.
+    const s = buildServiceDeployScript(opts({ constraints: ["node.hostname==B"] }));
+    expect(s).toContain(`set -- "$@" --constraint-add 'node.hostname==B'`);
+    expect(s).not.toContain("node.hostname==A");
+  });
+
+  it("placement args append onto the SAME $@ list as env --env-add (one update invocation)", () => {
+    const s = buildServiceDeployScript(opts({ env: { FOO: "bar" }, constraints: ["node.role==worker"] }));
+    const envIdx = s.indexOf("--env-add");
+    const placeIdx = s.indexOf("TUGRA_CUR_C=");
+    expect(envIdx).toBeGreaterThan(-1);
+    expect(placeIdx).toBeGreaterThan(envIdx); // placement build spliced AFTER env build
+    expect((s.match(/docker service update --detach/g) ?? []).length).toBe(1);
+  });
+
+  it("placement expressions are shq-quoted in both create and update positions (injection-safe)", () => {
+    // A value with a quote must be escaped via the '\'' idiom, never left to break out of quoting.
+    const s = buildServiceDeployScript(opts({ constraints: ["node.labels.x==a'b"] }));
+    expect(s).toContain(`--constraint 'node.labels.x==a'\\''b'`);
+    expect(s).toContain(`--constraint-add 'node.labels.x==a'\\''b'`);
+  });
 });

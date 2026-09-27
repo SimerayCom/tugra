@@ -1,4 +1,7 @@
 import { z } from "zod";
+// Cross-module dto import: reuse the label charset from the clusters domain so app placement rules and node
+// labels validate identically (dto files don't usually import each other — kept intentional + documented).
+import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
 
 export const CreateAppSchema = z
   .object({
@@ -115,6 +118,23 @@ export const SetLimitsSchema = z
     path: ["reserveCpus"],
   });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
+
+// FLEET-D placement: structured rules, never a raw docker expression from the client. The picker never emits
+// type "nodeId" (it offers hostname/role/label — hostname is the human-legible, live-list-sourced id); nodeId
+// is accepted for advanced API/PAT callers only.
+export const PlacementConstraintSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("hostname"), op: z.enum(["eq", "ne"]).default("eq"), value: z.string().min(1).max(253).regex(/^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/) }),
+  z.object({ type: z.literal("nodeId"), op: z.enum(["eq", "ne"]).default("eq"), value: z.string().regex(/^[a-z0-9]{5,50}$/i) }),
+  z.object({ type: z.literal("role"), op: z.enum(["eq", "ne"]).default("eq"), value: z.enum(["manager", "worker"]) }),
+  z.object({ type: z.literal("label"), op: z.enum(["eq", "ne"]).default("eq"), key: z.string().regex(LABEL_KEY_RE), value: z.string().regex(LABEL_VALUE_RE) }),
+]);
+export const SetPlacementSchema = z
+  .object({
+    constraints: z.array(PlacementConstraintSchema).max(10),
+    spreadLabelKey: z.string().regex(LABEL_KEY_RE).nullable(),
+  })
+  .strict();
+export type SetPlacementInput = z.infer<typeof SetPlacementSchema>;
 
 export const SetHealthCheckSchema = z
   .object({

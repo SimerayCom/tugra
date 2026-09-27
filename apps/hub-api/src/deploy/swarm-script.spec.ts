@@ -8,6 +8,8 @@ import {
   buildSwarmTokenRotateScript,
   buildNodeDrainScript,
   buildNodeRemoveScript,
+  buildNodeInspectAllScript,
+  buildNodeLabelUpdateScript,
   SWARM_JOIN_TIMEOUT_SEC,
 } from "./swarm-script";
 
@@ -87,5 +89,15 @@ describe("swarm-script builders", () => {
   it("node rm force-removes by id with proper quoting", () => {
     expect(buildNodeRemoveScript("node_x")).toBe("docker node rm --force 'node_x'");
     expect(buildNodeRemoveScript("a'b")).toBe("docker node rm --force 'a'\\''b'");
+  });
+
+  it("node inspect-all lists every node as JSON (richer than node ls — carries labels/role)", () => {
+    expect(buildNodeInspectAllScript()).toBe("docker node inspect $(docker node ls -q) --format '{{json .}}'");
+  });
+
+  it("node label update composes --label-add (adds) then --label-rm (removes), nodeId last + quoted", () => {
+    expect(buildNodeLabelUpdateScript("nodeid1", { zone: "east" }, ["old"])).toBe("docker node update --label-add 'zone=east' --label-rm 'old' 'nodeid1'");
+    // shell-safety: a value containing a quote is escaped
+    expect(buildNodeLabelUpdateScript("n", { k: "a'b" }, [])).toContain("--label-add 'k=a'\\''b'");
   });
 });

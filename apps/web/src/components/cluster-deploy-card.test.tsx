@@ -37,19 +37,21 @@ describe("ClusterDeployCard", () => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(api, "listClusters").mockResolvedValue([cluster()]);
     vi.spyOn(api, "getCluster").mockResolvedValue(detail());
+    // PlacementPicker (rendered when clusterId is set) reads live nodes; keep it quiet by default.
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue({ clusterId: "c1", swarmStatus: "ACTIVE", managerServerId: "s1", swarmLastError: null, nodes: [], live: [] });
   });
   afterEach(() => vi.restoreAllMocks());
 
   it("shows node health for the selected (already-assigned) cluster", async () => {
     vi.spyOn(api, "getAppClusterStatus").mockResolvedValue({ desired: 2, running: 2, reachable: true, tasks: [] });
-    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={2} />);
+    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={2} placement={{ constraints: [], spreadLabelKey: null }} />);
     await waitFor(() => expect(screen.getByText(/2\/3 nodes online/)).toBeTruthy());
     expect(screen.getByText(/eu-1, eu-2/)).toBeTruthy();
   });
 
   it("warns when replicas exceed online nodes", async () => {
     vi.spyOn(api, "getAppClusterStatus").mockResolvedValue({ desired: 5, running: 2, reachable: true, tasks: [] });
-    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={5} />);
+    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={5} placement={{ constraints: [], spreadLabelKey: null }} />);
     // 5 replicas > 2 online nodes → capacity warning
     await waitFor(() => expect(screen.getByText(/5 replicas across 2 online node/)).toBeTruthy());
   });
@@ -65,7 +67,7 @@ describe("ClusterDeployCard", () => {
       ],
     };
     vi.spyOn(api, "getAppClusterStatus").mockResolvedValue(status);
-    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={3} />);
+    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={3} placement={{ constraints: [], spreadLabelKey: null }} />);
     await waitFor(() => expect(screen.getByText("tugra_app1.1")).toBeTruthy());
     expect(screen.getByText("tugra_app1.2")).toBeTruthy();
     expect(screen.getByText(/running 2\/3/)).toBeTruthy();
@@ -73,14 +75,14 @@ describe("ClusterDeployCard", () => {
 
   it("shows an unavailable hint (no crash) when the manager can't be reached", async () => {
     vi.spyOn(api, "getAppClusterStatus").mockResolvedValue({ desired: 2, running: 0, reachable: false, tasks: [] });
-    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={2} />);
+    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={2} placement={{ constraints: [], spreadLabelKey: null }} />);
     await waitFor(() => expect(screen.getByText(/Live replica status unavailable/)).toBeTruthy());
   });
 
   it("does NOT query live status for an unsaved new cluster selection (nothing deployed yet)", async () => {
     const statusSpy = vi.spyOn(api, "getAppClusterStatus").mockResolvedValue({ desired: 1, running: 0, reachable: true, tasks: [] });
     // app not yet assigned to any cluster → picking one shows the "save to deploy" hint, no live poll
-    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId={null} replicas={null} />);
+    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId={null} replicas={null} placement={{ constraints: [], spreadLabelKey: null }} />);
     // wait for the cluster option to load before selecting it (jsdom ignores a value with no matching option)
     await screen.findByRole("option", { name: "prod-eu" });
     fireEvent.change(screen.getByLabelText(/Target cluster/), { target: { value: "c1" } });
@@ -90,7 +92,7 @@ describe("ClusterDeployCard", () => {
 
   it("the replica stepper clamps to 1..100", async () => {
     vi.spyOn(api, "getAppClusterStatus").mockResolvedValue({ desired: 1, running: 1, reachable: true, tasks: [] });
-    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={1} />);
+    wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={1} placement={{ constraints: [], spreadLabelKey: null }} />);
     const input = (await screen.findByLabelText("Replicas")) as HTMLInputElement;
     expect(input.value).toBe("1");
     fireEvent.click(screen.getByLabelText("Decrease replicas")); // can't go below 1

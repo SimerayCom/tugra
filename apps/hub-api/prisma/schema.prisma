@@ -743,6 +743,7 @@ model Application {
   cluster        Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId      String?
   replicas       Int?         // swarm service replica count (null = classic single-server deploy)
+  placement      Json?        // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client (FLEET-D)
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
   source         AppSource    @default(IMAGE)

@@ -64,6 +64,8 @@ import {
   SetClusterConfigSchema,
   SetDeploySettingsInput,
   SetDeploySettingsSchema,
+  SetPlacementInput,
+  SetPlacementSchema,
   SetVolumesInput,
   SetVolumesSchema,
 } from "./dto";
@@ -381,6 +383,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetVolumesSchema)) body: SetVolumesInput,
   ) {
     await this.apps.setVolumes(user.userId, id, body.volumes);
+    return { ok: true };
+  }
+
+  @Put(":id/placement")
+  @HttpCode(200)
+  @ApiZodBody(SetPlacementSchema)
+  async setPlacement(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetPlacementSchema)) body: SetPlacementInput,
+  ) {
+    await this.apps.setPlacement(user.userId, id, body);
     return { ok: true };
   }
 

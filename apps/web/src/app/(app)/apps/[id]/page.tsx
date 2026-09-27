@@ -249,7 +249,7 @@ export default function AppDetailPage() {
             <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} />
           )}
           {appData.source !== "COMPOSE" && (
-            <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} />
+            <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} />
           )}
           {appData.source !== "COMPOSE" && (
             <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />

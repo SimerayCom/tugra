@@ -113,6 +113,19 @@ describe("SwarmDeployService.deploy", () => {
     expect(send.mock.calls[0][1]).toContain("--publish '8080:80'");
   });
 
+  it("renders spec placement into --constraint/--placement-pref (shared by deploy + rollback)", async () => {
+    const { svc, send } = make();
+    await svc.deploy(
+      app(),
+      spec({ placementConstraints: [{ type: "hostname", op: "eq", value: "web-1" }], placementSpreadLabelKey: "zone" }),
+      "dep1",
+      { timeoutMs: 1000 },
+    );
+    const script = send.mock.calls[0][1] as string;
+    expect(script).toContain("--constraint 'node.hostname==web-1'");
+    expect(script).toContain("--placement-pref 'spread=node.labels.zone'");
+  });
+
   it("domain app: ensures the swarm proxy and attaches Traefik SERVICE labels (no host publish)", async () => {
     const { svc, send, swarmProxy } = make();
     await svc.deploy(

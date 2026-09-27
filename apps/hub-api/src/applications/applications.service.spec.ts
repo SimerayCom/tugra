@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
@@ -86,6 +86,7 @@ function make(
     resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
   },
   portAlloc: { allocate: jest.Mock; probeUsedPorts?: jest.Mock } = { allocate: jest.fn().mockResolvedValue([]) },
+  swarm: { status?: jest.Mock } = { status: jest.fn().mockResolvedValue({ live: [] }) },
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -134,6 +135,7 @@ function make(
       remove: jest.fn().mockResolvedValue(undefined),
       status: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
     } as unknown as import("../clusters/swarm-deploy.service").SwarmDeployService,
+    { status: swarm.status ?? jest.fn().mockResolvedValue({ live: [] }) } as unknown as import("../clusters/swarm.service").SwarmService,
     {
       get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
     } as unknown as import("@nestjs/core").ModuleRef,
@@ -2358,6 +2360,57 @@ describe("ApplicationsService.hydrateCertSpec cluster-aware", () => {
     );
     expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "s1" } }));
     expect(spec.wildcardDomain).toBe("own.example.com");
+  });
+});
+
+describe("ApplicationsService.setPlacement (FLEET-D)", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const withSwarm = (statusMock: jest.Mock) => [undefined, undefined, undefined, undefined, undefined, { status: statusMock }] as const;
+
+  it("400s when the app has no clusterId", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: null }), update: jest.fn() } } as unknown as PrismaService;
+    await expect(make(prisma, access, {} as AgentWsServer).setPlacement("u1", "app1", { constraints: [], spreadLabelKey: null })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("400s when a hostname rule targets a node not in the live list", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1" }), update } } as unknown as PrismaService;
+    const status = jest.fn().mockResolvedValue({ live: [{ id: "n1", hostname: "web-1", labels: {} }] });
+    await expect(
+      make(prisma, access, {} as AgentWsServer, ...withSwarm(status)).setPlacement("u1", "app1", { constraints: [{ type: "hostname", op: "eq", value: "web-9" }], spreadLabelKey: null }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("persists a valid placement (label rule needs no live check)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1" }), update } } as unknown as PrismaService;
+    const input = { constraints: [{ type: "label" as const, op: "eq" as const, key: "zone", value: "east" }], spreadLabelKey: "zone" };
+    await make(prisma, access, {} as AgentWsServer).setPlacement("u1", "app1", input);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "app1" }, data: { placement: input } }));
+  });
+
+  it("setClusterConfig clears a stale placement when clusterId changes, keeps it when re-saved as the same", async () => {
+    const clusterRow = { teamId: "t1", swarmStatus: "ACTIVE", swarmManagerId: "mgr1" };
+    // change (null → c1): cleared
+    const upd1 = jest.fn().mockResolvedValue({});
+    const p1 = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "IMAGE", clusterId: null }), update: upd1 },
+      cluster: { findUnique: jest.fn().mockResolvedValue(clusterRow) },
+      server: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    await make(p1, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    expect(upd1.mock.calls[0][0].data.placement).toBeDefined(); // Prisma.JsonNull sentinel
+
+    // same (c1 → c1): untouched
+    const upd2 = jest.fn().mockResolvedValue({});
+    const p2 = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "IMAGE", clusterId: "c1" }), update: upd2 },
+      cluster: { findUnique: jest.fn().mockResolvedValue(clusterRow) },
+      server: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    await make(p2, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    expect(upd2.mock.calls[0][0].data.placement).toBeUndefined();
   });
 });
 
