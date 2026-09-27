@@ -6,7 +6,7 @@ import (
 )
 
 func TestValidateImageRef(t *testing.T) {
-	good := []string{"ghcr.io/mrcandev/tugra-agent:0.2.0", "registry.internal:5000/agent:1.0.0", "a/b@sha256:abc"}
+	good := []string{"ghcr.io/simeraycom/tugra-agent:0.2.0", "registry.internal:5000/agent:1.0.0", "a/b@sha256:abc"}
 	for _, g := range good {
 		if err := ValidateImageRef(g); err != nil {
 			t.Errorf("ValidateImageRef(%q) = %v, want nil", g, err)
@@ -57,8 +57,8 @@ func TestBuildRecreateInvocation(t *testing.T) {
 		SelfName:    "tugra-agent",
 		DataVolume:  "tugra-agent-data",
 		HubURL:      "wss://hub.example.com/agent",
-		NewImageRef: "ghcr.io/mrcandev/tugra-agent:0.2.0@sha256:abc",
-		OldImageRef: "ghcr.io/mrcandev/tugra-agent:0.1.0",
+		NewImageRef: "ghcr.io/simeraycom/tugra-agent:0.2.0@sha256:abc",
+		OldImageRef: "ghcr.io/simeraycom/tugra-agent:0.1.0",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -72,9 +72,9 @@ func TestBuildRecreateInvocation(t *testing.T) {
 		"-e", "SELF=tugra-agent",
 		"-e", "DATA_VOL=tugra-agent-data",
 		"-e", "HUB=wss://hub.example.com/agent",
-		"-e", "NEW_IMAGE=ghcr.io/mrcandev/tugra-agent:0.2.0@sha256:abc",
-		"-e", "OLD_IMAGE=ghcr.io/mrcandev/tugra-agent:0.1.0",
-		"ghcr.io/mrcandev/tugra-agent:0.2.0@sha256:abc", "-c", script,
+		"-e", "NEW_IMAGE=ghcr.io/simeraycom/tugra-agent:0.2.0@sha256:abc",
+		"-e", "OLD_IMAGE=ghcr.io/simeraycom/tugra-agent:0.1.0",
+		"ghcr.io/simeraycom/tugra-agent:0.2.0@sha256:abc", "-c", script,
 	}
 	if len(argv) != len(want) {
 		t.Fatalf("argv len = %d, want %d\n got: %#v", len(argv), len(want), argv)

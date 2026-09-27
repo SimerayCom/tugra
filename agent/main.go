@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mrcandev/tugra/agent/internal/client"
-	"github.com/mrcandev/tugra/agent/internal/config"
-	"github.com/mrcandev/tugra/agent/internal/keys"
-	"github.com/mrcandev/tugra/agent/internal/protocol"
+	"github.com/SimerayCom/tugra/agent/internal/client"
+	"github.com/SimerayCom/tugra/agent/internal/config"
+	"github.com/SimerayCom/tugra/agent/internal/keys"
+	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
 
 // Version is overridden at build time via -ldflags "-X main.Version=...".

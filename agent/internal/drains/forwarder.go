@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mrcandev/tugra/agent/internal/protocol"
+	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
 
 const (

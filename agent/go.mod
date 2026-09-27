@@ -1,4 +1,4 @@
-module github.com/mrcandev/tugra/agent
+module github.com/SimerayCom/tugra/agent
 
 go 1.24.0
 

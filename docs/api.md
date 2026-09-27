@@ -71,7 +71,7 @@ returns `405` with `Allow: POST`.
   resolved token, never anything the client asserts, so a client can't widen its own team scope.
 - **Methods:** `initialize`, `ping`, `notifications/initialized`, `notifications/cancelled`, `tools/list`,
   `tools/call`. Requests may be batched (a JSON array); notifications (no `id`) return no body (`202`).
-- **Tools:** ~17 read tools across applications, servers, clusters/swarm, databases and monitors — e.g.
+- **Tools:** 17 read tools across applications, servers, clusters/swarm, databases and monitors — e.g.
   `list_applications`, `get_application`, `list_deployments`, `get_app_logs`, `list_containers`,
   `get_app_env_keys`, `list_servers`, `get_server`, `get_server_capabilities`, `list_clusters`,
   `get_cluster`, `get_cluster_status`, `list_databases`, `get_database`, `list_backups`, `list_monitors`,

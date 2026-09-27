@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/mrcandev/tugra/agent/internal/protocol"
+	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
 
 func TestProtocolVersionMatchesShared(t *testing.T) {

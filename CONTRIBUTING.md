@@ -25,8 +25,8 @@ trying to solve, not just the solution you have in mind.
 ## Contributor License Agreement (CLA)
 
 Tugra is dual-licensed (AGPLv3 + commercial). For that to work, every
-contributor must agree to the [CLA](CLA.md). The first time you open a pull
-request, a bot will ask you to sign it — this is a one-time step.
+contributor must agree to the [CLA](CLA.md). By opening your first pull request
+you agree to it — a one-time step a maintainer confirms on the PR.
 
 In short: you keep the copyright to your contribution, and you grant the project
 owner the right to license it (including commercially) as part of Tugra.

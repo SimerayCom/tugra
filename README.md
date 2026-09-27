@@ -60,11 +60,11 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 
 ## How Tugra compares
 
-A short, honest comparison — cells we couldn't verify with confidence are marked `—` rather than guessed:
+A short, honest comparison (competitor columns last verified 2026-09-27) — cells we couldn't verify with confidence are marked `—` rather than guessed:
 
 | | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
 |---|---|---|---|---|---|
-| Multi-node clustering | ✅ | Planned (v5, no date)¹ | ✅ Swarm-based | ✅ Swarm-based | via k3s scheduler |
+| Multi-node clustering | ✅ | Planned (v5, no date)¹ | ✅ Swarm-based | ✅ Swarm-based | — |
 | MCP / agent control | ✅ built-in (17 tools, read-only)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
 | Database engines | **9** (named above) | 8 | 6 | — | — |
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
@@ -151,13 +151,14 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Public API (OpenAPI) + CLI (`tugra`)
 - [x] Server patching (OS package updates)
 - [x] Self-update (signed releases) + guided onboarding
+- [x] Migrator — discover & adopt existing/foreign containers into Tugra
 
 **Next**
 
 - [ ] MCP write/mutate tools + OAuth
 - [ ] App store (Home mode)
 - [ ] Mobile app
-- [ ] Migrator (import from Coolify / Dokploy)
+- [ ] Config-aware import from Coolify / Dokploy (on top of the existing adopt flow)
 
 ## Community & docs
 

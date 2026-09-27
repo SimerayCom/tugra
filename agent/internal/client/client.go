@@ -13,17 +13,17 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/mrcandev/tugra/agent/internal/config"
-	"github.com/mrcandev/tugra/agent/internal/dockerstats"
-	"github.com/mrcandev/tugra/agent/internal/drains"
-	"github.com/mrcandev/tugra/agent/internal/exec"
-	"github.com/mrcandev/tugra/agent/internal/hostinfo"
-	"github.com/mrcandev/tugra/agent/internal/keys"
-	"github.com/mrcandev/tugra/agent/internal/logs"
-	"github.com/mrcandev/tugra/agent/internal/metrics"
-	"github.com/mrcandev/tugra/agent/internal/protocol"
-	"github.com/mrcandev/tugra/agent/internal/selfupdate"
-	"github.com/mrcandev/tugra/agent/internal/terminal"
+	"github.com/SimerayCom/tugra/agent/internal/config"
+	"github.com/SimerayCom/tugra/agent/internal/dockerstats"
+	"github.com/SimerayCom/tugra/agent/internal/drains"
+	"github.com/SimerayCom/tugra/agent/internal/exec"
+	"github.com/SimerayCom/tugra/agent/internal/hostinfo"
+	"github.com/SimerayCom/tugra/agent/internal/keys"
+	"github.com/SimerayCom/tugra/agent/internal/logs"
+	"github.com/SimerayCom/tugra/agent/internal/metrics"
+	"github.com/SimerayCom/tugra/agent/internal/protocol"
+	"github.com/SimerayCom/tugra/agent/internal/selfupdate"
+	"github.com/SimerayCom/tugra/agent/internal/terminal"
 )
 
 const (
