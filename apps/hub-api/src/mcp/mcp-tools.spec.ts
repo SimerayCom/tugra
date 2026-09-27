@@ -6,14 +6,95 @@ function tool(name: string) {
   return t;
 }
 
+const MUTATE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"];
+
 describe("MCP_TOOLS catalog", () => {
-  it("every tool is read-only-scoped (read or read:secrets) with a name/description/inputSchema", () => {
+  it("every tool has a valid scope + name/description/inputSchema", () => {
     for (const t of MCP_TOOLS) {
-      expect(["read", "read:secrets"]).toContain(t.scope); // Phase1 is read-only; no write/deploy/admin tools
+      expect(["read", "read:secrets", "write", "deploy", "admin"]).toContain(t.scope);
       expect(t.name).toMatch(/^[a-z_]+$/);
       expect(typeof t.description).toBe("string");
       expect(t.inputSchema).toBeTruthy();
     }
+  });
+
+  it("read tools stay read-scoped; the only mutate tools (Phase2a) are the deploy-tier app-lifecycle ones", () => {
+    for (const t of MCP_TOOLS) {
+      if (MUTATE_TOOLS.includes(t.name)) {
+        expect(t.scope).toBe("deploy"); // mirrors the REST @RequireScopes("deploy") on the same routes
+      } else {
+        expect(["read", "read:secrets"]).toContain(t.scope); // everything else is still read-only
+      }
+    }
+    // no accidental write/admin-tier tools slipped in this slice
+    expect(MCP_TOOLS.filter((t) => t.scope === "write" || t.scope === "admin")).toEqual([]);
+  });
+
+  describe("mutate: application lifecycle (Phase2a)", () => {
+    it("deploy_application redeploys via apps.deploy(userId,id) and STRIPS both logs AND configSnapshot (composeFile can hold secrets)", async () => {
+      const deploy = jest.fn().mockResolvedValue({
+        id: "d1", status: "SUCCESS", image: "nginx",
+        logs: "DATABASE_URL=postgres://u:secret@h/db",
+        configSnapshot: { composeFile: "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: hunter2" },
+      });
+      const deps = { apps: { deploy } } as unknown as McpDeps;
+      const res = (await tool("deploy_application").execute(deps, "u1", { id: "app1" })) as Record<string, unknown>;
+      expect(deploy).toHaveBeenCalledWith("u1", "app1");
+      expect(res.ok).toBe(true);
+      expect(res.action).toBe("deploy");
+      expect((res.deployment as Record<string, unknown>).logs).toBeUndefined();
+      expect((res.deployment as Record<string, unknown>).configSnapshot).toBeUndefined(); // #F1
+      expect((res.deployment as Record<string, unknown>).status).toBe("SUCCESS");
+      expect(JSON.stringify(res)).not.toContain("secret");
+      expect(JSON.stringify(res)).not.toContain("hunter2"); // compose secret never leaks
+    });
+
+    it("rollback_application redeploys a prior deployment via apps.rollback(userId,id,deploymentId), logs+configSnapshot stripped", async () => {
+      const rollback = jest.fn().mockResolvedValue({ id: "d9", status: "SUCCESS", logs: "sk_live_leak", configSnapshot: { composeFile: "x: sk_compose_leak" } });
+      const deps = { apps: { rollback } } as unknown as McpDeps;
+      const res = (await tool("rollback_application").execute(deps, "u1", { id: "app1", deploymentId: "d3" })) as Record<string, unknown>;
+      expect(rollback).toHaveBeenCalledWith("u1", "app1", "d3");
+      expect((res.deployment as Record<string, unknown>).logs).toBeUndefined();
+      expect((res.deployment as Record<string, unknown>).configSnapshot).toBeUndefined();
+      expect(JSON.stringify(res)).not.toContain("sk_live_leak");
+      expect(JSON.stringify(res)).not.toContain("sk_compose_leak");
+    });
+
+    it("rollback_application requires a deploymentId (throws when missing)", async () => {
+      const deps = { apps: { rollback: jest.fn() } } as unknown as McpDeps;
+      await expect(Promise.resolve().then(() => tool("rollback_application").execute(deps, "u1", { id: "app1" }))).rejects.toThrow(/missing required argument: deploymentId/);
+    });
+
+    for (const [name, method] of [["restart_application", "restart"], ["stop_application", "stop"], ["start_application", "start"]] as const) {
+      it(`${name} calls apps.${method}(userId,id) then returns the fresh app view from apps.get`, async () => {
+        const action = jest.fn().mockResolvedValue(undefined);
+        const get = jest.fn().mockResolvedValue({ id: "app1", status: "RUNNING" });
+        const deps = { apps: { [method]: action, get } } as unknown as McpDeps;
+        const res = (await tool(name).execute(deps, "u1", { id: "app1" })) as Record<string, unknown>;
+        expect(action).toHaveBeenCalledWith("u1", "app1");
+        expect(get).toHaveBeenCalledWith("u1", "app1"); // follow-up read for the new status
+        expect(res.ok).toBe(true);
+        expect((res.application as Record<string, unknown>).status).toBe("RUNNING");
+      });
+    }
+
+    it("lifecycle tools still report the action as done (application:null) if the follow-up get() throws (#F4)", async () => {
+      // the mutate already took effect + audited; a concurrent delete making get() 404 must not imply it didn't
+      const restart = jest.fn().mockResolvedValue(undefined);
+      const get = jest.fn().mockRejectedValue(new Error("not found"));
+      const deps = { apps: { restart, get } } as unknown as McpDeps;
+      const res = (await tool("restart_application").execute(deps, "u1", { id: "app1" })) as Record<string, unknown>;
+      expect(restart).toHaveBeenCalledWith("u1", "app1");
+      expect(res.ok).toBe(true);
+      expect(res.application).toBeNull();
+    });
+
+    it("every lifecycle tool throws on a missing id", async () => {
+      const deps = { apps: { deploy: jest.fn(), restart: jest.fn(), stop: jest.fn(), start: jest.fn(), rollback: jest.fn() } } as unknown as McpDeps;
+      for (const name of MUTATE_TOOLS) {
+        await expect(Promise.resolve().then(() => tool(name).execute(deps, "u1", {}))).rejects.toThrow(/missing required argument: id/);
+      }
+    });
   });
 
   it("secret-bearing log tool (get_app_logs) requires read:secrets, not plain read", () => {

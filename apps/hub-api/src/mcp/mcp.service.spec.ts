@@ -80,6 +80,20 @@ describe("McpService.handle", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.tools_call", target: "get_thing", actor: "u1" }));
   });
 
+  it("real catalog (Phase2a): a deploy-scoped token SEES the mutate tools; a read-only token neither sees nor can call them", async () => {
+    const { svc } = make(); // svc.tools defaults to the real MCP_TOOLS
+    const deployNames = ((await svc.handle(ctx(["deploy"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+    expect(deployNames).toEqual(expect.arrayContaining(["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"]));
+
+    const readNames = ((await svc.handle(ctx(["read"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+    expect(readNames).toContain("list_applications"); // read tools still visible
+    expect(readNames).not.toContain("restart_application"); // mutate tools hidden from a read-only token
+
+    // and a read-only token that calls one anyway is refused BEFORE execution (never touches the service)
+    const denied = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "restart_application", arguments: { id: "x" } }))) as { error: { code: number } };
+    expect(denied.error.code).toBe(-32001);
+  });
+
   it("tools/call: an executing tool that throws → isError content (not a JSON-RPC error) + audits", async () => {
     const { svc, audit } = make();
     svc.tools = [toolStub("boom", "read", async () => { throw new Error("kaboom"); })];

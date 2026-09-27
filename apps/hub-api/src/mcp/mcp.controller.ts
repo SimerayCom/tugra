@@ -9,6 +9,9 @@ import { McpService } from "./mcp.service";
 
 const BURST_WINDOW_SEC = 10;
 const BURST_MAX = 30;
+// Hard cap on a single JSON-RPC batch. A batch executes every message in one HTTP POST, so without a cap one
+// request could fan a mutate tool (deploy/stop/restart/rollback) across every resource the token can reach.
+const MAX_BATCH = 20;
 
 /** Minimal Express response shape we use (avoids a hard @types/express dependency — same pattern as
  *  oidc.controller's RedirectResponse). */
@@ -36,8 +39,17 @@ export class McpController {
   async handle(@CurrentUser() user: AuthUser, @Body() body: unknown, @Res({ passthrough: true }) res: McpHttpResponse) {
     const ctx = { userId: user.userId, scopes: user.scopes, tokenId: user.tokenId };
 
-    // Per-user burst limit (fixed 10s window). Fail-open on a Redis hiccup — auth already gates access.
-    const n = await this.redis.incr(`mcp:burst:${user.userId}`, BURST_WINDOW_SEC).catch(() => 0);
+    // Reject an oversized batch outright — bounds how many actions one POST can fan out (esp. mutate tools).
+    if (Array.isArray(body) && body.length > MAX_BATCH) {
+      res.status(400);
+      return { jsonrpc: "2.0", id: null, error: { code: -32600, message: `batch too large (max ${MAX_BATCH} messages)` } };
+    }
+
+    // Per-user burst limit (fixed 10s window), charged by NUMBER OF MESSAGES (a batch of k costs k), so a
+    // batch can't smuggle many tool calls past the limit as a single request. Fail-open on a Redis hiccup —
+    // auth already gates access.
+    const cost = Array.isArray(body) ? Math.max(1, body.length) : 1;
+    const n = await this.redis.incrBy(`mcp:burst:${user.userId}`, cost, BURST_WINDOW_SEC).catch(() => 0);
     if (n > BURST_MAX) {
       res.status(429);
       return { jsonrpc: "2.0", id: null, error: { code: -32000, message: "rate limit exceeded" } };
