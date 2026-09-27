@@ -8583,6 +8583,59 @@
         ]
       }
     },
+    "/api/v1/clusters/{id}/swarm/nodes": {
+      "post": {
+        "operationId": "ClustersController_joinSwarmNode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "advertiseAddr": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 45
+                  }
+                },
+                "required": [
+                  "serverId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      }
+    },
     "/api/v1/databases": {
       "get": {
         "operationId": "DatabasesController_list",

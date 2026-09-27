@@ -43,6 +43,8 @@ describe("ClusterDetailPage", () => {
       { id: "s2", name: "node-b", status: "OFFLINE", teamId: "t1", tags: [] },
       { id: "s3", name: "node-c", status: "ONLINE", teamId: "t1", tags: [] },
     ] as never);
+    // Default: no swarm formed (keeps the existing tests unaffected; add-node tests override this).
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue({ clusterId: "c1", swarmStatus: "NONE", managerServerId: null, swarmLastError: null, nodes: [], live: null } as never);
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -64,5 +66,48 @@ describe("ClusterDetailPage", () => {
     fireEvent.click(cCheckbox);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(setSpy).toHaveBeenCalledWith("c1", expect.arrayContaining(["s1", "s2", "s3"])));
+  });
+
+  const ACTIVE_SWARM = (nodes: unknown[]) =>
+    ({ clusterId: "c1", swarmStatus: "ACTIVE", managerServerId: "s1", swarmLastError: null, nodes, live: null }) as never;
+
+  it("shows 'Add node' on an ACTIVE swarm with an online, not-yet-joined member and joins it", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      ACTIVE_SWARM([
+        { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+        { serverId: "s3", name: "node-c", status: "ONLINE", swarmRole: null, swarmError: null, swarmCapable: true },
+      ]),
+    );
+    const joinSpy = vi.spyOn(api, "joinSwarmNode").mockResolvedValue(ACTIVE_SWARM([]));
+    wrap(<ClusterDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add node" }));
+    // Modal open: the submit button is the last "Add node" button (card button + modal submit both match).
+    const addButtons = await screen.findAllByRole("button", { name: "Add node" });
+    fireEvent.click(addButtons[addButtons.length - 1]);
+    await waitFor(() => expect(joinSpy).toHaveBeenCalledWith("c1", { serverId: "s3" }));
+  });
+
+  it("hides 'Add node' when the ACTIVE swarm has no eligible candidate", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      ACTIVE_SWARM([
+        { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+        { serverId: "s2", name: "node-b", status: "ONLINE", swarmRole: "WORKER", swarmError: null, swarmCapable: true },
+      ]),
+    );
+    wrap(<ClusterDetailPage />);
+    await screen.findByRole("button", { name: "Dissolve swarm" }); // swarm card rendered
+    expect(screen.queryByRole("button", { name: "Add node" })).toBeNull();
+  });
+
+  it("hides 'Add node' for an online, unjoined member that lacks the swarm capability", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      ACTIVE_SWARM([
+        { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+        { serverId: "s3", name: "node-c", status: "ONLINE", swarmRole: null, swarmError: null, swarmCapable: false },
+      ]),
+    );
+    wrap(<ClusterDetailPage />);
+    await screen.findByRole("button", { name: "Dissolve swarm" });
+    expect(screen.queryByRole("button", { name: "Add node" })).toBeNull();
   });
 });

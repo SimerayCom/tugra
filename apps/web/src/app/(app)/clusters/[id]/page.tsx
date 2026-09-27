@@ -13,7 +13,7 @@ import { TextInput } from "../../../../components/form";
 import { useConfirm } from "../../../../components/confirm";
 import { useToast } from "../../../../components/toast";
 import { BulkRunModal } from "../../../../components/bulk-run-modal";
-import type { ClusterDetail, SwarmStatus } from "../../../../lib/types";
+import type { ClusterDetail, SwarmStatus, SwarmView } from "../../../../lib/types";
 
 const SWARM_COLOR: Record<SwarmStatus, string> = {
   NONE: "var(--c-tx3)",
@@ -21,6 +21,7 @@ const SWARM_COLOR: Record<SwarmStatus, string> = {
   ACTIVE: "var(--c-g)",
   DEGRADED: "var(--c-am)",
   DISSOLVING: "var(--c-am)",
+  JOINING: "var(--c-am)",
 };
 
 function StatCard({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
@@ -46,6 +47,7 @@ export default function ClusterDetailPage() {
   const [running, setRunning] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [forming, setForming] = useState(false);
+  const [addingNode, setAddingNode] = useState(false);
 
   const { data: swarm, isLoading: swarmLoading, refetch: refetchSwarm, isRefetching: swarmRefetching } = useQuery({
     queryKey: ["swarm", id],
@@ -68,6 +70,8 @@ export default function ClusterDetailPage() {
 
   const h = cluster.health;
   const memberIds = cluster.servers.map((s) => s.id);
+  // Members that are online, swarm-capable, and not yet joined — eligible for a live "Add node".
+  const joinCandidates = swarm ? swarm.nodes.filter((n) => !n.swarmRole && n.status === "ONLINE" && n.swarmCapable) : [];
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -139,6 +143,9 @@ export default function ClusterDetailPage() {
             {cluster.canWrite && swarm?.swarmStatus === "NONE" && memberIds.length > 0 && (
               <Btn onClick={() => setForming(true)}>{t("clusters.formSwarm")}</Btn>
             )}
+            {cluster.canWrite && swarm?.swarmStatus === "ACTIVE" && joinCandidates.length > 0 && (
+              <Btn onClick={() => setAddingNode(true)}>{t("clusters.addNode")}</Btn>
+            )}
             {cluster.canWrite && swarm && swarm.swarmStatus !== "NONE" && (
               <Btn
                 variant="danger"
@@ -199,6 +206,7 @@ export default function ClusterDetailPage() {
       {renaming && <RenameModal cluster={cluster} onClose={() => setRenaming(false)} />}
       {running && <ClusterRunModal cluster={cluster} memberIds={memberIds} onClose={() => setRunning(false)} />}
       {forming && <FormSwarmModal cluster={cluster} onClose={() => setForming(false)} />}
+      {addingNode && swarm && <AddNodeModal cluster={cluster} swarm={swarm} onClose={() => setAddingNode(false)} />}
     </div>
   );
 }
@@ -316,6 +324,42 @@ function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose:
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
         <Btn onClick={() => form.mutate()} disabled={form.isPending || !managerServerId}>{form.isPending ? "…" : t("clusters.formSwarm")}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swarm: SwarmView; onClose: () => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const candidates = swarm.nodes.filter((n) => !n.swarmRole && n.status === "ONLINE" && n.swarmCapable);
+  const [serverId, setServerId] = useState(candidates[0]?.serverId ?? "");
+  const join = useMutation({
+    mutationFn: () => api.joinSwarmNode(cluster.id, { serverId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
+      qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
+      onClose();
+    },
+  });
+  return (
+    <Modal onClose={onClose} cardStyle={{ width: 420, maxWidth: "92vw" }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("clusters.addNode")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("clusters.addNodeHint")}</div>
+      <label style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.addNodeServer")}</label>
+      <select
+        value={serverId}
+        onChange={(e) => setServerId(e.target.value)}
+        style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)", background: "var(--c-bg)", color: "var(--c-tx)" }}
+      >
+        {candidates.map((n) => (
+          <option key={n.serverId} value={n.serverId}>{n.name}</option>
+        ))}
+      </select>
+      {join.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{join.error instanceof Error ? join.error.message : t("clusters.addNodeFailed")}</div>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+        <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
+        <Btn onClick={() => join.mutate()} disabled={join.isPending || !serverId}>{join.isPending ? "…" : t("clusters.addNode")}</Btn>
       </div>
     </Modal>
   );

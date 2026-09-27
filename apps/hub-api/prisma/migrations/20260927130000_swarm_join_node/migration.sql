@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "SwarmStatus" ADD VALUE IF NOT EXISTS 'JOINING';

@@ -43,5 +43,9 @@
   "noOnlineMembers": "No online members",
   "advertiseAddr": "Advertise address (optional)",
   "advertiseAddrPlaceholder": "auto (manager's private IP)",
-  "swarmPortsWarn": "Requires open ports between members: TCP 2377, TCP/UDP 7946, UDP 4789. Grant the 'swarm' capability to each server first."
+  "swarmPortsWarn": "Requires open ports between members: TCP 2377, TCP/UDP 7946, UDP 4789. Grant the 'swarm' capability to each server first.",
+  "addNode": "Add node",
+  "addNodeHint": "Join one more online server into the running swarm — the rest of the cluster is untouched.",
+  "addNodeServer": "Server to add",
+  "addNodeFailed": "Couldn't add the node to the swarm."
 }

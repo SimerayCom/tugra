@@ -29,6 +29,7 @@ enum SwarmStatus {
   ACTIVE
   DEGRADED
   DISSOLVING
+  JOINING
 }
 
 // A server's role in its cluster's swarm (null = not in a swarm).
