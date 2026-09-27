@@ -59,6 +59,14 @@ export default function ClusterDetailPage() {
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.swarmActionFailed"), "error"),
   });
 
+  // Per-node in-flight set (not a single id) so removing node B doesn't visually re-enable node A's button.
+  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+  const leaveNode = useMutation({
+    mutationFn: (sid: string) => api.leaveSwarmNode(id, sid),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["swarm", id] }); qc.invalidateQueries({ queryKey: ["cluster", id] }); },
+    onError: (e) => toast(e instanceof Error ? e.message : t("clusters.removeNodeFailed"), "error"),
+  });
+
   const del = useMutation({
     mutationFn: () => api.deleteCluster(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["clusters"] }); router.replace("/clusters"); },
@@ -183,13 +191,30 @@ export default function ClusterDetailPage() {
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {swarm.nodes.map((n) => (
-                <div key={n.serverId} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                <div key={n.serverId} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
                   <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: n.swarmRole === "MANAGER" ? "var(--c-a)" : n.swarmRole === "WORKER" ? "var(--c-tx2)" : "var(--c-tx3)", minWidth: 60 }}>
                     {n.swarmRole ?? "—"}
                   </span>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</span>
                   {n.swarmError && <span style={{ fontSize: 12, color: "var(--c-r)" }}>{n.swarmError}</span>}
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--c-tx3)" }}>{n.status}</span>
+                  {cluster.canWrite && n.swarmRole === "WORKER" && (
+                    <Btn
+                      variant="danger"
+                      style={{ fontSize: 11, padding: "4px 8px" }}
+                      disabled={removingIds.has(n.serverId)}
+                      onClick={async () => {
+                        if (await confirm({ body: t("clusters.removeNodeConfirm", { name: n.name }), danger: true })) {
+                          setRemovingIds((prev) => new Set(prev).add(n.serverId));
+                          leaveNode.mutate(n.serverId, {
+                            onSettled: () => setRemovingIds((prev) => { const next = new Set(prev); next.delete(n.serverId); return next; }),
+                          });
+                        }
+                      }}
+                    >
+                      {removingIds.has(n.serverId) ? "…" : t("clusters.removeNode")}
+                    </Btn>
+                  )}
                 </div>
               ))}
             </div>

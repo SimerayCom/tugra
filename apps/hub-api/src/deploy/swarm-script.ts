@@ -69,3 +69,40 @@ export function buildNodeLsScript(): string {
 export function buildSwarmTokenRotateScript(role: "worker" | "manager"): string {
   return `docker swarm join-token --rotate -q ${role}`;
 }
+
+/** Bound the drain wait so an operator gets a definitive answer instead of the WS command hanging on a stuck
+ *  task. Draining itself ALWAYS proceeds regardless of timeout — the node is left drained (safe, reversible
+ *  via `docker node update --availability active`); only the wait for a clean evacuation is time-boxed. */
+export const NODE_DRAIN_TIMEOUT_SEC = 90;
+
+/** Drain a node (mark unschedulable, evict its tasks for rescheduling) then poll `docker node ps` until no
+ *  RUNNING task remains on it, or timeoutSec elapses. MUST run on a MANAGER — `docker node update`/`node ps`
+ *  are Raft-store operations, so this works even if the draining node's own agent is offline/unreachable.
+ *  Exits 0 once clean, 2 on timeout (still drained; remaining tasks are likely Pending because there is
+ *  nowhere left to schedule — the caller treats this as a soft warning, not a failure). */
+export function buildNodeDrainScript(nodeId: string, timeoutSec = NODE_DRAIN_TIMEOUT_SEC): string {
+  const id = shq(nodeId);
+  const intervalSec = 3;
+  const maxIter = Math.max(1, Math.ceil(timeoutSec / intervalSec));
+  return [
+    `docker node update --availability drain ${id} >/dev/null`,
+    `TUGRA_I=0`,
+    `while [ "$TUGRA_I" -lt ${maxIter} ]; do`,
+    // Capture `node ps`'s OWN exit status separately from the row count, so a transient query failure isn't
+    // misread as "zero running tasks" (a false-positive clean drain). Only converge when the query SUCCEEDED
+    // and no running task remains; otherwise keep polling until the timeout soft-warning fires.
+    `  TUGRA_PS=$(docker node ps ${id} --filter desired-state=running --format '{{.ID}}' 2>/dev/null); TUGRA_RC=$?`,
+    `  TUGRA_RUN=$(printf '%s\\n' "$TUGRA_PS" | grep -c .)`,
+    `  if [ "$TUGRA_RC" -eq 0 ] && [ "\${TUGRA_RUN:-0}" -eq 0 ]; then echo "TUGRA_DRAIN: clean"; exit 0; fi`,
+    `  TUGRA_I=$((TUGRA_I+1)); sleep ${intervalSec}`,
+    `done`,
+    `echo "TUGRA_DRAIN: timeout"; exit 2`,
+  ].join("\n");
+}
+
+/** Remove a node from the swarm's member list, run on a MANAGER. --force covers every departure shape: a
+ *  node that already ran `swarm leave` cleanly, one that's Down because it was unreachable, or one that never
+ *  got the chance to leave locally at all. */
+export function buildNodeRemoveScript(nodeId: string): string {
+  return `docker node rm --force ${shq(nodeId)}`;
+}

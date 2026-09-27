@@ -27,6 +27,8 @@ function agentMock(opts: {
   infoState?: Record<string, string>; // serverId → LocalNodeState ("inactive"|"active")
   joinExit?: Record<string, number>; // worker serverId → join exit code
   tokenExit?: number;
+  drainExit?: number; // node-drain script exit (0 clean, 2 timeout)
+  nodeRmExit?: number; // `docker node rm` exit
 } = {}) {
   const sendCommand = jest.fn(async (serverId: string, command: string) => {
     if (command.includes("docker info")) {
@@ -39,6 +41,10 @@ function agentMock(opts: {
     }
     if (command.includes("swarm init")) return { exitCode: 0, output: "" };
     if (command.includes("swarm join ")) return { exitCode: opts.joinExit?.[serverId] ?? 0, output: "joined" };
+    if (command.includes("node update --availability drain")) {
+      return { exitCode: opts.drainExit ?? 0, output: opts.drainExit === 2 ? "TUGRA_DRAIN: timeout" : "TUGRA_DRAIN: clean" };
+    }
+    if (command.includes("node rm")) return { exitCode: opts.nodeRmExit ?? 0, output: "" };
     if (command.includes("node ls")) return { exitCode: 0, output: "" };
     if (command.includes("swarm leave")) return { exitCode: 0, output: "" };
     return { exitCode: 0, output: "" };
@@ -52,6 +58,8 @@ function make(opts: {
   swarmManagerId?: string | null;
   casCount?: number;
   appCount?: number;
+  apps?: { name: string; replicas: number | null }[]; // for replicaRiskWarning
+  otherOnline?: number; // server.count → other online swarm members
   agent?: AgentWsServer;
 } = {}) {
   const cluster = {
@@ -74,8 +82,12 @@ function make(opts: {
       findMany: jest.fn().mockResolvedValue(opts.members ?? []),
       findUnique: jest.fn().mockResolvedValue({ swarmError: "join failed: exit 1" }),
       update: serverUpdate,
+      count: jest.fn().mockResolvedValue(opts.otherOnline ?? 0),
     },
-    application: { count: jest.fn().mockResolvedValue(opts.appCount ?? 0) },
+    application: {
+      count: jest.fn().mockResolvedValue(opts.appCount ?? 0),
+      findMany: jest.fn().mockResolvedValue(opts.apps ?? []),
+    },
   } as unknown as PrismaService;
   const access = {
     requirePermission: jest.fn().mockResolvedValue(undefined),
@@ -357,5 +369,127 @@ describe("SwarmService.joinNode", () => {
     expect(sc(agent).mock.calls.some((c) => c[0] === "s2" && (c[1] as string).includes("swarm join "))).toBe(false);
     const revert = (clusterUpdateMany as unknown as jest.Mock).mock.calls.find((c) => c[0].where?.swarmStatus === "JOINING" && c[0].data?.swarmStatus === "ACTIVE");
     expect(revert).toBeTruthy();
+  });
+});
+
+describe("SwarmService.leaveNode", () => {
+  const mgr = () => member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" });
+  const worker = (over = {}) => member({ id: "w1", swarmRole: "WORKER", swarmNodeId: "node_w1", ...over });
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+
+  it("refuses when the swarm is not ACTIVE/DEGRADED (no agent contact)", async () => {
+    const { svc, agent } = make({ swarmStatus: "NONE", members: [mgr(), worker()] });
+    await expect(svc.leaveNode("u1", "c1", "w1")).rejects.toBeInstanceOf(ConflictException);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("404s when the serverId is not a member", async () => {
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()] });
+    await expect(svc.leaveNode("u1", "c1", "nope")).rejects.toThrow(/not found/i);
+  });
+
+  it("400s when the target never joined the swarm (swarmRole null)", async () => {
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), member({ id: "s2" })] });
+    await expect(svc.leaveNode("u1", "c1", "s2")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("always refuses removing the MANAGER (points at FLEET-G), no docker command", async () => {
+    const { svc, agent } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()] });
+    await expect(svc.leaveNode("u1", "c1", "mgr")).rejects.toThrow(/manager/i);
+    await expect(svc.leaveNode("u1", "c1", "mgr")).rejects.toThrow(/FLEET-G/);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("503s when the manager is offline", async () => {
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr", status: "OFFLINE" }), worker()] });
+    await expect(svc.leaveNode("u1", "c1", "w1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("409s when the busy-marker CAS is lost, before any agent contact", async () => {
+    const { svc, agent } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], casCount: 0 });
+    await expect(svc.leaveNode("u1", "c1", "w1")).rejects.toBeInstanceOf(ConflictException);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  // The success cluster-restore is a CAS'd updateMany (FORMING→prior status), not a plain update, so a
+  // concurrent dissolve() can't be clobbered. This helper finds that terminal restore call.
+  const restoreCall = (cum: jest.Mock) => cum.mock.calls.find((c) => c[0].where?.swarmStatus === "FORMING" && c[0].data?.swarmStatus === "ACTIVE");
+
+  it("happy path (ONLINE worker): drain → local leave → node rm, clears role+cluster, restores ACTIVE", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdate, clusterUpdateMany, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    const calls = sc(agent).mock.calls;
+    expect(calls[0][0]).toBe("mgr");
+    expect(calls[0][1] as string).toContain("node update --availability drain");
+    expect(calls.some((c) => c[0] === "w1" && (c[1] as string).includes("swarm leave"))).toBe(true);
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("node rm --force"))).toBe(true);
+    expect(serverUpdate).toHaveBeenCalledWith({ where: { id: "w1" }, data: { swarmRole: null, swarmNodeId: null, swarmError: null, clusterId: null } });
+    expect(restoreCall(clusterUpdateMany as unknown as jest.Mock)?.[0].data).toEqual({ swarmStatus: "ACTIVE", swarmLastError: null });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.leave_node" }));
+  });
+
+  it("OFFLINE worker: never dispatches to the dead node, still drains+removes, notes it", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdate } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker({ status: "OFFLINE" })], agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    const calls = sc(agent).mock.calls;
+    expect(calls.some((c) => c[0] === "w1")).toBe(false); // never talk to the offline node
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("node rm --force"))).toBe(true);
+    const w1Update = (serverUpdate as unknown as jest.Mock).mock.calls.find((c) => c[0].where.id === "w1");
+    expect(w1Update![0].data.swarmError).toMatch(/not attempted/i);
+    expect(w1Update![0].data.swarmError).toMatch(/swarm leave --force/);
+  });
+
+  it("ONLINE worker whose swarm capability was revoked: skips local leave with a note, still removes", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdate } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker({ capabilities: ["deploy"] })], agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    const calls = sc(agent).mock.calls;
+    expect(calls.some((c) => c[0] === "w1")).toBe(false); // no local leave attempted
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("node rm --force"))).toBe(true);
+    const w1Update = (serverUpdate as unknown as jest.Mock).mock.calls.find((c) => c[0].where.id === "w1");
+    expect(w1Update![0].data.swarmError).toMatch(/not attempted/i);
+  });
+
+  it("drain timeout still proceeds and notes possible Pending tasks", async () => {
+    const agent = agentMock({ drainExit: 2 });
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    expect(restoreCall(clusterUpdateMany as unknown as jest.Mock)?.[0].data.swarmLastError).toMatch(/Pending|vacate/i);
+  });
+
+  it("replica-risk is advisory: warns in swarmLastError but never blocks", async () => {
+    const agent = agentMock();
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], apps: [{ name: "api", replicas: 3 }], otherOnline: 1, agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    expect(sc(agent).mock.calls.some((c) => (c[1] as string).includes("node rm --force"))).toBe(true); // executed anyway
+    const data = restoreCall(clusterUpdateMany as unknown as jest.Mock)?.[0].data;
+    expect(data.swarmLastError).toMatch(/api/);
+    expect(data.swarmLastError).toMatch(/under-replicated/i);
+  });
+
+  it("no warning + clean removal → swarmLastError null", async () => {
+    const agent = agentMock();
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], apps: [], agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    expect(restoreCall(clusterUpdateMany as unknown as jest.Mock)?.[0].data.swarmLastError).toBeNull();
+  });
+
+  it("node-rm failure throws and CAS-restores the prior status with a sanitized error", async () => {
+    const agent = agentMock({ nodeRmExit: 1 });
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], agent });
+    await expect(svc.leaveNode("u1", "c1", "w1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const revert = (clusterUpdateMany as unknown as jest.Mock).mock.calls.find((c) => c[0].where?.swarmStatus === "FORMING" && c[0].data?.swarmStatus === "ACTIVE");
+    expect(revert?.[0].data).toEqual(expect.objectContaining({ swarmStatus: "ACTIVE", swarmLastError: expect.any(String) }));
+  });
+
+  it("never persists raw docker output", async () => {
+    const agent = agentMock({ drainExit: 2 });
+    const { svc, serverUpdate, clusterUpdate, clusterUpdateMany, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], agent });
+    await svc.leaveNode("u1", "c1", "w1");
+    for (const fn of [serverUpdate, clusterUpdate, clusterUpdateMany, audit.log]) {
+      expect(allArgs(fn as unknown as jest.Mock)).not.toContain("TUGRA_DRAIN");
+    }
   });
 });

@@ -47,5 +47,8 @@
   "addNode": "Add node",
   "addNodeHint": "Join one more online server into the running swarm — the rest of the cluster is untouched.",
   "addNodeServer": "Server to add",
-  "addNodeFailed": "Couldn't add the node to the swarm."
+  "addNodeFailed": "Couldn't add the node to the swarm.",
+  "removeNode": "Remove from cluster",
+  "removeNodeConfirm": "Remove {name} from this cluster's swarm? Its tasks will be drained onto the remaining nodes first, then it leaves the swarm and this cluster.",
+  "removeNodeFailed": "Couldn't remove this node from the swarm."
 }

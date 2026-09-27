@@ -20,6 +20,7 @@ function make() {
     status: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     dissolve: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     joinNode: jest.fn().mockResolvedValue({ clusterId: "c1" }),
+    leaveNode: jest.fn().mockResolvedValue({ clusterId: "c1" }),
   } as unknown as SwarmService;
   return { ctrl: new ClustersController(svc, swarm), svc, swarm };
 }
@@ -60,6 +61,8 @@ describe("ClustersController", () => {
     expect(swarm.dissolve).toHaveBeenCalledWith("u1", "c1");
     await ctrl.joinSwarmNode(USER, "c1", { serverId: "s2" });
     expect(swarm.joinNode).toHaveBeenCalledWith("u1", "c1", { serverId: "s2" });
+    await ctrl.leaveSwarmNode(USER, "c1", "s2");
+    expect(swarm.leaveNode).toHaveBeenCalledWith("u1", "c1", "s2");
   });
 
   it("POST swarm requires the elevated 'deploy' scope (above the plain-write default)", () => {
@@ -72,5 +75,9 @@ describe("ClustersController", () => {
 
   it("DELETE swarm inherits the platform admin default (no scope override on the destructive dissolve)", () => {
     expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.dissolveSwarm)).toBeUndefined();
+  });
+
+  it("DELETE swarm node inherits the platform admin default (no scope override on node removal)", () => {
+    expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.leaveSwarmNode)).toBeUndefined();
   });
 });
