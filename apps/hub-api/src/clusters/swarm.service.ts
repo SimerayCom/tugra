@@ -13,13 +13,16 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
 import { isPrivateV4, normalizeIp } from "../common/observed-ip";
 import {
+  buildNodeDrainScript,
   buildNodeLsScript,
+  buildNodeRemoveScript,
   buildSwarmInfoScript,
   buildSwarmInitScript,
   buildSwarmJoinScript,
   buildSwarmJoinTokenScript,
   buildSwarmLeaveScript,
   buildSwarmTokenRotateScript,
+  NODE_DRAIN_TIMEOUT_SEC,
 } from "../deploy/swarm-script";
 
 type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING" | "JOINING";
@@ -334,6 +337,96 @@ export class SwarmService {
         .updateMany({ where: { id, swarmStatus: "JOINING" }, data: { swarmStatus: "ACTIVE", swarmLastError: safeMessage(e) } })
         .catch(() => undefined);
       throw e;
+    }
+  }
+
+  /** Remove ONE node from a live swarm (drain → leave → rm) WITHOUT dissolving the rest of the cluster. Only
+   *  a WORKER can be removed in v1 (single-manager) — removing the manager always means removing the ONLY
+   *  manager, which is refused (use dissolve(), or wait for multi-manager / FLEET-G). The node's cluster
+   *  membership is cleared too (this IS "Remove from cluster", not just "leave the swarm").
+   *  swarmStatus is reused as a transitional busy-marker (CAS to "FORMING", restored to the prior ACTIVE/
+   *  DEGRADED value on both success and failure) to avoid a migration for this slice; swarmLastError carries
+   *  the advisory replica-risk warning (already doubles as a "last note", as dissolve()'s abandon note does). */
+  async leaveNode(userId: string, id: string, serverId: string): Promise<SwarmView> {
+    const cluster = await this.requireWrite(userId, id);
+    if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
+      throw new ConflictException(`cluster swarm is ${cluster.swarmStatus} — a node can only be removed from an ACTIVE or DEGRADED swarm`);
+    }
+    const members = await this.members(id);
+    const node = members.find((m) => m.id === serverId);
+    if (!node) throw new NotFoundException("server not found in this cluster");
+    if (!node.swarmRole) throw new BadRequestException("this server has not joined the cluster's swarm");
+    if (node.swarmRole === "MANAGER") {
+      // v1 forms exactly one manager (see form()) — every manager removal IS the sole-manager case.
+      throw new ConflictException(
+        "cannot remove the swarm manager — dissolve the swarm instead. Removing one manager out of several will be possible once multi-manager support ships (FLEET-G).",
+      );
+    }
+    if (!node.swarmNodeId) throw new ConflictException("this node's swarm identity is unknown — reconcile via Dissolve/Form");
+    const manager = members.find((m) => m.id === cluster.swarmManagerId);
+    if (!manager || manager.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline — cannot remove a node");
+
+    const restoreStatus = cluster.swarmStatus;
+    const cas = await this.prisma.cluster.updateMany({ where: { id, swarmStatus: restoreStatus }, data: { swarmStatus: "FORMING" } });
+    if (cas.count !== 1) throw new ConflictException("a swarm operation is already in progress");
+
+    try {
+      const warning = await this.replicaRiskWarning(id, node);
+      const drain = await this.run(manager.id, buildNodeDrainScript(node.swarmNodeId), NODE_DRAIN_TIMEOUT_SEC * 1000 + 10_000);
+      const drainNote = drain.exitCode === 2 ? "some tasks did not vacate within the drain window — they may be left Pending" : null;
+
+      // Local `swarm leave` is only attempted when the node is reachable AND still holds the swarm capability
+      // (an admin can revoke it while joined). The manager-side `node rm --force` below is authoritative
+      // regardless — but a skipped local leave leaves the node's own daemon believing it's still a member, so
+      // we always note it (covers both offline and capability-revoked, not just offline).
+      const localLeaveSkipped = !(node.status === "ONLINE" && node.capabilities.includes("swarm"));
+      if (!localLeaveSkipped) {
+        await this.run(node.id, buildSwarmLeaveScript(false), JOIN_WS_TIMEOUT_MS).catch(() => undefined);
+      }
+      const offlineNote = localLeaveSkipped
+        ? "local swarm leave was not attempted for this node — if it is still reachable and locally part of the swarm, run 'docker swarm leave --force' on it to clear stale swarm state"
+        : null;
+
+      const rm = await this.run(manager.id, buildNodeRemoveScript(node.swarmNodeId));
+      if (rm.exitCode !== 0) throw new ServiceUnavailableException("docker node rm failed on the manager");
+
+      const nodeNote = [drainNote, offlineNote].filter(Boolean).join("; ") || null;
+      // The node genuinely left the swarm at the docker level → clear its role/cluster unconditionally.
+      await this.prisma.server.update({ where: { id: node.id }, data: { swarmRole: null, swarmNodeId: null, swarmError: nodeNote, clusterId: null } });
+      // Restore the cluster row ONLY if we still hold the FORMING lock. dissolve()'s CAS accepts FORMING as a
+      // source, so a concurrent dissolve() can legitimately tear the swarm down mid-removal — an unconditional
+      // write here would resurrect a self-contradictory ACTIVE + null-manager row (mirrors form()'s guarded commit).
+      await this.prisma.cluster.updateMany({
+        where: { id, swarmStatus: "FORMING" },
+        data: { swarmStatus: restoreStatus, swarmLastError: [warning, nodeNote].filter(Boolean).join("; ") || null },
+      });
+      await this.audit.log({
+        actor: userId, action: "cluster.swarm.leave_node", target: id,
+        meta: { serverId: node.id, drainTimedOut: drain.exitCode === 2, localLeaveSkipped, warned: !!warning },
+      });
+      return this.view(id);
+    } catch (e) {
+      await this.prisma.cluster
+        .updateMany({ where: { id, swarmStatus: "FORMING" }, data: { swarmStatus: restoreStatus, swarmLastError: safeMessage(e) } })
+        .catch(() => undefined);
+      throw e;
+    }
+  }
+
+  /** Advisory-only precheck (never throws, never blocks): would removing `node` leave a swarm-deployed app
+   *  with fewer other ONLINE swarm members than its desired replica count? A coarse "warm bodies" count —
+   *  Swarm's own scheduler does the real bin-packing; this just flags the operator BEFORE they strand an app
+   *  under-replicated, without hard-refusing the removal. */
+  private async replicaRiskWarning(clusterId: string, node: MemberRow): Promise<string | null> {
+    try {
+      const apps = await this.prisma.application.findMany({ where: { clusterId, replicas: { not: null } }, select: { name: true, replicas: true } });
+      if (!apps.length) return null;
+      const others = await this.prisma.server.count({ where: { clusterId, id: { not: node.id }, swarmRole: { not: null }, status: "ONLINE" } });
+      const short = apps.filter((a) => (a.replicas ?? 1) > others);
+      if (!short.length) return null;
+      return `removing this node leaves only ${others} other online swarm node(s) — ${short.map((a) => a.name).join(", ")} wants more replicas than that and may run under-replicated`;
+    } catch {
+      return null;
     }
   }
 

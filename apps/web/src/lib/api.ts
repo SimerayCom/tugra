@@ -408,6 +408,9 @@ export const api = {
   dissolveSwarm(id: string) {
     return apiFetch<SwarmView>(`/clusters/${id}/swarm`, { method: "DELETE" });
   },
+  leaveSwarmNode(clusterId: string, serverId: string) {
+    return apiFetch<SwarmView>(`/clusters/${clusterId}/swarm/nodes/${serverId}`, { method: "DELETE" });
+  },
 
   getMetrics(id: string, limit = 60) {
     return apiFetch<MetricsSample[]>(`/servers/${id}/metrics?limit=${limit}`);

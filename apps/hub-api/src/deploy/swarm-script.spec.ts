@@ -6,6 +6,8 @@ import {
   buildSwarmLeaveScript,
   buildNodeLsScript,
   buildSwarmTokenRotateScript,
+  buildNodeDrainScript,
+  buildNodeRemoveScript,
   SWARM_JOIN_TIMEOUT_SEC,
 } from "./swarm-script";
 
@@ -67,5 +69,23 @@ describe("swarm-script builders", () => {
 
   it("token rotate invalidates the worker join token", () => {
     expect(buildSwarmTokenRotateScript("worker")).toBe("docker swarm join-token --rotate -q worker");
+  });
+
+  it("node drain marks unschedulable then polls node ps to convergence, with a bounded timeout branch", () => {
+    const s = buildNodeDrainScript("node_x", 9);
+    expect(s).toContain("docker node update --availability drain 'node_x'");
+    expect(s).toContain("docker node ps 'node_x' --filter desired-state=running");
+    expect(s).toContain('echo "TUGRA_DRAIN: clean"; exit 0');
+    expect(s).toContain('echo "TUGRA_DRAIN: timeout"; exit 2');
+    expect(s).toContain("sleep 3"); // 9s / 3s interval = a bounded 3-iteration loop
+  });
+
+  it("node drain shq-quotes an id containing a quote", () => {
+    expect(buildNodeDrainScript("a'b")).toContain("'a'\\''b'");
+  });
+
+  it("node rm force-removes by id with proper quoting", () => {
+    expect(buildNodeRemoveScript("node_x")).toBe("docker node rm --force 'node_x'");
+    expect(buildNodeRemoveScript("a'b")).toBe("docker node rm --force 'a'\\''b'");
   });
 });

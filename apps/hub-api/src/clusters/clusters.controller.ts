@@ -119,4 +119,12 @@ export class ClustersController {
   dissolveSwarm(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.swarm.dissolve(user.userId, id);
   }
+
+  // Remove ONE node from a live swarm (drain → leave → rm), without dissolving the rest. No @RequireScopes →
+  // inherits the platform DELETE⇒admin default, same rationale as dissolveSwarm (dispatches signed docker
+  // commands to mutate a live swarm). The service enforces servers:manage.
+  @Delete(":id/swarm/nodes/:serverId")
+  leaveSwarmNode(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("serverId") serverId: string) {
+    return this.swarm.leaveNode(user.userId, id, serverId);
+  }
 }

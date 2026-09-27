@@ -8636,6 +8636,42 @@
         ]
       }
     },
+    "/api/v1/clusters/{id}/swarm/nodes/{serverId}": {
+      "delete": {
+        "operationId": "ClustersController_leaveSwarmNode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serverId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      }
+    },
     "/api/v1/databases": {
       "get": {
         "operationId": "DatabasesController_list",
