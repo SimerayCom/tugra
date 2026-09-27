@@ -5,11 +5,22 @@
  * discovering `docker service` labels via Traefik's swarm provider.
  *
  * Design decisions locked in by review:
- *  - `--publish mode=host` (bind 80/443 on the manager only, NOT the routing mesh on every node) → ingress
- *    enters via the manager IP. Combined with `--replicas 1` this is the ONLY safe choice because Traefik's
- *    ACME storage is a local JSON file (multiple replicas would race ACME → Let's Encrypt rate-limits).
- *  - Pinned via a NODE LABEL (not `node.role==manager`) so a future multi-manager can't float the task to a
- *    different node and re-trigger ACME against an empty cert store.
+ *  - `--publish mode=ingress` (routing mesh: :80/:443 answered on EVERY swarm node, load-balanced by IPVS to
+ *    the N task replicas) so ingress survives losing any one node — FLEET-H. With `--replicas 1` this behaves
+ *    like the old single-node ingress; with 2-3 replicas it is real HA. Each replica keeps its OWN node-local
+ *    ACME store (a bind mount) — NOT a shared volume. That is intentional and safe ONLY under DNS-01: the
+ *    challenge is an outbound TXT-record API call, so every replica can independently complete its own order
+ *    for the same domain with no inbound-request-routing conflict (HTTP-01, which needs the challenge hit to
+ *    land on the specific replica holding the order, is fundamentally incompatible with N>1 behind the mesh —
+ *    the service layer refuses replicas>1 without le-dns). Replica count is capped at 3 upstream to stay under
+ *    Let's Encrypt's 5-duplicate-cert/7-day limit; a rescheduled task re-acquires from scratch (a few-second
+ *    self-signed blip on that ONE task while the other N-1 keep serving valid certs via the mesh).
+ *  - Pinned via a NODE LABEL (`tugra.proxy==true`, added to every pool node) rather than `node.role==manager`,
+ *    so the operator controls exactly which nodes host ingress tasks. (Empty pool → falls back to
+ *    `node.role==manager` + forced `--replicas 1`, the safe single-node shape.)
+ *  - The `tugra.proxy.confighash` service label folds in the pool (replica count + sorted node ids) so a
+ *    replica-count or pool-membership change is detected and takes the rm+recreate branch (a brief blip) —
+ *    a plain deploy with an unchanged pool is still skipped (no flap).
  *  - `--providers.swarm` reads SERVICE labels (`--label` on the app's `docker service`), and we pin
  *    `--providers.swarm.network` so backend discovery is unambiguous. `lbswarm` is deliberately NEVER set
  *    (task-IP mode keeps Traefik's per-task health-check labels effective).
@@ -46,19 +57,32 @@ export interface SwarmProxyDns {
   secretName: string; // tugra-swarm-dns-<clusterId>-<confighash>
 }
 
-/** Ensure the overlay + node-label + swarm-Traefik service on the manager, reconciled against `confighash`.
- *  With `dns`, adds the `le-dns` DNS-01 resolver + a Docker secret for the provider creds. `secretPrefix`
- *  (tugra-swarm-dns-<clusterId>) scopes secret pruning to this cluster. */
+/** Ensure the overlay + node-labels + swarm-Traefik service across the ingress pool, reconciled against
+ *  `confighash`. `nodeIds` are the docker swarm node ids to label + host ingress tasks (pool, manager first);
+ *  `replicas` is the desired task count (routing mesh). Empty `nodeIds` → falls back to `node.role==manager`
+ *  with a forced single replica (the safe single-node shape). With `dns`, adds the `le-dns` DNS-01 resolver +
+ *  a Docker secret for the provider creds. `secretPrefix` (tugra-swarm-dns-<clusterId>) scopes secret pruning. */
 export function buildSwarmProxyEnsureScript(opts: {
-  managerNodeId?: string | null;
+  nodeIds: string[];
+  replicas: number;
   acmeEmail?: string | null;
   confighash: string;
   secretPrefix: string;
   dns?: SwarmProxyDns | null;
+  /** Docker swarm node ids to STRIP the tugra.proxy label from — cluster members that were previously in the
+   *  pool but no longer are (a scale-down or a member that dropped). Prevents stale labels from letting the
+   *  service schedule a replica onto an unintended node. Safe to pass full ids (docker node update accepts them);
+   *  must NOT overlap nodeIds. */
+  unlabelNodeIds?: string[];
 }): string {
   const email = opts.acmeEmail || "admin@example.com";
-  const pinByLabel = !!opts.managerNodeId;
+  const ids = opts.nodeIds ?? [];
+  const unlabel = opts.unlabelNodeIds ?? [];
+  const pinByLabel = ids.length > 0;
   const constraint = pinByLabel ? `node.labels.${SWARM_PROXY_NODE_LABEL}==true` : "node.role==manager";
+  // The fallback branch (no pool nodes) ignores a bad `replicas` and forces 1, so the builder is self-consistent
+  // even if the caller passes something odd for the degenerate empty-pool case.
+  const replicas = pinByLabel ? Math.max(1, opts.replicas) : 1;
   const dns = opts.dns ?? null;
 
   // Flags passed to Traefik as argv (after `traefik` in the wrapper) — static ones bare, user values shq'd.
@@ -84,10 +108,10 @@ export function buildSwarmProxyEnsureScript(opts: {
 
   const createArgs = [
     `docker service create --detach --name ${SWARM_PROXY_NAME}`,
-    `--replicas 1`,
+    `--replicas ${replicas}`,
     `--constraint ${shq(constraint)}`,
-    `--publish mode=host,target=80,published=80`,
-    `--publish mode=host,target=443,published=443`,
+    `--publish mode=ingress,target=80,published=80`,
+    `--publish mode=ingress,target=443,published=443`,
     `--network ${shq(SWARM_OVERLAY)}`,
     `--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,ro`,
     `--mount type=bind,src=${SWARM_PROXY_CERT_DIR},dst=/letsencrypt`,
@@ -105,7 +129,10 @@ export function buildSwarmProxyEnsureScript(opts: {
     buildOverlayEnsureScript(SWARM_OVERLAY),
     `mkdir -p ${SWARM_PROXY_CERT_DIR} && touch ${SWARM_PROXY_CERT_DIR}/acme.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme.json`,
     ...(dns ? [`touch ${SWARM_PROXY_CERT_DIR}/acme-dns.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme-dns.json`] : []),
-    ...(pinByLabel ? [`docker node update --label-add ${SWARM_PROXY_NODE_LABEL}=true ${shq(opts.managerNodeId!)}`] : []),
+    // Strip the label from nodes that left the pool FIRST (best-effort), then (re)add it to every current pool
+    // node — so after a scale-down the constraint only matches the intended nodes.
+    ...unlabel.map((nid) => `docker node update --label-rm ${SWARM_PROXY_NODE_LABEL} ${shq(nid)} >/dev/null 2>&1 || true`),
+    ...(pinByLabel ? ids.map((nid) => `docker node update --label-add ${SWARM_PROXY_NODE_LABEL}=true ${shq(nid)}`) : []),
     // Mint the DNS-creds secret (immutable → hash-named; create only if this exact version is absent).
     ...(dns
       ? [`docker secret inspect ${shq(dns.secretName)} >/dev/null 2>&1 || printf %s ${shq(dns.credsB64)} | base64 -d | docker secret create ${shq(dns.secretName)} -`]

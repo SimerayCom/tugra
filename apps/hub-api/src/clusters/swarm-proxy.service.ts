@@ -12,14 +12,26 @@ import {
   buildSwarmProxyTeardownScript,
   type SwarmProxyDns,
 } from "../deploy/swarm-proxy-script";
+import type { IngressView } from "./dto";
 
 interface ManagerRow {
   id: string;
+  name: string;
   status: string;
+  publicIp: string | null;
   swarmNodeId: string | null;
   certMode: string;
   dnsProvider: string | null;
   dnsCredsEnc: string | null;
+  ingressReplicas: number;
+}
+
+/** One node in the resolved ingress pool (manager first, then online joined members). */
+interface IngressPoolNode {
+  id: string;
+  name: string;
+  swarmNodeId: string | null;
+  publicIp: string | null;
 }
 
 /**
@@ -44,7 +56,7 @@ export class SwarmProxyService {
   private async primary(clusterId: string): Promise<ManagerRow> {
     const cluster = await this.prisma.cluster.findUnique({
       where: { id: clusterId },
-      select: { swarmStatus: true, swarmManagerId: true },
+      select: { swarmStatus: true, swarmManagerId: true, ingressReplicas: true },
     });
     if (!cluster) throw new BadRequestException("cluster not found");
     if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
@@ -53,10 +65,46 @@ export class SwarmProxyService {
     if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
     const mgr = await this.prisma.server.findUnique({
       where: { id: cluster.swarmManagerId },
-      select: { id: true, status: true, swarmNodeId: true, certMode: true, dnsProvider: true, dnsCredsEnc: true },
+      select: { id: true, name: true, status: true, publicIp: true, swarmNodeId: true, certMode: true, dnsProvider: true, dnsCredsEnc: true },
     });
     if (!mgr) throw new ServiceUnavailableException("swarm manager server not found");
-    return { id: mgr.id, status: mgr.status, swarmNodeId: mgr.swarmNodeId, certMode: mgr.certMode, dnsProvider: mgr.dnsProvider, dnsCredsEnc: mgr.dnsCredsEnc };
+    return {
+      id: mgr.id,
+      name: mgr.name,
+      status: mgr.status,
+      publicIp: mgr.publicIp,
+      swarmNodeId: mgr.swarmNodeId,
+      certMode: mgr.certMode,
+      dnsProvider: mgr.dnsProvider,
+      dnsCredsEnc: mgr.dnsCredsEnc,
+      ingressReplicas: cluster.ingressReplicas,
+    };
+  }
+
+  /** Resolve the live ingress pool: the primary manager FIRST, then (when ingressReplicas > 1) up to
+   *  ingressReplicas-1 OTHER online, swarm-joined members in deterministic id order. Pool size is
+   *  min(ingressReplicas, available online joined members) so ensure() never fails purely because the fleet
+   *  hasn't grown into the requested count yet. Re-derived fresh on every call (never snapshotted). */
+  private async resolveIngressPool(clusterId: string): Promise<{ mgr: ManagerRow; pool: IngressPoolNode[] }> {
+    const mgr = await this.primary(clusterId);
+    const pool: IngressPoolNode[] = [{ id: mgr.id, name: mgr.name, swarmNodeId: mgr.swarmNodeId, publicIp: mgr.publicIp }];
+    if (mgr.ingressReplicas > 1) {
+      const extra = await this.prisma.server.findMany({
+        where: { clusterId, id: { not: mgr.id }, status: "ONLINE", swarmNodeId: { not: null } },
+        orderBy: { id: "asc" },
+        take: mgr.ingressReplicas - 1,
+        select: { id: true, name: true, swarmNodeId: true, publicIp: true },
+      });
+      pool.push(...extra);
+    }
+    return { mgr, pool };
+  }
+
+  /** Read-only view of the resolved ingress pool for the UI: how many replicas + which nodes/IPs an operator
+   *  should point DNS at for failover. */
+  async ingressInfo(clusterId: string): Promise<IngressView> {
+    const { pool } = await this.resolveIngressPool(clusterId);
+    return { replicas: pool.length, nodes: pool.map((p) => ({ id: p.id, name: p.name, ip: p.publicIp })) };
   }
 
   /** Pick the manager to DISPATCH a cluster-wide read (`docker service …`) to: the primary if it's online, else
@@ -84,60 +132,83 @@ export class SwarmProxyService {
     }
   }
 
-  /** Idempotently ensure the overlay + swarm-Traefik are up on the manager, refusing if a classic proxy
-   *  would collide on :80/:443. Verifies the proxy task actually reached 1/1 (a task on a non-manager node
-   *  would silently discover zero services). */
+  /** Idempotently ensure the overlay + swarm-Traefik ingress pool are up, refusing if a classic proxy would
+   *  collide on :80/:443 anywhere in the swarm. Pins + labels every pool node, publishes on the routing mesh
+   *  (mode=ingress), gates 2+ replicas on DNS-01, and verifies the service converged to <poolSize>/<poolSize>. */
   async ensure(clusterId: string): Promise<void> {
-    const mgr = await this.primary(clusterId);
-    // ensure() is UNCHANGED in behavior: the ingress container can only ever be scheduled on THIS node (pinned
-    // by a node label to its local ACME cert store — see swarm-proxy-script.ts), so there is no failover to give
-    // it. The online check that manager() used to bake in simply moves inline here.
+    const { mgr, pool } = await this.resolveIngressPool(clusterId);
+    // The primary must be ONLINE: it is where we dispatch the signed `docker service create`, and it is always
+    // the first pool node. (Other pool members only need to be schedulable task hosts.)
     if (mgr.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
 
-    // Coexistence guard: the classic per-server Traefik and the swarm proxy both bind :80/:443 on the
-    // manager. If either a classic domain app is assigned to the manager, or a classic tugra-proxy is
-    // actually running there, refuse — otherwise the swarm proxy task silently crash-loops on the port.
+    const email = this.config.get<string>("ACME_EMAIL") ?? null;
+    const secretPrefix = `tugra-swarm-dns-${clusterId}`;
+    const dnsCfg = this.dnsConfig(mgr);
+    // HA gate FIRST (before ANY docker/agent command): 2+ replicas each hold an INDEPENDENT node-local ACME
+    // store, which is only safe under DNS-01 (an outbound TXT challenge every replica can complete for the same
+    // domain). HTTP-01 can't be routed to one specific replica behind the mesh. Failing here — ahead of the
+    // per-node coexistence round-trips — makes an unconfigured request fail fast (no N×agent timeouts).
+    if (pool.length > 1 && !dnsCfg) {
+      throw new BadRequestException(
+        "ingress HA (2+ replicas) requires DNS-01 — set the manager's certMode to le-dns with a DNS provider before increasing ingressReplicas (HTTP-01 challenges cannot be routed to one specific replica behind the swarm mesh)",
+      );
+    }
+
+    // Coexistence guard, scoped to EVERY swarm-joined member (not just the manager): `mode=ingress` reserves
+    // :80/:443 across the WHOLE routing mesh, so a classic per-server Traefik or classic domain app on ANY
+    // joined node collides — refuse loudly instead of a silent port-bind failure. (Old `mode=host` only ever
+    // touched the pinned manager, hence the old manager-only scope.)
+    const joined = await this.prisma.server.findMany({ where: { clusterId, swarmNodeId: { not: null } }, select: { id: true, name: true, swarmNodeId: true } });
+    const joinedIds = joined.map((s) => s.id);
     const classicDomainApps = await this.prisma.application.count({
-      where: { serverId: mgr.id, clusterId: null, domain: { not: null } },
+      where: { serverId: { in: joinedIds }, clusterId: null, domain: { not: null } },
     });
     if (classicDomainApps > 0) {
       throw new BadRequestException(
-        "the swarm manager also hosts classic domain-routed apps on :80/:443 — dedicate it to the swarm (move those apps) before routing swarm traffic",
+        "a swarm-joined server hosts classic domain-routed apps on :80/:443 — the routing mesh reserves those ports cluster-wide; move those apps before routing swarm traffic",
       );
     }
-    const live = await this.agentWs
-      .sendCommand(mgr.id, buildClassicProxyRunningScript(), "swarm")
-      .catch(() => ({ exitCode: 1, output: "" }));
-    if (live.exitCode === 0 && live.output.trim()) {
-      throw new BadRequestException("a classic Traefik (tugra-proxy) is running on the swarm manager — remove it before routing swarm traffic");
+    const checks = await Promise.all(
+      joined.map(async (s) => ({ s, r: await this.agentWs.sendCommand(s.id, buildClassicProxyRunningScript(), "swarm").catch(() => ({ exitCode: 1, output: "" })) })),
+    );
+    const collided = checks.find((c) => c.r.exitCode === 0 && c.r.output.trim());
+    if (collided) {
+      throw new BadRequestException(
+        `a classic Traefik (tugra-proxy) is running on swarm-joined server '${collided.s.name}' — the routing mesh reserves :80/:443 cluster-wide; remove it before routing swarm traffic`,
+      );
     }
 
-    const email = this.config.get<string>("ACME_EMAIL") ?? null;
-    // DNS-01 wildcard when the manager has le-dns configured. Creds ride an immutable, hash-named Docker
-    // secret; the confighash label reconciles the proxy (skip if unchanged → no flap on ordinary deploys).
-    const secretPrefix = `tugra-swarm-dns-${clusterId}`;
-    const dnsCfg = this.dnsConfig(mgr);
+    // DNS-01 wildcard when the manager has le-dns configured. Creds ride an immutable, hash-named Docker secret;
+    // the confighash label reconciles the proxy (skip if unchanged → no flap on ordinary deploys).
+    const nodeIds = pool.map((p) => p.swarmNodeId).filter((x): x is string => !!x);
+    const poolKey = [...nodeIds].sort().join(","); // fold the pool into the hash so a replica/membership change reconciles
+    // Strip the tugra.proxy label from joined members that are NOT in the current pool (a scale-down leftover),
+    // so the label constraint only matches intended nodes and the service can't schedule a replica onto a stale
+    // one. Uses full DB node ids (docker node update accepts them); pool nodes are never in this set.
+    const poolNodeIdSet = new Set(nodeIds);
+    const unlabelNodeIds = joined.map((s) => s.swarmNodeId).filter((x): x is string => !!x && !poolNodeIdSet.has(x));
     let dns: SwarmProxyDns | null = null;
     let confighash: string;
     if (dnsCfg) {
       const credsB64 = envFileB64(dnsCfg.dnsCreds);
-      confighash = createHash("sha256").update(`${email}|${dnsCfg.dnsProvider}|${credsB64}|ledns`).digest("hex").slice(0, 12);
+      confighash = createHash("sha256").update(`${email}|${dnsCfg.dnsProvider}|${credsB64}|ledns|${pool.length}|${poolKey}`).digest("hex").slice(0, 12);
       dns = { provider: dnsCfg.dnsProvider, credsB64, secretName: `${secretPrefix}-${confighash}` };
     } else {
-      confighash = createHash("sha256").update(`${email}|http`).digest("hex").slice(0, 12);
+      confighash = createHash("sha256").update(`${email}|http|${pool.length}|${poolKey}`).digest("hex").slice(0, 12);
     }
     await this.agentWs.sendCommand(
       mgr.id,
-      buildSwarmProxyEnsureScript({ managerNodeId: mgr.swarmNodeId, acmeEmail: email, confighash, secretPrefix, dns }),
+      buildSwarmProxyEnsureScript({ nodeIds, unlabelNodeIds, replicas: pool.length, acmeEmail: email, confighash, secretPrefix, dns }),
       "swarm",
       60_000,
     );
 
-    // Verify the proxy actually converged to 1/1 (constraint could leave it Pending if the node label /
-    // manager pin didn't take).
+    // Verify the proxy actually converged to <poolSize>/<poolSize> (a constraint/label miss could leave tasks
+    // Pending). `docker service ls` reports "<running>/<desired>"; desired == pool.length (≤3, single digit).
     const status = await this.agentWs.sendCommand(mgr.id, buildSwarmProxyStatusScript(), "swarm").catch(() => ({ exitCode: 1, output: "" }));
     const replicas = status.output.trim();
-    if (status.exitCode !== 0 || !/^1\/1\b/.test(replicas)) {
+    const expect = `${pool.length}/${pool.length}`;
+    if (status.exitCode !== 0 || !replicas.startsWith(expect)) {
       throw new ServiceUnavailableException(`swarm proxy did not become ready (${replicas || "no status"})`);
     }
   }

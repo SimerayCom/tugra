@@ -56,9 +56,15 @@ export default function ClusterDetailPage() {
     queryKey: ["swarm", id],
     queryFn: () => api.getSwarmStatus(id),
   });
+  // Any swarm-topology change can shift the resolved ingress pool (members, primary, online set) → refresh it too.
+  const invalidateSwarm = () => {
+    qc.invalidateQueries({ queryKey: ["swarm", id] });
+    qc.invalidateQueries({ queryKey: ["cluster", id] });
+    qc.invalidateQueries({ queryKey: ["ingress", id] });
+  };
   const dissolve = useMutation({
     mutationFn: () => api.dissolveSwarm(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["swarm", id] }); qc.invalidateQueries({ queryKey: ["cluster", id] }); },
+    onSuccess: invalidateSwarm,
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.swarmActionFailed"), "error"),
   });
 
@@ -66,7 +72,7 @@ export default function ClusterDetailPage() {
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
   const leaveNode = useMutation({
     mutationFn: (sid: string) => api.leaveSwarmNode(id, sid),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["swarm", id] }); qc.invalidateQueries({ queryKey: ["cluster", id] }); },
+    onSuccess: invalidateSwarm,
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.removeNodeFailed"), "error"),
   });
 
@@ -76,7 +82,7 @@ export default function ClusterDetailPage() {
   const demote = useMutation({
     mutationFn: (v: { serverId: string; ack?: boolean }) =>
       v.ack ? api.removeManager(id, v.serverId, { acknowledgeEvenQuorum: true }) : api.removeManager(id, v.serverId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["swarm", id] }); qc.invalidateQueries({ queryKey: ["cluster", id] }); },
+    onSuccess: invalidateSwarm,
     onError: async (e, v) => {
       const msg = e instanceof Error ? e.message : "";
       // Even-quorum guard (e.g. demoting 3→2 managers): offer an acknowledge-and-retry, same affordance as the
@@ -93,6 +99,20 @@ export default function ClusterDetailPage() {
     mutationFn: () => api.deleteCluster(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["clusters"] }); router.replace("/clusters"); },
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.deleteFailed"), "error"),
+  });
+
+  // Ingress HA (FLEET-H) — only meaningful once a swarm is ACTIVE/DEGRADED (the only states the ingress API
+  // accepts; FORMING/JOINING/DISSOLVING would 400 the getIngress query).
+  const swarmFormedForIngress = !!swarm && (swarm.swarmStatus === "ACTIVE" || swarm.swarmStatus === "DEGRADED");
+  const { data: ingress } = useQuery({
+    queryKey: ["ingress", id],
+    queryFn: () => api.getIngress(id),
+    enabled: swarmFormedForIngress,
+  });
+  const setIngress = useMutation({
+    mutationFn: (replicas: number) => api.setIngressReplicas(id, replicas),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ingress", id] }),
+    onError: (e) => toast(e instanceof Error ? e.message : t("clusters.ingressUpdateFailed"), "error"),
   });
 
   if (isLoading) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -295,6 +315,48 @@ export default function ClusterDetailPage() {
         )}
       </Card>
 
+      {swarmFormedForIngress && (
+        <Card style={{ padding: 18, marginTop: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontWeight: 600 }}>{t("clusters.ingressTitle")}</div>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 2 }}>{t("clusters.ingressHint")}</div>
+            </div>
+            {cluster.canWrite && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("clusters.ingressReplicas")}</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[1, 2, 3].map((n) => (
+                    <Btn
+                      key={n}
+                      variant={ingress?.replicas === n ? "primary" : "ghost"}
+                      style={{ fontSize: 12, padding: "4px 10px" }}
+                      disabled={setIngress.isPending}
+                      onClick={() => setIngress.mutate(n)}
+                    >
+                      {n}
+                    </Btn>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 10 }}>{t("clusters.ingressReplicasHint")}</div>
+          {ingress && ingress.nodes.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.ingressNodes")}</div>
+              {ingress.nodes.map((n) => (
+                <div key={n.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</span>
+                  <span className="mono" style={{ marginLeft: "auto", fontSize: 12, color: "var(--c-tx3)" }}>{n.ip ?? "—"}</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: "var(--c-am)" }}>{t("clusters.ingressDnsHint")}</div>
+            </div>
+          )}
+        </Card>
+      )}
+
       {managing && <ManageMembersModal cluster={cluster} onClose={() => setManaging(false)} />}
       {renaming && <RenameModal cluster={cluster} onClose={() => setRenaming(false)} />}
       {running && <ClusterRunModal cluster={cluster} memberIds={memberIds} onClose={() => setRunning(false)} />}
@@ -391,6 +453,7 @@ function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose:
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
       qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
+      qc.invalidateQueries({ queryKey: ["ingress", cluster.id] });
       onClose();
     },
   });
@@ -433,6 +496,7 @@ function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swa
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
       qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
+      qc.invalidateQueries({ queryKey: ["ingress", cluster.id] });
       onClose();
     },
   });
@@ -473,6 +537,7 @@ function AddManagerModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
       qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
+      qc.invalidateQueries({ queryKey: ["ingress", cluster.id] });
       onClose();
     },
   });

@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { ApiSecurity, ApiTags } from "@nestjs/swagger";
-import { ApiZodBody } from "../openapi/openapi";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -16,8 +16,11 @@ import {
   CreateClusterSchema,
   FormSwarmInput,
   FormSwarmSchema,
+  IngressViewSchema,
   JoinNodeInput,
   JoinNodeSchema,
+  SetIngressReplicasInput,
+  SetIngressReplicasSchema,
   SetNodeLabelsInput,
   SetNodeLabelsSchema,
   SetServersInput,
@@ -171,5 +174,26 @@ export class ClustersController {
     @Query("acknowledgeEvenQuorum") acknowledgeEvenQuorum?: string,
   ) {
     return this.swarm.removeManager(user.userId, id, { serverId, acknowledgeEvenQuorum: acknowledgeEvenQuorum === "true" });
+  }
+
+  // Ingress HA (FLEET-H). GET is read-only (any team member). PATCH bumps the ingress replica count — same
+  // elevated 'deploy' scope + servers:manage as the other swarm-mutating routes (it dispatches a signed
+  // `docker service create` on reconcile).
+  @Get(":id/ingress")
+  @ApiZodResponse(IngressViewSchema)
+  getIngress(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.swarm.getIngress(user.userId, id);
+  }
+
+  @Patch(":id/ingress")
+  @RequireScopes("deploy")
+  @ApiZodBody(SetIngressReplicasSchema)
+  @ApiZodResponse(IngressViewSchema)
+  setIngress(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIngressReplicasSchema)) body: SetIngressReplicasInput,
+  ) {
+    return this.swarm.setIngressReplicas(user.userId, id, body.replicas);
   }
 }

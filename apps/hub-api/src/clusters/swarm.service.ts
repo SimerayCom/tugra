@@ -316,6 +316,37 @@ export class SwarmService {
     return this.statusInternal(id);
   }
 
+  /** Read the resolved swarm-ingress pool (FLEET-H) — how many replicas + which nodes/IPs to point DNS at. */
+  async getIngress(userId: string, id: string) {
+    await this.requireRead(userId, id);
+    return this.swarmProxy.ingressInfo(id);
+  }
+
+  /** Set the desired swarm-ingress replica count (FLEET-H). Clamped 1-3 here too (defence-in-depth beyond the
+   *  DTO) so the invariant holds for any caller. On a live swarm the change is applied ATOMICALLY: persist the
+   *  new value, reconcile via ensure(), and if ensure() fails (e.g. the DNS-01-required refusal, or a node that
+   *  won't converge) REVERT the persisted value and rethrow — so the API never reports a "success" pool the
+   *  ingress didn't actually converge to (which would hand the operator misleading DNS-pointing IPs). On a
+   *  not-yet-formed swarm there is no live ingress to reconcile, so the value is simply saved as desired state. */
+  async setIngressReplicas(userId: string, id: string, replicas: number) {
+    const cluster = await this.requireWrite(userId, id);
+    const n = Math.max(1, Math.min(3, Math.floor(replicas)));
+    const prev = cluster.ingressReplicas;
+    await this.prisma.cluster.update({ where: { id }, data: { ingressReplicas: n } });
+    if (cluster.swarmStatus === "ACTIVE" || cluster.swarmStatus === "DEGRADED") {
+      try {
+        await this.swarmProxy.ensure(id);
+      } catch (e) {
+        // Reconcile failed → revert so the DB never advertises a replica count the ingress didn't converge to,
+        // and surface the real reason (e.g. "ingress HA requires DNS-01") to the operator instead of a false 200.
+        await this.prisma.cluster.update({ where: { id }, data: { ingressReplicas: prev } }).catch(() => undefined);
+        throw e;
+      }
+    }
+    await this.audit.log({ actor: userId, action: "cluster.swarm.ingress_replicas", target: id, meta: { replicas: n } });
+    return this.swarmProxy.ingressInfo(id);
+  }
+
   /** Add ONE more node to an ALREADY-ACTIVE swarm (Phase2b) — joins a single, already-a-cluster-member,
    *  not-yet-joined server without dissolving/reforming the rest. Idempotent (an already-joined target is a
    *  no-op) and CAS-safe: ACTIVE→JOINING sits outside both form()'s and dissolve()'s accepted source sets, so
@@ -868,7 +899,7 @@ export class SwarmService {
   private async requireWrite(
     userId: string,
     id: string,
-  ): Promise<{ id: string; teamId: string; swarmStatus: SwarmStatus; swarmManagerId: string | null }> {
+  ): Promise<{ id: string; teamId: string; swarmStatus: SwarmStatus; swarmManagerId: string | null; ingressReplicas: number }> {
     const cluster = await this.loadCluster(userId, id);
     await this.access.requirePermission(userId, cluster.teamId, "servers:manage");
     return cluster;
@@ -878,18 +909,18 @@ export class SwarmService {
   private requireRead(
     userId: string,
     id: string,
-  ): Promise<{ id: string; teamId: string; swarmStatus: SwarmStatus; swarmManagerId: string | null }> {
+  ): Promise<{ id: string; teamId: string; swarmStatus: SwarmStatus; swarmManagerId: string | null; ingressReplicas: number }> {
     return this.loadCluster(userId, id);
   }
 
   private async loadCluster(userId: string, id: string) {
     const cluster = await this.prisma.cluster.findUnique({
       where: { id },
-      select: { id: true, teamId: true, swarmStatus: true, swarmManagerId: true },
+      select: { id: true, teamId: true, swarmStatus: true, swarmManagerId: true, ingressReplicas: true },
     });
     if (!cluster || !(await this.access.teamIds(userId)).includes(cluster.teamId)) {
       throw new NotFoundException("cluster not found");
     }
-    return cluster as { id: string; teamId: string; swarmStatus: SwarmStatus; swarmManagerId: string | null };
+    return cluster as { id: string; teamId: string; swarmStatus: SwarmStatus; swarmManagerId: string | null; ingressReplicas: number };
   }
 }

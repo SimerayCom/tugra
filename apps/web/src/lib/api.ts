@@ -12,6 +12,7 @@ import type {
   ClusterDetail,
   AppClusterStatus,
   SwarmView,
+  IngressView,
   SavedView,
   Application,
   AppVolume,
@@ -421,6 +422,12 @@ export const api = {
   removeManager(clusterId: string, serverId: string, opts?: { acknowledgeEvenQuorum?: boolean }) {
     const q = opts?.acknowledgeEvenQuorum ? "?acknowledgeEvenQuorum=true" : "";
     return apiFetch<SwarmView>(`/clusters/${clusterId}/swarm/managers/${serverId}${q}`, { method: "DELETE" });
+  },
+  getIngress(id: string) {
+    return apiFetch<IngressView>(`/clusters/${id}/ingress`);
+  },
+  setIngressReplicas(id: string, replicas: number) {
+    return apiFetch<IngressView>(`/clusters/${id}/ingress`, { method: "PATCH", body: JSON.stringify({ replicas }) });
   },
 
   getMetrics(id: string, limit = 60) {
