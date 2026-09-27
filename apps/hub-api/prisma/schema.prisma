@@ -331,6 +331,11 @@ model Cluster {
   swarmStatus    SwarmStatus @default(NONE)
   swarmManagerId String?
   swarmLastError String?
+  // FLEET-H: desired swarm-ingress (Traefik) replica count for HA. 1 = today's single-node routing (default,
+  // zero behavior change). 2-3 = routing-mesh multi-replica ingress; requires DNS-01 (le-dns) on the manager
+  // and is capped at 3 to stay under Let's Encrypt's duplicate-certificate rate limit. The actual pool is
+  // re-derived live on every ensure() (manager first, then online joined members), never snapshotted.
+  ingressReplicas Int @default(1)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

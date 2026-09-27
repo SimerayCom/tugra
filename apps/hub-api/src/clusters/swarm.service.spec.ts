@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { SwarmService } from "./swarm.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -73,6 +73,7 @@ function make(opts: {
   appCount?: number;
   apps?: object[]; // rows for replicaRiskWarning (name/replicas) and stripPlacementNamingNode (id/placement)
   otherOnline?: number; // server.count → other online swarm members
+  ingressReplicas?: number; // FLEET-H: cluster.ingressReplicas (for setIngressReplicas revert tests)
   agent?: AgentWsServer;
 } = {}) {
   const cluster = {
@@ -81,6 +82,7 @@ function make(opts: {
     swarmStatus: opts.swarmStatus ?? "NONE",
     swarmManagerId: opts.swarmManagerId ?? null,
     swarmLastError: null,
+    ingressReplicas: opts.ingressReplicas ?? 1,
   };
   const clusterUpdate = jest.fn().mockResolvedValue(cluster);
   const clusterUpdateMany = jest.fn().mockResolvedValue({ count: opts.casCount ?? 1 });
@@ -112,7 +114,11 @@ function make(opts: {
   } as unknown as TeamAccessService;
   const audit = { log: jest.fn() } as unknown as AuditService;
   const agent = opts.agent ?? agentMock();
-  const swarmProxy = { teardown: jest.fn().mockResolvedValue(true) } as unknown as import("./swarm-proxy.service").SwarmProxyService;
+  const swarmProxy = {
+    teardown: jest.fn().mockResolvedValue(true),
+    ensure: jest.fn().mockResolvedValue(undefined),
+    ingressInfo: jest.fn().mockResolvedValue({ replicas: 1, nodes: [{ id: "mgr", name: "mgr", ip: "1.1.1.1" }] }),
+  } as unknown as import("./swarm-proxy.service").SwarmProxyService;
   const svc = new SwarmService(prisma, access, audit, agent, swarmProxy);
   return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate, serverUpdateMany, appUpdate };
 }
@@ -931,6 +937,58 @@ describe("SwarmService quorum + status failover (FLEET-G)", () => {
     const inspect = sc(agent).mock.calls.find((c) => (c[1] as string).includes("node inspect"));
     expect(inspect?.[0]).toBe("m2"); // dispatched to the online backup, not the offline primary
     expect(view.live?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("SwarmService ingress HA (FLEET-H)", () => {
+  it("getIngress: read-gated (non-member rejected), then delegates to swarmProxy.ingressInfo", async () => {
+    const r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" })] });
+    const out = await r.svc.getIngress("u1", "c1");
+    expect((r.swarmProxy.ingressInfo as unknown as jest.Mock)).toHaveBeenCalledWith("c1");
+    expect(out).toEqual({ replicas: 1, nodes: [{ id: "mgr", name: "mgr", ip: "1.1.1.1" }] });
+    // non-member → requireRead throws before any delegation
+    const r2 = make({ swarmStatus: "ACTIVE", members: [] });
+    (r2.access.teamIds as unknown as jest.Mock).mockResolvedValue([]);
+    await expect(r2.svc.getIngress("u1", "c1")).rejects.toBeInstanceOf(NotFoundException);
+    expect((r2.swarmProxy.ingressInfo as unknown as jest.Mock)).not.toHaveBeenCalled();
+  });
+
+  it("setIngressReplicas: write-gated, persists the column, triggers ensure() only when ACTIVE/DEGRADED", async () => {
+    // ACTIVE → persists + ensure()
+    const r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" })] });
+    await r.svc.setIngressReplicas("u1", "c1", 2);
+    expect(r.clusterUpdate).toHaveBeenCalledWith({ where: { id: "c1" }, data: { ingressReplicas: 2 } });
+    expect((r.swarmProxy.ensure as unknown as jest.Mock)).toHaveBeenCalledWith("c1");
+    expect(r.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.ingress_replicas", meta: { replicas: 2 } }));
+    // NONE → persists but does NOT reconcile (no swarm up to reconcile)
+    const r2 = make({ swarmStatus: "NONE", members: [] });
+    await r2.svc.setIngressReplicas("u1", "c1", 3);
+    expect(r2.clusterUpdate).toHaveBeenCalledWith({ where: { id: "c1" }, data: { ingressReplicas: 3 } });
+    expect((r2.swarmProxy.ensure as unknown as jest.Mock)).not.toHaveBeenCalled();
+  });
+
+  it("setIngressReplicas: an ensure() failure REVERTS the persisted value and rethrows (no misleading success)", async () => {
+    const r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" })] });
+    (r.swarmProxy.ensure as unknown as jest.Mock).mockRejectedValue(new Error("ingress HA (2+ replicas) requires DNS-01"));
+    await expect(r.svc.setIngressReplicas("u1", "c1", 2)).rejects.toThrow(/DNS-01/);
+    // first write set 2, then it is reverted to the prior value (1 from the loadCluster mock's ingressReplicas)
+    expect(r.clusterUpdate).toHaveBeenCalledWith({ where: { id: "c1" }, data: { ingressReplicas: 2 } });
+    expect(r.clusterUpdate).toHaveBeenLastCalledWith({ where: { id: "c1" }, data: { ingressReplicas: 1 } });
+    // never audits a change that didn't converge
+    expect(r.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.ingress_replicas" }));
+  });
+
+  it("setIngressReplicas: clamps out-of-range values (defence-in-depth beyond the DTO)", async () => {
+    const r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" })] });
+    await r.svc.setIngressReplicas("u1", "c1", 9);
+    expect(r.clusterUpdate).toHaveBeenCalledWith({ where: { id: "c1" }, data: { ingressReplicas: 3 } }); // capped at 3
+  });
+
+  it("setIngressReplicas: non-permitted user rejected before any write", async () => {
+    const r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [] });
+    (r.access.requirePermission as unknown as jest.Mock).mockRejectedValue(new Error("forbidden"));
+    await expect(r.svc.setIngressReplicas("u1", "c1", 2)).rejects.toThrow();
+    expect(r.clusterUpdate).not.toHaveBeenCalled();
   });
 });
 

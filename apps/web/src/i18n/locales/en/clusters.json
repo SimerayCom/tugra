@@ -69,5 +69,12 @@
   "demoteConfirm": "Demote {name} back to a worker?",
   "removeManagerFailed": "Couldn't demote the manager.",
   "primaryManager": "Primary",
-  "acknowledgeAndRetry": "Proceed anyway"
+  "acknowledgeAndRetry": "Proceed anyway",
+  "ingressTitle": "Ingress (HTTPS)",
+  "ingressHint": "How many Traefik replicas front this cluster's domains. 2+ survive a node failure (routing mesh) — they require DNS-01 (le-dns) on the manager.",
+  "ingressReplicas": "Replicas",
+  "ingressReplicasHint": "Capped at 3 (Let's Encrypt duplicate-certificate limit).",
+  "ingressNodes": "Ingress nodes",
+  "ingressDnsHint": "For failover, point one DNS A record at EACH node IP below (round-robin). Any listed node can serve every domain.",
+  "ingressUpdateFailed": "Couldn't update ingress replicas."
 }

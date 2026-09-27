@@ -9,7 +9,8 @@ import {
 type EnsureOpts = Parameters<typeof buildSwarmProxyEnsureScript>[0];
 function ensure(over: Partial<EnsureOpts> = {}): string {
   return buildSwarmProxyEnsureScript({
-    managerNodeId: "node_x",
+    nodeIds: ["node_x"],
+    replicas: 1,
     acmeEmail: "ops@acme.io",
     confighash: "h4sh",
     secretPrefix: "tugra-swarm-dns-c1",
@@ -18,15 +19,15 @@ function ensure(over: Partial<EnsureOpts> = {}): string {
 }
 
 describe("swarm-proxy-script builders", () => {
-  it("ensure: overlay + node-label pin + swarm-provider Traefik as a single manager-pinned service", () => {
+  it("ensure: overlay + node-label pin + swarm-provider Traefik as a routing-mesh service", () => {
     const s = ensure();
     expect(s).toContain("docker network create -d overlay --opt encrypted --attachable 'tugra-swarm'");
     expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_x'");
     expect(s).toContain("--constraint 'node.labels.tugra.proxy==true'");
     expect(s).toContain("docker service create --detach --name tugra-swarm-proxy");
     expect(s).toContain("--replicas 1");
-    expect(s).toContain("--publish mode=host,target=80,published=80");
-    expect(s).toContain("--publish mode=host,target=443,published=443");
+    expect(s).toContain("--publish mode=ingress,target=80,published=80");
+    expect(s).toContain("--publish mode=ingress,target=443,published=443");
     expect(s).toContain("--providers.swarm=true");
     expect(s).toContain("--providers.swarm.network='tugra-swarm'");
     expect(s).toContain("--certificatesresolvers.le.acme.email='ops@acme.io'");
@@ -85,10 +86,29 @@ describe("swarm-proxy-script builders", () => {
     expect(s).toContain("--certificatesresolvers.le-dns.acme.dnschallenge.provider='y'\\''; bad'");
   });
 
-  it("ensure: falls back to node.role==manager when no swarm node id is known", () => {
-    const s = ensure({ managerNodeId: null });
+  it("ensure: multi-node pool labels EVERY node, sets --replicas N, keeps the label constraint (FLEET-H)", () => {
+    const s = ensure({ nodeIds: ["node_a", "node_b", "node_c"], replicas: 3 });
+    expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_a'");
+    expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_b'");
+    expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_c'");
+    expect(s).toContain("--replicas 3");
+    expect(s).toContain("--constraint 'node.labels.tugra.proxy==true'");
+    expect(s).toContain("--publish mode=ingress,target=80,published=80");
+  });
+
+  it("ensure: empty pool falls back to node.role==manager AND forces --replicas 1 (ignores a bad count)", () => {
+    const s = ensure({ nodeIds: [], replicas: 3 });
     expect(s).toContain("--constraint 'node.role==manager'");
+    expect(s).toContain("--replicas 1"); // forced, not the passed-in 3
+    expect(s).not.toContain("--replicas 3");
     expect(s).not.toContain("--label-add");
+  });
+
+  it("ensure: strips the tugra.proxy label from nodes that left the pool (scale-down cleanup, FLEET-H)", () => {
+    const s = ensure({ nodeIds: ["node_a"], replicas: 1, unlabelNodeIds: ["node_b", "node_c"] });
+    expect(s).toContain("docker node update --label-rm tugra.proxy 'node_b' >/dev/null 2>&1 || true");
+    expect(s).toContain("docker node update --label-rm tugra.proxy 'node_c' >/dev/null 2>&1 || true");
+    expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_a'"); // current pool node re-added
   });
 
   it("status / classic-detect / teardown builders", () => {

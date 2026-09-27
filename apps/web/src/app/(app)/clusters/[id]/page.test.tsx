@@ -45,6 +45,8 @@ describe("ClusterDetailPage", () => {
     ] as never);
     // Default: no swarm formed (keeps the existing tests unaffected; add-node tests override this).
     vi.spyOn(api, "getSwarmStatus").mockResolvedValue({ clusterId: "c1", swarmStatus: "NONE", managerServerId: null, swarmLastError: null, nodes: [], live: null } as never);
+    // Benign default so the (FLEET-H) ingress query doesn't hit the network in swarm-active tests.
+    vi.spyOn(api, "getIngress").mockResolvedValue({ replicas: 1, nodes: [] } as never);
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -206,5 +208,37 @@ describe("ClusterDetailPage", () => {
     // even-quorum error → acknowledge-and-retry dialog → "Proceed anyway"
     fireEvent.click(await screen.findByRole("button", { name: "Proceed anyway" }));
     await waitFor(() => expect(rmSpy).toHaveBeenNthCalledWith(2, "c1", "s2", { acknowledgeEvenQuorum: true }));
+  });
+
+  // ── FLEET-H: ingress HA ──
+  const oneManager = () => [{ serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true }];
+
+  it("renders the Ingress panel with node IPs and the DNS-pointing hint (FLEET-H)", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(ACTIVE_SWARM(oneManager()));
+    vi.spyOn(api, "getIngress").mockResolvedValue({ replicas: 2, nodes: [{ id: "s1", name: "node-a", ip: "1.1.1.1" }, { id: "s3", name: "node-c", ip: "3.3.3.3" }] } as never);
+    wrap(<ClusterDetailPage />);
+    expect(await screen.findByText("Ingress (HTTPS)")).toBeTruthy();
+    expect(await screen.findByText("3.3.3.3")).toBeTruthy();
+    expect(screen.getByText(/point one DNS A record/i)).toBeTruthy();
+  });
+
+  it("selecting a replica count calls api.setIngressReplicas (FLEET-H)", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(ACTIVE_SWARM(oneManager()));
+    vi.spyOn(api, "getIngress").mockResolvedValue({ replicas: 1, nodes: [{ id: "s1", name: "node-a", ip: "1.1.1.1" }] } as never);
+    const setSpy = vi.spyOn(api, "setIngressReplicas").mockResolvedValue({ replicas: 2, nodes: [] } as never);
+    wrap(<ClusterDetailPage />);
+    await screen.findByText("Ingress (HTTPS)");
+    fireEvent.click(screen.getByRole("button", { name: "2" })); // the "2 replicas" button
+    await waitFor(() => expect(setSpy).toHaveBeenCalledWith("c1", 2));
+  });
+
+  it("surfaces the DNS-01-required error when raising replicas is refused (FLEET-H)", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(ACTIVE_SWARM(oneManager()));
+    vi.spyOn(api, "getIngress").mockResolvedValue({ replicas: 1, nodes: [{ id: "s1", name: "node-a", ip: "1.1.1.1" }] } as never);
+    vi.spyOn(api, "setIngressReplicas").mockRejectedValue(new Error("ingress HA (2+ replicas) requires DNS-01"));
+    wrap(<ClusterDetailPage />);
+    await screen.findByText("Ingress (HTTPS)");
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    expect(await screen.findByText(/DNS-01/i)).toBeTruthy();
   });
 });

@@ -3,6 +3,7 @@ import type { ClustersService } from "./clusters.service";
 import type { SwarmService } from "./swarm.service";
 import type { AuthUser } from "../auth/strategies/jwt.strategy";
 import { REQUIRE_SCOPES } from "../api-tokens/require-scopes.decorator";
+import { SetIngressReplicasSchema } from "./dto";
 
 const USER = { userId: "u1", scopes: ["*"] } as AuthUser;
 
@@ -24,6 +25,8 @@ function make() {
     setNodeLabels: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     addManager: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     removeManager: jest.fn().mockResolvedValue({ clusterId: "c1" }),
+    getIngress: jest.fn().mockResolvedValue({ replicas: 1, nodes: [] }),
+    setIngressReplicas: jest.fn().mockResolvedValue({ replicas: 2, nodes: [] }),
   } as unknown as SwarmService;
   return { ctrl: new ClustersController(svc, swarm), svc, swarm };
 }
@@ -101,6 +104,25 @@ describe("ClustersController", () => {
     expect(swarm.removeManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1", acknowledgeEvenQuorum: true });
     await ctrl.removeManager(USER, "c1", "s1", undefined);
     expect(swarm.removeManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1", acknowledgeEvenQuorum: false });
+  });
+
+  it("ingress: GET delegates to getIngress, PATCH delegates to setIngressReplicas (FLEET-H)", async () => {
+    const { ctrl, swarm } = make();
+    await ctrl.getIngress(USER, "c1");
+    expect(swarm.getIngress).toHaveBeenCalledWith("u1", "c1");
+    await ctrl.setIngress(USER, "c1", { replicas: 2 });
+    expect(swarm.setIngressReplicas).toHaveBeenCalledWith("u1", "c1", 2);
+  });
+
+  it("PATCH ingress requires the elevated 'deploy' scope; GET ingress inherits read (no scope override)", () => {
+    expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.setIngress)).toEqual(["deploy"]);
+    expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.getIngress)).toBeUndefined();
+  });
+
+  it("PATCH ingress replicas out of the 1-3 range is rejected by Zod before the service", () => {
+    expect(SetIngressReplicasSchema.safeParse({ replicas: 0 }).success).toBe(false);
+    expect(SetIngressReplicasSchema.safeParse({ replicas: 4 }).success).toBe(false);
+    expect(SetIngressReplicasSchema.safeParse({ replicas: 2 }).success).toBe(true);
   });
 
   it("POST swarm/managers (add manager) requires the elevated 'deploy' scope", () => {

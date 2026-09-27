@@ -47,6 +47,27 @@ export const AddManagerSchema = z.object({
 });
 export type AddManagerInput = z.infer<typeof AddManagerSchema>;
 
+/** Set the swarm-ingress (Traefik) replica count for HA (FLEET-H). Capped at 3 to stay under Let's Encrypt's
+ *  duplicate-certificate rate limit (each replica keeps its own DNS-01 ACME store). 1 = today's single node. */
+export const SetIngressReplicasSchema = z.object({
+  replicas: z.number().int().min(1).max(3),
+});
+export type SetIngressReplicasInput = z.infer<typeof SetIngressReplicasSchema>;
+
+/** One node in the resolved ingress pool (a swarm-joined server that hosts an ingress task). `ip` is where the
+ *  operator points a DNS A record for failover. */
+export const IngressNodeViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  ip: z.string().nullable(),
+});
+export const IngressViewSchema = z.object({
+  replicas: z.number().int(),
+  nodes: z.array(IngressNodeViewSchema),
+});
+export type IngressNodeView = z.infer<typeof IngressNodeViewSchema>;
+export type IngressView = z.infer<typeof IngressViewSchema>;
+
 // Docker node/service label charset (defence-in-depth; shq() at the shell boundary is the real safety net,
 // same convention as applications/dto.ts's GPU_RE). Exported for reuse by applications/dto.ts's placement schema.
 export const LABEL_KEY_RE = /^[a-z0-9]([a-z0-9_.-]{0,62})?$/i;

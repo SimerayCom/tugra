@@ -181,6 +181,17 @@ export interface SwarmView {
   quorum: SwarmQuorum | null;
 }
 
+/** One node in the resolved swarm-ingress pool (FLEET-H) — point a DNS A record at each `ip` for failover. */
+export interface IngressNode {
+  id: string;
+  name: string;
+  ip: string | null;
+}
+export interface IngressView {
+  replicas: number;
+  nodes: IngressNode[];
+}
+
 /** Public onboarding state (GET /instance/status) — read before login to gate the welcome flow. */
 export interface InstanceStatus {
   /** True once the first user has completed setup; false → a fresh install needs the owner account. */
