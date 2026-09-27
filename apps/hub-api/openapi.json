@@ -9958,6 +9958,101 @@
         ]
       }
     },
+    "/api/v1/clusters/{id}/swarm/managers": {
+      "post": {
+        "operationId": "ClustersController_addManager",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "acknowledgeEvenQuorum": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "serverId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      }
+    },
+    "/api/v1/clusters/{id}/swarm/managers/{serverId}": {
+      "delete": {
+        "operationId": "ClustersController_removeManager",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serverId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "acknowledgeEvenQuorum",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "clusters"
+        ]
+      }
+    },
     "/api/v1/databases": {
       "get": {
         "operationId": "DatabasesController_list",

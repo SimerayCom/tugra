@@ -16,6 +16,7 @@ const swarm = (live: Partial<SwarmLiveNode>[]): SwarmView => ({
   swarmLastError: null,
   nodes: [],
   live: live.map((l) => ({ id: "x", hostname: "h", role: "worker", state: "ready", availability: "active", labels: {}, ...l })),
+  quorum: null,
 });
 
 let qc: QueryClient;

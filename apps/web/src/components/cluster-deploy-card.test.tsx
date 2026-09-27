@@ -38,7 +38,7 @@ describe("ClusterDeployCard", () => {
     vi.spyOn(api, "listClusters").mockResolvedValue([cluster()]);
     vi.spyOn(api, "getCluster").mockResolvedValue(detail());
     // PlacementPicker (rendered when clusterId is set) reads live nodes; keep it quiet by default.
-    vi.spyOn(api, "getSwarmStatus").mockResolvedValue({ clusterId: "c1", swarmStatus: "ACTIVE", managerServerId: "s1", swarmLastError: null, nodes: [], live: [] });
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue({ clusterId: "c1", swarmStatus: "ACTIVE", managerServerId: "s1", swarmLastError: null, nodes: [], live: [], quorum: null });
   });
   afterEach(() => vi.restoreAllMocks());
 

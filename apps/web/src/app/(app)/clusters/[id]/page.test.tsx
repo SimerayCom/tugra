@@ -120,4 +120,91 @@ describe("ClusterDetailPage", () => {
     wrap(<ClusterDetailPage />);
     await waitFor(() => expect(screen.getByText("zone=east")).toBeTruthy());
   });
+
+  // ── FLEET-G: multi-manager Raft HA ──
+  const QUORUM_SWARM = (nodes: unknown[], quorum: unknown, managerServerId = "s1") =>
+    ({ clusterId: "c1", swarmStatus: "ACTIVE", managerServerId, swarmLastError: null, nodes, live: null, quorum }) as never;
+
+  it("renders the quorum-lost banner when a majority of managers are offline", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      QUORUM_SWARM(
+        [
+          { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s2", name: "node-b", status: "OFFLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s3", name: "node-c", status: "OFFLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+        ],
+        { managers: 3, managersOnline: 1, hasQuorum: false },
+      ),
+    );
+    wrap(<ClusterDetailPage />);
+    expect(await screen.findByText(/Quorum lost/i)).toBeTruthy();
+  });
+
+  it("Advanced → Add manager modal submit calls api.addManager", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      QUORUM_SWARM(
+        [
+          { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s2", name: "node-b", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s3", name: "node-c", status: "ONLINE", swarmRole: "WORKER", swarmError: null, swarmCapable: true },
+        ],
+        { managers: 2, managersOnline: 2, hasQuorum: true },
+      ),
+    );
+    const addSpy = vi.spyOn(api, "addManager").mockResolvedValue(QUORUM_SWARM([], { managers: 3, managersOnline: 3, hasQuorum: true }));
+    wrap(<ClusterDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Advanced/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add manager" }));
+    // The modal's submit button is the last "Add manager" (the Advanced-revealed card button matches too).
+    const addButtons = await screen.findAllByRole("button", { name: "Add manager" });
+    fireEvent.click(addButtons[addButtons.length - 1]);
+    await waitFor(() => expect(addSpy).toHaveBeenCalledWith("c1", { serverId: "s3", acknowledgeEvenQuorum: undefined }));
+  });
+
+  it("Demote on a non-primary manager row (after confirm) calls api.removeManager; the primary has no Demote", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      QUORUM_SWARM(
+        [
+          { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s2", name: "node-b", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+        ],
+        { managers: 2, managersOnline: 2, hasQuorum: true },
+      ),
+    );
+    const rmSpy = vi.spyOn(api, "removeManager").mockResolvedValue(QUORUM_SWARM([], { managers: 1, managersOnline: 1, hasQuorum: true }));
+    wrap(<ClusterDetailPage />);
+    // Exactly ONE Demote button — the non-primary manager (s2). The primary (s1) shows none.
+    const demoteButtons = await screen.findAllByRole("button", { name: "Demote" });
+    expect(demoteButtons.length).toBe(1);
+    fireEvent.click(demoteButtons[0]);
+    // Confirm dialog → click Confirm.
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(rmSpy).toHaveBeenCalledWith("c1", "s2"));
+  });
+
+  it("Demote even-quorum guard → acknowledge-and-retry re-submits with acknowledgeEvenQuorum (F6)", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue(
+      QUORUM_SWARM(
+        [
+          { serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s2", name: "node-b", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+          { serverId: "s3", name: "node-c", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true },
+        ],
+        { managers: 3, managersOnline: 3, hasQuorum: true },
+      ),
+    );
+    const rmSpy = vi.spyOn(api, "removeManager")
+      .mockRejectedValueOnce(new Error("removing this manager brings the total to 2 — an even manager count adds no extra Raft fault-tolerance"))
+      .mockResolvedValueOnce(QUORUM_SWARM([], { managers: 2, managersOnline: 2, hasQuorum: true }));
+    wrap(<ClusterDetailPage />);
+    // 2 non-primary managers (s2, s3) → 2 Demote buttons; demote the first (s2).
+    const demoteButtons = await screen.findAllByRole("button", { name: "Demote" });
+    expect(demoteButtons.length).toBe(2);
+    fireEvent.click(demoteButtons[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" })); // demote confirm
+    await waitFor(() => expect(rmSpy).toHaveBeenNthCalledWith(1, "c1", "s2")); // first attempt, no ack → 400
+    // even-quorum error → acknowledge-and-retry dialog → "Proceed anyway"
+    fireEvent.click(await screen.findByRole("button", { name: "Proceed anyway" }));
+    await waitFor(() => expect(rmSpy).toHaveBeenNthCalledWith(2, "c1", "s2", { acknowledgeEvenQuorum: true }));
+  });
 });

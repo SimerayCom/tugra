@@ -31,11 +31,15 @@ function spec(over: Partial<AppSpec> = {}): AppSpec {
   } as AppSpec;
 }
 
-function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; sendImpl?: jest.Mock } = {}) {
+function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; backupManagerId?: string | null; sendImpl?: jest.Mock } = {}) {
   const cluster = { swarmStatus: opts.swarmStatus ?? "ACTIVE", swarmManagerId: opts.swarmManagerId ?? "mgr" };
   const prisma = {
     cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
-    server: { findUnique: jest.fn().mockResolvedValue({ status: opts.managerStatus ?? "ONLINE" }) },
+    server: {
+      findUnique: jest.fn().mockResolvedValue({ status: opts.managerStatus ?? "ONLINE" }),
+      // FLEET-G failover: the primary being offline triggers a search for any other online MANAGER.
+      findFirst: jest.fn().mockResolvedValue(opts.backupManagerId ? { id: opts.backupManagerId } : null),
+    },
   } as unknown as PrismaService;
   const send =
     opts.sendImpl ??
@@ -55,8 +59,16 @@ describe("SwarmDeployService.resolveManager", () => {
       await expect(make({ swarmStatus: st }).svc.resolveManager("c1")).rejects.toBeInstanceOf(BadRequestException);
     }
   });
-  it("errors when the manager is offline", async () => {
+  it("errors when the manager is offline and there is no other online manager to fail over to", async () => {
     await expect(make({ managerStatus: "OFFLINE" }).svc.resolveManager("c1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+  it("FLEET-G: fails over to another ONLINE manager when the primary is offline", async () => {
+    const { svc, prisma } = make({ managerStatus: "OFFLINE", backupManagerId: "mgr2" });
+    expect(await svc.resolveManager("c1")).toBe("mgr2");
+    // the fallback query excludes the primary and requires an online swarm-capable manager
+    expect((prisma.server.findFirst as unknown as jest.Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ clusterId: "c1", swarmRole: "MANAGER", status: "ONLINE", NOT: { id: "mgr" } }) }),
+    );
   });
 });
 

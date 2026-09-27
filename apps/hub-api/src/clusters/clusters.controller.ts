@@ -10,6 +10,8 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ClustersService } from "./clusters.service";
 import { SwarmService } from "./swarm.service";
 import {
+  AddManagerInput,
+  AddManagerSchema,
   CreateClusterInput,
   CreateClusterSchema,
   FormSwarmInput,
@@ -143,5 +145,31 @@ export class ClustersController {
     @Body(new ZodValidationPipe(SetNodeLabelsSchema)) body: SetNodeLabelsInput,
   ) {
     return this.swarm.setNodeLabels(user.userId, id, nodeId, body);
+  }
+
+  // Add one more MANAGER (FLEET-G, multi-manager Raft HA): promote an existing worker or have a fresh member
+  // join directly as a manager. Same elevated scope as Form Swarm — it dispatches signed `docker node promote`/
+  // `docker swarm join` to agents; the service enforces servers:manage.
+  @Post(":id/swarm/managers")
+  @RequireScopes("deploy")
+  @ApiZodBody(AddManagerSchema)
+  addManager(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(AddManagerSchema)) body: AddManagerInput,
+  ) {
+    return this.swarm.addManager(user.userId, id, body);
+  }
+
+  // Demote a MANAGER back to a worker (FLEET-G). No @RequireScopes → inherits the platform DELETE⇒admin
+  // default, same rationale as dissolveSwarm: annotating would only ever LOWER that scope for a destructive op.
+  @Delete(":id/swarm/managers/:serverId")
+  removeManager(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("serverId") serverId: string,
+    @Query("acknowledgeEvenQuorum") acknowledgeEvenQuorum?: string,
+  ) {
+    return this.swarm.removeManager(user.userId, id, { serverId, acknowledgeEvenQuorum: acknowledgeEvenQuorum === "true" });
   }
 }

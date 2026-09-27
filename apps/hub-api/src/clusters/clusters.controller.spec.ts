@@ -22,6 +22,8 @@ function make() {
     joinNode: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     leaveNode: jest.fn().mockResolvedValue({ clusterId: "c1" }),
     setNodeLabels: jest.fn().mockResolvedValue({ clusterId: "c1" }),
+    addManager: jest.fn().mockResolvedValue({ clusterId: "c1" }),
+    removeManager: jest.fn().mockResolvedValue({ clusterId: "c1" }),
   } as unknown as SwarmService;
   return { ctrl: new ClustersController(svc, swarm), svc, swarm };
 }
@@ -86,5 +88,26 @@ describe("ClustersController", () => {
 
   it("DELETE swarm node inherits the platform admin default (no scope override on node removal)", () => {
     expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.leaveSwarmNode)).toBeUndefined();
+  });
+
+  it("addManager / removeManager delegate to the swarm service (FLEET-G)", async () => {
+    const { ctrl, swarm } = make();
+    await ctrl.addManager(USER, "c1", { serverId: "s1" });
+    expect(swarm.addManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1" });
+    await ctrl.addManager(USER, "c1", { serverId: "s1", acknowledgeEvenQuorum: true });
+    expect(swarm.addManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1", acknowledgeEvenQuorum: true });
+    // the ?acknowledgeEvenQuorum=true query string is coerced to a real boolean for the service
+    await ctrl.removeManager(USER, "c1", "s1", "true");
+    expect(swarm.removeManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1", acknowledgeEvenQuorum: true });
+    await ctrl.removeManager(USER, "c1", "s1", undefined);
+    expect(swarm.removeManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1", acknowledgeEvenQuorum: false });
+  });
+
+  it("POST swarm/managers (add manager) requires the elevated 'deploy' scope", () => {
+    expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.addManager)).toEqual(["deploy"]);
+  });
+
+  it("DELETE swarm/managers (demote) inherits the platform admin default (no scope override on the destructive demote)", () => {
+    expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.removeManager)).toBeUndefined();
   });
 });

@@ -42,8 +42,8 @@ export function buildSwarmInitScript(advertiseAddr: string): string {
   return `docker swarm init --advertise-addr ${shq(addr)} --listen-addr ${shq(`0.0.0.0:${SWARM_MGMT_PORT}`)}`;
 }
 
-/** Print (quiet) the current join token for the given role. Workers always use "worker" — the "manager"
- *  token is higher-privilege and out of scope for single-manager v1. */
+/** Print (quiet) the current join token for the given role. The "manager" token is higher-privilege — used by
+ *  addManager() to grow a multi-manager Raft quorum (FLEET-G). */
 export function buildSwarmJoinTokenScript(role: "worker" | "manager"): string {
   return `docker swarm join-token -q ${role}`;
 }
@@ -121,4 +121,18 @@ export function buildNodeDrainScript(nodeId: string, timeoutSec = NODE_DRAIN_TIM
  *  got the chance to leave locally at all. */
 export function buildNodeRemoveScript(nodeId: string): string {
   return `docker node rm --force ${shq(nodeId)}`;
+}
+
+/** Promote an existing worker node to MANAGER (grow the Raft quorum), run on a MANAGER. `nodeId` is the DOCKER
+ *  swarm node id (Server.swarmNodeId), never Tugra's Server.id — `docker node promote` only knows the former.
+ *  Idempotent: promoting an already-manager node is a no-op that exits 0. */
+export function buildNodePromoteScript(nodeId: string): string {
+  return `docker node promote ${shq(nodeId)}`;
+}
+
+/** Demote a MANAGER back to worker (shrink the Raft quorum), run on a MANAGER. `nodeId` is the DOCKER swarm
+ *  node id (Server.swarmNodeId). Idempotent: demoting an already-worker node is a no-op that exits 0. The
+ *  caller MUST guard against demoting the last reachable manager (that would lose the control plane). */
+export function buildNodeDemoteScript(nodeId: string): string {
+  return `docker node demote ${shq(nodeId)}`;
 }

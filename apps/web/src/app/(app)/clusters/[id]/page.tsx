@@ -49,6 +49,8 @@ export default function ClusterDetailPage() {
   const [renaming, setRenaming] = useState(false);
   const [forming, setForming] = useState(false);
   const [addingNode, setAddingNode] = useState(false);
+  const [addingManager, setAddingManager] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
 
   const { data: swarm, isLoading: swarmLoading, refetch: refetchSwarm, isRefetching: swarmRefetching } = useQuery({
     queryKey: ["swarm", id],
@@ -68,6 +70,25 @@ export default function ClusterDetailPage() {
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.removeNodeFailed"), "error"),
   });
 
+  // Per-manager in-flight set for demote — kept separate from removingIds (worker removal) since a manager row
+  // and a worker row can be acted on independently.
+  const [demotingIds, setDemotingIds] = useState<Set<string>>(new Set());
+  const demote = useMutation({
+    mutationFn: (v: { serverId: string; ack?: boolean }) =>
+      v.ack ? api.removeManager(id, v.serverId, { acknowledgeEvenQuorum: true }) : api.removeManager(id, v.serverId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["swarm", id] }); qc.invalidateQueries({ queryKey: ["cluster", id] }); },
+    onError: async (e, v) => {
+      const msg = e instanceof Error ? e.message : "";
+      // Even-quorum guard (e.g. demoting 3→2 managers): offer an acknowledge-and-retry, same affordance as the
+      // Add-manager modal, instead of dead-ending in a toast the operator can't act on.
+      if (!v.ack && /even manager count/i.test(msg) && (await confirm({ body: msg, confirmLabel: t("clusters.acknowledgeAndRetry") }))) {
+        demote.mutate({ serverId: v.serverId, ack: true });
+        return;
+      }
+      toast(msg || t("clusters.removeManagerFailed"), "error");
+    },
+  });
+
   const del = useMutation({
     mutationFn: () => api.deleteCluster(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["clusters"] }); router.replace("/clusters"); },
@@ -81,6 +102,10 @@ export default function ClusterDetailPage() {
   const memberIds = cluster.servers.map((s) => s.id);
   // Members that are online, swarm-capable, and not yet joined — eligible for a live "Add node".
   const joinCandidates = swarm ? swarm.nodes.filter((n) => !n.swarmRole && n.status === "ONLINE" && n.swarmCapable) : [];
+  // Online, swarm-capable members that are NOT already a manager — eligible to be promoted/joined as a manager.
+  const managerCandidates = swarm ? swarm.nodes.filter((n) => n.swarmRole !== "MANAGER" && n.status === "ONLINE" && n.swarmCapable) : [];
+  const managerCount = swarm ? swarm.nodes.filter((n) => n.swarmRole === "MANAGER").length : 0;
+  const swarmFormed = swarm?.swarmStatus === "ACTIVE" || swarm?.swarmStatus === "DEGRADED";
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -155,6 +180,12 @@ export default function ClusterDetailPage() {
             {cluster.canWrite && swarm?.swarmStatus === "ACTIVE" && joinCandidates.length > 0 && (
               <Btn onClick={() => setAddingNode(true)}>{t("clusters.addNode")}</Btn>
             )}
+            {cluster.canWrite && swarmFormed && (
+              <Btn variant="ghost" onClick={() => setAdvanced((v) => !v)}>{t("clusters.managersAdvanced")} {advanced ? "▴" : "▾"}</Btn>
+            )}
+            {cluster.canWrite && swarmFormed && advanced && managerCandidates.length > 0 && (
+              <Btn onClick={() => setAddingManager(true)}>{t("clusters.addManager")}</Btn>
+            )}
             {cluster.canWrite && swarm && swarm.swarmStatus !== "NONE" && (
               <Btn
                 variant="danger"
@@ -185,6 +216,16 @@ export default function ClusterDetailPage() {
                 </span>
               )}
             </div>
+            {swarm.quorum && !swarm.quorum.hasQuorum && (
+              <div role="alert" style={{ fontSize: 12, color: "var(--c-am)", background: "var(--c-bg2)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 10px" }}>
+                {t("clusters.quorumLost", { online: swarm.quorum.managersOnline, total: swarm.quorum.managers })}
+              </div>
+            )}
+            {swarm.quorum && swarm.quorum.managers > 1 && swarm.quorum.hasQuorum && (
+              <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>
+                {t("clusters.quorumHealthy", { online: swarm.quorum.managersOnline, total: swarm.quorum.managers })}
+              </div>
+            )}
             {swarm.swarmLastError && (
               <div style={{ fontSize: 12, color: "var(--c-am)", background: "var(--c-bg2)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 10px" }}>
                 {swarm.swarmLastError}
@@ -199,8 +240,30 @@ export default function ClusterDetailPage() {
                     {n.swarmRole ?? "—"}
                   </span>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</span>
+                  {n.swarmRole === "MANAGER" && n.serverId === swarm.managerServerId && (
+                    <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--c-a)", border: "1px solid var(--c-a)", borderRadius: 999, padding: "1px 7px" }}>
+                      {t("clusters.primaryManager")}
+                    </span>
+                  )}
                   {n.swarmError && <span style={{ fontSize: 12, color: "var(--c-r)" }}>{n.swarmError}</span>}
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--c-tx3)" }}>{n.status}</span>
+                  {cluster.canWrite && n.swarmRole === "MANAGER" && n.serverId !== swarm.managerServerId && managerCount > 1 && (
+                    <Btn
+                      variant="ghost"
+                      style={{ fontSize: 11, padding: "4px 8px" }}
+                      disabled={demotingIds.has(n.serverId)}
+                      onClick={async () => {
+                        if (await confirm({ body: t("clusters.demoteConfirm", { name: n.name }) })) {
+                          setDemotingIds((prev) => new Set(prev).add(n.serverId));
+                          demote.mutate({ serverId: n.serverId }, {
+                            onSettled: () => setDemotingIds((prev) => { const next = new Set(prev); next.delete(n.serverId); return next; }),
+                          });
+                        }
+                      }}
+                    >
+                      {demotingIds.has(n.serverId) ? "…" : t("clusters.demoteManager")}
+                    </Btn>
+                  )}
                   {cluster.canWrite && n.swarmRole === "WORKER" && (
                     <Btn
                       variant="danger"
@@ -237,6 +300,7 @@ export default function ClusterDetailPage() {
       {running && <ClusterRunModal cluster={cluster} memberIds={memberIds} onClose={() => setRunning(false)} />}
       {forming && <FormSwarmModal cluster={cluster} onClose={() => setForming(false)} />}
       {addingNode && swarm && <AddNodeModal cluster={cluster} swarm={swarm} onClose={() => setAddingNode(false)} />}
+      {addingManager && swarm && <AddManagerModal cluster={cluster} swarm={swarm} onClose={() => setAddingManager(false)} />}
     </div>
   );
 }
@@ -390,6 +454,61 @@ function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swa
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
         <Btn onClick={() => join.mutate()} disabled={join.isPending || !serverId}>{join.isPending ? "…" : t("clusters.addNode")}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/** Add a MANAGER (FLEET-G): promote an eligible online worker, or have a fresh member join directly as a
+ *  manager. If the hub refuses because the resulting manager count would be even, surface an inline
+ *  "Proceed anyway" checkbox that re-submits with acknowledgeEvenQuorum. */
+function AddManagerModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swarm: SwarmView; onClose: () => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const candidates = swarm.nodes.filter((n) => n.swarmRole !== "MANAGER" && n.status === "ONLINE" && n.swarmCapable);
+  const [serverId, setServerId] = useState(candidates[0]?.serverId ?? "");
+  const [ack, setAck] = useState(false);
+  const add = useMutation({
+    mutationFn: () => api.addManager(cluster.id, { serverId, acknowledgeEvenQuorum: ack || undefined }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
+      qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
+      onClose();
+    },
+  });
+  const errMsg = add.error instanceof Error ? add.error.message : add.isError ? t("clusters.addManagerFailed") : null;
+  const evenBlocked = !!errMsg && /even manager count/i.test(errMsg);
+  return (
+    <Modal onClose={onClose} cardStyle={{ width: 460, maxWidth: "92vw" }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("clusters.addManager")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("clusters.addManagerHint")}</div>
+      {candidates.length === 0 ? (
+        <div style={{ fontSize: 12, color: "var(--c-am)" }}>{t("clusters.noEligibleServers")}</div>
+      ) : (
+        <>
+          <label style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.addManagerServer")}</label>
+          <select
+            value={serverId}
+            onChange={(e) => setServerId(e.target.value)}
+            style={{ width: "100%", marginTop: 6, padding: "8px 10px", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)", background: "var(--c-bg)", color: "var(--c-tx)" }}
+          >
+            {candidates.map((n) => (
+              <option key={n.serverId} value={n.serverId}>{n.name}</option>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: "var(--c-am)", marginTop: 10 }}>{t("clusters.swarmPortsWarn")}</div>
+        </>
+      )}
+      {errMsg && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{errMsg}</div>}
+      {evenBlocked && (
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 8 }}>
+          <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+          {t("clusters.acknowledgeAndRetry")}
+        </label>
+      )}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+        <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
+        <Btn onClick={() => add.mutate()} disabled={add.isPending || !serverId || (evenBlocked && !ack)}>{add.isPending ? "…" : t("clusters.addManager")}</Btn>
       </div>
     </Modal>
   );

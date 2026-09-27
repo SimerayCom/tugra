@@ -9,6 +9,7 @@ function make(opts: {
   swarmManagerId?: string | null;
   managerStatus?: string;
   swarmNodeId?: string | null;
+  backupManagerId?: string | null; // FLEET-G: an online backup manager for status() failover
   classicDomainApps?: number;
   classicProxyOutput?: string; // buildClassicProxyRunningScript output
   proxyReplicas?: string; // buildSwarmProxyStatusScript output
@@ -29,6 +30,7 @@ function make(opts: {
         dnsProvider: opts.dnsProvider ?? null,
         dnsCredsEnc: opts.dnsCredsEnc ?? null,
       }),
+      findFirst: jest.fn().mockResolvedValue(opts.backupManagerId ? { id: opts.backupManagerId } : null),
     },
     application: { count: jest.fn().mockResolvedValue(opts.classicDomainApps ?? 0) },
   } as unknown as PrismaService;
@@ -100,5 +102,28 @@ describe("SwarmProxyService.ensure", () => {
   it("blocks a non-formed swarm", async () => {
     const { svc } = make({ swarmStatus: "NONE" });
     await expect(svc.ensure("c1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("SwarmProxyService.status (FLEET-G failover)", () => {
+  it("dispatches the cluster-wide `docker service ls` read to the primary when it is online", async () => {
+    const { svc, send } = make({ proxyReplicas: "1/1" });
+    const r = await svc.status("c1");
+    const call = send.mock.calls.find((c) => (c[1] as string).includes("docker service ls --filter name=tugra-swarm-proxy"));
+    expect(call![0]).toBe("mgr");
+    expect(r).toEqual({ exitCode: 0, output: "1/1" });
+  });
+
+  it("fails over to a backup online manager when the primary is offline", async () => {
+    const { svc, send } = make({ managerStatus: "OFFLINE", backupManagerId: "mgr2", proxyReplicas: "1/1" });
+    const r = await svc.status("c1");
+    const call = send.mock.calls.find((c) => (c[1] as string).includes("docker service ls --filter name=tugra-swarm-proxy"));
+    expect(call![0]).toBe("mgr2"); // dispatched to the backup, not the offline primary
+    expect(r.output).toBe("1/1");
+  });
+
+  it("throws when the primary is offline and no other manager is online", async () => {
+    const { svc } = make({ managerStatus: "OFFLINE" }); // no backupManagerId → findFirst returns null
+    await expect(svc.status("c1")).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
