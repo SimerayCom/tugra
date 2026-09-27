@@ -2120,6 +2120,7 @@
                         "deploy_rolled_back",
                         "server_offline",
                         "server_online",
+                        "swarm_degraded",
                         "ssl_expiring",
                         "token_expiring",
                         "backup_failed",
@@ -2222,6 +2223,7 @@
                         "deploy_rolled_back",
                         "server_offline",
                         "server_online",
+                        "swarm_degraded",
                         "ssl_expiring",
                         "token_expiring",
                         "backup_failed",
@@ -3569,6 +3571,14 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "reserveMemoryMb": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "reserveCpus": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "gpus": {
                         "type": "string",
                         "nullable": true
@@ -3790,6 +3800,8 @@
                       "healthCheckPort",
                       "memoryMb",
                       "cpus",
+                      "reserveMemoryMb",
+                      "reserveCpus",
                       "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
@@ -4066,6 +4078,14 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "reserveMemoryMb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "reserveCpus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -4287,6 +4307,8 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "reserveMemoryMb",
+                    "reserveCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -4548,6 +4570,14 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "reserveMemoryMb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "reserveCpus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -4769,6 +4799,8 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "reserveMemoryMb",
+                    "reserveCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -5044,6 +5076,14 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "reserveMemoryMb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "reserveCpus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -5265,6 +5305,8 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "reserveMemoryMb",
+                    "reserveCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -6024,6 +6066,18 @@
                     "maximum": 64,
                     "nullable": true
                   },
+                  "reserveMemoryMb": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 1048576,
+                    "nullable": true
+                  },
+                  "reserveCpus": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 64,
+                    "nullable": true
+                  },
                   "gpus": {
                     "anyOf": [
                       {
@@ -6706,6 +6760,14 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "reserveMemoryMb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "reserveCpus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -6927,6 +6989,8 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "reserveMemoryMb",
+                    "reserveCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -7138,6 +7202,14 @@
                         "nullable": true
                       },
                       "cpus": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "reserveMemoryMb": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "reserveCpus": {
                         "type": "number",
                         "nullable": true
                       },
@@ -7362,6 +7434,8 @@
                       "healthCheckPort",
                       "memoryMb",
                       "cpus",
+                      "reserveMemoryMb",
+                      "reserveCpus",
                       "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
@@ -7606,6 +7680,14 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "reserveMemoryMb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "reserveCpus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -7827,6 +7909,8 @@
                     "healthCheckPort",
                     "memoryMb",
                     "cpus",
+                    "reserveMemoryMb",
+                    "reserveCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",

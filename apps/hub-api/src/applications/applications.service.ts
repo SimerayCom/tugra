@@ -113,6 +113,8 @@ export const AppViewSchema = z.object({
   healthCheckPort: z.number().nullable(),
   memoryMb: z.number().nullable(),
   cpus: z.number().nullable(),
+  reserveMemoryMb: z.number().nullable(),
+  reserveCpus: z.number().nullable(),
   gpus: z.string().nullable(),
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
@@ -680,6 +682,8 @@ export class ApplicationsService {
           healthCheckPort: parent.healthCheckPort,
           memoryMb: parent.memoryMb,
           cpus: parent.cpus,
+          reserveMemoryMb: parent.reserveMemoryMb,
+          reserveCpus: parent.reserveCpus,
           gpus: parent.gpus,
           volumes: (parent.volumes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           gitTokenEnc: parent.gitTokenEnc,
@@ -1546,7 +1550,14 @@ export class ApplicationsService {
   async setLimits(
     userId: string,
     id: string,
-    limits: { memoryMb?: number | null; cpus?: number | null; gpus?: string | null; deployTimeoutSec?: number | null },
+    limits: {
+      memoryMb?: number | null;
+      cpus?: number | null;
+      reserveMemoryMb?: number | null;
+      reserveCpus?: number | null;
+      gpus?: string | null;
+      deployTimeoutSec?: number | null;
+    },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
@@ -1554,6 +1565,8 @@ export class ApplicationsService {
       data: {
         memoryMb: limits.memoryMb ?? null,
         cpus: limits.cpus ?? null,
+        reserveMemoryMb: limits.reserveMemoryMb ?? null,
+        reserveCpus: limits.reserveCpus ?? null,
         gpus: limits.gpus || null, // "" (cleared) → null
         deployTimeoutSec: limits.deployTimeoutSec ?? null,
       },
@@ -1958,6 +1971,8 @@ export class ApplicationsService {
       healthCheckPort: app.healthCheckPort,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      reserveMemoryMb: app.reserveMemoryMb,
+      reserveCpus: app.reserveCpus,
       gpus: app.gpus,
       replicas: app.replicas,
       dockerOptions: app.dockerOptions,
@@ -2084,6 +2099,8 @@ export class ApplicationsService {
       healthCheckPort: app.healthCheckPort,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
+      reserveMemoryMb: app.reserveMemoryMb,
+      reserveCpus: app.reserveCpus,
       gpus: app.gpus,
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,

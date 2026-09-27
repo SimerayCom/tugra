@@ -178,6 +178,15 @@ describe("renderEvent — typed per-event templates", () => {
     expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/srv1");
   });
 
+  it("swarm_degraded: failure + critical, nodesReady field, cluster link", () => {
+    const m = render("swarm_degraded", { clusterId: "c1", clusterName: "prod", readyCount: 2, joinedCount: 3 });
+    expect(m.level).toBe("failure");
+    expect(m.title).toBe("Swarm degraded — prod");
+    expect(m.critical).toBe(true);
+    expect(fieldVal(m, "Nodes ready")).toBe("2/3");
+    expect(linkUrl(m, "Open cluster")).toBe("https://web.test/clusters/c1");
+  });
+
   it("volume_backup_success: success, aggregate size, failed-volumes field dropped", () => {
     const m = render("volume_backup_success", {
       appId: "app1", appName: "blog", volumes: "2", destType: "S3", bucket: "b", sizeBytes: "1048576", failedVolumes: "",
@@ -275,7 +284,7 @@ describe("renderEvent — typed per-event templates", () => {
   it("empty ctx never yields the string 'undefined' and drops empty fields", () => {
     for (const type of [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
-      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online",
+      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
     ]) {
@@ -300,11 +309,11 @@ describe("renderEvent — typed per-event templates", () => {
     // critical events are volume_backup_failed and scheduled_task_failed (real failed operations).
     const critical = new Set([
       "deploy_failed", "backup_failed", "backup_restore_failed", "server_offline", "monitor_down",
-      "volume_backup_failed", "scheduled_task_failed",
+      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded",
     ]);
     const all = [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
-      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online",
+      "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
     ];

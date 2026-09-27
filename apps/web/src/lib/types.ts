@@ -642,6 +642,8 @@ export interface Application {
   healthCheckPort: number | null;
   memoryMb: number | null;
   cpus: number | null;
+  reserveMemoryMb: number | null;
+  reserveCpus: number | null;
   gpus: string | null;
   deployTimeoutSec: number | null;
   dockerOptions: string | null;

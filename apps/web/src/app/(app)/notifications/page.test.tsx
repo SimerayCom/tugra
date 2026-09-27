@@ -40,11 +40,12 @@ describe("NotificationsPage — event list from the backend single source", () =
 
   it("renders the newly-added operation events with their i18n labels", async () => {
     vi.spyOn(api, "listChannelEvents").mockResolvedValue({
-      events: ["backup_success", "server_online", "volume_backup_failed", "scheduled_task_success", "docker_cleanup_success"],
+      events: ["backup_success", "server_online", "swarm_degraded", "volume_backup_failed", "scheduled_task_success", "docker_cleanup_success"],
     });
     wrap(<NotificationsPage />);
     await waitFor(() => expect(screen.getByText("Backup succeeded")).toBeTruthy());
     expect(screen.getByText("Server back online")).toBeTruthy();
+    expect(screen.getByText("Swarm degraded")).toBeTruthy();
     expect(screen.getByText("Volume backup failed")).toBeTruthy();
     expect(screen.getByText("Scheduled task succeeded")).toBeTruthy();
     expect(screen.getByText("Docker cleanup succeeded")).toBeTruthy();

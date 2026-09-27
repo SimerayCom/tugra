@@ -22,6 +22,7 @@
   "eventDeployRolledBack": "Deploy rolled back (kept previous version)",
   "eventServerOffline": "Server offline",
   "eventServerOnline": "Server back online",
+  "eventSwarmDegraded": "Swarm degraded",
   "eventSslExpiring": "SSL certificate expiring",
   "eventTokenExpiring": "API token expiring",
   "eventBackupFailed": "Backup failed",

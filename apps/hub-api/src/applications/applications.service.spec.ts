@@ -876,7 +876,19 @@ describe("ApplicationsService", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, cpus: 0.5, gpus: "all", deployTimeoutSec: 600 });
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, gpus: "all", deployTimeoutSec: 600 } }),
+      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, reserveMemoryMb: null, reserveCpus: null, gpus: "all", deployTimeoutSec: 600 } }),
+    );
+  });
+
+  it("persists swarm resource reservations", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, reserveMemoryMb: 128, reserveCpus: 0.25 });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ reserveMemoryMb: 128, reserveCpus: 0.25 }) }),
     );
   });
 

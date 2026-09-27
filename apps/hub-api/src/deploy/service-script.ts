@@ -30,8 +30,19 @@ export function serviceName(app: { id: string }): string {
  *  can reach each other across nodes. Created on a manager, idempotent. */
 export const SWARM_OVERLAY = "tugra-swarm";
 
+/** `--opt encrypted` turns on IPsec ESP encryption for inter-node VXLAN traffic. Swarm's own control-plane
+ *  gossip is already TLS-encrypted; this additionally protects the DATA PLANE — the actual traffic between
+ *  service tasks on different nodes. No competitor Docker-Swarm PaaS turns this on by default.
+ *
+ *  MIGRATION NOTE: this only affects a network created FRESH. `docker network create` with the SAME name but
+ *  different options on an EXISTING network returns non-zero ("already exists"), which the trailing `|| true`
+ *  swallows — so a cluster whose overlay was created before this change keeps running UNENCRYPTED until an
+ *  operator manually removes+recreates it (requires no services attached, i.e. stop every swarm app on that
+ *  cluster → `docker network rm tugra-swarm` on the manager → redeploy). Doc-only migration for now (see
+ *  CHANGELOG); a future slice could warn when `docker network inspect tugra-swarm --format
+ *  '{{.Options.encrypted}}'` comes back empty. */
 export function buildOverlayEnsureScript(name = SWARM_OVERLAY): string {
-  return `docker network create -d overlay --attachable ${shq(name)} 2>/dev/null || true`;
+  return `docker network create -d overlay --opt encrypted --attachable ${shq(name)} 2>/dev/null || true`;
 }
 
 // Container health-check cadence (mirrors the classic path's runContainerArgs defaults).
@@ -52,6 +63,13 @@ export interface ServiceDeployOpts {
   registryAuth?: RegistryAuth | null; // login before create/update + --with-registry-auth distributes it
   memoryMb?: number | null;
   cpus?: number | null;
+  /** Soft placement hints (`docker service --reserve-memory`/`--reserve-cpu`): Swarm's scheduler avoids
+   *  placing this service's tasks on a node without this much capacity free. Unlike memoryMb/cpus (hard
+   *  cgroup ceilings enforced at runtime), a reservation is advisory — it only affects WHERE a task lands,
+   *  never throttles/OOM-kills it. Swarm-only: the classic `docker run` path has no reservation flag, so
+   *  these are never read outside this file. */
+  reserveMemoryMb?: number | null;
+  reserveCpus?: number | null;
   healthCmd?: string | null;
   labels?: string[]; // service-level labels (Traefik swarm-provider reads these) — PhaseB; [] in PhaseA
   publish?: string[]; // routing-mesh published ports, e.g. "8080:80" (reachable on any node) — domain-less apps
@@ -147,6 +165,8 @@ function commonServiceFlags(o: ServiceDeployOpts): string[] {
   const flags: string[] = [`--with-registry-auth`, `--update-failure-action rollback`, `--update-monitor ${updateMonitorSec(o.healthCmd)}s`];
   if (o.memoryMb) flags.push(`--limit-memory ${o.memoryMb}m`);
   if (o.cpus) flags.push(`--limit-cpu ${o.cpus}`);
+  if (o.reserveMemoryMb) flags.push(`--reserve-memory ${o.reserveMemoryMb}m`);
+  if (o.reserveCpus) flags.push(`--reserve-cpu ${o.reserveCpus}`);
   return flags;
 }
 
@@ -226,9 +246,15 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
   ].join("\n");
 }
 
-/** Scale a service (stop = 0, start = the app's stored replica count). Fire-and-forget; status reconciles. */
-export function buildServiceScaleScript(name: string, replicas: number): string {
-  return `docker service scale --detach ${shq(name)}=${replicas}`;
+/** Scale a service (stop = 0, start = the app's stored replica count) AND poll to convergence — exactly like
+ *  restart()/deploy() do (SAME pollFragment machinery), so a stop/start actually confirms the tasks reached
+ *  the target count instead of reporting success the instant Swarm ACCEPTED the request. TUGRA_MODE stays
+ *  "create" (never "update"): a pure replica-count change does NOT set Docker's Spec.UpdateStatus (that only
+ *  fires when the TASK SPEC changes — image/env/labels/health), so convergence is judged the same way FIRST
+ *  CREATE is: counting Running tasks against the target. For replicas=0 (stop) this converges as soon as 0
+ *  Running tasks remain. */
+export function buildServiceScaleScript(name: string, replicas: number, pollSec: number): string {
+  return ["set +e", "TUGRA_MODE=create", `docker service scale --detach ${shq(name)}=${replicas}`, pollFragment(name, replicas, pollSec)].join("\n");
 }
 
 /** Force a rolling recreation of all tasks (restart) — async, so callers poll for convergence. */
