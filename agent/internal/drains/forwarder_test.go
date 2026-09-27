@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mrcandev/tugra/agent/internal/protocol"
+	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
 
 func TestBatcherFlushesOnSize(t *testing.T) {
