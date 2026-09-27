@@ -80,18 +80,31 @@ describe("McpService.handle", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.tools_call", target: "get_thing", actor: "u1" }));
   });
 
-  it("real catalog (Phase2a): a deploy-scoped token SEES the mutate tools; a read-only token neither sees nor can call them", async () => {
+  it("real catalog: scope tiers gate the mutate tools (read < deploy < admin) — Phase2a/2b", async () => {
     const { svc } = make(); // svc.tools defaults to the real MCP_TOOLS
-    const deployNames = ((await svc.handle(ctx(["deploy"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
-    expect(deployNames).toEqual(expect.arrayContaining(["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"]));
+    const names = async (scopes: string[]) =>
+      ((await svc.handle(ctx(scopes), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
 
-    const readNames = ((await svc.handle(ctx(["read"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+    const deployNames = await names(["deploy"]);
+    // deploy token sees the deploy-tier lifecycle + swarm ops...
+    expect(deployNames).toEqual(expect.arrayContaining(["deploy_application", "restart_application", "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas"]));
+    // ...but NOT the admin-tier destructive tools
+    expect(deployNames).not.toContain("dissolve_swarm");
+    expect(deployNames).not.toContain("remove_application");
+
+    const readNames = await names(["read"]);
     expect(readNames).toContain("list_applications"); // read tools still visible
-    expect(readNames).not.toContain("restart_application"); // mutate tools hidden from a read-only token
+    expect(readNames).not.toContain("restart_application"); // no mutate tools for a read-only token
 
-    // and a read-only token that calls one anyway is refused BEFORE execution (never touches the service)
-    const denied = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "restart_application", arguments: { id: "x" } }))) as { error: { code: number } };
+    const adminNames = await names(["admin"]);
+    expect(adminNames).toEqual(expect.arrayContaining(["dissolve_swarm", "remove_application", "form_swarm", "restart_application"])); // admin sees everything
+
+    // a deploy token calling an admin tool anyway is refused BEFORE execution
+    const denied = (await svc.handle(ctx(["deploy"]), rpc("tools/call", { name: "remove_application", arguments: { id: "x", confirmName: "y" } }))) as { error: { code: number } };
     expect(denied.error.code).toBe(-32001);
+    // and a read token calling a deploy tool is likewise refused
+    const denied2 = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "restart_application", arguments: { id: "x" } }))) as { error: { code: number } };
+    expect(denied2.error.code).toBe(-32001);
   });
 
   it("tools/call: an executing tool that throws → isError content (not a JSON-RPC error) + audits", async () => {
