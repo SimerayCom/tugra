@@ -744,6 +744,7 @@ model Application {
   clusterId      String?
   replicas       Int?         // swarm service replica count (null = classic single-server deploy)
   placement      Json?        // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client (FLEET-D)
+  constraintServerId String?   // FLEET-E: system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
   source         AppSource    @default(IMAGE)

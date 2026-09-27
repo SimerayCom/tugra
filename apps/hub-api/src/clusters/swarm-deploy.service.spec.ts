@@ -126,6 +126,14 @@ describe("SwarmDeployService.deploy", () => {
     expect(script).toContain("--placement-pref 'spread=node.labels.zone'");
   });
 
+  it("mounts named volumes for a stateful app (FLEET-E), sourced from spec.volumes", async () => {
+    const { svc, send } = make();
+    await svc.deploy(app(), spec({ volumes: [{ name: "data", path: "/var/lib/data" }] }), "dep1", { timeoutMs: 1000 });
+    const script = send.mock.calls[0][1] as string;
+    expect(script).toContain("--mount 'type=volume,source=");
+    expect(script).toContain("destination=/var/lib/data'");
+  });
+
   it("domain app: ensures the swarm proxy and attaches Traefik SERVICE labels (no host publish)", async () => {
     const { svc, send, swarmProxy } = make();
     await svc.deploy(

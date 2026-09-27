@@ -2414,6 +2414,106 @@ describe("ApplicationsService.setPlacement (FLEET-D)", () => {
   });
 });
 
+describe("ApplicationsService FLEET-E — stateful auto-pin", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const stateful = (over = {}) => ({ ...app, source: "IMAGE", volumes: [{ name: "data", path: "/data" }], ...over });
+  const clusterRow = { teamId: "t1", swarmStatus: "ACTIVE", swarmManagerId: "mgr1" };
+  function ccDeps(appRow: object, cluster: object = clusterRow) {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(appRow), update },
+      cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
+      server: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    return { prisma, update };
+  }
+
+  it("auto-pins a stateful app to the cluster manager instead of refusing it", async () => {
+    const { prisma, update } = ccDeps(stateful());
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    expect(update.mock.calls[0][0].data).toMatchObject({ clusterId: "c1", constraintServerId: "mgr1" });
+  });
+
+  it("rejects replicas>1 for a stateful clustered app", async () => {
+    const { prisma } = ccDeps(stateful());
+    await expect(make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1", replicas: 3 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("clears the pin when leaving the cluster", async () => {
+    const { prisma, update } = ccDeps(stateful({ clusterId: "c1", constraintServerId: "mgr1" }));
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: null });
+    expect(update.mock.calls[0][0].data.constraintServerId).toBeNull();
+  });
+
+  it("explicitly nulls the pin for a stateless clustered app (never leaves a stale pin)", async () => {
+    const { prisma, update } = ccDeps({ ...app, source: "IMAGE", volumes: [] });
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    expect(update.mock.calls[0][0].data.constraintServerId).toBeNull();
+  });
+
+  it("rejects pinning a stateful app whose STORED replicas>1 even when the request omits replicas (P0 guard)", async () => {
+    const { prisma } = ccDeps(stateful({ replicas: 3 }));
+    await expect(make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("clears a stale pin when a stateless app moves to a DIFFERENT cluster", async () => {
+    // was pinned to c1's manager while stateful; volumes since removed → now stateless, moving to c2
+    const { prisma, update } = ccDeps({ ...app, source: "IMAGE", volumes: [], clusterId: "c1", constraintServerId: "mgr1" });
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c2" });
+    expect(update.mock.calls[0][0].data.constraintServerId).toBeNull();
+  });
+
+  it("auto-pin also clears any user placement (a hard pin can't coexist with contradictory rules)", async () => {
+    const { prisma, update } = ccDeps(stateful());
+    await make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1", replicas: 1 });
+    expect(update.mock.calls[0][0].data.placement).toBeDefined(); // Prisma.JsonNull sentinel
+  });
+
+  it("still refuses COMPOSE and GPU apps regardless of volumes", async () => {
+    const c = ccDeps(stateful({ source: "COMPOSE" }));
+    await expect(make(c.prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toThrow(/compose/i);
+    const g = ccDeps(stateful({ gpus: "all" }));
+    await expect(make(g.prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toThrow(/GPU/i);
+  });
+
+  it("throws when a stateful app targets a cluster with no swarm manager", async () => {
+    const { prisma } = ccDeps(stateful(), { teamId: "t1", swarmStatus: "ACTIVE", swarmManagerId: null });
+    await expect(make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toThrow(/manager/i);
+  });
+
+  it("setVolumes auto-pins when adding storage to an already-clustered app (replicas 1)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1", replicas: 1 }), update },
+      cluster: { findUnique: jest.fn().mockResolvedValue({ swarmManagerId: "mgr1" }) },
+    } as unknown as PrismaService;
+    await make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/data" }]);
+    expect(update.mock.calls[0][0].data.constraintServerId).toBe("mgr1");
+  });
+
+  it("setVolumes rejects adding storage when the clustered app has replicas>1", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1", replicas: 3 }), update },
+      cluster: { findUnique: jest.fn().mockResolvedValue({ swarmManagerId: "mgr1" }) },
+    } as unknown as PrismaService;
+    await expect(make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/data" }])).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setVolumes on a classic (non-cluster) app just persists, no cluster query", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const clusterFind = jest.fn();
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: null }), update },
+      cluster: { findUnique: clusterFind },
+    } as unknown as PrismaService;
+    await make(prisma, access, {} as AgentWsServer).setVolumes("u1", "app1", [{ name: "data", path: "/data" }]);
+    expect(clusterFind).not.toHaveBeenCalled();
+    expect(update.mock.calls[0][0].data.constraintServerId).toBeUndefined();
+  });
+});
+
 describe("ApplicationsService.clusterStatus", () => {
   type WithSwarm = { swarmDeploy: { status: jest.Mock } };
   const ps = (tasks: object[]) => tasks.map((t) => JSON.stringify(t)).join("\n");

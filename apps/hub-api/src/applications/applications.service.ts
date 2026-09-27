@@ -132,6 +132,7 @@ export const AppViewSchema = z.object({
   clusterId: z.string().nullable(),
   replicas: z.number().nullable(),
   placement: z.object({ constraints: z.array(PlacementConstraintSchema), spreadLabelKey: z.string().nullable() }),
+  constraintServerId: z.string().nullable(),
   deployStrategy: z.string(),
   rollbackOnFailure: z.boolean(),
   zeroDowntime: z.boolean(),
@@ -1604,11 +1605,21 @@ export class ApplicationsService {
   }
 
   async setVolumes(userId: string, id: string, volumes: AppVolume[]): Promise<void> {
-    await this.requireWrite(userId, id);
-    await this.prisma.application.update({
-      where: { id },
-      data: { volumes: volumes as unknown as Prisma.InputJsonValue },
-    });
+    const app = await this.requireWrite(userId, id);
+    const data: Prisma.ApplicationUncheckedUpdateInput = { volumes: volumes as unknown as Prisma.InputJsonValue };
+    // FLEET-E: adding persistent storage to an app ALREADY on a cluster hard-pins it to one node (a stateful
+    // service can't diverge across nodes) — symmetric with setClusterConfig, and closes the pre-existing gap
+    // where setVolumes had zero cluster-awareness. Removing all volumes does NOT auto-unpin (v1 — see docs).
+    if (app.clusterId && volumes.length > 0) {
+      if ((app.replicas ?? 1) > 1) {
+        throw new BadRequestException("lower replicas to 1 before adding persistent storage — a stateful app pinned to a single node can't run more than one replica");
+      }
+      const cluster = await this.prisma.cluster.findUnique({ where: { id: app.clusterId }, select: { swarmManagerId: true } });
+      if (!cluster?.swarmManagerId) throw new BadRequestException("cluster has no swarm manager to pin this stateful app to");
+      data.constraintServerId = cluster.swarmManagerId;
+      data.placement = Prisma.JsonNull; // hard pin overrides any user placement rules (can't contradict the pin)
+    }
+    await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.volumes.update", target: id });
   }
 
@@ -1692,8 +1703,8 @@ export class ApplicationsService {
       let managerId: string | null = null;
       if (cfg.clusterId) {
         if (app.source === "COMPOSE") throw new BadRequestException("compose apps can't be deployed as swarm services yet");
-        // Named volumes / GPUs are node-local — replicas would diverge (data) or fail to schedule (device).
-        if (this.appVolumes(app).length > 0) throw new BadRequestException("remove named volumes before deploying to a swarm — replica data would diverge per node");
+        // GPUs are node-local hardware — genuinely unsupportable on a multi-node cluster. (Named volumes used
+        // to be refused here too; FLEET-E now hard-pins a stateful app to one node instead — see below.)
         if (app.gpus) throw new BadRequestException("GPU apps can't be deployed as swarm services");
         const cluster = await this.prisma.cluster.findUnique({ where: { id: cfg.clusterId }, select: { teamId: true, swarmStatus: true, swarmManagerId: true } });
         if (!cluster || cluster.teamId !== app.teamId) throw new BadRequestException("cluster not found in this team");
@@ -1705,6 +1716,21 @@ export class ApplicationsService {
           data.pushToRegistry = true; // every node pulls the built image from the registry
         }
         managerId = cluster.swarmManagerId;
+        // FLEET-E: a stateful app's named volume is node-local — a replica rescheduled elsewhere would start
+        // with empty/diverged data. Instead of refusing, hard-pin it to one node (the manager — deterministic,
+        // always resolvable, same anchor magic-domain re-home already uses) so its single replica lands on its data.
+        if (this.appVolumes(app).length > 0) {
+          if (!managerId) throw new BadRequestException("cluster has no swarm manager to pin this stateful app to");
+          data.constraintServerId = managerId;
+          // A hard node-pin is authoritative over user placement rules (which are meaningless on a single-node
+          // app and can directly contradict the pin) — clear them so the deploy can't emit a contradictory set.
+          data.placement = Prisma.JsonNull;
+        } else {
+          // Stateless on a cluster: never leave a STALE pin from a previous stateful/different-cluster state.
+          data.constraintServerId = null;
+        }
+      } else {
+        data.constraintServerId = null; // leaving a cluster drops the node pin (meaningless on classic deploy)
       }
       // Placement references a SPECIFIC cluster's live nodes — stale on ANY clusterId change (including
       // clearing back to classic deploy, where constraints are meaningless). Wipe it (Prisma.JsonNull convention).
@@ -1742,6 +1768,15 @@ export class ApplicationsService {
           }
         }
       }
+    }
+    // A stateful app pinned to one node runs exactly 1 replica (N>1 tasks would mount the same node-local
+    // volume concurrently = corruption). Effective clusterId so a later replicas-only change is caught too.
+    const effectiveClusterId = cfg.clusterId !== undefined ? cfg.clusterId : app.clusterId;
+    // Effective replicas too (not just this call's cfg.replicas): a pin call that OMITS replicas must still be
+    // caught if the app already has replicas>1 stored (else N tasks mount the same node-local volume = corruption).
+    const effectiveReplicas = cfg.replicas !== undefined ? cfg.replicas : app.replicas;
+    if (effectiveClusterId && this.appVolumes(app).length > 0 && effectiveReplicas != null && effectiveReplicas > 1) {
+      throw new BadRequestException("a stateful app pinned to a single node runs exactly 1 replica");
     }
     if (cfg.replicas !== undefined) {
       data.replicas = cfg.replicas === null ? null : Math.max(1, Math.floor(cfg.replicas));
@@ -2153,6 +2188,7 @@ export class ApplicationsService {
       clusterId: app.clusterId,
       replicas: app.replicas,
       placement: this.appPlacement(app),
+      constraintServerId: app.constraintServerId,
       deployStrategy: app.deployStrategy,
       rollbackOnFailure: app.rollbackOnFailure,
       // Whether this app will ACTUALLY deploy zero-downtime (rolling) — surfaces the fact
