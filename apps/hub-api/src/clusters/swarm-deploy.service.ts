@@ -3,9 +3,12 @@ import type { Application } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
-import { appVolumeName, buildBuildOnlyScript, constraintExpr, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
+import { createHash } from "node:crypto";
+import { appVolumeName, buildBuildOnlyScript, constraintExpr, envFileB64, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
   SWARM_OVERLAY,
+  appEnvSecretPrefix,
+  buildInspectEntrypointScript,
   buildOverlayEnsureScript,
   buildServiceDeployScript,
   buildServiceLogsScript,
@@ -14,10 +17,22 @@ import {
   buildServiceRestartScript,
   buildServiceScaleScript,
   buildServiceTaskContainerScript,
+  parseImageEntrypointCmd,
   parseServiceImageDigest,
   serviceName,
   updateMonitorSec,
+  type AppEnvSecret,
 } from "../deploy/service-script";
+
+/** Order-independent short hash of an app's env (sorted-by-key), so a no-op resave that only reorders keys does
+ *  NOT rotate the secret. Mirrors swarm-proxy.service.ts's confighash convention. */
+export function appEnvConfigHash(env: Record<string, string>): string {
+  const body = Object.keys(env)
+    .sort()
+    .map((k) => `${k}=${env[k]}`)
+    .join("\n");
+  return createHash("sha256").update(body).digest("hex").slice(0, 12);
+}
 
 /** Total rollout poll budget, scaled to the replica count. A flat 300s is far too short for N replicas
  *  updated one at a time (worst case ≈ N × update-monitor), which would make a fine deploy report FAILED
@@ -161,6 +176,32 @@ export class SwarmDeployService {
         if (!constraints.includes(pin)) constraints.push(pin);
       }
     }
+    // FLEET-F: move env into an encrypted Docker secret instead of plaintext in the Raft store — but ONLY if
+    // the image has a shell to run the loader wrapper. Pull+inspect the image on the manager to learn its real
+    // Entrypoint/Cmd (the wrapper must re-supply them) and whether it has a shell; a shell-less image
+    // (distroless/scratch) falls back to the classic plaintext env path so it is never silently broken.
+    const env = spec.env && typeof spec.env === "object" ? spec.env : {};
+    let envSecret: AppEnvSecret | null = null;
+    let imageEntrypoint: string[] = [];
+    let imageCmd: string[] = [];
+    let envFallbackNoShell = false;
+    if (Object.keys(env).length > 0) {
+      const insp = await this.agentWs.sendCommand(managerId, buildInspectEntrypointScript(ref, auth), "swarm", 120_000);
+      if (insp.exitCode !== 0) throw new Error(`could not pull/inspect ${ref} to protect its env vars:\n${insp.output}`);
+      const parsed = parseImageEntrypointCmd(insp.output);
+      // Use a secret only when the image has a shell AND a real command to re-exec — an image with neither
+      // entrypoint nor cmd can't be wrapped (`exec "$@"` would be a no-op → silent crash loop), so fall back.
+      if (parsed.hasShell && (parsed.entrypoint.length > 0 || parsed.cmd.length > 0)) {
+        const confighash = appEnvConfigHash(env);
+        envSecret = { name: `${appEnvSecretPrefix(serviceName(app))}-${confighash}`, confighash, credsB64: envFileB64(env) };
+        imageEntrypoint = parsed.entrypoint;
+        imageCmd = parsed.cmd;
+      } else {
+        // shell-less/command-less image → keep env plaintext; flag it so a previously-WRAPPED service is
+        // recreated (its stale sh-wrapper entrypoint can't be reset by `docker service update`).
+        envFallbackNoShell = true;
+      }
+    }
     const script = [
       buildOverlayEnsureScript(SWARM_OVERLAY),
       buildServiceDeployScript({
@@ -168,7 +209,11 @@ export class SwarmDeployService {
         ref,
         replicas,
         network: SWARM_OVERLAY,
-        env: spec.env && typeof spec.env === "object" ? spec.env : {},
+        env,
+        envSecret,
+        imageEntrypoint,
+        imageCmd,
+        envFallbackNoShell,
         registryAuth: auth,
         memoryMb: spec.memoryMb ?? null,
         cpus: spec.cpus ?? null,

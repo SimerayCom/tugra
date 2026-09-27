@@ -95,6 +95,7 @@
   "regenerateConfirm": "Regenerate the webhook secret? The old one stops working.",
   "env": "Environment variables",
   "envDesc": "Stored encrypted. Injected at deploy via an env-file (not the command line).",
+  "envDescSwarm": "Stored as a Docker secret and decrypted only inside the running container — never written to the cluster's shared config store (needs an image with a shell; distroless images fall back to standard env).",
   "envAdd": "+ Add variable",
   "searchKeys": "Search keys…",
   "bulkEdit": "Bulk edit",

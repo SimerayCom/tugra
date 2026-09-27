@@ -45,6 +45,29 @@ export function buildOverlayEnsureScript(name = SWARM_OVERLAY): string {
   return `docker network create -d overlay --opt encrypted --attachable ${shq(name)} 2>/dev/null || true`;
 }
 
+// ── FLEET-F: swarm app env via Docker secret (encrypted-at-rest in Raft) instead of plaintext in the spec ──
+// Swarm has no k8s-style envFrom — a secret is always a FILE under /run/secrets. To turn it into process env
+// we override the entrypoint with a tiny loader that reads the file, exports each KEY=VALUE, then execs the
+// image's OWN command. This only works on images that HAVE a shell; the caller (dispatchService) detects that
+// and only sets envSecret when a shell exists — a shell-less image (distroless/scratch) falls back to the
+// classic plaintext --env path (envHelpers), so it is never silently broken.
+export const APP_ENV_CONFIGHASH_LABEL = "tugra.app.envhash";
+const APP_ENV_MOUNT = "app_env";
+// Deliberately ZERO single quotes (keeps the update-path nested shq() a single clean layer). Guarded: if the
+// secret isn't mounted (no env, or a legacy service on its first migrating update) it just execs the app.
+const APP_ENV_WRAPPER = `if [ -f /run/secrets/${APP_ENV_MOUNT} ]; then while IFS="=" read -r k v || [ -n "$k" ]; do [ -n "$k" ] && export "$k=$v"; done < /run/secrets/${APP_ENV_MOUNT}; fi; exec "$@"`;
+
+export interface AppEnvSecret {
+  name: string; // tugra-appenv-<serviceName>-<confighash>, minted by the caller (hub-side sha256)
+  confighash: string; // order-independent (sorted-by-key) short hash of the env
+  credsB64: string; // envFileB64(env) — the KEY=VALUE body used to mint the secret when absent
+}
+
+/** Prefix for every hash-named env secret of an app (so every version can be pruned on delete). */
+export function appEnvSecretPrefix(serviceNameValue: string): string {
+  return `tugra-appenv-${serviceNameValue}`;
+}
+
 // Container health-check cadence (mirrors the classic path's runContainerArgs defaults).
 const HEALTH = { intervalSec: 10, timeoutSec: 5, retries: 3, startPeriodSec: 30 };
 
@@ -76,6 +99,15 @@ export interface ServiceDeployOpts {
   constraints?: string[]; // already-rendered `--constraint` expressions (e.g. "node.hostname==web-1") — FLEET-D
   placementPrefs?: string[]; // already-rendered `--placement-pref` expressions (e.g. "spread=node.labels.zone") — FLEET-D
   mounts?: { source: string; target: string }[]; // named-volume mounts for a node-pinned stateful app — FLEET-E
+  // FLEET-F: when set, env rides this Docker secret (not plaintext --env) and the entrypoint is wrapped to load
+  // it. Only set by the caller when the image HAS a shell; null → the classic plaintext `env` path below is used.
+  envSecret?: AppEnvSecret | null;
+  imageEntrypoint?: string[]; // the image's OWN .Config.Entrypoint (re-supplied to the wrapper) — only with envSecret
+  imageCmd?: string[]; // the image's OWN .Config.Cmd (re-supplied to the wrapper) — only with envSecret
+  // FLEET-F: set when the app HAS env but the image is shell-less (plaintext fallback). If such a service was
+  // previously env-secret-WRAPPED, `docker service update` can't reset its entrypoint — so recreate instead.
+  // Only meaningful when envSecret is null; keeps no-env/classic apps' scripts byte-identical to before.
+  envFallbackNoShell?: boolean;
   pollSec: number; // total rollout poll budget (effective timeout, sized by replica count)
 }
 
@@ -204,13 +236,19 @@ function placementUpdateBuild(svc: string, constraints: string[], placementPrefs
  */
 export function buildServiceDeployScript(o: ServiceDeployOpts): string {
   const q = shq(o.serviceName);
-  const env = envHelpers(o);
   const health = healthFlags(o.healthCmd);
   const labels = o.labels ?? [];
   const publish = o.publish ?? [];
   const constraints = o.constraints ?? [];
   const placementPrefs = o.placementPrefs ?? [];
   const mounts = o.mounts ?? [];
+  const es = o.envSecret ?? null;
+  const ep = o.imageEntrypoint ?? [];
+  const cmd = o.imageCmd ?? [];
+  const envPrefix = appEnvSecretPrefix(o.serviceName);
+  // Classic plaintext env path — non-swarm apps, no-env apps, and (fallback) shell-less swarm images. When an
+  // env SECRET is in play (es) it FULLY replaces this (no --env in the spec at all).
+  const env = es ? null : envHelpers(o);
 
   const createFlags = [
     `--name ${q}`,
@@ -230,8 +268,14 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ...labels.map((l) => `--label ${shq(l)}`),
     ...publish.map((p) => `--publish ${shq(p)}`),
     ...mounts.map((m) => `--mount ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
-    ...env.createFlags,
+    ...(es
+      ? [`--label ${APP_ENV_CONFIGHASH_LABEL}=${shq(es.confighash)}`, `--secret source=${shq(es.name)},target=${APP_ENV_MOUNT}`, `--entrypoint sh`]
+      : env!.createFlags),
     shq(o.ref),
+    // Secret path only: after the ref, `sh -c <wrapper> $0 $1...` — "app" is the $0 process-name placeholder,
+    // the image's real Entrypoint+Cmd are $1.. which the wrapper execs. (--entrypoint is just ["sh"] here, so it
+    // adds no $0 of its own — unlike the UPDATE path whose --entrypoint string carries its own trailing "_".)
+    ...(es ? [`-c ${shq(APP_ENV_WRAPPER)}`, `app`, ...ep.map(shq), ...cmd.map(shq)] : []),
   ].join(" ");
 
   // Update RE-APPLIES the full desired state (`docker service update` only mutates the fields you name), so
@@ -247,25 +291,88 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ...labels.map((l) => `--label-add ${shq(l)}`),
     ...publish.map((p) => `--publish-add ${shq(p)}`),
     ...mounts.map((m) => `--mount-add ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
-    `"$@"`, // --env-add args built by env.updateBuild
+    `"$@"`, // accumulated below: plaintext --env-add (classic), OR --env-rm scrub + --secret-* (secret), + placement
+    ...(es
+      ? [`--entrypoint ${shq(`sh -c ${shq(APP_ENV_WRAPPER)} _`)}`, `--args ${shq([...ep, ...cmd].map(shq).join(" "))}`]
+      : []),
     q,
   ].join(" ");
+
+  // Secret-path update accumulator: scrub any plaintext env still on the spec (legacy/migration), then rotate
+  // the secret ONLY when the confighash label changed (runtime check — race-safe, mirrors swarm-proxy's reconcile).
+  const secretUpdateBuild = es
+    ? [
+        `set --`,
+        `TUGRA_ENVLIST=$(mktemp)`,
+        `docker service inspect ${q} --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{.}}{{"\\n"}}{{end}}' > "$TUGRA_ENVLIST" 2>/dev/null || true`,
+        `while IFS='=' read -r TUGRA_EK TUGRA_EV || [ -n "$TUGRA_EK" ]; do [ -n "$TUGRA_EK" ] && set -- "$@" --env-rm "$TUGRA_EK"; done < "$TUGRA_ENVLIST"`,
+        `rm -f "$TUGRA_ENVLIST"`,
+        `TUGRA_CUR=$(docker service inspect ${q} --format '{{index .Spec.Labels "${APP_ENV_CONFIGHASH_LABEL}"}}' 2>/dev/null || echo "")`,
+        // Remember the superseded secret's name so we can DELETE the object after the update (--secret-rm only
+        // detaches the reference; the object lingers in the Raft store otherwise — one orphan per env change).
+        `TUGRA_OLD_SECRET=""`,
+        `if [ "$TUGRA_CUR" != ${shq(es.confighash)} ]; then`,
+        `  [ -n "$TUGRA_CUR" ] && TUGRA_OLD_SECRET=${shq(envPrefix)}"-$TUGRA_CUR" && set -- "$@" --secret-rm "$TUGRA_OLD_SECRET"`,
+        `  set -- "$@" --secret-add source=${shq(es.name)},target=${APP_ENV_MOUNT} --label-add ${APP_ENV_CONFIGHASH_LABEL}=${shq(es.confighash)}`,
+        `fi`,
+      ]
+    : env!.updateBuild;
+
+  // Reusable create branch (also used by the es-null recreate-if-wrapped transition below).
+  const createLines = (ind: string): string[] => [
+    `${ind}TUGRA_MODE=create`,
+    ...(es ? [] : env!.createLoad).map((s) => `${ind}${s}`),
+    `${ind}docker service create --detach ${createFlags}`,
+    `${ind}TUGRA_RC=$?`,
+  ];
+
+  const updateBranch = es
+    ? [
+        `  TUGRA_MODE=update`,
+        ...secretUpdateBuild.map((s) => `  ${s}`),
+        ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `  ${s}`),
+        `  docker service update --detach ${updateFlags}`,
+        `  TUGRA_RC=$?`,
+        // Delete the just-detached OLD secret OBJECT (see TUGRA_OLD_SECRET) — --secret-rm only drops the reference.
+        `  [ "$TUGRA_RC" -eq 0 ] && [ -n "$TUGRA_OLD_SECRET" ] && docker secret rm "$TUGRA_OLD_SECRET" >/dev/null 2>&1 || true`,
+      ]
+    : o.envFallbackNoShell
+      ? [
+          // Plaintext fallback (env present, shell-less image). A service still wrapped by a PREVIOUS env-secret
+          // deploy can't have its entrypoint reset by `docker service update` — RECREATE so the new image runs
+          // its OWN command instead of the now-dead `sh -c` wrapper (which the shell-less image can't exec).
+          `  TUGRA_WAS_WRAPPED=$(docker service inspect ${q} --format '{{index .Spec.Labels "${APP_ENV_CONFIGHASH_LABEL}"}}' 2>/dev/null || echo "")`,
+          `  if [ -n "$TUGRA_WAS_WRAPPED" ]; then`,
+          `    docker service rm ${q} >/dev/null 2>&1 || true`,
+          ...createLines("    "),
+          `  else`,
+          `    TUGRA_MODE=update`,
+          ...env!.updateBuild.map((s) => `    ${s}`),
+          ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `    ${s}`),
+          `    docker service update --detach ${updateFlags}`,
+          `    TUGRA_RC=$?`,
+          `  fi`,
+        ]
+      : [
+          `  TUGRA_MODE=update`,
+          ...env!.updateBuild.map((s) => `  ${s}`),
+          ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `  ${s}`),
+          `  docker service update --detach ${updateFlags}`,
+          `  TUGRA_RC=$?`,
+        ];
 
   return [
     "set +e",
     ...registryLoginPrelude(o.registryAuth),
-    ...env.writeSteps,
+    // Secret path: mint the immutable hash-named secret if absent (same idempotent pattern as swarm-proxy's DNS
+    // creds). Classic path: write the 0600 env file. Only one runs.
+    ...(es
+      ? [`docker secret inspect ${shq(es.name)} >/dev/null 2>&1 || printf %s ${shq(es.credsB64)} | base64 -d | docker secret create ${shq(es.name)} -`]
+      : env!.writeSteps),
     `if docker service inspect ${q} >/dev/null 2>&1; then`,
-    `  TUGRA_MODE=update`,
-    ...env.updateBuild.map((s) => `  ${s}`),
-    ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `  ${s}`),
-    `  docker service update --detach ${updateFlags}`,
-    `  TUGRA_RC=$?`,
+    ...updateBranch,
     `else`,
-    `  TUGRA_MODE=create`,
-    ...env.createLoad.map((s) => `  ${s}`),
-    `  docker service create --detach ${createFlags}`,
-    `  TUGRA_RC=$?`,
+    ...createLines("  "),
     `fi`,
     ...registryLogoutSteps(o.registryAuth),
     // A non-zero create/update (bad ref, auth failure at schedule time, or an "already exists" caused by a
@@ -298,9 +405,49 @@ export function buildServiceRestartScript(name: string, replicas: number, pollSe
   return ["set +e", "TUGRA_MODE=update", `docker service update --detach --force ${shq(name)}`, pollFragment(name, replicas, pollSec)].join("\n");
 }
 
-/** Remove the service cluster-wide (Swarm tears down every task immediately). */
+/** Remove the service cluster-wide (Swarm tears down every task immediately) AND prune every version of its
+ *  env secret (FLEET-F) — mirrors the swarm-proxy teardown's unconditional secret prune. */
 export function buildServiceRemoveScript(name: string): string {
-  return `docker service rm ${shq(name)} 2>/dev/null || true`;
+  const prefix = appEnvSecretPrefix(name);
+  return `docker service rm ${shq(name)} 2>/dev/null || true; for s in $(docker secret ls --filter name=${shq(prefix)} --format '{{.Name}}' 2>/dev/null); do docker secret rm "$s" >/dev/null 2>&1 || true; done`;
+}
+
+/** Pull an image on the manager and read its OWN Entrypoint/Cmd + whether it has a shell (FLEET-F). Needed
+ *  because overriding --entrypoint for the env-secret wrapper DISCARDS the image's baked-in CMD, so the wrapper
+ *  must re-supply the real command; and a shell-less image can't run the wrapper at all (caller falls back). */
+export function buildInspectEntrypointScript(ref: string, auth?: RegistryAuth | null): string {
+  const q = shq(ref);
+  return [
+    "set -e",
+    ...registryLoginPrelude(auth),
+    `docker pull -q ${q}`,
+    ...registryLogoutSteps(auth),
+    `echo "TUGRA_ENTRYPOINT=$(docker inspect ${q} --format '{{json .Config.Entrypoint}}')"`,
+    `echo "TUGRA_CMD=$(docker inspect ${q} --format '{{json .Config.Cmd}}')"`,
+    // Definitive shell test (the `if` swallows the non-zero so `set -e` doesn't abort). No shell → the caller
+    // keeps env as plaintext instead of a wrapper that would never exec.
+    `if docker run --rm --entrypoint /bin/sh ${q} -c ':' >/dev/null 2>&1; then echo "TUGRA_HAS_SHELL=yes"; else echo "TUGRA_HAS_SHELL=no"; fi`,
+  ].join("\n");
+}
+
+/** Parse buildInspectEntrypointScript's output (structured, in TS — never in shell, per this file's convention). */
+export function parseImageEntrypointCmd(output: string): { entrypoint: string[]; cmd: string[]; hasShell: boolean } {
+  const grab = (marker: string): string[] => {
+    for (const line of output.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith(`${marker}=`)) {
+        try {
+          const v = JSON.parse(t.slice(marker.length + 1));
+          return Array.isArray(v) ? v.map(String) : [];
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  };
+  const hasShell = output.split("\n").some((l) => l.trim() === "TUGRA_HAS_SHELL=yes");
+  return { entrypoint: grab("TUGRA_ENTRYPOINT"), cmd: grab("TUGRA_CMD"), hasShell };
 }
 
 /** Task status across all nodes — one JSON object per task (for the status/containers view). */
