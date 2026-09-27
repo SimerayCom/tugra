@@ -53,6 +53,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return n;
   }
 
+  /** Like incr, but adds `amount` at once (fixed-window TTL set when this is the first write in the window).
+   *  Used to charge a rate-limit budget by units of WORK (e.g. messages in a JSON-RPC batch), not just calls. */
+  async incrBy(key: string, amount: number, ttlSeconds?: number): Promise<number> {
+    const n = await this.redis.incrby(key, amount);
+    if (ttlSeconds && n === amount) await this.redis.expire(key, ttlSeconds);
+    return n;
+  }
+
   async smembers(key: string): Promise<string[]> {
     return this.redis.smembers(key);
   }

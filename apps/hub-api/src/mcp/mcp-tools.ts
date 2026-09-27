@@ -49,6 +49,31 @@ function clampInt(v: unknown, min: number, max: number, def: number): number {
 const idSchema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] } as const;
 const noArgs = { type: "object", properties: {} } as const;
 
+/** Reduce a Deployment row to LLM-safe metadata: drop the raw build `logs` blob AND the `configSnapshot`
+ *  (whose `composeFile` stores user compose YAML verbatim — commonly with hard-coded secrets, and gated behind
+ *  apps:config everywhere else). Mirrors what `apps.deployments()` / `get_application`'s view already strip, so
+ *  a deploy-only caller can't exfiltrate config a read of the app would deny them. Undefined for a null row. */
+function stripDeployment(dep: unknown): Record<string, unknown> | undefined {
+  if (!dep || typeof dep !== "object") return undefined;
+  const { logs: _logs, configSnapshot: _cs, ...rest } = dep as Record<string, unknown>;
+  return rest;
+}
+
+/** Run a void lifecycle action (stop/start/restart) then read the app back for its new status. The follow-up
+ *  read is best-effort: if it throws (e.g. the app was deleted by a concurrent action in the tiny window after
+ *  the mutate already took effect + audited), still report the action as done with application:null, rather than
+ *  failing the whole call and implying the mutate didn't happen. */
+async function lifecycle(deps: McpDeps, userId: string, id: string, action: "stop" | "start" | "restart"): Promise<unknown> {
+  await deps.apps[action](userId, id);
+  let application: unknown = null;
+  try {
+    application = await deps.apps.get(userId, id);
+  } catch {
+    application = null;
+  }
+  return { ok: true, action, application };
+}
+
 /**
  * Phase1 MCP tool catalog — read-only. Every tool requires the `read` scope (implied by any non-empty
  * token scope set) and returns metadata only: no decrypted secret VALUES ever (env is key-names only,
@@ -191,5 +216,50 @@ export const MCP_TOOLS: McpTool[] = [
     scope: "read",
     inputSchema: idSchema,
     execute: (d, userId, a) => d.monitors.get(userId, reqStr(a, "id")),
+  },
+
+  // ── mutate: application lifecycle (Phase2a) ──────────────────────────────────────────────────────
+  // Each is a thin pass-through to the SAME ApplicationsService method the REST route calls — which itself
+  // enforces the caller's 'apps:deploy' team permission (requireWrite) and audits 'app.<verb>'. The 'deploy'
+  // PAT scope (mirroring the routes' @RequireScopes("deploy")) is filtered + enforced by McpService, so a
+  // read-only token can neither see nor call these. All five are reversible / idempotent (single-resource).
+  {
+    name: "deploy_application",
+    description: "Redeploy an application using its currently-stored config (image/git ref). Blocks until the deploy finishes; returns the deployment metadata (build logs + config snapshot are stripped). Does not take a new image/version.",
+    scope: "deploy",
+    inputSchema: idSchema,
+    execute: async (d, userId, a) => ({ ok: true, action: "deploy", deployment: stripDeployment(await d.apps.deploy(userId, reqStr(a, "id"))) }),
+  },
+  {
+    name: "restart_application",
+    description: "Request a restart of an application (rolling recreate on swarm, restart on a single server). Returns the app's recorded status after the request (the underlying container action is dispatched best-effort).",
+    scope: "deploy",
+    inputSchema: idSchema,
+    execute: (d, userId, a) => lifecycle(d, userId, reqStr(a, "id"), "restart"),
+  },
+  {
+    name: "stop_application",
+    description: "Request an application stop (scale to 0 on swarm, stop on a single server). Returns the app's recorded status after the request.",
+    scope: "deploy",
+    inputSchema: idSchema,
+    execute: (d, userId, a) => lifecycle(d, userId, reqStr(a, "id"), "stop"),
+  },
+  {
+    name: "start_application",
+    description: "Request a start of a stopped application (scale back to its replica count on swarm, start on a single server). Returns the app's recorded status after the request.",
+    scope: "deploy",
+    inputSchema: idSchema,
+    execute: (d, userId, a) => lifecycle(d, userId, reqStr(a, "id"), "start"),
+  },
+  {
+    name: "rollback_application",
+    description: "Roll an application back to a prior deployment (redeploys that deployment's retained image/artifact — the 'undo a bad deploy' action). Blocks until it finishes; returns the new deployment metadata (build logs + config snapshot stripped).",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, deploymentId: { type: "string" } }, required: ["id", "deploymentId"] },
+    execute: async (d, userId, a) => ({
+      ok: true,
+      action: "rollback",
+      deployment: stripDeployment(await d.apps.rollback(userId, reqStr(a, "id"), reqStr(a, "deploymentId"))),
+    }),
   },
 ];
