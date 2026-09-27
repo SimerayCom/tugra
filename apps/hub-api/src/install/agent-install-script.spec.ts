@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderAgentInstallScript } from "./agent-install-script";
 
-const IMAGE = "ghcr.io/mrcandev/tugra-agent:0.1.0";
+const IMAGE = "ghcr.io/simeraycom/tugra-agent:0.1.0";
 
 describe("renderAgentInstallScript", () => {
   const script = renderAgentInstallScript({ image: IMAGE });

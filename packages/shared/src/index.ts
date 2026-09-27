@@ -390,7 +390,7 @@ export interface AgentUpdateMsg {
   type: "agent_update";
   reqId: string;
   targetVersion: string;
-  image: string; // full ref, e.g. ghcr.io/mrcandev/tugra-agent:0.2.0
+  image: string; // full ref, e.g. ghcr.io/simeraycom/tugra-agent:0.2.0
   sha256: string; // per-arch image-manifest digest (bare lowercase hex)
   capability?: AgentCapability;
   /** base64(ed25519 signature over canonicalAgentUpdate) — agent rejects if invalid. */

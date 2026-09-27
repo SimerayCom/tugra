@@ -34,7 +34,7 @@ export class InstallController {
   async agentScript(): Promise<string> {
     // Version-matched agent image (keeps agent↔hub protocol aligned); AGENT_IMAGE overrides for
     // custom registries / air-gapped mirrors. Published by the release pipeline (release-pipeline-ghcr).
-    const image = this.config.get<string>("AGENT_IMAGE") ?? `ghcr.io/mrcandev/tugra-agent:${appVersion()}`;
+    const image = this.config.get<string>("AGENT_IMAGE") ?? `ghcr.io/simeraycom/tugra-agent:${appVersion()}`;
     const digests = (await this.agentDigests()) ?? undefined;
     try {
       return renderAgentInstallScript({ image, digests });

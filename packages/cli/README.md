@@ -1,6 +1,6 @@
 # @tugra/cli
 
-The command-line client for [Tugra](https://github.com/mrcandev/tugra), the self-hostable server
+The command-line client for [Tugra](https://github.com/SimerayCom/tugra), the self-hostable server
 control plane. Talk to your hub's REST API from the terminal or CI — list servers, deploy and restart
 apps, tail logs, run backups. MIT-licensed.
 

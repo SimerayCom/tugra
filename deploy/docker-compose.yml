@@ -38,7 +38,7 @@ services:
       retries: 20
 
   hub-api:
-    image: "ghcr.io/mrcandev/tugra-hub:${TUGRA_VERSION:-latest}"
+    image: "ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile.hub
@@ -82,7 +82,7 @@ services:
       - "${HUB_PORT:-3000}:3000"
 
   web:
-    image: "ghcr.io/mrcandev/tugra-web:${TUGRA_VERSION:-latest}"
+    image: "ghcr.io/simeraycom/tugra-web:${TUGRA_VERSION:-latest}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
@@ -103,7 +103,7 @@ services:
   # sidecar drains, then pulls + recreates hub-api/web (--no-deps, never itself/postgres/redis). It has
   # docker.sock but runs only scripts/update.sh's fixed pull/up command set (see SECURITY.md).
   tugra-updater:
-    image: "ghcr.io/mrcandev/tugra-updater:${TUGRA_VERSION:-latest}"
+    image: "ghcr.io/simeraycom/tugra-updater:${TUGRA_VERSION:-latest}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile.updater

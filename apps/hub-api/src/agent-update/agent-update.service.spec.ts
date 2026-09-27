@@ -59,7 +59,7 @@ describe("normalizeArch", () => {
 
 describe("agentImageRef", () => {
   it("defaults to the official ghcr image at the target version", () => {
-    expect(agentImageRef(undefined, "0.2.0")).toBe("ghcr.io/mrcandev/tugra-agent:0.2.0");
+    expect(agentImageRef(undefined, "0.2.0")).toBe("ghcr.io/simeraycom/tugra-agent:0.2.0");
   });
   it("honors an AGENT_IMAGE registry/repo override, replacing its tag with the target version", () => {
     expect(agentImageRef("registry.internal/tugra-agent:0.1.0", "0.2.0")).toBe("registry.internal/tugra-agent:0.2.0");
@@ -75,7 +75,7 @@ describe("AgentUpdateService.updateOne", () => {
     const res = await svc.updateOne("u1", "s1");
     expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "servers:manage");
     // target comes ONLY from the verified manifest, never the caller: version + arch-specific sha256.
-    expect(sendAgentUpdate).toHaveBeenCalledWith("s1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "aaa");
+    expect(sendAgentUpdate).toHaveBeenCalledWith("s1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "aaa");
     expect(res).toMatchObject({ status: "ok", total: 1, sent: 1, results: [{ serverId: "s1", status: "sent" }] });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "agent.update.request" }));
   });
@@ -133,6 +133,6 @@ describe("AgentUpdateService.updateFleet", () => {
     expect(res.results).toContainEqual({ serverId: "s2", status: "skipped", reason: "not-permitted" });
     // s2 (arm64) never dispatched; s1 got the amd64 digest.
     expect(sendAgentUpdate).toHaveBeenCalledTimes(1);
-    expect(sendAgentUpdate).toHaveBeenCalledWith("s1", "0.2.0", "ghcr.io/mrcandev/tugra-agent:0.2.0", "aaa");
+    expect(sendAgentUpdate).toHaveBeenCalledWith("s1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "aaa");
   });
 });
