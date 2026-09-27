@@ -234,7 +234,7 @@ export default function AppDetailPage() {
           )}
 
           {appData.source !== "COMPOSE" && (
-            <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} />
+            <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />
           )}
           {appData.source !== "COMPOSE" && (
             <HealthCheckCard
@@ -728,12 +728,14 @@ function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-function LimitsCard({ id, memoryMb, cpus, gpus, deployTimeoutSec }: { id: string; memoryMb: number | null; cpus: number | null; gpus: string | null; deployTimeoutSec: number | null }) {
+function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, gpus, deployTimeoutSec, clusterId }: { id: string; memoryMb: number | null; cpus: number | null; reserveMemoryMb: number | null; reserveCpus: number | null; gpus: string | null; deployTimeoutSec: number | null; clusterId: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
   const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
+  const [reserveMem, setReserveMem] = useState(reserveMemoryMb != null ? String(reserveMemoryMb) : "");
+  const [reserveCpu, setReserveCpu] = useState(reserveCpus != null ? String(reserveCpus) : "");
   const [gpu, setGpu] = useState(gpus ?? "");
   const [timeout, setTimeoutS] = useState(deployTimeoutSec != null ? String(deployTimeoutSec) : "");
   const save = useMutation({
@@ -741,6 +743,9 @@ function LimitsCard({ id, memoryMb, cpus, gpus, deployTimeoutSec }: { id: string
       api.setAppLimits(id, {
         memoryMb: mem ? Number(mem) : null,
         cpus: cpu ? Number(cpu) : null,
+        // Swarm-only reservation hints; only sent for a clustered app (inputs are hidden otherwise).
+        reserveMemoryMb: clusterId && reserveMem ? Number(reserveMem) : null,
+        reserveCpus: clusterId && reserveCpu ? Number(reserveCpu) : null,
         gpus: gpu.trim() || null,
         deployTimeoutSec: timeout ? Number(timeout) : null,
       }),
@@ -755,6 +760,12 @@ function LimitsCard({ id, memoryMb, cpus, gpus, deployTimeoutSec }: { id: string
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
         <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
+        {clusterId && (
+          <>
+            <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.reserveMemoryMb")} value={reserveMem} onChange={(e) => setReserveMem(e.target.value)} />
+            <input style={{ ...envField, width: 150 }} type="number" step="0.1" placeholder={t("apps.reserveCpus")} value={reserveCpu} onChange={(e) => setReserveCpu(e.target.value)} />
+          </>
+        )}
         <input style={{ ...envField, width: 180 }} placeholder={t("apps.gpus")} value={gpu} onChange={(e) => setGpu(e.target.value)} />
         <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.deployTimeout")} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>

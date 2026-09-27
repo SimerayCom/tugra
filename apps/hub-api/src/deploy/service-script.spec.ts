@@ -1,6 +1,7 @@
 import {
   serviceName,
   updateMonitorSec,
+  buildOverlayEnsureScript,
   buildServiceDeployScript,
   buildServiceScaleScript,
   buildServiceRestartScript,
@@ -34,8 +35,13 @@ describe("service-script builders", () => {
     expect(updateMonitorSec(null)).toBe(15);
   });
 
+  it("overlay ensure is idempotent and encrypted (IPsec ESP for inter-node traffic) by default", () => {
+    expect(buildOverlayEnsureScript()).toBe("docker network create -d overlay --opt encrypted --attachable 'tugra-swarm' 2>/dev/null || true");
+    expect(buildOverlayEnsureScript("custom-net")).toContain("--attachable 'custom-net'");
+  });
+
   it("deploy is existence-driven (inspect → update, else create) with all rollout-safety flags", () => {
-    const s = buildServiceDeployScript(opts({ healthCmd: "curl -f localhost", memoryMb: 256, cpus: 1.5 }));
+    const s = buildServiceDeployScript(opts({ healthCmd: "curl -f localhost", memoryMb: 256, cpus: 1.5, reserveMemoryMb: 128, reserveCpus: 0.5 }));
     expect(s).toContain("docker service inspect 'tugra_abc' >/dev/null 2>&1");
     expect(s).toContain("docker service create --detach");
     expect(s).toContain("docker service update --detach");
@@ -49,8 +55,16 @@ describe("service-script builders", () => {
     expect(s).toContain("--update-order start-first");
     expect(s).toContain("--limit-memory 256m");
     expect(s).toContain("--limit-cpu 1.5");
+    expect(s).toContain("--reserve-memory 128m");
+    expect(s).toContain("--reserve-cpu 0.5");
     expect(s).toContain("--health-cmd 'curl -f localhost'");
     expect(s).toContain("'ghcr.io/org/tugra_abc:v1'");
+  });
+
+  it("omits --reserve-* when reservations are unset (mirrors the --limit-* falsy guard)", () => {
+    const s = buildServiceDeployScript(opts({ memoryMb: 256, cpus: 1 }));
+    expect(s).not.toContain("--reserve-memory");
+    expect(s).not.toContain("--reserve-cpu");
   });
 
   it("attaches SERVICE labels via --label (never --container-label, which the swarm provider can't see)", () => {
@@ -129,8 +143,13 @@ describe("service-script builders", () => {
   });
 
   it("scale / restart / remove / ps / logs builders", () => {
-    expect(buildServiceScaleScript("tugra_abc", 0)).toBe("docker service scale --detach 'tugra_abc'=0");
-    expect(buildServiceScaleScript("tugra_abc", 5)).toBe("docker service scale --detach 'tugra_abc'=5");
+    // scale now polls to convergence (create-mode) instead of fire-and-forget, so a stop/start confirms the
+    // tasks reached the target count.
+    const scale0 = buildServiceScaleScript("tugra_abc", 0, 30);
+    expect(scale0).toContain("docker service scale --detach 'tugra_abc'=0");
+    expect(scale0).toContain("TUGRA_MODE=create");
+    expect(scale0).toContain("TUGRA_ROLLOUT"); // proves it polls
+    expect(buildServiceScaleScript("tugra_abc", 5, 30)).toContain("docker service scale --detach 'tugra_abc'=5");
     const restart = buildServiceRestartScript("tugra_abc", 3, 60);
     expect(restart).toContain("docker service update --detach --force 'tugra_abc'");
     expect(restart).toContain("TUGRA_ROLLOUT"); // restart is async → same poll machinery

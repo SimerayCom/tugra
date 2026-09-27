@@ -759,6 +759,8 @@ model Application {
   healthCheckPort Int?                             // HTTP check port (default container/host port)
   memoryMb       Int?
   cpus           Float?
+  reserveMemoryMb Int?        // soft swarm scheduling hint (--reserve-memory); swarm-only, advisory
+  reserveCpus    Float?       // soft swarm scheduling hint (--reserve-cpu); swarm-only, advisory
   gpus           String?      // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
   deployTimeoutSec Int?
   volumes        Json?

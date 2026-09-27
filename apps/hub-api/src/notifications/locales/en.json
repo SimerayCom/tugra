@@ -29,6 +29,14 @@
     "field": { "hostname": "Hostname", "lastSeen": "Last seen", "ip": "IP" },
     "link": { "openServer": "Open server" }
   },
+  "swarm": {
+    "degraded": {
+      "title": "Swarm degraded — {cluster}",
+      "summary": "Cluster {cluster}'s Docker Swarm dropped from healthy to degraded — a node may be unreachable."
+    },
+    "field": { "nodesReady": "Nodes ready" },
+    "link": { "openCluster": "Open cluster" }
+  },
   "volumeBackup": {
     "succeeded": { "title": "Volume backup succeeded — {app}", "summary": "The volume backup for {app} completed." },
     "failed": { "title": "Volume backup failed — {app}", "summary": "The volume backup for {app} failed." },

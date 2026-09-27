@@ -21,7 +21,11 @@ and orchestrating servers — from a single Raspberry Pi to a fleet.
   and one-click restore.
 - **Monitoring & notifications** — uptime monitors (HTTP/TCP/metric checks) with configurable
   notification channels.
-- **Clustering** — Docker Swarm-based multi-server clusters, with fleet-wide bulk operations.
+- **Clustering** — Docker Swarm-based multi-server clusters, with fleet-wide bulk operations. The overlay
+  network is now **encrypted by default** (VXLAN + IPsec) for inter-node traffic; a background health check
+  alerts (`swarm_degraded` notification) when a cluster drops from healthy to degraded; per-app soft resource
+  reservations (`--reserve-memory`/`--reserve-cpu`) are supported for swarm scheduling; and stop/start now
+  waits for the service to actually converge.
 - **MCP server** — a read-only [Model Context Protocol](docs/api.md#mcp-server) server
   (`POST /api/v1/mcp`) exposing ~17 read tools over applications, servers, clusters, databases and
   monitors, for AI assistants and agents.

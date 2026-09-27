@@ -230,12 +230,18 @@ export class SwarmService {
   }
 
   /** Live swarm status: reconcile the DB cache against `docker node ls` on the manager. Read-only. */
-  async status(userId: string, id: string): Promise<SwarmView> {
-    const cluster = await this.requireRead(userId, id);
+  /** Live swarm status — system-safe core (no RBAC / team lookup), for internal callers not acting on behalf
+   *  of a single user (SwarmSchedulerService's periodic fleet-wide poll). status() below is the RBAC-gated
+   *  wrapper every human-facing path keeps using. Self-heals ACTIVE→DEGRADED when fewer nodes are Ready than
+   *  the DB thinks joined — SAME logic status() had, just extracted.
+   *  KNOWN, ACCEPTED GAP: when the manager is fully unreachable this returns swarmStatus UNCHANGED (still
+   *  ACTIVE) with only an in-memory error string — it never persists DEGRADED for a dead manager, so the
+   *  scheduler catches "a worker dropped" but MISSES "the manager itself died". Intentional non-goal for now. */
+  async statusInternal(id: string): Promise<SwarmView> {
     const base = await this.view(id);
-    if (base.swarmStatus === "NONE" || !cluster.swarmManagerId) return base;
+    if (base.swarmStatus === "NONE" || !base.managerServerId) return base;
     const members = await this.members(id);
-    const manager = members.find((m) => m.id === cluster.swarmManagerId);
+    const manager = members.find((m) => m.id === base.managerServerId);
     if (!manager || manager.status !== "ONLINE") {
       return { ...base, swarmLastError: base.swarmLastError ?? "manager offline — live status unavailable" };
     }
@@ -257,6 +263,11 @@ export class SwarmService {
       }
     }
     return { ...base, swarmStatus, live };
+  }
+
+  async status(userId: string, id: string): Promise<SwarmView> {
+    await this.requireRead(userId, id); // RBAC + existence only; the live check is system-safe
+    return this.statusInternal(id);
   }
 
   /** Dissolve the swarm: workers leave (best-effort, node-local), then the manager `leave --force` last.

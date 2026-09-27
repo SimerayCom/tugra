@@ -156,6 +156,8 @@ export class SwarmDeployService {
         registryAuth: auth,
         memoryMb: spec.memoryMb ?? null,
         cpus: spec.cpus ?? null,
+        reserveMemoryMb: spec.reserveMemoryMb ?? null,
+        reserveCpus: spec.reserveCpus ?? null,
         healthCmd: spec.healthCmd ?? null,
         labels,
         publish,
@@ -167,9 +169,18 @@ export class SwarmDeployService {
 
   // ── lifecycle (all dispatched to the cluster manager under the "swarm" capability) ──
 
-  async scale(app: Application, replicas: number): Promise<void> {
+  /** Scale (stop = 0, start = stored replica count) AND wait for convergence — same sizing/return shape as
+   *  restart(), so stop/start actually confirms the tasks reached the target instead of returning the instant
+   *  Swarm accepted the request. */
+  async scale(app: Application, replicas: number): Promise<{ exitCode: number; output: string }> {
     const managerId = await this.resolveManager(app.clusterId!);
-    await this.agentWs.sendCommand(managerId, buildServiceScaleScript(serviceName(app), replicas), "swarm");
+    const pollSec = effectivePollSec(Math.max(1, replicas), app.healthCmd);
+    return this.agentWs.sendCommand(
+      managerId,
+      buildServiceScaleScript(serviceName(app), replicas, pollSec),
+      "swarm",
+      (pollSec + 30) * 1000,
+    );
   }
 
   async restart(app: Application): Promise<{ exitCode: number; output: string }> {

@@ -43,6 +43,10 @@ export interface AppSpec {
   healthCheckPort?: number | null;
   memoryMb?: number | null;
   cpus?: number | null;
+  /** Soft Swarm scheduling hints (`docker service --reserve-memory`/`--reserve-cpu`) — swarm-only; ignored on
+   *  the classic single-container path (which has no reservation flag). See ServiceDeployOpts in service-script.ts. */
+  reserveMemoryMb?: number | null;
+  reserveCpus?: number | null;
   /** docker `--gpus` value (e.g. "all", "1", "device=0,1"); requires the NVIDIA container runtime on the host. */
   gpus?: string | null;
   /** Swarm service replica count (Phase3, only meaningful when deployed to a cluster). null = classic single container. */

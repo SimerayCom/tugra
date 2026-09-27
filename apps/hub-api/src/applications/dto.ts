@@ -95,12 +95,25 @@ export const SetLimitsSchema = z
   .object({
     memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
     cpus: z.number().min(0.1).max(64).nullable().optional(),
+    // Soft swarm scheduling hints (advisory placement, not runtime ceilings). Swarm-only.
+    reserveMemoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
+    reserveCpus: z.number().min(0.1).max(64).nullable().optional(),
     gpus: z.union([z.string().regex(GPU_RE), z.literal("")]).nullable().optional(),
     deployTimeoutSec: z.number().int().min(30).max(3600).nullable().optional(),
   })
   // healthCmd moved to PUT /health-check; reject (not silently drop) a stale client still
   // sending it so a lost edit surfaces as an error instead of vanishing.
-  .strict();
+  .strict()
+  // A reservation above the hard limit can never be scheduled. Only checkable when BOTH are sent in the same
+  // call (the web form always does); a partial PATCH that omits the limit is left to Docker to reject at deploy.
+  .refine((v) => v.reserveMemoryMb == null || v.memoryMb == null || v.reserveMemoryMb <= v.memoryMb, {
+    message: "reserveMemoryMb must not exceed memoryMb",
+    path: ["reserveMemoryMb"],
+  })
+  .refine((v) => v.reserveCpus == null || v.cpus == null || v.reserveCpus <= v.cpus, {
+    message: "reserveCpus must not exceed cpus",
+    path: ["reserveCpus"],
+  });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
 
 export const SetHealthCheckSchema = z

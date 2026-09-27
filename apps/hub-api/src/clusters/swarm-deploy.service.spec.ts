@@ -68,7 +68,7 @@ describe("SwarmDeployService.deploy", () => {
     const [serverId, script, cap] = send.mock.calls[0];
     expect(serverId).toBe("mgr");
     expect(cap).toBe("swarm");
-    expect(script).toContain("docker network create -d overlay --attachable 'tugra-swarm'");
+    expect(script).toContain("docker network create -d overlay --opt encrypted --attachable 'tugra-swarm'");
     expect(script).toContain("docker service create --detach");
     expect(script).toContain("'ghcr.io/org/app:1'");
     expect(r).toMatchObject({ exitCode: 0, digest: "ghcr.io/org/app@sha256:dd", registryRef: null });
@@ -192,7 +192,13 @@ describe("SwarmDeployService lifecycle", () => {
   it("scale / remove / status / logs dispatch the right script to the manager under swarm cap", async () => {
     const { svc, send } = make();
     await svc.scale(app(), 0);
-    expect(send.mock.calls[0]).toEqual(["mgr", "docker service scale --detach 'tugra_abc'=0", "swarm"]);
+    // scale() now polls to convergence (like restart()): dispatch to the manager under the swarm cap, with a
+    // sized WS timeout, and a script that both scales and polls.
+    expect(send.mock.calls[0][0]).toBe("mgr");
+    expect(send.mock.calls[0][1]).toContain("docker service scale --detach 'tugra_abc'=0");
+    expect(send.mock.calls[0][1]).toContain("TUGRA_ROLLOUT");
+    expect(send.mock.calls[0][2]).toBe("swarm");
+    expect(typeof send.mock.calls[0][3]).toBe("number");
     await svc.remove(app());
     expect(send.mock.calls[1][1]).toBe("docker service rm 'tugra_abc' 2>/dev/null || true");
     await svc.status(app());

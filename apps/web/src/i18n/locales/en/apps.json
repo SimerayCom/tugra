@@ -193,6 +193,8 @@
   "healthCheckPort": "Port",
   "memoryMb": "Memory (MB)",
   "cpus": "CPUs",
+  "reserveMemoryMb": "Reserved memory (MB)",
+  "reserveCpus": "Reserved CPUs",
   "gpus": "GPUs (all / 1 / device=0,1)",
   "deployTimeout": "Deploy timeout (s)",
   "limitsSaveFailed": "Couldn't save resources.",

@@ -26,6 +26,7 @@ export const EVENT_TYPES = [
   "deploy_rolled_back",
   "server_offline",
   "server_online",
+  "swarm_degraded",
   "ssl_expiring",
   "token_expiring",
   "backup_failed",

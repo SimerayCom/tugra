@@ -20,7 +20,7 @@ function ensure(over: Partial<EnsureOpts> = {}): string {
 describe("swarm-proxy-script builders", () => {
   it("ensure: overlay + node-label pin + swarm-provider Traefik as a single manager-pinned service", () => {
     const s = ensure();
-    expect(s).toContain("docker network create -d overlay --attachable 'tugra-swarm'");
+    expect(s).toContain("docker network create -d overlay --opt encrypted --attachable 'tugra-swarm'");
     expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_x'");
     expect(s).toContain("--constraint 'node.labels.tugra.proxy==true'");
     expect(s).toContain("docker service create --detach --name tugra-swarm-proxy");
