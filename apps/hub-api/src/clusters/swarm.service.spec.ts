@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { SwarmService } from "./swarm.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -72,6 +72,7 @@ function make(opts: {
     },
     server: {
       findMany: jest.fn().mockResolvedValue(opts.members ?? []),
+      findUnique: jest.fn().mockResolvedValue({ swarmError: "join failed: exit 1" }),
       update: serverUpdate,
     },
     application: { count: jest.fn().mockResolvedValue(opts.appCount ?? 0) },
@@ -258,5 +259,103 @@ describe("SwarmService.dissolve", () => {
     });
     await expect(svc.dissolve("u1", "c1")).rejects.toBeInstanceOf(ConflictException);
     expect(clusterUpdateMany).not.toHaveBeenCalled(); // blocked before the DISSOLVING CAS
+  });
+});
+
+describe("SwarmService.joinNode", () => {
+  const activeMembers = () => [
+    member({ id: "mgr", swarmRole: "MANAGER", reportedIps: ["10.0.0.5"] }),
+    member({ id: "w1", swarmRole: "WORKER" }),
+    member({ id: "s2" }), // fresh: online, swarm-capable, not yet joined
+  ];
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+
+  it("rejects when the swarm is not ACTIVE (no CAS, no agent)", async () => {
+    const { svc, agent, clusterUpdateMany } = make({ swarmStatus: "NONE", members: activeMembers() });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toBeInstanceOf(ConflictException);
+    expect(sc(agent)).not.toHaveBeenCalled();
+    expect(clusterUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a serverId that is not a member of the cluster", async () => {
+    const { svc, agent } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers() });
+    await expect(svc.joinNode("u1", "c1", { serverId: "nope" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent: an already-joined target returns without CAS or agent contact", async () => {
+    const { svc, agent, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers() });
+    await svc.joinNode("u1", "c1", { serverId: "w1" }); // already WORKER
+    expect(sc(agent)).not.toHaveBeenCalled();
+    expect(clusterUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an offline target before the CAS", async () => {
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" }), member({ id: "s2", status: "OFFLINE" })] });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(clusterUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("requires the swarm capability on the target", async () => {
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" }), member({ id: "s2", capabilities: ["deploy"] })] });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toThrow(/swarm.*capability/i);
+  });
+
+  it("throws when the manager is offline, before any CAS", async () => {
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", status: "OFFLINE" }), member({ id: "s2" })] });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(clusterUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("409s when the ACTIVE→JOINING CAS is lost (no agent contact)", async () => {
+    const { svc, agent } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers(), casCount: 0 });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toBeInstanceOf(ConflictException);
+    expect(sc(agent)).not.toHaveBeenCalled();
+  });
+
+  it("happy path: joins ONLY the new node, rotates the token, → ACTIVE", async () => {
+    const agent = agentMock();
+    const { svc, clusterUpdateMany, serverUpdate, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers(), agent });
+    await svc.joinNode("u1", "c1", { serverId: "s2" });
+    const calls = sc(agent).mock.calls;
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("join-token -q worker"))).toBe(true);
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("join-token --rotate -q worker"))).toBe(true);
+    expect(calls.some((c) => c[0] === "s2" && (c[1] as string).includes("swarm join "))).toBe(true);
+    expect(calls.some((c) => c[0] === "w1")).toBe(false); // the existing worker is never touched
+    expect(serverUpdate).toHaveBeenCalledWith({ where: { id: "s2" }, data: expect.objectContaining({ swarmRole: "WORKER" }) });
+    const term = (clusterUpdateMany as unknown as jest.Mock).mock.calls.find((c) => c[0].where?.swarmStatus === "JOINING" && c[0].data?.swarmStatus === "ACTIVE");
+    // Success MUST clear any stale swarmLastError (else a prior failed attempt's banner persists on a healthy
+    // swarm and masks a later real "manager offline").
+    expect(term?.[0]).toMatchObject({ where: { id: "c1", swarmStatus: "JOINING" }, data: { swarmStatus: "ACTIVE", swarmLastError: null } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.join_node" }));
+  });
+
+  it("never lets the join token reach persisted state", async () => {
+    const agent = agentMock();
+    const { svc, serverUpdate, clusterUpdate, clusterUpdateMany, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers(), agent });
+    await svc.joinNode("u1", "c1", { serverId: "s2" });
+    expect(allArgs(serverUpdate as unknown as jest.Mock)).not.toContain("SWMTKN");
+    expect(allArgs(clusterUpdate as unknown as jest.Mock)).not.toContain("SWMTKN");
+    expect(allArgs(clusterUpdateMany as unknown as jest.Mock)).not.toContain("SWMTKN");
+    expect(allArgs(audit.log as unknown as jest.Mock)).not.toContain("SWMTKN");
+  });
+
+  it("a failed join reverts to ACTIVE (never DEGRADED) with a sanitized error", async () => {
+    const agent = agentMock({ joinExit: { s2: 1 } });
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers(), agent });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const calls = (clusterUpdateMany as unknown as jest.Mock).mock.calls;
+    expect(calls.some((c) => c[0].data?.swarmStatus === "DEGRADED")).toBe(false);
+    const revert = calls.find((c) => c[0].where?.swarmStatus === "JOINING" && c[0].data?.swarmStatus === "ACTIVE");
+    expect(revert?.[0].data).toEqual(expect.objectContaining({ swarmStatus: "ACTIVE", swarmLastError: expect.any(String) }));
+  });
+
+  it("a token-fetch failure aborts before touching the target and reverts to ACTIVE", async () => {
+    const agent = agentMock({ tokenExit: 1 });
+    const { svc, clusterUpdateMany } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: activeMembers(), agent });
+    await expect(svc.joinNode("u1", "c1", { serverId: "s2" })).rejects.toThrow(/join token/i);
+    expect(sc(agent).mock.calls.some((c) => c[0] === "s2" && (c[1] as string).includes("swarm join "))).toBe(false);
+    const revert = (clusterUpdateMany as unknown as jest.Mock).mock.calls.find((c) => c[0].where?.swarmStatus === "JOINING" && c[0].data?.swarmStatus === "ACTIVE");
+    expect(revert).toBeTruthy();
   });
 });

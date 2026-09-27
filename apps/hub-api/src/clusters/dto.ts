@@ -29,3 +29,11 @@ export const FormSwarmSchema = z.object({
   advertiseAddr: z.string().trim().min(1).max(45).optional(),
 });
 export type FormSwarmInput = z.infer<typeof FormSwarmSchema>;
+
+/** Add ONE more already-a-member server to an already-ACTIVE swarm as a worker (Phase2b). `advertiseAddr`
+ *  optionally overrides the manager's auto-picked dial IP (validated as an IP literal). */
+export const JoinNodeSchema = z.object({
+  serverId: z.string().min(1),
+  advertiseAddr: z.string().trim().min(1).max(45).optional(),
+});
+export type JoinNodeInput = z.infer<typeof JoinNodeSchema>;

@@ -118,7 +118,7 @@ export interface ClusterDetail extends Cluster {
 }
 
 // ── Docker Swarm formation (Phase2) ──
-export type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING";
+export type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING" | "JOINING";
 
 /** One swarm task (replica) in the live cluster-deploy panel. */
 export interface SwarmTask {
@@ -142,6 +142,7 @@ export interface SwarmNodeView {
   status: string;
   swarmRole: SwarmRole | null;
   swarmError: string | null;
+  swarmCapable: boolean;
 }
 export interface SwarmLiveNode {
   id: string;

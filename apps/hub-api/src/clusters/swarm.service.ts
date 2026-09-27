@@ -22,7 +22,7 @@ import {
   buildSwarmTokenRotateScript,
 } from "../deploy/swarm-script";
 
-type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING";
+type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING" | "JOINING";
 type SwarmRole = "MANAGER" | "WORKER";
 
 // WS timeout for a worker join. The join script itself is `timeout 25 docker swarm join …`, so it always
@@ -48,6 +48,9 @@ export interface SwarmNodeView {
   status: string;
   swarmRole: SwarmRole | null;
   swarmError: string | null;
+  /** Whether the server has been granted the 'swarm' capability — a prerequisite for joining. Lets the UI
+   *  exclude ineligible members from the "Add node" picker instead of round-tripping to a guaranteed 400. */
+  swarmCapable: boolean;
 }
 export interface SwarmLiveNode {
   id: string;
@@ -270,6 +273,70 @@ export class SwarmService {
     return this.statusInternal(id);
   }
 
+  /** Add ONE more node to an ALREADY-ACTIVE swarm (Phase2b) — joins a single, already-a-cluster-member,
+   *  not-yet-joined server without dissolving/reforming the rest. Idempotent (an already-joined target is a
+   *  no-op) and CAS-safe: ACTIVE→JOINING sits outside both form()'s and dissolve()'s accepted source sets, so
+   *  a concurrent form/dissolve/join-node 409s instead of racing a manager command against this. */
+  async joinNode(userId: string, id: string, dto: { serverId: string; advertiseAddr?: string }): Promise<SwarmView> {
+    const cluster = await this.requireWrite(userId, id);
+    if (cluster.swarmStatus !== "ACTIVE") {
+      throw new ConflictException("the swarm must be ACTIVE to add a node (Form Swarm first, or re-run it to reconcile a DEGRADED cluster)");
+    }
+    const members = await this.members(id);
+    const target = members.find((m) => m.id === dto.serverId);
+    if (!target) throw new BadRequestException("server must be a member of this cluster");
+    if (target.swarmRole) return this.view(id); // idempotent: already joined, nothing to do
+    if (target.status !== "ONLINE") throw new BadRequestException("server is offline");
+    if (!target.capabilities.includes("swarm")) {
+      throw new BadRequestException("grant the 'swarm' capability to this server first");
+    }
+    const manager = members.find((m) => m.id === cluster.swarmManagerId);
+    if (!manager || manager.status !== "ONLINE") {
+      throw new ServiceUnavailableException("swarm manager is offline — cannot add a node right now");
+    }
+
+    let advertiseAddr: string;
+    if (dto.advertiseAddr !== undefined) {
+      if (isIP(dto.advertiseAddr) === 0) throw new BadRequestException("advertiseAddr must be an IP literal");
+      advertiseAddr = dto.advertiseAddr;
+    } else {
+      // Recomputed fresh (not the manager's original init address) — safe because buildSwarmInitScript binds
+      // --listen-addr 0.0.0.0:2377, so any currently-reachable manager IP works as the worker's dial target.
+      const picked = this.pickAdvertiseAddr(manager);
+      if (!picked) throw new BadRequestException("manager has no usable IP; provide advertiseAddr");
+      advertiseAddr = picked;
+    }
+
+    const cas = await this.prisma.cluster.updateMany({ where: { id, swarmStatus: "ACTIVE" }, data: { swarmStatus: "JOINING" } });
+    if (cas.count !== 1) throw new ConflictException("a swarm operation is already in progress");
+
+    try {
+      const tokRes = await this.run(manager.id, buildSwarmJoinTokenScript("worker"));
+      const token = tokRes.output.trim();
+      if (tokRes.exitCode !== 0 || !token) {
+        throw new ServiceUnavailableException("could not fetch a join token from the manager");
+      }
+      const reason = await this.joinWorker(target, token, advertiseAddr);
+      await this.run(manager.id, buildSwarmTokenRotateScript("worker")).catch(() => undefined);
+      if (reason) {
+        const fresh = await this.prisma.server.findUnique({ where: { id: target.id }, select: { swarmError: true } });
+        throw new ServiceUnavailableException(fresh?.swarmError ?? "could not add the node to the swarm");
+      }
+      // Clear any stale error from a prior failed attempt on success — matches form()/dissolve()'s
+      // reset-on-every-terminal-transition convention; otherwise the old banner would persist on a healthy
+      // swarm AND mask a later real "manager offline" (statusInternal's `?? ...` never fires if it's truthy).
+      await this.prisma.cluster.updateMany({ where: { id, swarmStatus: "JOINING" }, data: { swarmStatus: "ACTIVE", swarmLastError: null } });
+      await this.audit.log({ actor: userId, action: "cluster.swarm.join_node", target: id, meta: { serverId: target.id } });
+      return this.view(id);
+    } catch (e) {
+      // Never DEGRADED here — the REST of the swarm is unaffected by one node's failed join.
+      await this.prisma.cluster
+        .updateMany({ where: { id, swarmStatus: "JOINING" }, data: { swarmStatus: "ACTIVE", swarmLastError: safeMessage(e) } })
+        .catch(() => undefined);
+      throw e;
+    }
+  }
+
   /** Dissolve the swarm: workers leave (best-effort, node-local), then the manager `leave --force` last.
    *  Unreachable nodes are abandoned (bookkeeping cleared, a marker left) rather than blocking teardown. */
   async dissolve(userId: string, id: string): Promise<SwarmView> {
@@ -444,6 +511,7 @@ export class SwarmService {
         status: m.status,
         swarmRole: m.swarmRole,
         swarmError: m.swarmError,
+        swarmCapable: m.capabilities.includes("swarm"),
       })),
       live: null,
     };

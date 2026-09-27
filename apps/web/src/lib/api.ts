@@ -399,6 +399,9 @@ export const api = {
   formSwarm(id: string, body: { managerServerId: string; advertiseAddr?: string }) {
     return apiFetch<SwarmView>(`/clusters/${id}/swarm`, { method: "POST", body: JSON.stringify(body) });
   },
+  joinSwarmNode(id: string, body: { serverId: string; advertiseAddr?: string }) {
+    return apiFetch<SwarmView>(`/clusters/${id}/swarm/nodes`, { method: "POST", body: JSON.stringify(body) });
+  },
   getSwarmStatus(id: string) {
     return apiFetch<SwarmView>(`/clusters/${id}/swarm`);
   },

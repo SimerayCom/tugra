@@ -14,6 +14,8 @@ import {
   CreateClusterSchema,
   FormSwarmInput,
   FormSwarmSchema,
+  JoinNodeInput,
+  JoinNodeSchema,
   SetServersInput,
   SetServersSchema,
   UpdateClusterInput,
@@ -91,6 +93,19 @@ export class ClustersController {
     @Body(new ZodValidationPipe(FormSwarmSchema)) body: FormSwarmInput,
   ) {
     return this.swarm.form(user.userId, id, body);
+  }
+
+  // Add one more node to an already-ACTIVE swarm. Same elevated scope as Form Swarm (it too dispatches a
+  // signed `docker swarm` command to an agent); the service enforces servers:manage.
+  @Post(":id/swarm/nodes")
+  @RequireScopes("deploy")
+  @ApiZodBody(JoinNodeSchema)
+  joinSwarmNode(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(JoinNodeSchema)) body: JoinNodeInput,
+  ) {
+    return this.swarm.joinNode(user.userId, id, body);
   }
 
   @Get(":id/swarm")
