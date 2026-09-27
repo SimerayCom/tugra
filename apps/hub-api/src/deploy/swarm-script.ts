@@ -64,6 +64,22 @@ export function buildNodeLsScript(): string {
   return "docker node ls --format '{{json .}}'";
 }
 
+/** Full node inspect (one JSON object per line) — richer than `node ls`: carries Spec.Labels, Spec.Role and
+ *  Spec.Availability, which the placement picker needs. Run on a MANAGER. */
+export function buildNodeInspectAllScript(): string {
+  return "docker node inspect $(docker node ls -q) --format '{{json .}}'";
+}
+
+/** Add/remove node labels on the swarm (run on a MANAGER). `nodeId` is the DOCKER swarm node id
+ *  (Server.swarmNodeId / SwarmLiveNode.id), never Tugra's Server.id — `docker node update` only knows the former. */
+export function buildNodeLabelUpdateScript(nodeId: string, add: Record<string, string>, remove: string[]): string {
+  const flags = [
+    ...Object.entries(add).map(([k, v]) => `--label-add ${shq(`${k}=${v}`)}`),
+    ...remove.map((k) => `--label-rm ${shq(k)}`),
+  ];
+  return `docker node update ${flags.join(" ")} ${shq(nodeId)}`;
+}
+
 /** Rotate (invalidate) the join token for the given role — run after a batch of joins so any token that
  *  leaked into a process list / stray log stops being usable within seconds. */
 export function buildSwarmTokenRotateScript(role: "worker" | "manager"): string {

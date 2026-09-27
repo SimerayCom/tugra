@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Btn, Card } from "./ui";
+import { PlacementPicker } from "./placement-picker";
+import type { Placement } from "../lib/types";
 
 const field: React.CSSProperties = {
   padding: "6px 9px",
@@ -30,11 +32,13 @@ export function ClusterDeployCard({
   teamId,
   clusterId,
   replicas,
+  placement,
 }: {
   id: string;
   teamId: string;
   clusterId: string | null;
   replicas: number | null;
+  placement: Placement;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -138,6 +142,7 @@ export function ClusterDeployCard({
 
       {cluster && <div style={{ fontSize: 11, color: "var(--c-am)", marginTop: 8 }}>{t("apps.clusterDeployNote")}</div>}
       {swarmClusters.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.clusterNoSwarms")}</div>}
+      {clusterId && <PlacementPicker appId={id} clusterId={clusterId} initial={placement} canWrite={true} />}
       {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{save.error instanceof Error ? save.error.message : t("apps.clusterSaveFailed")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>

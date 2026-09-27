@@ -16,6 +16,8 @@ import {
   FormSwarmSchema,
   JoinNodeInput,
   JoinNodeSchema,
+  SetNodeLabelsInput,
+  SetNodeLabelsSchema,
   SetServersInput,
   SetServersSchema,
   UpdateClusterInput,
@@ -126,5 +128,20 @@ export class ClustersController {
   @Delete(":id/swarm/nodes/:serverId")
   leaveSwarmNode(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("serverId") serverId: string) {
     return this.swarm.leaveNode(user.userId, id, serverId);
+  }
+
+  // Add/remove docker node labels (feeds the placement picker). deploy scope + servers:manage, same tier as
+  // Form Swarm — it dispatches a signed `docker node update` to the manager. nodeId is the docker swarm node id.
+  @Put(":id/swarm/nodes/:nodeId/labels")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodBody(SetNodeLabelsSchema)
+  setNodeLabels(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("nodeId") nodeId: string,
+    @Body(new ZodValidationPipe(SetNodeLabelsSchema)) body: SetNodeLabelsInput,
+  ) {
+    return this.swarm.setNodeLabels(user.userId, id, nodeId, body);
   }
 }

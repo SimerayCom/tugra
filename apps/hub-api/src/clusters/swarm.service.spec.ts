@@ -29,6 +29,8 @@ function agentMock(opts: {
   tokenExit?: number;
   drainExit?: number; // node-drain script exit (0 clean, 2 timeout)
   nodeRmExit?: number; // `docker node rm` exit
+  nodeInspectOut?: string; // `docker node inspect` output (for status() live parsing)
+  labelExit?: number; // `docker node update --label-*` exit
 } = {}) {
   const sendCommand = jest.fn(async (serverId: string, command: string) => {
     if (command.includes("docker info")) {
@@ -44,7 +46,9 @@ function agentMock(opts: {
     if (command.includes("node update --availability drain")) {
       return { exitCode: opts.drainExit ?? 0, output: opts.drainExit === 2 ? "TUGRA_DRAIN: timeout" : "TUGRA_DRAIN: clean" };
     }
+    if (command.includes("--label-add") || command.includes("--label-rm")) return { exitCode: opts.labelExit ?? 0, output: "" };
     if (command.includes("node rm")) return { exitCode: opts.nodeRmExit ?? 0, output: "" };
+    if (command.includes("node inspect")) return { exitCode: 0, output: opts.nodeInspectOut ?? "" };
     if (command.includes("node ls")) return { exitCode: 0, output: "" };
     if (command.includes("swarm leave")) return { exitCode: 0, output: "" };
     return { exitCode: 0, output: "" };
@@ -58,7 +62,7 @@ function make(opts: {
   swarmManagerId?: string | null;
   casCount?: number;
   appCount?: number;
-  apps?: { name: string; replicas: number | null }[]; // for replicaRiskWarning
+  apps?: object[]; // rows for replicaRiskWarning (name/replicas) and stripPlacementNamingNode (id/placement)
   otherOnline?: number; // server.count → other online swarm members
   agent?: AgentWsServer;
 } = {}) {
@@ -72,6 +76,7 @@ function make(opts: {
   const clusterUpdate = jest.fn().mockResolvedValue(cluster);
   const clusterUpdateMany = jest.fn().mockResolvedValue({ count: opts.casCount ?? 1 });
   const serverUpdate = jest.fn().mockResolvedValue({});
+  const appUpdate = jest.fn().mockResolvedValue({});
   const prisma = {
     cluster: {
       findUnique: jest.fn().mockResolvedValue(cluster),
@@ -87,6 +92,7 @@ function make(opts: {
     application: {
       count: jest.fn().mockResolvedValue(opts.appCount ?? 0),
       findMany: jest.fn().mockResolvedValue(opts.apps ?? []),
+      update: appUpdate,
     },
   } as unknown as PrismaService;
   const access = {
@@ -97,7 +103,7 @@ function make(opts: {
   const agent = opts.agent ?? agentMock();
   const swarmProxy = { teardown: jest.fn().mockResolvedValue(true) } as unknown as import("./swarm-proxy.service").SwarmProxyService;
   const svc = new SwarmService(prisma, access, audit, agent, swarmProxy);
-  return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate };
+  return { svc, prisma, access, audit, agent, swarmProxy, clusterUpdate, clusterUpdateMany, serverUpdate, appUpdate };
 }
 
 /** Every arg passed to a jest.fn, flattened to a string — for leak assertions. */
@@ -420,8 +426,7 @@ describe("SwarmService.leaveNode", () => {
     const { svc, serverUpdate, clusterUpdateMany, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [mgr(), worker()], agent });
     await svc.leaveNode("u1", "c1", "w1");
     const calls = sc(agent).mock.calls;
-    expect(calls[0][0]).toBe("mgr");
-    expect(calls[0][1] as string).toContain("node update --availability drain");
+    expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("node update --availability drain"))).toBe(true);
     expect(calls.some((c) => c[0] === "w1" && (c[1] as string).includes("swarm leave"))).toBe(true);
     expect(calls.some((c) => c[0] === "mgr" && (c[1] as string).includes("node rm --force"))).toBe(true);
     expect(serverUpdate).toHaveBeenCalledWith({ where: { id: "w1" }, data: { swarmRole: null, swarmNodeId: null, swarmError: null, clusterId: null } });
@@ -491,5 +496,54 @@ describe("SwarmService.leaveNode", () => {
     for (const fn of [serverUpdate, clusterUpdate, clusterUpdateMany, audit.log]) {
       expect(allArgs(fn as unknown as jest.Mock)).not.toContain("TUGRA_DRAIN");
     }
+  });
+
+  it("strips app placement pinned to the removed node (by hostname or node id) so it can't go unschedulable", async () => {
+    const inspect = JSON.stringify({ ID: "node_w1", Description: { Hostname: "worker-3" }, Spec: { Role: "worker", Availability: "active", Labels: {} }, Status: { State: "ready" } });
+    const agent = agentMock({ nodeInspectOut: inspect });
+    const { svc, appUpdate } = make({
+      swarmStatus: "ACTIVE", swarmManagerId: "mgr",
+      members: [mgr(), worker()],
+      apps: [{ id: "app1", name: "api", replicas: 1, placement: { constraints: [{ type: "hostname", op: "eq", value: "worker-3" }, { type: "role", op: "eq", value: "worker" }], spreadLabelKey: null } }],
+      otherOnline: 5,
+      agent,
+    });
+    await svc.leaveNode("u1", "c1", "w1");
+    // the worker-3 hostname pin is stripped; the unrelated role rule survives
+    expect(appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { placement: { constraints: [{ type: "role", op: "eq", value: "worker" }], spreadLabelKey: null } } });
+  });
+});
+
+describe("SwarmService status() live-parse + setNodeLabels (FLEET-D)", () => {
+  const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
+  const inspectLine = JSON.stringify({ ID: "node_mgr", Description: { Hostname: "mgr-host" }, Spec: { Role: "manager", Availability: "active", Labels: { zone: "east" } }, Status: { State: "ready" } });
+
+  it("status() parses labels/role/hostname/state from docker node inspect + threads swarmNodeId", async () => {
+    const agent = agentMock({ nodeInspectOut: inspectLine });
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" })], agent });
+    const view = await svc.status("u1", "c1");
+    expect(view.live).toEqual([{ id: "node_mgr", hostname: "mgr-host", role: "manager", state: "ready", availability: "active", labels: { zone: "east" } }]);
+    expect(view.nodes.find((n) => n.serverId === "mgr")?.swarmNodeId).toBe("node_mgr");
+  });
+
+  it("setNodeLabels dispatches a node update to the manager under swarm cap + audits", async () => {
+    const agent = agentMock({ nodeInspectOut: inspectLine });
+    const { svc, audit } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", swarmNodeId: "node_mgr" })], agent });
+    await svc.setNodeLabels("u1", "c1", "node_mgr", { add: { zone: "east" }, remove: [] });
+    const call = sc(agent).mock.calls.find((c) => (c[1] as string).includes("--label-add"));
+    expect(call?.[0]).toBe("mgr");
+    expect(call?.[1] as string).toContain("--label-add 'zone=east'");
+    expect(call?.[2]).toBe("swarm");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "cluster.swarm.node.labels" }));
+  });
+
+  it("setNodeLabels 400s when the swarm is not active", async () => {
+    const { svc } = make({ swarmStatus: "NONE", members: [member({ id: "mgr", swarmRole: "MANAGER" })] });
+    await expect(svc.setNodeLabels("u1", "c1", "node_mgr", { add: { a: "b" }, remove: [] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("setNodeLabels 503s when the manager is offline", async () => {
+    const { svc } = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER", status: "OFFLINE" })] });
+    await expect(svc.setNodeLabels("u1", "c1", "node_mgr", { add: { a: "b" }, remove: [] })).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

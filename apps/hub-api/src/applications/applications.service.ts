@@ -26,6 +26,10 @@ import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filter
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
+import { SwarmService } from "../clusters/swarm.service";
+import type { PlacementConstraint } from "../deploy/deploy-script";
+import type { SetPlacementInput } from "./dto";
+import { PlacementConstraintSchema } from "./dto";
 import { serviceName, parseServiceTasks, parseSwarmTasks, type SwarmTask } from "../deploy/service-script";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -127,6 +131,7 @@ export const AppViewSchema = z.object({
   buildServerId: z.string().nullable(),
   clusterId: z.string().nullable(),
   replicas: z.number().nullable(),
+  placement: z.object({ constraints: z.array(PlacementConstraintSchema), spreadLabelKey: z.string().nullable() }),
   deployStrategy: z.string(),
   rollbackOnFailure: z.boolean(),
   zeroDowntime: z.boolean(),
@@ -223,6 +228,7 @@ export class ApplicationsService {
     private readonly portAlloc: PortAllocatorService,
     private readonly catalog: TemplateCatalogService,
     private readonly swarmDeploy: SwarmDeployService,
+    private readonly swarm: SwarmService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -1700,6 +1706,9 @@ export class ApplicationsService {
         }
         managerId = cluster.swarmManagerId;
       }
+      // Placement references a SPECIFIC cluster's live nodes — stale on ANY clusterId change (including
+      // clearing back to classic deploy, where constraints are meaningless). Wipe it (Prisma.JsonNull convention).
+      if (cfg.clusterId !== app.clusterId) data.placement = Prisma.JsonNull;
       data.clusterId = cfg.clusterId;
       // A magic app is served by the CLUSTER's swarm-Traefik (on the manager), not its own server — so
       // re-home its magic domain + cert onto the manager when it joins a cluster, and back onto its own
@@ -1739,6 +1748,25 @@ export class ApplicationsService {
     }
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.clusterconfig.update", target: id });
+  }
+
+  /** Configure swarm placement (FLEET-D). Config-time (applied on next deploy) like volumes/limits. Requires a
+   *  clusterId; hostname/nodeId rules are re-validated server-side against the cluster's CURRENT live nodes at
+   *  save time (a TOCTOU with a node leaving between page-load and save is acceptable — same class as our
+   *  manager-reachability checks elsewhere). */
+  async setPlacement(userId: string, id: string, input: SetPlacementInput): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (!app.clusterId) throw new BadRequestException("select a cluster before configuring placement");
+    const needsLive = input.constraints.some((c) => c.type === "hostname" || c.type === "nodeId");
+    if (needsLive) {
+      const live = (await this.swarm.status(userId, app.clusterId)).live ?? [];
+      for (const c of input.constraints) {
+        if (c.type === "hostname" && !live.some((n) => n.hostname === c.value)) throw new BadRequestException(`no live node with hostname "${c.value}"`);
+        if (c.type === "nodeId" && !live.some((n) => n.id === c.value)) throw new BadRequestException(`no live node with id "${c.value}"`);
+      }
+    }
+    await this.prisma.application.update({ where: { id }, data: { placement: input as unknown as Prisma.InputJsonValue } });
+    await this.audit.log({ actor: userId, action: "app.placement.update", target: id });
   }
 
   /** Choose the deploy strategy (ROLLING zero-downtime vs RECREATE) and whether a failed
@@ -1871,6 +1899,15 @@ export class ApplicationsService {
     return Array.isArray(app.configMounts) ? (app.configMounts as unknown as AppConfigMount[]) : [];
   }
 
+  /** Structured placement of a swarm app (FLEET-D), safely coerced from the nullable Json column. */
+  private appPlacement(app: Application): { constraints: PlacementConstraint[]; spreadLabelKey: string | null } {
+    const p = app.placement as { constraints?: unknown; spreadLabelKey?: unknown } | null;
+    return {
+      constraints: Array.isArray(p?.constraints) ? (p!.constraints as PlacementConstraint[]) : [],
+      spreadLabelKey: typeof p?.spreadLabelKey === "string" ? (p!.spreadLabelKey as string) : null,
+    };
+  }
+
   private appGitToken(app: Application): string | null {
     if (!app.gitTokenEnc) return null;
     try {
@@ -1975,6 +2012,8 @@ export class ApplicationsService {
       reserveCpus: app.reserveCpus,
       gpus: app.gpus,
       replicas: app.replicas,
+      placementConstraints: this.appPlacement(app).constraints,
+      placementSpreadLabelKey: this.appPlacement(app).spreadLabelKey,
       dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
       gitToken: this.appGitToken(app),
@@ -2113,6 +2152,7 @@ export class ApplicationsService {
       buildServerId: app.buildServerId,
       clusterId: app.clusterId,
       replicas: app.replicas,
+      placement: this.appPlacement(app),
       deployStrategy: app.deployStrategy,
       rollbackOnFailure: app.rollbackOnFailure,
       // Whether this app will ACTUALLY deploy zero-downtime (rolling) — surfaces the fact

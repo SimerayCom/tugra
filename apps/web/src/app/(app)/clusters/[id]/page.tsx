@@ -13,6 +13,7 @@ import { TextInput } from "../../../../components/form";
 import { useConfirm } from "../../../../components/confirm";
 import { useToast } from "../../../../components/toast";
 import { BulkRunModal } from "../../../../components/bulk-run-modal";
+import { NodeLabelsEditor } from "../../../../components/node-labels-editor";
 import type { ClusterDetail, SwarmStatus, SwarmView } from "../../../../lib/types";
 
 const SWARM_COLOR: Record<SwarmStatus, string> = {
@@ -190,7 +191,9 @@ export default function ClusterDetailPage() {
               </div>
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {swarm.nodes.map((n) => (
+              {swarm.nodes.map((n) => {
+                const liveNode = swarm.live?.find((x) => x.id === n.swarmNodeId) ?? null;
+                return (
                 <div key={n.serverId} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
                   <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: n.swarmRole === "MANAGER" ? "var(--c-a)" : n.swarmRole === "WORKER" ? "var(--c-tx2)" : "var(--c-tx3)", minWidth: 60 }}>
                     {n.swarmRole ?? "—"}
@@ -215,8 +218,10 @@ export default function ClusterDetailPage() {
                       {removingIds.has(n.serverId) ? "…" : t("clusters.removeNode")}
                     </Btn>
                   )}
+                  {cluster.canWrite && liveNode && <NodeLabelsEditor clusterId={id} nodeId={liveNode.id} labels={liveNode.labels} />}
                 </div>
-              ))}
+                );
+              })}
             </div>
             {swarm.live && swarm.live.length > 0 && (
               <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>

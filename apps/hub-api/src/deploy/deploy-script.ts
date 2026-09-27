@@ -51,6 +51,10 @@ export interface AppSpec {
   gpus?: string | null;
   /** Swarm service replica count (Phase3, only meaningful when deployed to a cluster). null = classic single container. */
   replicas?: number | null;
+  /** Swarm-only (FLEET-D): structured placement constraints (rendered to `--constraint` expressions). */
+  placementConstraints?: PlacementConstraint[] | null;
+  /** Swarm-only (FLEET-D): spread replicas across values of this node-label key (`--placement-pref spread=…`). */
+  placementSpreadLabelKey?: string | null;
   volumes?: AppVolume[] | null;
   gitToken?: string | null;
   registryAuth?: RegistryAuth | null;
@@ -88,6 +92,31 @@ export interface AppSpec {
    *  into their service. buildComposeUpScript writes each under the app's compose dir + adds the bind
    *  to the Tugra override. */
   configMounts?: AppConfigMount[] | null;
+}
+
+/** A structured Swarm placement rule (FLEET-D). Never a raw docker expression from the client — the hub
+ *  renders it to a `docker service --constraint` string via constraintExpr(). Values are charset-validated in
+ *  the DTO layer; shq() at the shell boundary is the real injection defence. */
+export type PlacementConstraint =
+  | { type: "hostname"; op: "eq" | "ne"; value: string }
+  | { type: "nodeId"; op: "eq" | "ne"; value: string }
+  | { type: "role"; op: "eq" | "ne"; value: "manager" | "worker" }
+  | { type: "label"; op: "eq" | "ne"; key: string; value: string };
+
+/** Render one placement constraint to a docker swarm constraint expression (e.g. `node.hostname==web-1`). */
+export function constraintExpr(c: PlacementConstraint): string {
+  const op = c.op === "ne" ? "!=" : "==";
+  switch (c.type) {
+    case "hostname": return `node.hostname${op}${c.value}`;
+    case "nodeId": return `node.id${op}${c.value}`;
+    case "role": return `node.role${op}${c.value}`;
+    case "label": return `node.labels.${c.key}${op}${c.value}`;
+  }
+}
+
+/** Render a spread preference over a node-label key (`--placement-pref spread=node.labels.<key>`). */
+export function spreadPrefExpr(labelKey: string): string {
+  return `spread=node.labels.${labelKey}`;
 }
 
 /** Credentials for pulling from a private container registry. */

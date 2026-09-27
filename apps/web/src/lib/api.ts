@@ -1,6 +1,7 @@
 import type {
   ApiToken,
   ApiTokenScope,
+  PlacementConstraint,
   InstanceStatus,
   InstanceUpdateApply,
   InstanceUpdateStatus,
@@ -410,6 +411,9 @@ export const api = {
   },
   leaveSwarmNode(clusterId: string, serverId: string) {
     return apiFetch<SwarmView>(`/clusters/${clusterId}/swarm/nodes/${serverId}`, { method: "DELETE" });
+  },
+  setNodeLabels(clusterId: string, nodeId: string, body: { add: Record<string, string>; remove: string[] }) {
+    return apiFetch<SwarmView>(`/clusters/${clusterId}/swarm/nodes/${encodeURIComponent(nodeId)}/labels`, { method: "PUT", body: JSON.stringify(body) });
   },
 
   getMetrics(id: string, limit = 60) {
@@ -898,6 +902,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ dockerOptions }),
     });
+  },
+  setAppPlacement(id: string, body: { constraints: PlacementConstraint[]; spreadLabelKey: string | null }) {
+    return apiFetch<{ ok: boolean }>(`/apps/${id}/placement`, { method: "PUT", body: JSON.stringify(body) });
   },
   setAppLimits(id: string, limits: { memoryMb?: number | null; cpus?: number | null; reserveMemoryMb?: number | null; reserveCpus?: number | null; gpus?: string | null; deployTimeoutSec?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {

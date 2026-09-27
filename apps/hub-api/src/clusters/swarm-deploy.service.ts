@@ -3,7 +3,7 @@ import type { Application } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
-import { buildBuildOnlyScript, imageRef, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
+import { buildBuildOnlyScript, constraintExpr, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
   SWARM_OVERLAY,
   buildOverlayEnsureScript,
@@ -145,6 +145,9 @@ export class SwarmDeployService {
     const routed = !!spec.domain;
     const labels = routed ? traefikLabels(spec) : [];
     const publish = !routed && app.hostPort ? [`${app.hostPort}:${spec.containerPort ?? 80}`] : [];
+    // Structured placement → rendered docker expressions (FLEET-D). Shared by deploy() and rollbackTo().
+    const constraints = (spec.placementConstraints ?? []).map(constraintExpr);
+    const placementPrefs = spec.placementSpreadLabelKey ? [spreadPrefExpr(spec.placementSpreadLabelKey)] : [];
     const script = [
       buildOverlayEnsureScript(SWARM_OVERLAY),
       buildServiceDeployScript({
@@ -161,6 +164,8 @@ export class SwarmDeployService {
         healthCmd: spec.healthCmd ?? null,
         labels,
         publish,
+        constraints,
+        placementPrefs,
         pollSec,
       }),
     ].join("\n");

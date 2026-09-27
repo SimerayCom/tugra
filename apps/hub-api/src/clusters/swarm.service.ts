@@ -6,7 +6,9 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { isIP } from "node:net";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import type { PlacementConstraint } from "../deploy/deploy-script";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
@@ -14,7 +16,8 @@ import { SwarmProxyService } from "./swarm-proxy.service";
 import { isPrivateV4, normalizeIp } from "../common/observed-ip";
 import {
   buildNodeDrainScript,
-  buildNodeLsScript,
+  buildNodeInspectAllScript,
+  buildNodeLabelUpdateScript,
   buildNodeRemoveScript,
   buildSwarmInfoScript,
   buildSwarmInitScript,
@@ -54,6 +57,9 @@ export interface SwarmNodeView {
   /** Whether the server has been granted the 'swarm' capability — a prerequisite for joining. Lets the UI
    *  exclude ineligible members from the "Add node" picker instead of round-tripping to a guaranteed 400. */
   swarmCapable: boolean;
+  /** The docker swarm node id (once joined), so the UI can join this cached row to its LIVE counterpart in
+   *  live[] (which carries labels) without guessing at hostname matching. */
+  swarmNodeId: string | null;
 }
 export interface SwarmLiveNode {
   id: string;
@@ -61,6 +67,7 @@ export interface SwarmLiveNode {
   role: string;
   state: string;
   availability: string;
+  labels: Record<string, string>;
 }
 export interface SwarmView {
   clusterId: string;
@@ -83,7 +90,10 @@ function parseSwarmInfo(output: string): { localNodeState: string; nodeId: strin
 }
 
 /** `docker node ls --format '{{json .}}'` → one JSON object per line. Malformed lines are dropped. */
-function parseNodeLs(output: string): SwarmLiveNode[] {
+/** Parse `docker node inspect --format '{{json .}}'` (one JSON object per line). Richer than `node ls`: it
+ *  carries Spec.Labels/Spec.Role/Spec.Availability. Prefers the authoritative Spec.Role, falling back to the
+ *  ManagerStatus heuristic. State stays lowercase (Docker's NodeState value already is). */
+function parseNodeInspect(output: string): SwarmLiveNode[] {
   return output
     .split("\n")
     .map((l) => l.trim())
@@ -91,12 +101,14 @@ function parseNodeLs(output: string): SwarmLiveNode[] {
     .map((line): SwarmLiveNode | null => {
       try {
         const j = JSON.parse(line);
+        const labels = j?.Spec?.Labels;
         return {
           id: String(j.ID ?? ""),
-          hostname: String(j.Hostname ?? ""),
-          role: j.ManagerStatus ? "manager" : "worker",
-          state: String(j.Status ?? ""),
-          availability: String(j.Availability ?? ""),
+          hostname: String(j?.Description?.Hostname ?? ""),
+          role: String(j?.Spec?.Role ?? (j.ManagerStatus ? "manager" : "worker")),
+          state: String(j?.Status?.State ?? ""),
+          availability: String(j?.Spec?.Availability ?? ""),
+          labels: labels && typeof labels === "object" ? (labels as Record<string, string>) : {},
         };
       } catch {
         return null;
@@ -253,8 +265,8 @@ export class SwarmService {
     }
     let live: SwarmLiveNode[] = [];
     try {
-      const res = await this.run(manager.id, buildNodeLsScript());
-      if (res.exitCode === 0) live = parseNodeLs(res.output);
+      const res = await this.run(manager.id, buildNodeInspectAllScript());
+      if (res.exitCode === 0) live = parseNodeInspect(res.output);
     } catch {
       // manager unreachable mid-call — fall back to the cached view
     }
@@ -372,6 +384,9 @@ export class SwarmService {
 
     try {
       const warning = await this.replicaRiskWarning(id, node);
+      // The node's live docker hostname (captured before removal) so we can also strip apps pinned to it BY
+      // hostname — not just by swarm node id — and never leave one permanently unschedulable (FLEET-D).
+      const departingHostname = (await this.statusInternal(id).catch(() => null))?.live?.find((n) => n.id === node.swarmNodeId)?.hostname ?? null;
       const drain = await this.run(manager.id, buildNodeDrainScript(node.swarmNodeId), NODE_DRAIN_TIMEOUT_SEC * 1000 + 10_000);
       const drainNote = drain.exitCode === 2 ? "some tasks did not vacate within the drain window — they may be left Pending" : null;
 
@@ -393,6 +408,9 @@ export class SwarmService {
       const nodeNote = [drainNote, offlineNote].filter(Boolean).join("; ") || null;
       // The node genuinely left the swarm at the docker level → clear its role/cluster unconditionally.
       await this.prisma.server.update({ where: { id: node.id }, data: { swarmRole: null, swarmNodeId: null, swarmError: nodeNote, clusterId: null } });
+      // Strip any app placement pinned to the node we just removed (by node id or its live hostname) so it
+      // can't be left permanently unschedulable on its next deploy.
+      await this.stripPlacementNamingNode(id, node.swarmNodeId, departingHostname);
       // Restore the cluster row ONLY if we still hold the FORMING lock. dissolve()'s CAS accepts FORMING as a
       // source, so a concurrent dissolve() can legitimately tear the swarm down mid-removal — an unconditional
       // write here would resurrect a self-contradictory ACTIVE + null-manager row (mirrors form()'s guarded commit).
@@ -428,6 +446,39 @@ export class SwarmService {
     } catch {
       return null;
     }
+  }
+
+  /** Remove any app placement constraint (FLEET-D) that pinned to a node just removed from the cluster — by
+   *  swarm node id (nodeId rules) or its live docker hostname (hostname rules) — so a decommissioned node can
+   *  never leave an app permanently unschedulable. Best-effort per app; never throws. */
+  private async stripPlacementNamingNode(clusterId: string, swarmNodeId: string, hostname: string | null): Promise<void> {
+    const apps = await this.prisma.application.findMany({ where: { clusterId }, select: { id: true, placement: true } }).catch(() => []);
+    for (const a of apps) {
+      const p = a.placement as { constraints?: PlacementConstraint[]; spreadLabelKey?: string | null } | null;
+      const cons = Array.isArray(p?.constraints) ? p!.constraints : [];
+      if (!cons.length) continue;
+      const kept = cons.filter((c) => !((c.type === "nodeId" && c.value === swarmNodeId) || (c.type === "hostname" && hostname != null && c.value === hostname)));
+      if (kept.length !== cons.length) {
+        await this.prisma.application
+          .update({ where: { id: a.id }, data: { placement: { constraints: kept, spreadLabelKey: p?.spreadLabelKey ?? null } as unknown as Prisma.InputJsonValue } })
+          .catch(() => undefined);
+      }
+    }
+  }
+
+  /** Add/remove docker node labels on a live swarm (cluster-scoped, not app-scoped). Feeds the placement
+   *  picker so label-based rules have real keys/values to choose from. Runs a signed `docker node update` on
+   *  the manager and returns a fresh status() so the caller re-renders with the new labels. */
+  async setNodeLabels(userId: string, id: string, nodeId: string, body: { add: Record<string, string>; remove: string[] }): Promise<SwarmView> {
+    const cluster = await this.requireWrite(userId, id);
+    if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") throw new BadRequestException("swarm is not active");
+    if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
+    const manager = (await this.members(id)).find((m) => m.id === cluster.swarmManagerId);
+    if (!manager || manager.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
+    const res = await this.run(manager.id, buildNodeLabelUpdateScript(nodeId, body.add, body.remove));
+    if (res.exitCode !== 0) throw new BadRequestException("node label update failed");
+    await this.audit.log({ actor: userId, action: "cluster.swarm.node.labels", target: id, meta: { nodeId, add: Object.keys(body.add), remove: body.remove } });
+    return this.status(userId, id);
   }
 
   /** Dissolve the swarm: workers leave (best-effort, node-local), then the manager `leave --force` last.
@@ -605,6 +656,7 @@ export class SwarmService {
         swarmRole: m.swarmRole,
         swarmError: m.swarmError,
         swarmCapable: m.capabilities.includes("swarm"),
+        swarmNodeId: m.swarmNodeId,
       })),
       live: null,
     };

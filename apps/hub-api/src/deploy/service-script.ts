@@ -73,6 +73,8 @@ export interface ServiceDeployOpts {
   healthCmd?: string | null;
   labels?: string[]; // service-level labels (Traefik swarm-provider reads these) — PhaseB; [] in PhaseA
   publish?: string[]; // routing-mesh published ports, e.g. "8080:80" (reachable on any node) — domain-less apps
+  constraints?: string[]; // already-rendered `--constraint` expressions (e.g. "node.hostname==web-1") — FLEET-D
+  placementPrefs?: string[]; // already-rendered `--placement-pref` expressions (e.g. "spread=node.labels.zone") — FLEET-D
   pollSec: number; // total rollout poll budget (effective timeout, sized by replica count)
 }
 
@@ -170,6 +172,30 @@ function commonServiceFlags(o: ServiceDeployOpts): string[] {
   return flags;
 }
 
+/** Full remove-then-add of a service's placement constraints/preferences on UPDATE (FLEET-D). Docker has no
+ *  "replace the whole list" flag — only --constraint-add/-rm — and a STALE constraint is a correctness bug
+ *  (pinning to A then adding B leaves A AND B active, ANDing to permanently-unschedulable). So we inspect the
+ *  LIVE service, remove EVERY current constraint/pref, then add the complete desired set — unconditionally,
+ *  even when the desired set is empty (a user who cleared placement must still get the old ones stripped).
+ *  Appends onto the SAME `$@` positional list env.updateBuild already started (no second bare `set --`, which
+ *  would wipe the accumulated --env-add args). IFS is set to a literal newline so a plain `for x in $VAR`
+ *  splits the inspect output on lines only (constraint/pref values are whitespace-free) with no subshell —
+ *  a `| while read` pipeline WOULD subshell and lose the accumulated `$@`, the hazard this file already notes. */
+function placementUpdateBuild(svc: string, constraints: string[], placementPrefs: string[]): string[] {
+  const q = shq(svc);
+  return [
+    `TUGRA_CUR_C=$(docker service inspect ${q} --format '{{range .Spec.TaskTemplate.Placement.Constraints}}{{.}}{{println}}{{end}}' 2>/dev/null || true)`,
+    `TUGRA_CUR_P=$(docker service inspect ${q} --format '{{range .Spec.TaskTemplate.Placement.Preferences}}spread={{.Spread.SpreadDescriptor}}{{println}}{{end}}' 2>/dev/null || true)`,
+    `TUGRA_OLDIFS=$IFS`,
+    `IFS='\n'`,
+    `for TUGRA_X in $TUGRA_CUR_C; do set -- "$@" --constraint-rm "$TUGRA_X"; done`,
+    `for TUGRA_X in $TUGRA_CUR_P; do set -- "$@" --placement-pref-rm "$TUGRA_X"; done`,
+    `IFS=$TUGRA_OLDIFS`,
+    ...constraints.map((c) => `set -- "$@" --constraint-add ${shq(c)}`),
+    ...placementPrefs.map((p) => `set -- "$@" --placement-pref-add ${shq(p)}`),
+  ];
+}
+
 /**
  * Idempotent, existence-driven create-vs-update — decided by `docker service inspect`, NOT by Tugra's
  * local Deployment history, so a prior failed attempt that left a real service object behind can't wedge
@@ -181,6 +207,8 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
   const health = healthFlags(o.healthCmd);
   const labels = o.labels ?? [];
   const publish = o.publish ?? [];
+  const constraints = o.constraints ?? [];
+  const placementPrefs = o.placementPrefs ?? [];
 
   const createFlags = [
     `--name ${q}`,
@@ -195,6 +223,8 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     `--update-parallelism 1`,
     `--update-order start-first`,
     ...health,
+    ...constraints.map((c) => `--constraint ${shq(c)}`),
+    ...placementPrefs.map((p) => `--placement-pref ${shq(p)}`),
     ...labels.map((l) => `--label ${shq(l)}`),
     ...publish.map((p) => `--publish ${shq(p)}`),
     ...env.createFlags,
@@ -224,6 +254,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     `if docker service inspect ${q} >/dev/null 2>&1; then`,
     `  TUGRA_MODE=update`,
     ...env.updateBuild.map((s) => `  ${s}`),
+    ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `  ${s}`),
     `  docker service update --detach ${updateFlags}`,
     `  TUGRA_RC=$?`,
     `else`,

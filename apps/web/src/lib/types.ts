@@ -143,6 +143,7 @@ export interface SwarmNodeView {
   swarmRole: SwarmRole | null;
   swarmError: string | null;
   swarmCapable: boolean;
+  swarmNodeId: string | null;
 }
 export interface SwarmLiveNode {
   id: string;
@@ -150,6 +151,18 @@ export interface SwarmLiveNode {
   role: string;
   state: string;
   availability: string;
+  labels: Record<string, string>;
+}
+
+/** A structured Swarm placement rule (FLEET-D). */
+export type PlacementConstraint =
+  | { type: "hostname"; op: "eq" | "ne"; value: string }
+  | { type: "nodeId"; op: "eq" | "ne"; value: string }
+  | { type: "role"; op: "eq" | "ne"; value: "manager" | "worker" }
+  | { type: "label"; op: "eq" | "ne"; key: string; value: string };
+export interface Placement {
+  constraints: PlacementConstraint[];
+  spreadLabelKey: string | null;
 }
 export interface SwarmView {
   clusterId: string;
@@ -657,6 +670,7 @@ export interface Application {
   buildServerId: string | null;
   clusterId: string | null;
   replicas: number | null;
+  placement: Placement;
   deployStrategy: string;
   rollbackOnFailure: boolean;
   zeroDowntime: boolean;

@@ -1,4 +1,6 @@
 import {
+  constraintExpr,
+  spreadPrefExpr,
   buildImageRemoveScript,
   buildRestartScript,
   buildStartScript,
@@ -865,5 +867,18 @@ describe("infra image digest pinning", () => {
   });
   it("pins the reverse-proxy image to a tag + sha256 digest", () => {
     expect(PROXY_IMAGE).toMatch(/^traefik:[\w.]+@sha256:[a-f0-9]{64}$/);
+  });
+});
+
+describe("placement expression builders (FLEET-D)", () => {
+  it("constraintExpr renders each type + both operators", () => {
+    expect(constraintExpr({ type: "hostname", op: "eq", value: "web-1" })).toBe("node.hostname==web-1");
+    expect(constraintExpr({ type: "hostname", op: "ne", value: "web-1" })).toBe("node.hostname!=web-1");
+    expect(constraintExpr({ type: "nodeId", op: "eq", value: "abc123" })).toBe("node.id==abc123");
+    expect(constraintExpr({ type: "role", op: "eq", value: "manager" })).toBe("node.role==manager");
+    expect(constraintExpr({ type: "label", op: "eq", key: "zone", value: "east" })).toBe("node.labels.zone==east");
+  });
+  it("spreadPrefExpr renders a spread over a label key", () => {
+    expect(spreadPrefExpr("zone")).toBe("spread=node.labels.zone");
   });
 });

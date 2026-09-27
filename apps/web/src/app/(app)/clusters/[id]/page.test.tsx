@@ -110,4 +110,14 @@ describe("ClusterDetailPage", () => {
     await screen.findByRole("button", { name: "Dissolve swarm" });
     expect(screen.queryByRole("button", { name: "Add node" })).toBeNull();
   });
+
+  it("renders a node's label editor when a live node matches its swarmNodeId", async () => {
+    vi.spyOn(api, "getSwarmStatus").mockResolvedValue({
+      clusterId: "c1", swarmStatus: "ACTIVE", managerServerId: "s1", swarmLastError: null,
+      nodes: [{ serverId: "s1", name: "node-a", status: "ONLINE", swarmRole: "MANAGER", swarmError: null, swarmCapable: true, swarmNodeId: "nd1" }],
+      live: [{ id: "nd1", hostname: "node-a", role: "manager", state: "ready", availability: "active", labels: { zone: "east" } }],
+    } as never);
+    wrap(<ClusterDetailPage />);
+    await waitFor(() => expect(screen.getByText("zone=east")).toBeTruthy());
+  });
 });
