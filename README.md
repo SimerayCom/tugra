@@ -64,13 +64,13 @@ A short, honest comparison (competitor columns last verified 2026-09-27) — cel
 
 | | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
 |---|---|---|---|---|---|
-| Multi-node clustering | ✅ | Planned (v5, no date)¹ | ✅ Swarm-based | ✅ Swarm-based | — |
+| Multi-node clustering | ✅ Swarm-based | Individual servers¹ | ✅ Swarm-based | ✅ Swarm-based | ✅ k3s-based (not Swarm)⁶ |
 | MCP / agent control | ✅ built-in (17 tools, read-only)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
 | Database engines | **9** (named above) | 8 | 6 | — | — |
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
 
-<sub>¹ Coolify's stable v4 manages servers individually; multi-server clustering was announced for a future v5 with no published date. ² Third-party project, not an official Dokku release, and marked early-stage by its own author. ³ Dokploy's core is Apache-2.0; a separate Source Available license covers its `proprietary/` enterprise directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an added appendix restricting modification/redistribution of paid features. ⁵ All three ship an MCP server today; Tugra's is read-only in this release (mutating tools are planned), while Coolify and Dokploy already expose write/mutate tools — so this is parity, not a Tugra-only feature. Competitor facts change — please verify before repeating them.</sub>
+<sub>¹ Coolify's stable v4 manages servers individually, not as a cluster; its legacy Docker Swarm mode is deprecated and blocked for new teams, and a v5 multi-node redesign was built then abandoned in-repo (a new architecture is TBD). ² Third-party project, not an official Dokku release, and marked early-stage by its own author. ³ Dokploy's core is Apache-2.0; a separate Source Available license covers its `proprietary/` enterprise directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an added appendix restricting modification/redistribution of paid features. ⁵ All three ship an MCP server today; Tugra's is read-only in this release (mutating tools are planned), while Coolify and Dokploy already expose write/mutate tools — so this is parity, not a Tugra-only feature. ⁶ Dokku has no Docker Swarm support, but ships a genuine multi-node story via a bundled k3s/Kubernetes distribution (`scheduler-k3s`) — WireGuard-encrypted overlay, Longhorn distributed storage and KEDA autoscaling; a different architecture, and more mature than ours on some of those axes. Competitor facts change — please verify before repeating them.</sub>
 
 ## Quick start
 
