@@ -27,6 +27,9 @@ export interface McpTool {
   /** JSON schema advertised to the client. NOTE: only a hint — a client can call `tools/call` with
    *  arbitrary arguments, so every execute() re-validates/clamps its inputs. */
   inputSchema: Record<string, unknown>;
+  /** Argument names whose VALUES are secret and must be redacted from the audit-log `meta.args` (e.g. an env
+   *  var value the caller is setting). The MCP server nulls these before persisting the audit entry. */
+  sensitiveArgs?: string[];
   execute: (deps: McpDeps, userId: string, args: Record<string, unknown>) => Promise<unknown>;
 }
 
@@ -42,6 +45,24 @@ function optStr(args: Record<string, unknown>, key: string): string | undefined 
 }
 function optBool(args: Record<string, unknown>, key: string): boolean {
   return args[key] === true;
+}
+/** A required string that MAY be empty (unlike reqStr) — for an env-var VALUE, where "" is legitimate. */
+function reqStrAllowEmpty(args: Record<string, unknown>, key: string): string {
+  const v = args[key];
+  if (typeof v !== "string") throw new Error(`missing required argument: ${key} (expected a string)`);
+  return v;
+}
+/** Standard POSIX-ish env var name — validated because the agent supplies the key (an "A=B"-shaped key would
+ *  corrupt the env map). */
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Names that would either poke at Object internals or read oddly in an env map — the regex admits them, so
+// reject explicitly (defence-in-depth; the merge/delete use own-property semantics so this isn't a live
+// pollution vector, but an env var literally named __proto__/constructor/prototype is never legitimate).
+const ENV_KEY_DENY = new Set(["__proto__", "constructor", "prototype"]);
+function reqEnvKey(args: Record<string, unknown>): string {
+  const k = reqStr(args, "key");
+  if (!ENV_KEY_RE.test(k) || ENV_KEY_DENY.has(k)) throw new Error(`invalid env var name: ${JSON.stringify(k)} (must match ${ENV_KEY_RE} and not be a reserved name)`);
+  return k;
 }
 /** Machine-checkable destructive confirm: the caller must echo the resource's EXACT name in `confirmName`.
  *  Stronger than a `confirm:true` rubber-stamp (which an LLM sets with no friction) — it forces the agent to
@@ -327,6 +348,63 @@ export const MCP_TOOLS: McpTool[] = [
       requireConfirmName(a, cluster.name, "cluster");
       return { ok: true, action: "dissolve_swarm", swarm: await d.swarm.dissolve(userId, clusterId) };
     },
+  },
+
+  // ── mutate: application env config (Phase2c) ─────────────────────────────────────────────────────
+  // Safe single-key MERGE: read the current env (apps.getEnv, apps:config-gated), change ONE key, write back
+  // via apps.setEnv — so the agent can't blow away the whole env map the way a raw full-replace would, and the
+  // decrypted values it reads to merge are NEVER returned (only the key name is echoed back). Scope "write"
+  // mirrors the REST PUT :id/env default. Note: read-modify-write is not atomic across concurrent calls.
+  {
+    name: "set_env_var",
+    description: "Set (create or update) a SINGLE environment variable on an application, merging it into the existing env (other vars are preserved). Values are write-only here — never returned. Takes effect on the next deploy/restart.",
+    scope: "write",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, key: { type: "string" }, value: { type: "string" } }, required: ["id", "key", "value"] },
+    sensitiveArgs: ["value"], // the value is a secret the caller supplies — never persist it to the audit log
+
+    execute: async (d, userId, a) => {
+      const id = reqStr(a, "id");
+      const key = reqEnvKey(a);
+      const value = reqStrAllowEmpty(a, "value");
+      const env = await d.apps.getEnv(userId, id);
+      await d.apps.setEnv(userId, id, { ...env, [key]: value });
+      return { ok: true, action: "set_env_var", key }; // never echo the value
+    },
+  },
+  {
+    name: "delete_env_var",
+    description: "Remove a SINGLE environment variable from an application (other vars are preserved). Takes effect on the next deploy/restart.",
+    scope: "write",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, key: { type: "string" } }, required: ["id", "key"] },
+    execute: async (d, userId, a) => {
+      const id = reqStr(a, "id");
+      const key = reqEnvKey(a);
+      const env = await d.apps.getEnv(userId, id);
+      // OWN-property check (not `in`, which walks the prototype chain — a key like "toString"/"__proto__" would
+      // otherwise falsely report removed:true and trigger a spurious re-encrypt+write of an unchanged env).
+      if (!Object.prototype.hasOwnProperty.call(env, key)) return { ok: true, action: "delete_env_var", key, removed: false };
+      const { [key]: _drop, ...rest } = env;
+      await d.apps.setEnv(userId, id, rest);
+      return { ok: true, action: "delete_env_var", key, removed: true };
+    },
+  },
+
+  // ── mutate: swarm node removal (Phase2c) ─────────────────────────────────────────────────────────
+  // Reversible (a demoted manager / removed worker can be re-added), so admin scope (DELETE default) is the
+  // gate — no echo-name confirm (that tier is reserved for irreversible dissolve/remove). Pure pass-throughs.
+  {
+    name: "remove_swarm_manager",
+    description: "Demote a swarm MANAGER back to a worker (shrinks the Raft quorum). Refuses to demote the primary/ingress manager or the last manager. Idempotent. Refuses an even resulting count unless acknowledgeEvenQuorum=true.",
+    scope: "admin",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, serverId: { type: "string" }, acknowledgeEvenQuorum: { type: "boolean" } }, required: ["clusterId", "serverId"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "remove_swarm_manager", swarm: await d.swarm.removeManager(userId, reqStr(a, "clusterId"), { serverId: reqStr(a, "serverId"), acknowledgeEvenQuorum: optBool(a, "acknowledgeEvenQuorum") }) }),
+  },
+  {
+    name: "leave_swarm_node",
+    description: "Remove a WORKER node from a cluster's swarm (drains its tasks, then it leaves the swarm and the cluster). A MANAGER must be demoted first. Reversible by re-joining.",
+    scope: "admin",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, serverId: { type: "string" } }, required: ["clusterId", "serverId"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "leave_swarm_node", swarm: await d.swarm.leaveNode(userId, reqStr(a, "clusterId"), reqStr(a, "serverId")) }),
   },
 
   // ── mutate: application removal (Phase2b, destructive) ────────────────────────────────────────────

@@ -8,7 +8,8 @@ function tool(name: string) {
 
 const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"];
 const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas"];
-const ADMIN_TOOLS = ["dissolve_swarm", "remove_application"];
+const WRITE_TOOLS = ["set_env_var", "delete_env_var"];
+const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node"];
 
 describe("MCP_TOOLS catalog", () => {
   it("every tool has a valid scope + name/description/inputSchema", () => {
@@ -20,15 +21,16 @@ describe("MCP_TOOLS catalog", () => {
     }
   });
 
-  it("mutate tools carry the scope of their REST route: deploy-tier ops = deploy, destructive = admin; everything else read", () => {
+  it("mutate tools carry the scope of their REST route: config=write, deploy-tier ops=deploy, destructive=admin; else read", () => {
     for (const t of MCP_TOOLS) {
       if (DEPLOY_TOOLS.includes(t.name)) expect(t.scope).toBe("deploy");
       else if (ADMIN_TOOLS.includes(t.name)) expect(t.scope).toBe("admin");
+      else if (WRITE_TOOLS.includes(t.name)) expect(t.scope).toBe("write");
       else expect(["read", "read:secrets"]).toContain(t.scope);
     }
-    // we deliberately mirror the routes' effective scope (deploy / admin) — never plain "write"
-    expect(MCP_TOOLS.filter((t) => t.scope === "write")).toEqual([]);
-    // the destructive tier must not be reachable with a mere deploy token
+    // the write-scoped tools are EXACTLY the env-config ones (mirror PUT :id/env's default scope)
+    expect(MCP_TOOLS.filter((t) => t.scope === "write").map((t) => t.name).sort()).toEqual([...WRITE_TOOLS].sort());
+    // the destructive/admin tier must not be reachable with a mere deploy/write token
     for (const name of ADMIN_TOOLS) expect(tool(name).scope).toBe("admin");
   });
 
@@ -152,6 +154,75 @@ describe("MCP_TOOLS catalog", () => {
       expect(get).toHaveBeenCalledWith("u1", "c1"); // read-gated name lookup happened first
       expect(dissolve).toHaveBeenCalledWith("u1", "c1");
       expect(res).toMatchObject({ ok: true, action: "dissolve_swarm" });
+    });
+  });
+
+  describe("mutate: application env config (Phase2c)", () => {
+    it("set_env_var MERGES one key (preserves others) via getEnv+setEnv and NEVER returns the value", async () => {
+      const getEnv = jest.fn().mockResolvedValue({ EXISTING: "keep", API_KEY: "old" });
+      const setEnv = jest.fn().mockResolvedValue(undefined);
+      const deps = { apps: { getEnv, setEnv } } as unknown as McpDeps;
+      const res = (await tool("set_env_var").execute(deps, "u1", { id: "app1", key: "API_KEY", value: "sk_new_secret" })) as Record<string, unknown>;
+      expect(getEnv).toHaveBeenCalledWith("u1", "app1");
+      expect(setEnv).toHaveBeenCalledWith("u1", "app1", { EXISTING: "keep", API_KEY: "sk_new_secret" }); // merged, other var kept
+      expect(res).toEqual({ ok: true, action: "set_env_var", key: "API_KEY" });
+      expect(JSON.stringify(res)).not.toContain("sk_new_secret"); // value never echoed back
+    });
+
+    it("set_env_var allows an empty value but rejects an invalid/reserved env key name (agent-supplied)", async () => {
+      const getEnv = jest.fn().mockResolvedValue({});
+      const setEnv = jest.fn().mockResolvedValue(undefined);
+      const deps = { apps: { getEnv, setEnv } } as unknown as McpDeps;
+      await tool("set_env_var").execute(deps, "u1", { id: "app1", key: "FLAG", value: "" }); // empty value OK
+      expect(setEnv).toHaveBeenCalledWith("u1", "app1", { FLAG: "" });
+      await expect(Promise.resolve().then(() => tool("set_env_var").execute(deps, "u1", { id: "app1", key: "BAD=KEY", value: "x" }))).rejects.toThrow(/invalid env var name/);
+      // reserved / prototype-ish names are rejected even though the regex would admit the underscore/letters
+      for (const bad of ["__proto__", "constructor", "prototype"]) {
+        await expect(Promise.resolve().then(() => tool("set_env_var").execute(deps, "u1", { id: "app1", key: bad, value: "x" }))).rejects.toThrow(/invalid env var name/);
+      }
+      await expect(Promise.resolve().then(() => tool("set_env_var").execute(deps, "u1", { id: "app1", key: "K" }))).rejects.toThrow(/missing required argument: value/);
+    });
+
+    it("set_env_var declares its value arg as sensitive (so the MCP server redacts it from the audit log)", () => {
+      expect(tool("set_env_var").sensitiveArgs).toEqual(["value"]);
+    });
+
+    it("delete_env_var removes one key; is a no-op (removed:false, no setEnv) when the key is absent", async () => {
+      const setEnv = jest.fn().mockResolvedValue(undefined);
+      const getEnv = jest.fn().mockResolvedValue({ A: "1", B: "2" });
+      const deps = { apps: { getEnv, setEnv } } as unknown as McpDeps;
+      const res = (await tool("delete_env_var").execute(deps, "u1", { id: "app1", key: "A" })) as Record<string, unknown>;
+      expect(setEnv).toHaveBeenCalledWith("u1", "app1", { B: "2" });
+      expect(res).toEqual({ ok: true, action: "delete_env_var", key: "A", removed: true });
+      setEnv.mockClear();
+      const res2 = (await tool("delete_env_var").execute(deps, "u1", { id: "app1", key: "MISSING" })) as Record<string, unknown>;
+      expect(setEnv).not.toHaveBeenCalled();
+      expect(res2).toEqual({ ok: true, action: "delete_env_var", key: "MISSING", removed: false });
+    });
+
+    it("delete_env_var uses an OWN-property check: an inherited name like 'toString' reports removed:false, no write (#F2/F3)", async () => {
+      const setEnv = jest.fn().mockResolvedValue(undefined);
+      const getEnv = jest.fn().mockResolvedValue({ REAL: "1" }); // plain object → inherits toString/valueOf via the chain
+      const deps = { apps: { getEnv, setEnv } } as unknown as McpDeps;
+      const res = (await tool("delete_env_var").execute(deps, "u1", { id: "app1", key: "toString" })) as Record<string, unknown>;
+      expect(res).toEqual({ ok: true, action: "delete_env_var", key: "toString", removed: false });
+      expect(setEnv).not.toHaveBeenCalled(); // no spurious re-encrypt+write of an unchanged env
+    });
+  });
+
+  describe("mutate: swarm node removal (Phase2c)", () => {
+    it("remove_swarm_manager delegates to swarm.removeManager with acknowledgeEvenQuorum as a boolean", async () => {
+      const removeManager = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
+      const deps = { swarm: { removeManager } } as unknown as McpDeps;
+      await tool("remove_swarm_manager").execute(deps, "u1", { clusterId: "c1", serverId: "s2", acknowledgeEvenQuorum: true });
+      expect(removeManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s2", acknowledgeEvenQuorum: true });
+    });
+    it("leave_swarm_node delegates to swarm.leaveNode(userId, clusterId, serverId)", async () => {
+      const leaveNode = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
+      const deps = { swarm: { leaveNode } } as unknown as McpDeps;
+      const res = (await tool("leave_swarm_node").execute(deps, "u1", { clusterId: "c1", serverId: "s2" })) as Record<string, unknown>;
+      expect(leaveNode).toHaveBeenCalledWith("u1", "c1", "s2");
+      expect(res).toMatchObject({ ok: true, action: "leave_swarm_node" });
     });
   });
 
