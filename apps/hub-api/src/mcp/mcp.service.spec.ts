@@ -96,8 +96,15 @@ describe("McpService.handle", () => {
     expect(readNames).toContain("list_applications"); // read tools still visible
     expect(readNames).not.toContain("restart_application"); // no mutate tools for a read-only token
 
+    // a WRITE token sees the config tools but not deploy/admin tiers (write/deploy are independent siblings)
+    const writeNames = await names(["write"]);
+    expect(writeNames).toEqual(expect.arrayContaining(["set_env_var", "delete_env_var"]));
+    expect(writeNames).not.toContain("restart_application"); // deploy tier
+    expect(writeNames).not.toContain("remove_application"); // admin tier
+    expect(deployNames).not.toContain("set_env_var"); // and a deploy token does NOT get the write-tier config tools
+
     const adminNames = await names(["admin"]);
-    expect(adminNames).toEqual(expect.arrayContaining(["dissolve_swarm", "remove_application", "form_swarm", "restart_application"])); // admin sees everything
+    expect(adminNames).toEqual(expect.arrayContaining(["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "set_env_var", "form_swarm", "restart_application"])); // admin sees everything
 
     // a deploy token calling an admin tool anyway is refused BEFORE execution
     const denied = (await svc.handle(ctx(["deploy"]), rpc("tools/call", { name: "remove_application", arguments: { id: "x", confirmName: "y" } }))) as { error: { code: number } };
@@ -105,6 +112,19 @@ describe("McpService.handle", () => {
     // and a read token calling a deploy tool is likewise refused
     const denied2 = (await svc.handle(ctx(["read"]), rpc("tools/call", { name: "restart_application", arguments: { id: "x" } }))) as { error: { code: number } };
     expect(denied2.error.code).toBe(-32001);
+  });
+
+  it("tools/call: a tool's sensitiveArgs are REDACTED from the audit log (secret values never persisted) (#F1)", async () => {
+    const { svc, audit } = make();
+    const execute = jest.fn().mockResolvedValue({ ok: true, key: "API_KEY" });
+    svc.tools = [{ name: "set_env_var", description: "x", scope: "write", inputSchema: { type: "object", properties: {} }, sensitiveArgs: ["value"], execute }];
+    await svc.handle(ctx(["write"]), rpc("tools/call", { name: "set_env_var", arguments: { id: "app1", key: "API_KEY", value: "sk_live_TOPSECRET" } }));
+    // the tool still RECEIVES the real value...
+    expect(execute).toHaveBeenCalledWith(expect.anything(), "u1", { id: "app1", key: "API_KEY", value: "sk_live_TOPSECRET" });
+    // ...but the audit entry has it nulled, and the secret never appears anywhere in the audit args
+    const auditCall = (audit.log as jest.Mock).mock.calls.find((c) => c[0].action === "mcp.tools_call");
+    expect(auditCall![0].meta.args).toEqual({ id: "app1", key: "API_KEY", value: null });
+    expect(JSON.stringify(auditCall![0])).not.toContain("sk_live_TOPSECRET");
   });
 
   it("tools/call: an executing tool that throws → isError content (not a JSON-RPC error) + audits", async () => {

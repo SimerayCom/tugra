@@ -93,15 +93,18 @@ export class McpService {
           return this.error(id, -32001, `Insufficient scope for tool: ${name} (requires ${tool.scope})`);
         }
         const args = params?.arguments && typeof params.arguments === "object" ? (params.arguments as Record<string, unknown>) : {};
+        // The audit trail records the ARGS — but a tool may declare secret-valued args (e.g. set_env_var's
+        // `value`), which must NOT be persisted in cleartext to AuditLog.meta. Redact those before auditing.
+        const auditArgs = this.redactArgs(args, tool.sensitiveArgs);
         try {
           const data = await tool.execute(this.deps, ctx.userId, args);
           const sanitized = sanitizeToolResult(data);
-          this.auditCall(ctx, name!, args, "ok");
+          this.auditCall(ctx, name!, auditArgs, "ok");
           return this.result(id, { content: [{ type: "text", text: JSON.stringify(sanitized) }] });
         } catch (err) {
           const msg = err instanceof Error ? err.message : "tool call failed";
           this.logger.warn(`MCP tool ${name} failed: ${msg}`);
-          this.auditCall(ctx, name!, args, "error");
+          this.auditCall(ctx, name!, auditArgs, "error");
           // MCP convention: tool failures are content with isError, NOT a JSON-RPC error.
           return this.result(id, { content: [{ type: "text", text: msg }], isError: true });
         }
@@ -115,6 +118,15 @@ export class McpService {
 
   /** Fire-and-forget audit of every tool call — who (from the token, never the client), which tool, args
    *  (ids/filters only — read tools take no secrets), outcome. Never blocks or breaks the MCP response. */
+  /** Null out a tool's declared secret-valued args so they never reach the persisted audit `meta`. Returns the
+   *  original object when nothing is sensitive (no allocation on the common path). Own-property check only. */
+  private redactArgs(args: Record<string, unknown>, sensitive?: string[]): Record<string, unknown> {
+    if (!sensitive?.length) return args;
+    const out = { ...args };
+    for (const k of sensitive) if (Object.prototype.hasOwnProperty.call(out, k)) out[k] = null;
+    return out;
+  }
+
   private auditCall(ctx: McpAuthCtx, tool: string, args: Record<string, unknown>, outcome: "ok" | "error"): void {
     this.audit
       .log({ actor: ctx.userId, action: "mcp.tools_call", target: tool, meta: { args, outcome, tokenId: ctx.tokenId ?? null } })
