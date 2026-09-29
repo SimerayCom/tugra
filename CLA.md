@@ -44,5 +44,6 @@ or conditions of any kind.
 
 ---
 
-Signing is handled automatically: the first time you open a pull request, a CLA
-bot will ask you to confirm that you have read and agree to this document.
+By opening a pull request you confirm that you have read and agree to this
+document; agreement is confirmed manually by a maintainer on your first
+contribution.

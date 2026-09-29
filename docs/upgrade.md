@@ -46,7 +46,7 @@ you prefer git-driven upgrades or haven't configured the signed-manifest source.
 
 | Key | Purpose |
 |---|---|
-| `UPDATE_MANIFEST_URL` | URL of the signed `versions.json` (the `.sig` is fetched alongside it). |
+| `UPDATE_MANIFEST_URL` | URL of the signed `versions.json` (the `.sig` is fetched alongside it). Official builds: `https://simeraycom.github.io/tugra/versions.json`. |
 | `UPDATE_PUBLISHER_KEY` | The publisher's ed25519 public key (base64), used to verify the manifest. |
 | `UPDATE_CHECK_INTERVAL_MIN` | Minutes between background version checks (default 1440 = daily). |
 | `UPDATE_CHANGELOG_URL` | Optional changelog URL surfaced next to an available update. |

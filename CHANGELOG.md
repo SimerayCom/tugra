@@ -26,9 +26,12 @@ and orchestrating servers — from a single Raspberry Pi to a fleet.
   alerts (`swarm_degraded` notification) when a cluster drops from healthy to degraded; per-app soft resource
   reservations (`--reserve-memory`/`--reserve-cpu`) are supported for swarm scheduling; and stop/start now
   waits for the service to actually converge.
-- **MCP server** — a read-only [Model Context Protocol](docs/api.md#mcp-server) server
-  (`POST /api/v1/mcp`) exposing ~17 read tools over applications, servers, clusters, databases and
-  monitors, for AI assistants and agents.
+- **MCP server** — a built-in [Model Context Protocol](docs/api.md#mcp-server) server
+  (`POST /api/v1/mcp`) with 34 tools for AI assistants and agents: 17 read tools over applications,
+  servers, clusters, databases and monitors, plus 17 PAT-scoped mutate/ops tools (app lifecycle +
+  live scale, env config, swarm operations, and a preview-then-confirm fleet action). Irreversible
+  tools (dissolve a swarm, remove an app) require echoing the resource name; OAuth for third-party
+  clients is still planned.
 - **Web dashboard** — the Next.js web UI covering deployment, monitoring, backups, teams/projects and
   instance settings.
 - **Public API & CLI** — a versioned REST API (OpenAPI) and the `tugra` CLI.

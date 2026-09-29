@@ -133,9 +133,12 @@ async function lifecycle(deps: McpDeps, userId: string, id: string, action: "sto
 }
 
 /**
- * Phase1 MCP tool catalog — read-only. Every tool requires the `read` scope (implied by any non-empty
- * token scope set) and returns metadata only: no decrypted secret VALUES ever (env is key-names only,
- * no credential-bearing URLs). Mutate / migrate tools arrive in Phase2/3.
+ * MCP tool catalog. The read tools (below) return metadata only — no decrypted secret VALUES ever (env is
+ * key-names only, no credential-bearing URLs). The mutate tools (Phase2a..2e, further down) each carry the
+ * scope of the REST route they mirror (`deploy` for lifecycle/swarm ops, `write` for env config, `admin` for
+ * irreversible ops) and are thin wrappers over the same team-permission-checked, audited service methods —
+ * McpService filters/enforces `scope` on tools/list + tools/call, so a read-only token sees none of them.
+ * Still planned: OAuth for third-party clients (Phase3).
  */
 export const MCP_TOOLS: McpTool[] = [
   // ── applications ──
