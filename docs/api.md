@@ -65,19 +65,35 @@ Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protoco
 plain HTTP (Streamable-HTTP transport, protocol version `2025-06-18`) — no SSE or stdio; `GET /api/v1/mcp`
 returns `405` with `Allow: POST`.
 
-- **Status:** read-only (Phase 1). Mutating and migration tools are planned for a later phase.
+- **Status:** read **and** write. 34 tools total — 17 read + 17 PAT-scoped mutate/ops tools. OAuth for
+  third-party clients (dynamic client registration, `/authorize`, `/token`, PKCE) is still planned; today a
+  PAT is the only credential.
 - **Auth:** the same PAT/session + scope model as the REST API above — a PAT works out of the box, and the
   `apiEnabled` kill-switch and IP allowlist apply here too. The caller's identity always comes from the
   resolved token, never anything the client asserts, so a client can't widen its own team scope.
 - **Methods:** `initialize`, `ping`, `notifications/initialized`, `notifications/cancelled`, `tools/list`,
-  `tools/call`. Requests may be batched (a JSON array); notifications (no `id`) return no body (`202`).
-- **Tools:** 17 read tools across applications, servers, clusters/swarm, databases and monitors — e.g.
+  `tools/call`. Requests may be batched (a JSON array, capped at 20 messages; each message is charged against
+  the burst limit); notifications (no `id`) return no body (`202`).
+- **Read tools (17):** across applications, servers, clusters/swarm, databases and monitors — e.g.
   `list_applications`, `get_application`, `list_deployments`, `get_app_logs`, `list_containers`,
   `get_app_env_keys`, `list_servers`, `get_server`, `get_server_capabilities`, `list_clusters`,
   `get_cluster`, `get_cluster_status`, `list_databases`, `get_database`, `list_backups`, `list_monitors`,
-  `get_monitor`. `tools/list` returns only the tools the token's scopes satisfy; `tools/call` re-checks the
-  scope server-side regardless. Most tools need only `read`; `get_app_logs` needs `read:secrets`
-  (container logs can contain secrets).
+  `get_monitor`. Most need only `read`; `get_app_logs` needs `read:secrets` (logs can contain secrets).
+- **Mutate/ops tools (17):** each is a thin wrapper over the same service method + team-permission check +
+  domain audit the REST API uses, so no new authorization path is introduced. **`deploy` scope:** app
+  lifecycle (`deploy_application`, `restart_application`, `stop_application`, `start_application`,
+  `rollback_application`, `scale_application` — live scaling), swarm ops (`form_swarm`, `join_swarm_node`,
+  `add_swarm_manager`, `set_ingress_replicas`), and the fleet wedge `fleet_app_action` (fan a reversible
+  lifecycle action across a whole cluster's apps, preview-then-confirm, 25-app cap). **`write` scope:**
+  `set_env_var`, `delete_env_var` (safe single-key merge — values are never returned). **`admin` scope:**
+  the irreversible `dissolve_swarm`, `remove_application` (each requires echoing the resource's exact name to
+  confirm), and `remove_swarm_manager`, `leave_swarm_node`. `tools/list` returns only the tools the token's
+  scopes satisfy; `tools/call` re-checks the scope server-side regardless — a `read`-only token sees and can
+  call none of the mutate tools.
+- **Agent-safety note:** a `deploy`- or `admin`-scoped PAT handed to an AI client can change and tear down
+  real infrastructure. Scope tokens to the minimum an agent needs (a read-only PAT for pure observability),
+  and treat a token as equivalent to the REST actions it unlocks. The name-confirmation on the two
+  irreversible tools is a guard against accidental fan-out, not a substitute for scoping the token.
 - **Redaction:** every tool result is sanitized before it reaches the (third-party) AI client — named
   secret/credential fields are nulled, Markdown code fences in strings are neutralized (a prompt-injection
   defense), strings are truncated, and nesting is depth-capped. No tool ever returns a decrypted secret

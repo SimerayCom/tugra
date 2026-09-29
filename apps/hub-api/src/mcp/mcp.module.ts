@@ -9,9 +9,10 @@ import { McpController } from "./mcp.controller";
 import { McpService } from "./mcp.service";
 
 /**
- * MCP server (Phase1, read-only). Imports the domain modules whose read services the tool catalog calls;
- * ApiTokens (guards), Redis and Audit are @Global. Agent-signing, migrations and existing controllers
- * are untouched — MCP is purely a new read surface over the same team-scoped services.
+ * MCP server (read + PAT-scoped mutate). Imports the domain modules whose services the tool catalog calls;
+ * ApiTokens (guards), Redis and Audit are @Global. Every tool — read or mutate — goes through the same
+ * team-scoped service methods (with their own permission checks + audit) that the REST controllers use, so
+ * MCP adds no new authorization path; it is a JSON-RPC surface over the existing capabilities.
  */
 @Module({
   imports: [ApplicationsModule, ServersModule, ClustersModule, DatabasesModule, BackupsModule, MonitorsModule],
