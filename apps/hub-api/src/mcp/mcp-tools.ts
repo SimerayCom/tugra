@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Scope } from "../api-tokens/scopes";
 import type { ApplicationsService } from "../applications/applications.service";
 import type { ServersService } from "../servers/servers.service";
@@ -90,6 +91,21 @@ function reqInt(args: Record<string, unknown>, key: string, min: number, max: nu
 
 const idSchema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] } as const;
 const noArgs = { type: "object", properties: {} } as const;
+
+/** The allowlist of REVERSIBLE lifecycle actions the fleet tool may fan across a cluster's apps — never an
+ *  arbitrary/destructive verb. Each maps 1:1 to an ApplicationsService method taking (userId, id). */
+const FLEET_ACTIONS = new Set(["restart", "stop", "start"]);
+/** Hard ceiling on how many apps one fleet call may touch — bounds blast radius + worst-case latency; above it
+ *  the operator must narrow scope. And the per-wave concurrency (don't hammer a swarm manager, but don't run
+ *  strictly serial either — cuts wall-time for a many-app cluster). */
+const MAX_FLEET_TARGETS = 25;
+const FLEET_CONCURRENCY = 5;
+/** A confirmation token that binds the exact ACTION + cluster + target-id SET (not just the count): if the
+ *  agent previews `restart` and then tries to confirm `stop`, or the cluster's app set changed since the
+ *  preview, the recomputed token won't match the echoed one and the execute is refused. */
+function fleetToken(action: string, clusterId: string, ids: string[]): string {
+  return createHash("sha256").update(`${action}|${clusterId}|${[...ids].sort().join(",")}`).digest("hex").slice(0, 16);
+}
 
 /** Reduce a Deployment row to LLM-safe metadata: drop the raw build `logs` blob AND the `configSnapshot`
  *  (whose `composeFile` stores user compose YAML verbatim — commonly with hard-coded secrets, and gated behind
@@ -405,6 +421,67 @@ export const MCP_TOOLS: McpTool[] = [
     scope: "admin",
     inputSchema: { type: "object", properties: { clusterId: { type: "string" }, serverId: { type: "string" } }, required: ["clusterId", "serverId"] },
     execute: async (d, userId, a) => ({ ok: true, action: "leave_swarm_node", swarm: await d.swarm.leaveNode(userId, reqStr(a, "clusterId"), reqStr(a, "serverId")) }),
+  },
+
+  // ── mutate: fleet (Phase2d) ──────────────────────────────────────────────────────────────────────
+  // The agent-native FLEET wedge: fan ONE allowlisted, reversible lifecycle action across every app deployed
+  // to a cluster — reusing the per-app ApplicationsService methods (each self-enforces apps:deploy + audits),
+  // never the raw /bulk shell-RCE path. Preview-then-confirm: called WITHOUT confirmCount it only PREVIEWS the
+  // targets (no action); to execute, the caller must pass confirmCount equal to the live target count — which
+  // forces it to have seen the preview AND guards against the fleet changing between preview and execute (TOCTOU).
+  {
+    name: "fleet_app_action",
+    description: "Fleet op: apply one lifecycle action (restart | stop | start) to EVERY application deployed to a cluster. Call without confirmToken to PREVIEW the affected apps (no change) — the preview returns a confirmToken; re-call with that exact confirmToken to execute. The token binds the action AND the target set, so a changed action/fleet forces a fresh preview. Reversible per app; per-app failures are reported, not fatal. Capped at " + String(MAX_FLEET_TARGETS) + " apps per call.",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { clusterId: { type: "string" }, action: { type: "string", enum: ["restart", "stop", "start"] }, confirmToken: { type: "string" } }, required: ["clusterId", "action"] },
+    execute: async (d, userId, a) => {
+      const clusterId = reqStr(a, "clusterId");
+      const action = reqStr(a, "action");
+      if (!FLEET_ACTIONS.has(action)) throw new Error(`action must be one of: ${[...FLEET_ACTIONS].join(", ")}`);
+      const act = action as "restart" | "stop" | "start";
+      const targets = (await d.apps.list(userId))
+        .filter((app) => (app as { clusterId: string | null }).clusterId === clusterId)
+        .map((app) => ({ id: (app as { id: string }).id, name: (app as { name: string }).name, status: (app as { status: string }).status }));
+      // Token binds action + cluster + the exact (sorted) target-id set — recomputed fresh here so a stale
+      // preview (different action or a membership change since) can never be confirmed.
+      const token = fleetToken(act, clusterId, targets.map((t) => t.id));
+      const provided = optStr(a, "confirmToken");
+
+      if (!provided) {
+        // PREVIEW: no change. Hand back the token the caller must echo to execute.
+        return {
+          ok: true, preview: true, action: act, clusterId, count: targets.length, targets,
+          tooMany: targets.length > MAX_FLEET_TARGETS,
+          confirmToken: token,
+          confirmHint: targets.length > MAX_FLEET_TARGETS
+            ? `too many apps (${targets.length} > ${MAX_FLEET_TARGETS}) to act on in one call — narrow the scope`
+            : `re-call with confirmToken="${token}" to apply "${act}" to these ${targets.length} app(s)`,
+        };
+      }
+      if (provided !== token) {
+        throw new Error(`stale or mismatched confirmation — the action or the cluster's app set changed since the preview; re-run without confirmToken to preview the current set, then confirm`);
+      }
+      if (targets.length > MAX_FLEET_TARGETS) {
+        throw new Error(`too many target apps (${targets.length} > ${MAX_FLEET_TARGETS}) for a single fleet action — narrow the scope`);
+      }
+      // Bounded-concurrency waves: cut wall-time vs strictly serial, without hammering the swarm manager. A
+      // per-app failure is captured, never aborts the rest.
+      const results: Array<{ id: string; name: string; ok: boolean; error?: string }> = [];
+      for (let i = 0; i < targets.length; i += FLEET_CONCURRENCY) {
+        const wave = await Promise.all(
+          targets.slice(i, i + FLEET_CONCURRENCY).map(async (t) => {
+            try {
+              await d.apps[act](userId, t.id);
+              return { id: t.id, name: t.name, ok: true };
+            } catch (e) {
+              return { id: t.id, name: t.name, ok: false, error: e instanceof Error ? e.message : "action failed" };
+            }
+          }),
+        );
+        results.push(...wave);
+      }
+      return { ok: true, preview: false, action: act, clusterId, succeeded: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results };
+    },
   },
 
   // ── mutate: application removal (Phase2b, destructive) ────────────────────────────────────────────
