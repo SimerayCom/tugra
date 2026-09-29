@@ -87,7 +87,7 @@ describe("McpService.handle", () => {
 
     const deployNames = await names(["deploy"]);
     // deploy token sees the deploy-tier lifecycle + swarm ops...
-    expect(deployNames).toEqual(expect.arrayContaining(["deploy_application", "restart_application", "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas"]));
+    expect(deployNames).toEqual(expect.arrayContaining(["deploy_application", "restart_application", "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action"]));
     // ...but NOT the admin-tier destructive tools
     expect(deployNames).not.toContain("dissolve_swarm");
     expect(deployNames).not.toContain("remove_application");

@@ -7,7 +7,7 @@ function tool(name: string) {
 }
 
 const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas"];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action"];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node"];
 
@@ -223,6 +223,97 @@ describe("MCP_TOOLS catalog", () => {
       const res = (await tool("leave_swarm_node").execute(deps, "u1", { clusterId: "c1", serverId: "s2" })) as Record<string, unknown>;
       expect(leaveNode).toHaveBeenCalledWith("u1", "c1", "s2");
       expect(res).toMatchObject({ ok: true, action: "leave_swarm_node" });
+    });
+  });
+
+  describe("mutate: fleet (Phase2d)", () => {
+    const clusterApps = () => [
+      { id: "a1", name: "api", clusterId: "c1", status: "RUNNING" },
+      { id: "a2", name: "web", clusterId: "c1", status: "RUNNING" },
+      { id: "a3", name: "other", clusterId: "c2", status: "RUNNING" }, // different cluster — must be excluded
+      { id: "a4", name: "solo", clusterId: null, status: "RUNNING" }, // not clustered — excluded
+    ];
+    const fleetTool = tool("fleet_app_action");
+    const preview = async (deps: McpDeps, args: Record<string, unknown>) => (await fleetTool.execute(deps, "u1", args)) as Record<string, unknown>;
+
+    it("previews (no confirmToken) the cluster's apps ONLY, returns a confirmToken, performs NO action", async () => {
+      const restart = jest.fn();
+      const list = jest.fn().mockResolvedValue(clusterApps());
+      const deps = { apps: { list, restart } } as unknown as McpDeps;
+      const res = await preview(deps, { clusterId: "c1", action: "restart" });
+      expect(res.preview).toBe(true);
+      expect(res.count).toBe(2);
+      expect((res.targets as Array<{ id: string }>).map((t) => t.id)).toEqual(["a1", "a2"]); // c2/null excluded
+      expect(typeof res.confirmToken).toBe("string");
+      expect(restart).not.toHaveBeenCalled(); // preview never acts
+    });
+
+    it("executes on every cluster app when the previewed confirmToken is echoed (bounded-concurrency), collecting per-app results", async () => {
+      const restart = jest.fn().mockResolvedValue(undefined);
+      const list = jest.fn().mockResolvedValue(clusterApps());
+      const deps = { apps: { list, restart } } as unknown as McpDeps;
+      const token = (await preview(deps, { clusterId: "c1", action: "restart" })).confirmToken as string;
+      const res = await preview(deps, { clusterId: "c1", action: "restart", confirmToken: token });
+      expect(restart).toHaveBeenCalledWith("u1", "a1");
+      expect(restart).toHaveBeenCalledWith("u1", "a2");
+      expect(restart).toHaveBeenCalledTimes(2);
+      expect(res).toMatchObject({ ok: true, preview: false, action: "restart", succeeded: 2, failed: 0 });
+    });
+
+    it("a per-app failure is collected (not fatal) — the rest still run", async () => {
+      const restart = jest.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("app offline"));
+      const list = jest.fn().mockResolvedValue(clusterApps());
+      const deps = { apps: { list, restart } } as unknown as McpDeps;
+      const token = (await preview(deps, { clusterId: "c1", action: "restart" })).confirmToken as string;
+      const res = await preview(deps, { clusterId: "c1", action: "restart", confirmToken: token });
+      expect(res).toMatchObject({ succeeded: 1, failed: 1 });
+      expect((res.results as Array<{ ok: boolean; error?: string }>).find((r) => !r.ok)?.error).toMatch(/app offline/);
+    });
+
+    it("the confirmToken binds the ACTION: a token previewed for restart cannot confirm stop (#F5)", async () => {
+      const restart = jest.fn();
+      const stop = jest.fn();
+      const list = jest.fn().mockResolvedValue(clusterApps());
+      const deps = { apps: { list, restart, stop } } as unknown as McpDeps;
+      const restartToken = (await preview(deps, { clusterId: "c1", action: "restart" })).confirmToken as string;
+      await expect(preview(deps, { clusterId: "c1", action: "stop", confirmToken: restartToken })).rejects.toThrow(/stale or mismatched/);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it("the confirmToken binds the TARGET SET: a same-count membership swap between preview and execute is refused (#F2/F3/F6)", async () => {
+      const restart = jest.fn();
+      const list = jest.fn();
+      const deps = { apps: { list, restart } } as unknown as McpDeps;
+      list.mockResolvedValueOnce(clusterApps()); // preview sees {a1,a2}
+      const token = (await preview(deps, { clusterId: "c1", action: "restart" })).confirmToken as string;
+      // between preview and execute, a2 leaves c1 and a5 joins — SAME count (2) but different identity
+      list.mockResolvedValueOnce([
+        { id: "a1", name: "api", clusterId: "c1", status: "RUNNING" },
+        { id: "a5", name: "new", clusterId: "c1", status: "RUNNING" },
+      ]);
+      await expect(preview(deps, { clusterId: "c1", action: "restart", confirmToken: token })).rejects.toThrow(/stale or mismatched/);
+      expect(restart).not.toHaveBeenCalled();
+    });
+
+    it("caps the fan-out: >MAX targets previews with tooMany and refuses to execute (#F1/F4/F7)", async () => {
+      const restart = jest.fn();
+      const many = Array.from({ length: 26 }, (_v, i) => ({ id: `a${i}`, name: `app${i}`, clusterId: "c1", status: "RUNNING" }));
+      const list = jest.fn().mockResolvedValue(many);
+      const deps = { apps: { list, restart } } as unknown as McpDeps;
+      const pv = await preview(deps, { clusterId: "c1", action: "restart" });
+      expect(pv.tooMany).toBe(true);
+      await expect(preview(deps, { clusterId: "c1", action: "restart", confirmToken: pv.confirmToken as string })).rejects.toThrow(/too many target apps/);
+      expect(restart).not.toHaveBeenCalled();
+    });
+
+    it("rejects an action outside the reversible allowlist (never fans a destructive/arbitrary verb)", async () => {
+      const remove = jest.fn();
+      const list = jest.fn().mockResolvedValue(clusterApps());
+      const deps = { apps: { list, remove } } as unknown as McpDeps;
+      for (const bad of ["remove", "deploy", "rm -rf", "delete"]) {
+        await expect(Promise.resolve().then(() => fleetTool.execute(deps, "u1", { clusterId: "c1", action: bad, confirmToken: "x" }))).rejects.toThrow(/action must be one of/);
+      }
+      expect(remove).not.toHaveBeenCalled();
     });
   });
 
