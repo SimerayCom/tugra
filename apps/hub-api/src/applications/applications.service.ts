@@ -1785,6 +1785,30 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.clusterconfig.update", target: id });
   }
 
+  /** LIVE scale a cluster-deployed app to `replicas` NOW (persist the count AND apply it to the running swarm
+   *  service, polling to convergence) — unlike setClusterConfig which only persists for the next deploy. Scoped
+   *  to swarm apps (replicas are meaningless for a single classic container) and refuses N>1 for a stateful
+   *  (named-volume) app pinned to one node, mirroring setClusterConfig's guard. Reuses swarmDeploy.scale (which
+   *  has no auth of its own) behind requireWrite('apps:deploy'). */
+  async scaleNow(userId: string, id: string, replicas: number): Promise<void> {
+    const app = await this.requireWrite(userId, id, "apps:deploy");
+    if (!app.clusterId) throw new BadRequestException("scaling replicas is only supported for cluster-deployed (swarm) apps");
+    const n = Math.max(1, Math.floor(replicas));
+    if (this.appVolumes(app).length > 0 && n > 1) {
+      throw new BadRequestException("a stateful app pinned to a single node runs exactly 1 replica");
+    }
+    // Apply LIVE first and only persist `replicas` once the swarm actually converged — mirrors runDeploy's
+    // "apply, then persist the true outcome". Persisting first would poison app.replicas (the desired-state
+    // field a later start()/deploy() blindly reasserts) with a count that never took effect if the manager is
+    // offline or the rollout doesn't converge. scale() takes the count as an arg, so `app` needs no mutation.
+    const res = await this.swarmDeploy.scale(app, n);
+    if (res.exitCode !== 0) {
+      throw new ServiceUnavailableException(`scale did not converge (exit ${res.exitCode}) — the app's stored replica count is unchanged`);
+    }
+    await this.prisma.application.update({ where: { id }, data: { replicas: n } });
+    await this.audit.log({ actor: userId, action: "app.scale", target: id, meta: { replicas: n } });
+  }
+
   /** Configure swarm placement (FLEET-D). Config-time (applied on next deploy) like volumes/limits. Requires a
    *  clusterId; hostname/nodeId rules are re-validated server-side against the cluster's CURRENT live nodes at
    *  save time (a TOCTOU with a node leaving between page-load and save is acceptable — same class as our

@@ -2514,6 +2514,61 @@ describe("ApplicationsService FLEET-E — stateful auto-pin", () => {
   });
 });
 
+describe("ApplicationsService.scaleNow (Phase2e live scale)", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const clustered = (over = {}) => ({ ...app, source: "IMAGE", clusterId: "c1", volumes: [], replicas: 1, ...over });
+  function deps(appRow: object) {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(appRow), update },
+      cluster: { findUnique: jest.fn() },
+      server: { findUnique: jest.fn() },
+    } as unknown as PrismaService;
+    return { prisma, update };
+  }
+  const scaleMock = (svc: object) => (svc as unknown as { swarmDeploy: { scale: jest.Mock } }).swarmDeploy.scale;
+
+  it("applies the live scale FIRST (checks exit 0), THEN persists the count + audits app.scale", async () => {
+    const { prisma, update } = deps(clustered());
+    const svc = make(prisma, access, {} as AgentWsServer);
+    scaleMock(svc).mockResolvedValue({ exitCode: 0, output: "" });
+    await svc.scaleNow("u1", "app1", 3);
+    expect(scaleMock(svc)).toHaveBeenCalledWith(expect.anything(), 3); // count passed as the arg
+    expect(update.mock.calls[0][0].data).toMatchObject({ replicas: 3 }); // persisted after a successful apply
+  });
+
+  it("does NOT persist replicas (nor audit) when the live scale fails to converge (non-zero exit) — no stale desired-state", async () => {
+    const { prisma, update } = deps(clustered());
+    const svc = make(prisma, access, {} as AgentWsServer);
+    scaleMock(svc).mockResolvedValue({ exitCode: 2, output: "timeout" });
+    await expect(svc.scaleNow("u1", "app1", 3)).rejects.toThrow(/converge/i);
+    expect(update).not.toHaveBeenCalled(); // the DB replica count is left untouched
+  });
+
+  it("clamps replicas to a minimum of 1", async () => {
+    const { prisma, update } = deps(clustered());
+    const svc = make(prisma, access, {} as AgentWsServer);
+    scaleMock(svc).mockResolvedValue({ exitCode: 0, output: "" });
+    await svc.scaleNow("u1", "app1", 0);
+    expect(scaleMock(svc)).toHaveBeenCalledWith(expect.anything(), 1);
+    expect(update.mock.calls[0][0].data.replicas).toBe(1);
+  });
+
+  it("refuses to scale a non-clustered (classic single-container) app", async () => {
+    const { prisma } = deps({ ...app, source: "IMAGE", clusterId: null, volumes: [] });
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.scaleNow("u1", "app1", 2)).rejects.toThrow(/cluster-deployed|swarm/i);
+    expect(scaleMock(svc)).not.toHaveBeenCalled();
+  });
+
+  it("refuses replicas>1 for a stateful (named-volume) clustered app", async () => {
+    const { prisma } = deps(clustered({ volumes: [{ name: "data", path: "/data" }] }));
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.scaleNow("u1", "app1", 3)).rejects.toBeInstanceOf(BadRequestException);
+    expect(scaleMock(svc)).not.toHaveBeenCalled();
+  });
+});
+
 describe("ApplicationsService.clusterStatus", () => {
   type WithSwarm = { swarmDeploy: { status: jest.Mock } };
   const ps = (tasks: object[]) => tasks.map((t) => JSON.stringify(t)).join("\n");

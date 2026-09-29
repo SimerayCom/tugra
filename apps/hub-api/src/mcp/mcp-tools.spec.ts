@@ -6,7 +6,7 @@ function tool(name: string) {
   return t;
 }
 
-const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application"];
+const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
 const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action"];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node"];
@@ -154,6 +154,35 @@ describe("MCP_TOOLS catalog", () => {
       expect(get).toHaveBeenCalledWith("u1", "c1"); // read-gated name lookup happened first
       expect(dissolve).toHaveBeenCalledWith("u1", "c1");
       expect(res).toMatchObject({ ok: true, action: "dissolve_swarm" });
+    });
+  });
+
+  describe("mutate: application scale (Phase2e)", () => {
+    it("scale_application live-scales via scaleNow(userId,id,replicas), then returns the fresh app view", async () => {
+      const scaleNow = jest.fn().mockResolvedValue(undefined);
+      const get = jest.fn().mockResolvedValue({ id: "app1", status: "RUNNING", replicas: 3 });
+      const deps = { apps: { scaleNow, get } } as unknown as McpDeps;
+      const res = (await tool("scale_application").execute(deps, "u1", { id: "app1", replicas: 3 })) as Record<string, unknown>;
+      expect(scaleNow).toHaveBeenCalledWith("u1", "app1", 3);
+      expect(res).toMatchObject({ ok: true, action: "scale", replicas: 3 });
+      expect((res.application as Record<string, unknown>).status).toBe("RUNNING");
+    });
+
+    it("scale_application clamps replicas into 1..20 and throws on a missing/garbage count", async () => {
+      const scaleNow = jest.fn().mockResolvedValue(undefined);
+      const get = jest.fn().mockResolvedValue({ id: "app1" });
+      const deps = { apps: { scaleNow, get } } as unknown as McpDeps;
+      await tool("scale_application").execute(deps, "u1", { id: "app1", replicas: 99 });
+      expect(scaleNow).toHaveBeenLastCalledWith("u1", "app1", 20); // clamped to the ceiling
+      await expect(Promise.resolve().then(() => tool("scale_application").execute(deps, "u1", { id: "app1" }))).rejects.toThrow(/replicas/);
+    });
+
+    it("scale_application still reports the action done (application:null) if the follow-up get() throws", async () => {
+      const scaleNow = jest.fn().mockResolvedValue(undefined);
+      const get = jest.fn().mockRejectedValue(new Error("not found"));
+      const deps = { apps: { scaleNow, get } } as unknown as McpDeps;
+      const res = (await tool("scale_application").execute(deps, "u1", { id: "app1", replicas: 2 })) as Record<string, unknown>;
+      expect(res).toEqual({ ok: true, action: "scale", replicas: 2, application: null });
     });
   });
 

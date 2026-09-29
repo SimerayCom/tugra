@@ -320,6 +320,24 @@ export const MCP_TOOLS: McpTool[] = [
       deployment: stripDeployment(await d.apps.rollback(userId, reqStr(a, "id"), reqStr(a, "deploymentId"))),
     }),
   },
+  {
+    name: "scale_application",
+    description: "Live-scale a cluster-deployed application to N replicas NOW — persists the count AND applies it to the running swarm service (polls to convergence). Swarm apps only; a stateful (named-volume) app is capped at 1 replica. Returns the app's fresh status.",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, replicas: { type: "integer", minimum: 1, maximum: 20 } }, required: ["id", "replicas"] },
+    execute: async (d, userId, a) => {
+      const id = reqStr(a, "id");
+      const replicas = reqInt(a, "replicas", 1, 20);
+      await d.apps.scaleNow(userId, id, replicas);
+      let application: unknown = null;
+      try {
+        application = await d.apps.get(userId, id);
+      } catch {
+        application = null;
+      }
+      return { ok: true, action: "scale", replicas, application };
+    },
+  },
 
   // ── mutate: cluster / swarm operation (Phase2b) ──────────────────────────────────────────────────
   // Thin pass-throughs to the SwarmService methods the REST routes call — each self-enforces the
