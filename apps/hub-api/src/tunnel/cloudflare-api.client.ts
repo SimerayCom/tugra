@@ -43,13 +43,35 @@ export interface DnsRecord {
  */
 @Injectable()
 export class CloudflareApiClient {
-  /** GET /user/tokens/verify → { valid }. An invalid token (401/403) → valid:false, not a throw. */
-  async verifyToken(apiToken: string): Promise<{ valid: boolean }> {
+  /** Verify an API token resolves to an active token. Tries GET /user/tokens/verify (user-owned tokens — the
+   *  common case); if that is rejected (401/403) and an `accountId` is supplied, retries
+   *  GET /accounts/{accountId}/tokens/verify (account-owned tokens verify there, not at /user). An invalid
+   *  token → valid:false, not a throw. */
+  async verifyToken(apiToken: string, accountId?: string): Promise<{ valid: boolean }> {
     try {
       const r = await this.request<{ status?: string }>("GET", "/user/tokens/verify", apiToken);
       return { valid: r?.status === "active" };
     } catch (e) {
-      if (e instanceof CloudflareApiError && (e.status === 401 || e.status === 403)) return { valid: false };
+      if (e instanceof CloudflareApiError && (e.status === 401 || e.status === 403)) {
+        if (accountId) return this.verifyAccountToken(apiToken, accountId);
+        return { valid: false };
+      }
+      throw e;
+    }
+  }
+
+  /** GET /accounts/{accountId}/tokens/verify → { valid }. An invalid/inaccessible token (401/403/404) →
+   *  valid:false, not a throw. */
+  private async verifyAccountToken(apiToken: string, accountId: string): Promise<{ valid: boolean }> {
+    try {
+      const r = await this.request<{ status?: string }>(
+        "GET",
+        `/accounts/${encodeURIComponent(accountId)}/tokens/verify`,
+        apiToken,
+      );
+      return { valid: r?.status === "active" };
+    } catch (e) {
+      if (e instanceof CloudflareApiError && (e.status === 401 || e.status === 403 || e.status === 404)) return { valid: false };
       throw e;
     }
   }

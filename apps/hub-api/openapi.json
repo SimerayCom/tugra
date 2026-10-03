@@ -13891,6 +13891,191 @@
         ]
       }
     },
+    "/api/v1/dns-credentials": {
+      "get": {
+        "operationId": "DnsCredentialsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-credentials"
+        ]
+      },
+      "post": {
+        "operationId": "DnsCredentialsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "teamId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "cloudflare"
+                    ]
+                  },
+                  "apiToken": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "cfAccountId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "teamId",
+                  "name",
+                  "provider",
+                  "apiToken"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-credentials"
+        ]
+      }
+    },
+    "/api/v1/dns-credentials/{id}": {
+      "put": {
+        "operationId": "DnsCredentialsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apiToken": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "cfAccountId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-credentials"
+        ]
+      },
+      "delete": {
+        "operationId": "DnsCredentialsController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-credentials"
+        ]
+      }
+    },
+    "/api/v1/dns-credentials/{id}/test": {
+      "post": {
+        "operationId": "DnsCredentialsController_test",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-credentials"
+        ]
+      }
+    },
     "/api/v1/api-tokens": {
       "get": {
         "operationId": "ApiTokensController_list",

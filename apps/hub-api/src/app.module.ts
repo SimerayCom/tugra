@@ -32,6 +32,7 @@ import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { MigratorModule } from "./migrator/migrator.module";
 import { CloudModule } from "./cloud/cloud.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
+import { DnsModule } from "./dns/dns.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
@@ -78,6 +79,7 @@ import { McpModule } from "./mcp/mcp.module";
     MigratorModule,
     CloudModule,
     TunnelModule,
+    DnsModule,
     ApiTokensModule,
     SavedViewsModule,
     SharedVariablesModule,

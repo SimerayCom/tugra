@@ -35,6 +35,35 @@ describe("CloudflareApiClient.verifyToken", () => {
     mockOnce(401, envelope(null, false, [{ message: "Invalid API Token" }]));
     await expect(cf.verifyToken("bad")).resolves.toEqual({ valid: false });
   });
+
+  it("does NOT hit the account endpoint when no accountId is supplied (user-token path unchanged)", async () => {
+    const f = mockOnce(403, envelope(null, false, [{ message: "forbidden" }]));
+    await expect(cf.verifyToken("acct-tok")).resolves.toEqual({ valid: false });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0][0]).toBe("https://api.cloudflare.com/client/v4/user/tokens/verify");
+  });
+
+  it("falls back to /accounts/{id}/tokens/verify when the user endpoint rejects (401/403) and an accountId is given", async () => {
+    const responses = [
+      { ok: false, status: 403, json: async () => envelope(null, false, [{ message: "forbidden" }]) },
+      { ok: true, status: 200, json: async () => envelope({ status: "active" }) },
+    ];
+    const f = jest.fn().mockImplementation(() => Promise.resolve(responses.shift()));
+    global.fetch = f as unknown as typeof fetch;
+    await expect(cf.verifyToken("acct-tok", "acc123")).resolves.toEqual({ valid: true });
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(f.mock.calls[0][0]).toBe("https://api.cloudflare.com/client/v4/user/tokens/verify");
+    expect(f.mock.calls[1][0]).toBe("https://api.cloudflare.com/client/v4/accounts/acc123/tokens/verify");
+  });
+
+  it("returns valid:false when BOTH the user and the account endpoints reject", async () => {
+    const f = jest
+      .fn()
+      .mockResolvedValue({ ok: false, status: 403, json: async () => envelope(null, false, [{ message: "forbidden" }]) });
+    global.fetch = f as unknown as typeof fetch;
+    await expect(cf.verifyToken("bad", "acc123")).resolves.toEqual({ valid: false });
+    expect(f).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("CloudflareApiClient.findZoneId", () => {
