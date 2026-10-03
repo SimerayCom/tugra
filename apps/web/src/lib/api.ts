@@ -38,6 +38,9 @@ import type {
   ServerContainers,
   DiscoveredContainer,
   CloudCredential,
+  DnsCredential,
+  DnsAutoSetupResult,
+  DnsManualRecords,
   Monitor,
   LogDrain,
   MyInvitation,
@@ -577,6 +580,31 @@ export const api = {
   },
   deleteCloudCredential(id: string) {
     return apiFetch<{ ok: true }>(`/cloud-credentials/${id}`, { method: "DELETE" });
+  },
+  // DNS-provider credentials (Cloudflare) for one-click custom-domain setup.
+  listDnsCredentials() {
+    return apiFetch<DnsCredential[]>("/dns-credentials");
+  },
+  createDnsCredential(input: { teamId: string; name: string; provider: string; apiToken: string; cfAccountId?: string }) {
+    return apiFetch<DnsCredential>("/dns-credentials", { method: "POST", body: JSON.stringify(input) });
+  },
+  testDnsCredential(id: string) {
+    return apiFetch<{ ok: true }>(`/dns-credentials/${id}/test`, { method: "POST" });
+  },
+  deleteDnsCredential(id: string) {
+    return apiFetch<{ ok: true }>(`/dns-credentials/${id}`, { method: "DELETE" });
+  },
+  // One-click custom-domain DNS auto-setup. dryRun=true returns the plan without writing.
+  autoSetupDomain(
+    id: string,
+    input: { domain: string; credentialId?: string; includeWww?: boolean; overwrite?: boolean; dryRun?: boolean },
+  ) {
+    return apiFetch<DnsAutoSetupResult>(`/apps/${id}/domain/auto-setup`, { method: "POST", body: JSON.stringify(input) });
+  },
+  // The copy-paste records to create by hand at any DNS provider (manual fallback).
+  getManualDnsRecords(id: string, domain: string, includeWww = true) {
+    const q = new URLSearchParams({ domain, includeWww: String(includeWww) });
+    return apiFetch<DnsManualRecords>(`/apps/${id}/domain/manual-records?${q.toString()}`);
   },
   provisionServer(input: { teamId: string; name: string; cloudCredentialId: string; provider: "hetzner"; location: string; serverType: string; image?: string }) {
     return apiFetch<ServerView>("/servers/provision", { method: "POST", body: JSON.stringify(input) });

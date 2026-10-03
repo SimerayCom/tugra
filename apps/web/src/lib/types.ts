@@ -310,6 +310,46 @@ export interface CloudCredential {
   canWrite: boolean;
 }
 
+// A team's DNS-provider API credential (Cloudflare) for one-click custom-domain setup. The token is never returned.
+export interface DnsCredential {
+  id: string;
+  name: string;
+  teamId: string;
+  provider: string;
+  cfAccountId: string | null;
+  lastVerifiedAt: string | null;
+  createdAt: string;
+  canWrite: boolean;
+}
+
+// A row in an auto-setup result. In a dry run it carries content/proxied/action (create|update|noop|delete|
+// conflict); after an apply it carries recordId/action (created|updated|kept|deleted).
+export interface DnsAutoSetupRecord {
+  type: string;
+  name: string;
+  content?: string;
+  proxied?: boolean;
+  action: string;
+  recordId?: string;
+  existingId?: string | null;
+}
+
+// Result of POST /apps/:id/domain/auto-setup, discriminated by dryRun.
+export interface DnsAutoSetupResult {
+  dryRun: boolean;
+  hostname: string;
+  apex?: boolean;
+  sslMode?: string;
+  status?: string;
+  records: DnsAutoSetupRecord[];
+}
+
+// The copy-paste records for a manual DNS setup at any provider.
+export interface DnsManualRecords {
+  hostname: string;
+  records: Array<{ type: string; name: string; content: string }>;
+}
+
 export interface LogDrain {
   id: string;
   name: string;

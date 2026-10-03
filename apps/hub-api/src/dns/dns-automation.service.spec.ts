@@ -230,6 +230,36 @@ describe("DnsAutomationService.applyRecords", () => {
   });
 });
 
+describe("DnsAutomationService.manualRecords", () => {
+  it("returns the apex A + www CNAME to create by hand, with no provider call (apps:config)", async () => {
+    const { svc, cf, access } = make();
+    const out = await svc.manualRecords("u1", "a1", { domain: "example.com" });
+    expect(out).toEqual({
+      hostname: "example.com",
+      records: [
+        { type: "A", name: "example.com", content: "203.0.113.7" },
+        { type: "CNAME", name: "www.example.com", content: "example.com" },
+      ],
+    });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(cf.findZoneForHostname).not.toHaveBeenCalled(); // no provider involvement
+  });
+
+  it("omits the www CNAME when includeWww is false and includes AAAA when the server has IPv6", async () => {
+    const { svc } = make({ server: { publicIp: "203.0.113.7", publicIpv6: "2001:db8::1" } });
+    const out = await svc.manualRecords("u1", "a1", { domain: "app.example.com", includeWww: false });
+    expect(out.records).toEqual([
+      { type: "A", name: "app.example.com", content: "203.0.113.7" },
+      { type: "AAAA", name: "app.example.com", content: "2001:db8::1" },
+    ]);
+  });
+
+  it("rejects when the server has no public IPv4", async () => {
+    const { svc } = make({ server: { publicIp: "10.0.0.5", publicIpv6: null } });
+    await expect(svc.manualRecords("u1", "a1", { domain: "example.com" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
 describe("DnsAutomationService.verify", () => {
   it("marks the domain active when every expected A resolves, and persists the status", async () => {
     const { svc, prisma } = make({ resolve4: ["203.0.113.7"] });

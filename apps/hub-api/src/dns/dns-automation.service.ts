@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import type { TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -183,6 +184,26 @@ export class DnsAutomationService {
     }
   }
 
+  /**
+   * The DNS records an operator should create by hand at ANY provider (the copy-paste fallback when they do not
+   * use Cloudflare, or want to do it themselves): the apex/host A (+AAAA) records pointing at the app's reachable
+   * public IP(s) and an optional www CNAME. No provider call, no zone lookup — advisory only (apps:config). www
+   * is a suggestion the operator applies only if the hostname is their zone apex.
+   */
+  async manualRecords(userId: string, appId: string, input: { domain: string; includeWww?: boolean }): Promise<{ hostname: string; records: Array<{ type: string; name: string; content: string }> }> {
+    const app = await this.resolveApp(userId, appId, "apps:config");
+    const hostname = this.normalizeHostname(input.domain);
+    const targetIps = await this.resolveTargetIps(app);
+    if (targetIps.v4.length === 0) {
+      throw new BadRequestException("the app's server/cluster has no public IPv4 address to point DNS at");
+    }
+    const records: Array<{ type: string; name: string; content: string }> = [];
+    for (const ip of targetIps.v4) records.push({ type: "A", name: hostname, content: ip });
+    for (const ip of targetIps.v6) records.push({ type: "AAAA", name: hostname, content: ip });
+    if (input.includeWww ?? true) records.push({ type: "CNAME", name: `www.${hostname}`, content: hostname });
+    return { hostname, records };
+  }
+
   // ── internals ──
 
   /** Resolve the full plan: app + decrypted token + zone + the reconciled record set (reads, never writes). The
@@ -304,13 +325,13 @@ export class DnsAutomationService {
     });
   }
 
-  private async resolveApp(userId: string, appId: string): Promise<AppRow> {
+  private async resolveApp(userId: string, appId: string, permission: TeamPermission = "apps:deploy"): Promise<AppRow> {
     const app = await this.prisma.application.findUnique({
       where: { id: appId },
       select: { id: true, teamId: true, serverId: true, clusterId: true, domain: true },
     });
     if (!app) throw new NotFoundException("application not found");
-    await this.access.requirePermission(userId, app.teamId, "apps:deploy");
+    await this.access.requirePermission(userId, app.teamId, permission);
     return app;
   }
 

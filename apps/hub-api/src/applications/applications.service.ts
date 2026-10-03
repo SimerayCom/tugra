@@ -1948,6 +1948,11 @@ export class ApplicationsService {
     return { dryRun: false, hostname: applied.hostname, status: applied.status, apex: applied.apex, records: applied.records };
   }
 
+  /** The copy-paste DNS records to create by hand at any provider (manual fallback when not using Cloudflare). */
+  manualDomainRecords(userId: string, id: string, input: { domain: string; includeWww?: boolean }) {
+    return this.dns.manualRecords(userId, id, input);
+  }
+
   /** Every app domain across the user's teams + a live SSL status probe. */
   async listDomains(userId: string): Promise<DomainView[]> {
     const apps = (await this.list(userId)).filter((a) => a.domain);
