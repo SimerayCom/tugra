@@ -118,6 +118,27 @@ export class DnsCredentialsService {
     return { ok: true };
   }
 
+  /**
+   * Internal: decrypt a credential's token for a DNS automation call. Enforces the caller's `integrations`
+   * permission on the credential's own team. NEVER exposed via the controller — the token stays in-process.
+   */
+  async resolveToken(userId: string, credentialId: string): Promise<{ token: string; cfAccountId: string | null; provider: string; teamId: string }> {
+    const r = await this.prisma.dnsCredential.findUnique({ where: { id: credentialId } });
+    if (!r) throw new NotFoundException("dns credential not found");
+    await this.access.requirePermission(userId, r.teamId, "integrations");
+    return { token: this.crypto.decrypt(r.apiTokenEnc), cfAccountId: r.cfAccountId, provider: r.provider, teamId: r.teamId };
+  }
+
+  /** The team's Cloudflare credentials (id + account id), for picking a default when none is specified. */
+  async cloudflareCredentialsForTeam(teamId: string): Promise<Array<{ id: string; cfAccountId: string | null }>> {
+    const rows = await this.prisma.dnsCredential.findMany({
+      where: { teamId, provider: "cloudflare" },
+      select: { id: true, cfAccountId: true },
+      orderBy: { createdAt: "asc" },
+    });
+    return rows;
+  }
+
   private async verify(token: string, accountId?: string | null): Promise<void> {
     const { valid } = await this.cf.verifyToken(token, accountId ?? undefined);
     if (!valid) throw new BadRequestException("the DNS provider rejected this API token");

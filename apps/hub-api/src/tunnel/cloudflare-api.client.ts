@@ -136,6 +136,20 @@ export class CloudflareApiClient {
     return { recordId: created.id, action: "created" };
   }
 
+  /** Create a NEW DNS record (pure POST — no find-first). Use this when reconciling a set of records at one name
+   *  (e.g. several A records for a multi-node cluster ingress) where upsertDnsRecord's "update the first match"
+   *  behaviour would wrongly overwrite a sibling instead of adding one. `proxied` defaults to false, `ttl` to auto. */
+  async createDnsRecord(
+    apiToken: string,
+    zoneId: string,
+    rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number },
+  ): Promise<{ recordId: string }> {
+    const body = { type: rec.type, name: rec.name, content: rec.content, proxied: rec.proxied ?? false, ttl: rec.ttl ?? 1 };
+    const created = await this.request<{ id?: string }>("POST", `/zones/${encodeURIComponent(zoneId)}/dns_records`, apiToken, body);
+    if (!created?.id) throw new CloudflareApiError("cloudflare did not return a dns record id", 502);
+    return { recordId: created.id };
+  }
+
   /** The zone's SSL/TLS encryption mode ("off"|"flexible"|"full"|"strict"). The auto-setup reads this to warn
    *  about the Flexible-SSL + :80→:443-redirect infinite-loop trap before creating proxied records. */
   async getZoneSslMode(apiToken: string, zoneId: string): Promise<string> {
