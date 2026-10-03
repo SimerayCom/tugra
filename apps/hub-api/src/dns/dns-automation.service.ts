@@ -46,6 +46,7 @@ export interface AppliedRecord {
 
 export interface DomainApplyResult {
   hostname: string;
+  apex: boolean;
   status: string;
   records: AppliedRecord[];
 }
@@ -157,7 +158,7 @@ export class DnsAutomationService {
       deleted: owned.filter((r) => r.action === "deleted").length,
     };
     await this.audit.log({ actor: userId, action: "dns.autosetup.apply", target: appId, meta: { hostname: plan.hostname, zoneId: plan.zoneId, ...counts } });
-    return { hostname: plan.hostname, status: "pending", records: owned };
+    return { hostname: plan.hostname, apex: plan.apex, status: "pending", records: owned };
   }
 
   async verify(userId: string, appId: string, hostname?: string): Promise<DomainVerifyResult> {

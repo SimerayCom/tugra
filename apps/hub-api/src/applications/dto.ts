@@ -203,6 +203,18 @@ export const SetDomainSchema = z.object({
 });
 export type SetDomainInput = z.infer<typeof SetDomainSchema>;
 
+// One-click custom-domain DNS auto-setup (Cloudflare). `dryRun` returns the plan without writing. `overwrite`
+// is required before any pre-existing record pointing elsewhere is touched. Records are always DNS-only
+// (proxied=false) — proxying is not exposed in v1 because a proxied record + Flexible SSL causes a redirect loop.
+export const AutoSetupDomainSchema = z.object({
+  domain: z.string().trim().min(1).max(253).regex(DOMAIN_RE, "invalid domain"),
+  credentialId: z.string().min(1).optional(),
+  includeWww: z.boolean().optional(),
+  overwrite: z.boolean().optional(),
+  dryRun: z.boolean().optional(),
+});
+export type AutoSetupDomainInput = z.infer<typeof AutoSetupDomainSchema>;
+
 // (Re)expose an existing app. A custom mode requires a domain; the other modes ignore it.
 export const ExposeSchema = z
   .object({

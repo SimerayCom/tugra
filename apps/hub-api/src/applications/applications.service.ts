@@ -27,6 +27,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 import { SwarmService } from "../clusters/swarm.service";
+import { DnsAutomationService } from "../dns/dns-automation.service";
 import type { PlacementConstraint } from "../deploy/deploy-script";
 import type { SetPlacementInput } from "./dto";
 import { PlacementConstraintSchema } from "./dto";
@@ -230,6 +231,7 @@ export class ApplicationsService {
     private readonly catalog: TemplateCatalogService,
     private readonly swarmDeploy: SwarmDeployService,
     private readonly swarm: SwarmService,
+    private readonly dns: DnsAutomationService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -1916,6 +1918,34 @@ export class ApplicationsService {
     if (opts.forwardAuth !== undefined) data.forwardAuth = opts.forwardAuth;
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
+  }
+
+  /**
+   * One-click custom-domain setup: create the Cloudflare DNS records (DnsAutomationService) AND wire the app's
+   * domain fields. `dryRun` returns the plan only. Otherwise it applies the records, then sets the app domain
+   * (custom + le-http + HTTPS) and, for an apex domain with a www CNAME, the www→apex canonical redirect — so
+   * both the apex and www are served and one Let's Encrypt cert covers them. apps:config is checked up front
+   * (fail fast before any DNS write) and DnsAutomationService additionally enforces apps:deploy.
+   */
+  async autoSetupDomain(
+    userId: string,
+    id: string,
+    input: { domain: string; credentialId?: string; includeWww?: boolean; overwrite?: boolean; dryRun?: boolean },
+  ): Promise<{ dryRun: boolean; hostname: string; status?: string; apex?: boolean; sslMode?: string; records: unknown[] }> {
+    await this.requireWrite(userId, id); // apps:config — we will set the domain; fail before any DNS mutation
+    const opts = { domain: input.domain, credentialId: input.credentialId, includeWww: input.includeWww, overwrite: input.overwrite };
+    if (input.dryRun) {
+      const plan = await this.dns.previewRecords(userId, id, opts);
+      return { dryRun: true, hostname: plan.hostname, apex: plan.apex, sslMode: plan.sslMode, records: plan.records };
+    }
+    const applied = await this.dns.applyRecords(userId, id, opts);
+    await this.setDomain(userId, id, applied.hostname); // custom + le-http + https + monitor/tunnel sync
+    // Set the canonical redirect EXPLICITLY in every case: "root" (www → apex) only when the apex has a www
+    // CNAME, otherwise clear it. Leaving a stale redirect would make Traefik serve Host(base)||Host(www) and
+    // request a cert for a www host that has no DNS record — failing the Let's Encrypt order and breaking HTTPS.
+    const hasWww = applied.records.some((r) => r.type === "CNAME" && r.name.startsWith("www."));
+    await this.setDomainOptions(userId, id, { domainRedirect: applied.apex && hasWww ? "root" : null });
+    return { dryRun: false, hostname: applied.hostname, status: applied.status, apex: applied.apex, records: applied.records };
   }
 
   /** Every app domain across the user's teams + a live SSL status probe. */
