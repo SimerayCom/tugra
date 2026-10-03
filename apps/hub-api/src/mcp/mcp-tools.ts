@@ -342,6 +342,45 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
+  // ── mutate + diagnostic: custom-domain DNS auto-setup (Cloudflare) ────────────────────────────────
+  // setup_app_domain fans the one-click flow (DNS records + app-domain wiring) out to agents; verify_app_domain
+  // is a read-only propagation check. Both pass through ApplicationsService, which enforces the team permission.
+  {
+    name: "setup_app_domain",
+    description:
+      "One-click custom-domain DNS setup for an application via Cloudflare: create the apex A (+AAAA) and optional www CNAME records (DNS-only) and wire the app's domain over HTTPS. Set dryRun:true to PREVIEW the plan without writing. A record that already points elsewhere is a conflict only replaced when overwrite:true. Needs a team Cloudflare DNS credential (credentialId optional when the team has exactly one).",
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        domain: { type: "string" },
+        credentialId: { type: "string" },
+        includeWww: { type: "boolean" },
+        overwrite: { type: "boolean" },
+        dryRun: { type: "boolean" },
+      },
+      required: ["id", "domain"],
+    },
+    execute: async (d, userId, a) =>
+      d.apps.autoSetupDomain(userId, reqStr(a, "id"), {
+        domain: reqStr(a, "domain"),
+        credentialId: optStr(a, "credentialId"),
+        // tri-state: omitted/non-boolean → undefined (backend default true); only an explicit boolean overrides.
+        includeWww: typeof a.includeWww === "boolean" ? a.includeWww : undefined,
+        overwrite: optBool(a, "overwrite"),
+        dryRun: optBool(a, "dryRun"),
+      }),
+  },
+  {
+    name: "verify_app_domain",
+    description:
+      "Check an application's auto-setup custom domain actually resolves to the app (real public-DNS lookup) and refresh its status (active | pending | error). Optionally pass a specific hostname.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, hostname: { type: "string" } }, required: ["id"] },
+    execute: async (d, userId, a) => d.apps.verifyDomain(userId, reqStr(a, "id"), optStr(a, "hostname")),
+  },
+
   // ── mutate: cluster / swarm operation (Phase2b) ──────────────────────────────────────────────────
   // Thin pass-throughs to the SwarmService methods the REST routes call — each self-enforces the
   // 'servers:manage' team permission. Scope mirrors the route: formation/growth/config = 'deploy'

@@ -462,6 +462,22 @@ export class ApplicationsController {
     return this.apps.manualDomainRecords(user.userId, id, { domain, includeWww: includeWww !== "false" });
   }
 
+  // Re-check an auto-setup domain resolves to the app (real public-DNS lookup) + refresh its stored status.
+  @Post(":id/domain/verify")
+  @HttpCode(200)
+  @RequireScopes("read")
+  verifyDomain(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("hostname") hostname?: string) {
+    return this.apps.verifyDomain(user.userId, id, hostname || undefined);
+  }
+
+  // Tear down the Cloudflare records Tugra created for this app's domain(s). Destructive → deploy scope.
+  @Delete(":id/domain/dns")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  cleanupDomainDns(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("hostname") hostname?: string) {
+    return this.apps.cleanupDomainDns(user.userId, id, hostname || undefined);
+  }
+
   @Put(":id/domain-options")
   @HttpCode(200)
   @ApiZodBody(SetDomainOptionsSchema)

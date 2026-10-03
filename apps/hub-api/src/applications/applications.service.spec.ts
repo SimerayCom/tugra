@@ -87,7 +87,7 @@ function make(
   },
   portAlloc: { allocate: jest.Mock; probeUsedPorts?: jest.Mock } = { allocate: jest.fn().mockResolvedValue([]) },
   swarm: { status?: jest.Mock } = { status: jest.fn().mockResolvedValue({ live: [] }) },
-  dns: { previewRecords?: jest.Mock; applyRecords?: jest.Mock; verify?: jest.Mock } = {},
+  dns: { previewRecords?: jest.Mock; applyRecords?: jest.Mock; verify?: jest.Mock; cleanup?: jest.Mock; purgeDomains?: jest.Mock; manualRecords?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -141,6 +141,9 @@ function make(
       previewRecords: dns.previewRecords ?? jest.fn(),
       applyRecords: dns.applyRecords ?? jest.fn(),
       verify: dns.verify ?? jest.fn(),
+      cleanup: dns.cleanup ?? jest.fn().mockResolvedValue({ removed: 0 }),
+      purgeDomains: dns.purgeDomains ?? jest.fn().mockResolvedValue({ removed: 0 }),
+      manualRecords: dns.manualRecords ?? jest.fn(),
     } as unknown as import("../dns/dns-automation.service").DnsAutomationService,
     {
       get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),

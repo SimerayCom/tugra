@@ -72,6 +72,9 @@ interface OwnedRecord {
   type: string;
   name: string;
   recordId: string;
+  // true only when Tugra CREATED this record (action "created"). A record we merely kept (noop on a record the
+  // user already had) or adopted/repointed (update) is NOT ours to delete — cleanup leaves those untouched.
+  created?: boolean;
 }
 
 interface PreviewInput {
@@ -163,23 +166,22 @@ export class DnsAutomationService {
   }
 
   async verify(userId: string, appId: string, hostname?: string): Promise<DomainVerifyResult> {
-    const app = await this.resolveApp(userId, appId);
+    const app = await this.resolveApp(userId, appId, "apps:config");
     const domain = hostname
       ? await this.prisma.domain.findUnique({ where: { applicationId_hostname: { applicationId: appId, hostname: this.normalizeHostname(hostname) } } })
       : await this.prisma.domain.findFirst({ where: { applicationId: appId }, orderBy: { createdAt: "desc" } });
     if (!domain) throw new NotFoundException("no auto-setup domain for this application");
     const expected = await this.resolveTargetIps(app);
+    // Side-effect-free: a live public-DNS lookup that RETURNS the status, with no DB write and no audit entry, so it
+    // is an honest read (safe for a read-scope token / looping agent to call without mutating or flooding anything).
     try {
       const [a, aaaa] = await Promise.all([this.lookup.resolve4(domain.hostname), this.lookup.resolve6(domain.hostname)]);
       const v4ok = expected.v4.length > 0 && expected.v4.every((ip) => a.includes(ip));
       const v6ok = expected.v6.length === 0 || expected.v6.every((ip) => aaaa.includes(ip));
       const status = v4ok && v6ok ? "active" : "pending";
-      await this.prisma.domain.update({ where: { id: domain.id }, data: { status, lastError: null, lastCheckedAt: new Date() } });
-      await this.audit.log({ actor: userId, action: "dns.autosetup.verify", target: appId, meta: { hostname: domain.hostname, status } });
       return { hostname: domain.hostname, status, expected: { a: expected.v4, aaaa: expected.v6 }, resolved: { a, aaaa }, lastError: null };
     } catch (e) {
       const lastError = e instanceof Error ? e.message : "dns lookup failed";
-      await this.prisma.domain.update({ where: { id: domain.id }, data: { status: "error", lastError, lastCheckedAt: new Date() } });
       return { hostname: domain.hostname, status: "error", expected: { a: expected.v4, aaaa: expected.v6 }, resolved: { a: [], aaaa: [] }, lastError };
     }
   }
@@ -202,6 +204,73 @@ export class DnsAutomationService {
     for (const ip of targetIps.v6) records.push({ type: "AAAA", name: hostname, content: ip });
     if (input.includeWww ?? true) records.push({ type: "CNAME", name: `www.${hostname}`, content: hostname });
     return { hostname, records };
+  }
+
+  /**
+   * Delete the Cloudflare records Tugra created for this app's domain(s) and drop the Domain row(s) — the
+   * teardown half of auto-setup, for when a custom domain is removed or an app is deleted. apps:deploy. Each
+   * record delete is best-effort (an already-gone record is fine); the row is dropped even if the credential is
+   * no longer usable, so a stuck credential can't leave an un-droppable row.
+   */
+  async cleanup(userId: string, appId: string, hostname?: string): Promise<{ removed: number; failed: number }> {
+    await this.resolveApp(userId, appId, "apps:deploy");
+    return this.purgeDomains(userId, appId, hostname);
+  }
+
+  /**
+   * Best-effort teardown given the caller is ALREADY authorized for the app (e.g. app deletion). Never throws.
+   * Deletes ONLY the records Tugra created (never a record the user already had that we merely kept/adopted). The
+   * Domain row — the ownership ledger — is dropped ONLY when every owned record was removed (or was already gone);
+   * if any delete fails, or the credential can't be resolved, the row is kept with an error status so the ledger
+   * survives for a retry, and the leftover record ids are audited for recovery.
+   */
+  async purgeDomains(userId: string, appId: string, hostname?: string): Promise<{ removed: number; failed: number }> {
+    const where = hostname ? { applicationId: appId, hostname: this.normalizeHostname(hostname) } : { applicationId: appId };
+    const domains = await this.prisma.domain.findMany({ where }).catch(() => []);
+    let removed = 0;
+    let failed = 0;
+    for (const d of domains) {
+      const recs: OwnedRecord[] = Array.isArray(d.recordIds) ? (d.recordIds as unknown as OwnedRecord[]) : [];
+      const owned = recs.filter((r) => r.created); // never delete a pre-existing (kept/adopted) record
+      const leftover: string[] = [];
+      let removedHere = 0;
+      if (owned.length && d.dnsCredentialId && d.zoneId) {
+        let token: string | null = null;
+        try {
+          token = (await this.creds.resolveToken(userId, d.dnsCredentialId)).token;
+        } catch {
+          token = null; // credential deleted or caller lacks `integrations`
+        }
+        if (token) {
+          for (const r of owned) {
+            // deleteDnsRecord already tolerates a 404 (already gone) — a throw here is a real failure (429/5xx/timeout).
+            try {
+              await this.cf.deleteDnsRecord(token, d.zoneId, r.recordId);
+              removedHere++;
+            } catch {
+              leftover.push(r.recordId);
+            }
+          }
+        } else {
+          leftover.push(...owned.map((r) => r.recordId));
+        }
+      }
+      removed += removedHere;
+      failed += leftover.length;
+      if (leftover.length === 0) {
+        await this.prisma.domain.delete({ where: { id: d.id } }).catch(() => undefined);
+      } else {
+        // Keep the ledger so a retry can finish the job (on app deletion the cascade still removes the row, but the
+        // audit entry below preserves the leftover ids for recovery).
+        await this.prisma.domain
+          .update({ where: { id: d.id }, data: { status: "error", lastError: `${leftover.length} DNS record(s) could not be removed`, lastCheckedAt: new Date() } })
+          .catch(() => undefined);
+      }
+      await this.audit
+        .log({ actor: userId, action: "dns.autosetup.cleanup", target: appId, meta: { hostname: d.hostname, removed: removedHere, failed: leftover.length, leftover } })
+        .catch(() => undefined);
+    }
+    return { removed, failed };
   }
 
   // ── internals ──
@@ -310,11 +379,17 @@ export class DnsAutomationService {
     });
     const prior: OwnedRecord[] = Array.isArray(existing?.recordIds) ? (existing!.recordIds as unknown as OwnedRecord[]) : [];
     const deleted = new Set(deletedIds);
-    const keptNow: OwnedRecord[] = owned.filter((r) => r.action !== "deleted").map((r) => ({ type: r.type, name: r.name, recordId: r.recordId }));
-    // prior first, current last → a re-owned record keeps its fresh type/name; deleted ids drop out.
+    const keptNow: OwnedRecord[] = owned
+      .filter((r) => r.action !== "deleted")
+      .map((r) => ({ type: r.type, name: r.name, recordId: r.recordId, created: r.action === "created" }));
+    // prior first, current last → a re-owned record keeps its fresh type/name; deleted ids drop out. `created` is
+    // OR-ed across runs: a record we created in an earlier apply but merely "kept" (noop) now must STAY ours.
     const byId = new Map<string, OwnedRecord>();
     for (const r of prior) if (!deleted.has(r.recordId)) byId.set(r.recordId, r);
-    for (const r of keptNow) byId.set(r.recordId, r);
+    for (const r of keptNow) {
+      const prev = byId.get(r.recordId);
+      byId.set(r.recordId, { ...r, created: (prev?.created ?? false) || r.created });
+    }
     const recordIds = [...byId.values()];
 
     const common = { apex: plan.apex, dnsCredentialId: plan.credentialId, zoneId: plan.zoneId, recordIds: recordIds as unknown as object, mode: "auto", status, lastError };

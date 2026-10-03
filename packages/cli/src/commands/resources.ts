@@ -62,6 +62,31 @@ export function register(program: Command): void {
       else printLine(`restart triggered for app ${id}`);
     });
   apps
+    .command("domain <id> <domain>")
+    .description("One-click Cloudflare DNS setup for a custom domain (deploy scope)")
+    .option("--credential <id>", "DNS credential id (optional when the team has one Cloudflare credential)")
+    .option("--no-www", "do not add a www record")
+    .option("--overwrite", "replace existing records that point elsewhere")
+    .option("--dry-run", "preview the records without writing them")
+    .option("--json", "output as JSON")
+    .action(
+      async (
+        id: string,
+        domain: string,
+        opts: { credential?: string; www?: boolean; overwrite?: boolean; dryRun?: boolean; json?: boolean },
+      ) => {
+        const res = await activeClient().client.autoSetupDomain(id, {
+          domain,
+          credentialId: opts.credential,
+          includeWww: opts.www,
+          overwrite: opts.overwrite,
+          dryRun: opts.dryRun,
+        });
+        if (opts.json) printJson(res);
+        else printLine(opts.dryRun ? `planned DNS records for ${domain}` : `DNS set up for ${domain}`);
+      },
+    );
+  apps
     .command("logs <id>")
     .description("Fetch recent application logs")
     .option("--tail <n>", "number of lines", (v) => Number(v))

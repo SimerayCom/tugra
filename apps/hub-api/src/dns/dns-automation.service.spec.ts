@@ -26,6 +26,7 @@ function make(over: {
   resolve6?: string[];
   resolve4Throws?: Error;
   createThrowsOn?: string; // content that makes createDnsRecord reject (partial-failure test)
+  domainsForCleanup?: Array<{ id: string; hostname: string; dnsCredentialId: string | null; zoneId: string | null; recordIds: unknown }>;
 } = {}) {
   const app = { ...APP, ...over.app };
   const prisma = {
@@ -34,11 +35,13 @@ function make(over: {
     domain: {
       findUnique: jest.fn().mockResolvedValue(over.priorRecordIds !== undefined && over.priorRecordIds !== null ? { recordIds: over.priorRecordIds } : null),
       findFirst: jest.fn().mockResolvedValue({ id: "d1", hostname: "example.com" }),
+      findMany: jest.fn().mockResolvedValue(over.domainsForCleanup ?? []),
       upsert: jest.fn().mockResolvedValue({ id: "d1" }),
       update: jest.fn().mockResolvedValue({ id: "d1" }),
+      delete: jest.fn().mockResolvedValue({}),
     },
   } as unknown as PrismaService;
-  const audit = { log: jest.fn() } as unknown as AuditService;
+  const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
   const cf = {
     findZoneForHostname: jest.fn().mockResolvedValue({ zoneId: "z1", zoneName: over.zoneName ?? "example.com" }),
@@ -165,8 +168,8 @@ describe("DnsAutomationService.applyRecords", () => {
     expect(upsertArg.create.status).toBe("pending");
     expect(upsertArg.create.dnsCredentialId).toBe("dc1");
     expect(upsertArg.create.recordIds).toEqual([
-      { type: "A", name: "example.com", recordId: "new-203.0.113.7" },
-      { type: "CNAME", name: "www.example.com", recordId: "new-example.com" },
+      { type: "A", name: "example.com", recordId: "new-203.0.113.7", created: true },
+      { type: "CNAME", name: "www.example.com", recordId: "new-example.com", created: true },
     ]);
     const auditArg = (audit.log as jest.Mock).mock.calls[0][0];
     expect(JSON.stringify(auditArg)).not.toContain("CFTOKEN");
@@ -216,8 +219,8 @@ describe("DnsAutomationService.applyRecords", () => {
     const { svc, prisma } = make({ priorRecordIds: [{ type: "CNAME", name: "www.example.com", recordId: "old-www" }] });
     await svc.applyRecords("u1", "a1", { domain: "example.com", includeWww: false });
     const recordIds = (prisma.domain.upsert as jest.Mock).mock.calls[0][0].update.recordIds;
-    expect(recordIds).toContainEqual({ type: "CNAME", name: "www.example.com", recordId: "old-www" });
-    expect(recordIds).toContainEqual({ type: "A", name: "example.com", recordId: "new-203.0.113.7" });
+    expect(recordIds).toContainEqual({ type: "CNAME", name: "www.example.com", recordId: "old-www" }); // prior, untouched
+    expect(recordIds).toContainEqual({ type: "A", name: "example.com", recordId: "new-203.0.113.7", created: true });
   });
 
   it("on a partial failure persists what was written (status error) and rethrows", async () => {
@@ -226,7 +229,7 @@ describe("DnsAutomationService.applyRecords", () => {
     const upsertArg = (prisma.domain.upsert as jest.Mock).mock.calls[0][0];
     expect(upsertArg.create.status).toBe("error");
     expect(upsertArg.create.lastError).toBe("cf 403");
-    expect(upsertArg.create.recordIds).toEqual([{ type: "A", name: "example.com", recordId: "new-203.0.113.7" }]);
+    expect(upsertArg.create.recordIds).toEqual([{ type: "A", name: "example.com", recordId: "new-203.0.113.7", created: true }]);
   });
 });
 
@@ -260,12 +263,58 @@ describe("DnsAutomationService.manualRecords", () => {
   });
 });
 
+describe("DnsAutomationService.cleanup", () => {
+  const dom = {
+    id: "d1",
+    hostname: "example.com",
+    dnsCredentialId: "dc1",
+    zoneId: "z1",
+    recordIds: [{ type: "A", name: "example.com", recordId: "r1", created: true }, { type: "CNAME", name: "www.example.com", recordId: "r2", created: true }],
+  };
+
+  it("deletes ONLY Tugra-created records and drops the Domain row (apps:deploy)", async () => {
+    const { svc, cf, prisma, access } = make({ domainsForCleanup: [dom] });
+    const res = await svc.cleanup("u1", "a1");
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:deploy");
+    expect(cf.deleteDnsRecord).toHaveBeenCalledWith("CFTOKEN", "z1", "r1");
+    expect(cf.deleteDnsRecord).toHaveBeenCalledWith("CFTOKEN", "z1", "r2");
+    expect(prisma.domain.delete as jest.Mock).toHaveBeenCalledWith({ where: { id: "d1" } });
+    expect(res).toEqual({ removed: 2, failed: 0 });
+  });
+
+  it("NEVER deletes a record the user already had (kept/adopted → created:false)", async () => {
+    const kept = { ...dom, recordIds: [{ type: "A", name: "example.com", recordId: "r1", created: false }, { type: "CNAME", name: "www.example.com", recordId: "r2", created: true }] };
+    const { svc, cf } = make({ domainsForCleanup: [kept] });
+    await svc.cleanup("u1", "a1");
+    expect(cf.deleteDnsRecord).toHaveBeenCalledTimes(1); // only the created CNAME
+    expect(cf.deleteDnsRecord).toHaveBeenCalledWith("CFTOKEN", "z1", "r2");
+  });
+
+  it("KEEPS the Domain row (ledger) when the credential can no longer be resolved — never silently loses records", async () => {
+    const { svc, cf, prisma, creds } = make({ domainsForCleanup: [dom] });
+    (creds.resolveToken as jest.Mock).mockRejectedValueOnce(new Error("credential gone"));
+    const res = await svc.cleanup("u1", "a1");
+    expect(cf.deleteDnsRecord).not.toHaveBeenCalled();
+    expect(prisma.domain.delete as jest.Mock).not.toHaveBeenCalled();
+    expect((prisma.domain.update as jest.Mock).mock.calls[0][0].data).toMatchObject({ status: "error" });
+    expect(res).toEqual({ removed: 0, failed: 2 });
+  });
+
+  it("KEEPS the Domain row when a provider delete fails (transient 5xx) so a retry can finish", async () => {
+    const { svc, cf, prisma } = make({ domainsForCleanup: [dom] });
+    (cf.deleteDnsRecord as jest.Mock).mockRejectedValue(new Error("cf 503"));
+    const res = await svc.cleanup("u1", "a1");
+    expect(prisma.domain.delete as jest.Mock).not.toHaveBeenCalled();
+    expect(res).toEqual({ removed: 0, failed: 2 });
+  });
+});
+
 describe("DnsAutomationService.verify", () => {
-  it("marks the domain active when every expected A resolves, and persists the status", async () => {
+  it("returns active when every expected A resolves — without writing to the DB (side-effect-free read)", async () => {
     const { svc, prisma } = make({ resolve4: ["203.0.113.7"] });
     const res = await svc.verify("u1", "a1");
     expect(res.status).toBe("active");
-    expect((prisma.domain.update as jest.Mock).mock.calls[0][0].data).toMatchObject({ status: "active", lastError: null });
+    expect(prisma.domain.update as jest.Mock).not.toHaveBeenCalled(); // a read never mutates
   });
 
   it("looks a specific hostname up by (applicationId, hostname) when one is given", async () => {
@@ -280,12 +329,11 @@ describe("DnsAutomationService.verify", () => {
     expect((await svc.verify("u1", "a1")).status).toBe("pending");
   });
 
-  it("records an error (not a throw) when the resolver fails", async () => {
-    const { svc, prisma } = make({ resolve4Throws: new Error("SERVFAIL") });
+  it("returns an error status (not a throw) when the resolver fails", async () => {
+    const { svc } = make({ resolve4Throws: new Error("SERVFAIL") });
     const res = await svc.verify("u1", "a1");
     expect(res.status).toBe("error");
     expect(res.lastError).toBe("SERVFAIL");
-    expect((prisma.domain.update as jest.Mock).mock.calls[0][0].data).toMatchObject({ status: "error", lastError: "SERVFAIL" });
   });
 
   it("404s when the app has no auto-setup domain", async () => {
