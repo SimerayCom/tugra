@@ -7,7 +7,7 @@ function tool(name: string) {
 }
 
 const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action"];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain"];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node"];
 
@@ -183,6 +183,37 @@ describe("MCP_TOOLS catalog", () => {
       const deps = { apps: { scaleNow, get } } as unknown as McpDeps;
       const res = (await tool("scale_application").execute(deps, "u1", { id: "app1", replicas: 2 })) as Record<string, unknown>;
       expect(res).toEqual({ ok: true, action: "scale", replicas: 2, application: null });
+    });
+  });
+
+  describe("mutate/diagnostic: custom-domain DNS auto-setup", () => {
+    it("setup_app_domain passes the args through to apps.autoSetupDomain (includeWww omitted → undefined)", async () => {
+      const autoSetupDomain = jest.fn().mockResolvedValue({ dryRun: false, hostname: "example.com", status: "pending", records: [] });
+      const deps = { apps: { autoSetupDomain } } as unknown as McpDeps;
+      const res = await tool("setup_app_domain").execute(deps, "u1", { id: "app1", domain: "example.com", credentialId: "dc1" });
+      expect(autoSetupDomain).toHaveBeenCalledWith("u1", "app1", { domain: "example.com", credentialId: "dc1", includeWww: undefined, overwrite: false, dryRun: false });
+      expect(res).toMatchObject({ hostname: "example.com" });
+    });
+
+    it("setup_app_domain forwards dryRun + overwrite + an explicit includeWww:false", async () => {
+      const autoSetupDomain = jest.fn().mockResolvedValue({ dryRun: true, hostname: "example.com", records: [] });
+      const deps = { apps: { autoSetupDomain } } as unknown as McpDeps;
+      await tool("setup_app_domain").execute(deps, "u1", { id: "app1", domain: "example.com", includeWww: false, overwrite: true, dryRun: true });
+      expect(autoSetupDomain).toHaveBeenCalledWith("u1", "app1", { domain: "example.com", credentialId: undefined, includeWww: false, overwrite: true, dryRun: true });
+    });
+
+    it("setup_app_domain requires id + domain", async () => {
+      const deps = { apps: { autoSetupDomain: jest.fn() } } as unknown as McpDeps;
+      await expect(Promise.resolve().then(() => tool("setup_app_domain").execute(deps, "u1", { id: "app1" }))).rejects.toThrow(/domain/);
+    });
+
+    it("verify_app_domain passes through to apps.verifyDomain (read scope) with an optional hostname", async () => {
+      const verifyDomain = jest.fn().mockResolvedValue({ hostname: "example.com", status: "active" });
+      const deps = { apps: { verifyDomain } } as unknown as McpDeps;
+      const res = await tool("verify_app_domain").execute(deps, "u1", { id: "app1", hostname: "example.com" });
+      expect(verifyDomain).toHaveBeenCalledWith("u1", "app1", "example.com");
+      expect(res).toMatchObject({ status: "active" });
+      expect(tool("verify_app_domain").scope).toBe("read");
     });
   });
 

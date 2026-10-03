@@ -83,6 +83,12 @@ export class TugraClient {
   restartApp(id: string): Promise<Row> {
     return this.request("POST", `/apps/${encodeURIComponent(id)}/restart`);
   }
+  autoSetupDomain(
+    id: string,
+    input: { domain: string; credentialId?: string; includeWww?: boolean; overwrite?: boolean; dryRun?: boolean },
+  ): Promise<Row> {
+    return this.request("POST", `/apps/${encodeURIComponent(id)}/domain/auto-setup`, input);
+  }
   appLogs(id: string, tail?: number): Promise<unknown> {
     // Only forward a sane positive line count; a NaN (bad --tail) or 0 falls back to the hub default.
     const q = typeof tail === "number" && Number.isFinite(tail) && tail > 0 ? `?tail=${Math.floor(tail)}` : "";

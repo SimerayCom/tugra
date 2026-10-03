@@ -1283,6 +1283,9 @@ export class ApplicationsService {
       await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
     }
     await this.monitors.removeForApp(id).catch(() => undefined);
+    // Best-effort: remove the Cloudflare records Tugra auto-created for this app BEFORE the Domain rows cascade
+    // away (otherwise they'd dangle at the provider). Never blocks deletion — the user already passed requireWrite.
+    await this.dns.purgeDomains(userId, id).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
     // Drop the deleted app's stale rule from its server's tunnel ingress (recomputed from DB truth).
     if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
@@ -1951,6 +1954,16 @@ export class ApplicationsService {
   /** The copy-paste DNS records to create by hand at any provider (manual fallback when not using Cloudflare). */
   manualDomainRecords(userId: string, id: string, input: { domain: string; includeWww?: boolean }) {
     return this.dns.manualRecords(userId, id, input);
+  }
+
+  /** Re-check that the app's auto-setup domain resolves to the app (real public-DNS lookup) + refresh its status. */
+  verifyDomain(userId: string, id: string, hostname?: string) {
+    return this.dns.verify(userId, id, hostname);
+  }
+
+  /** Tear down the Cloudflare records Tugra created for a domain (+ drop the Domain row). */
+  cleanupDomainDns(userId: string, id: string, hostname?: string) {
+    return this.dns.cleanup(userId, id, hostname);
   }
 
   /** Every app domain across the user's teams + a live SSL status probe. */
