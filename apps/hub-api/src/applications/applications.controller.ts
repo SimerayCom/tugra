@@ -48,6 +48,8 @@ import {
   SetEnvSchema,
   SetDomainInput,
   SetDomainSchema,
+  AutoSetupDomainSchema,
+  AutoSetupDomainInput,
   ExposeInput,
   ExposeSchema,
   SetDomainOptionsInput,
@@ -432,6 +434,20 @@ export class ApplicationsController {
   ) {
     await this.apps.setDomain(user.userId, id, body.domain);
     return { ok: true };
+  }
+
+  // One-click Cloudflare DNS auto-setup for a custom domain: create the apex A (+AAAA) + www CNAME records and
+  // wire the app's domain/HTTPS. `dryRun` returns the plan only. deploy scope (it both mutates DNS and the app).
+  @Post(":id/domain/auto-setup")
+  @HttpCode(200)
+  @RequireScopes("deploy")
+  @ApiZodBody(AutoSetupDomainSchema)
+  autoSetupDomain(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(AutoSetupDomainSchema)) body: AutoSetupDomainInput,
+  ) {
+    return this.apps.autoSetupDomain(user.userId, id, body);
   }
 
   @Put(":id/domain-options")

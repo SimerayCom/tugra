@@ -8,6 +8,7 @@ import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { TeamDefaultsModule } from "../teams/team-defaults.module";
 import { CatalogModule } from "../catalog/catalog.module";
 import { ClustersModule } from "../clusters/clusters.module";
+import { DnsModule } from "../dns/dns.module";
 import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { ProxyService } from "./proxy.service";
@@ -17,7 +18,7 @@ import { ContainerLogStreamGuard } from "./log-stream.guard";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule],
   controllers: [ApplicationsController],
   providers: [
     ApplicationsService,

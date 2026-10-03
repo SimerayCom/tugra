@@ -87,6 +87,7 @@ function make(
   },
   portAlloc: { allocate: jest.Mock; probeUsedPorts?: jest.Mock } = { allocate: jest.fn().mockResolvedValue([]) },
   swarm: { status?: jest.Mock } = { status: jest.fn().mockResolvedValue({ live: [] }) },
+  dns: { previewRecords?: jest.Mock; applyRecords?: jest.Mock; verify?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -136,6 +137,11 @@ function make(
       status: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
     } as unknown as import("../clusters/swarm-deploy.service").SwarmDeployService,
     { status: swarm.status ?? jest.fn().mockResolvedValue({ live: [] }) } as unknown as import("../clusters/swarm.service").SwarmService,
+    {
+      previewRecords: dns.previewRecords ?? jest.fn(),
+      applyRecords: dns.applyRecords ?? jest.fn(),
+      verify: dns.verify ?? jest.fn(),
+    } as unknown as import("../dns/dns-automation.service").DnsAutomationService,
     {
       get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
     } as unknown as import("@nestjs/core").ModuleRef,
@@ -1820,6 +1826,57 @@ describe("ApplicationsService", () => {
     });
     await svc.setDomain("u1", "app1", null);
     expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null, domainKind: "none" } });
+  });
+
+  it("autoSetupDomain dryRun returns the plan and writes nothing (no setDomain)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const previewRecords = jest.fn().mockResolvedValue({ hostname: "example.com", apex: true, sslMode: "full", records: [{ type: "A", name: "example.com" }] });
+    const applyRecords = jest.fn();
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, { previewRecords, applyRecords });
+    const res = await svc.autoSetupDomain("u1", "app1", { domain: "example.com", dryRun: true });
+    expect(res).toMatchObject({ dryRun: true, hostname: "example.com", apex: true });
+    expect(previewRecords).toHaveBeenCalled();
+    expect(applyRecords).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled(); // no setDomain / setDomainOptions
+  });
+
+  it("autoSetupDomain apply writes DNS, sets the app domain, and sets the www→apex redirect for an apex+www", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const applyRecords = jest.fn().mockResolvedValue({
+      hostname: "example.com",
+      apex: true,
+      status: "pending",
+      records: [{ type: "A", name: "example.com", recordId: "r1", action: "created" }, { type: "CNAME", name: "www.example.com", recordId: "r2", action: "created" }],
+    });
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, { applyRecords });
+    await svc.autoSetupDomain("u1", "app1", { domain: "example.com" });
+    expect(applyRecords).toHaveBeenCalled();
+    // setDomain → custom + le-http + https
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: "example.com", domainKind: "custom", certType: "le-http", https: true } });
+    // setDomainOptions → www→apex canonical redirect (apex + a www CNAME was created)
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domainRedirect: "root" } });
+  });
+
+  it("autoSetupDomain apply on a subdomain sets the domain but NO redirect (no www)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const applyRecords = jest.fn().mockResolvedValue({
+      hostname: "app.example.com",
+      apex: false,
+      status: "pending",
+      records: [{ type: "A", name: "app.example.com", recordId: "r1", action: "created" }],
+    });
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, { applyRecords });
+    await svc.autoSetupDomain("u1", "app1", { domain: "app.example.com" });
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: "app.example.com", domainKind: "custom", certType: "le-http", https: true } });
+    // the canonical redirect is explicitly CLEARED (not left stale) when there is no www CNAME
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domainRedirect: null } });
+    expect(update).not.toHaveBeenCalledWith({ where: { id: "app1" }, data: { domainRedirect: "root" } });
   });
 
   it("rejects moving an app to an environment in another team", async () => {
