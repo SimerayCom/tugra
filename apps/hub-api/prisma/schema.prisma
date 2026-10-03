@@ -142,6 +142,7 @@ model Team {
   gitSources   GitSource[]
   registries   Registry[]
   cloudCredentials CloudCredential[]
+  dnsCredentials   DnsCredential[]
   savedViews   SavedView[]
   customRoles  TeamRole[]
   clusters     Cluster[]
@@ -628,6 +629,22 @@ model CloudCredential {
   apiTokenEnc String   // encrypted cloud API token — never returned/logged
   servers     Server[]
   createdAt   DateTime @default(now())
+
+  @@index([teamId])
+}
+
+// Team-scoped DNS-provider API credential (one-click custom-domain DNS auto-setup). Mirrors CloudCredential:
+// the token is verified against the provider BEFORE encrypt+persist and is NEVER returned/logged.
+model DnsCredential {
+  id             String    @id @default(cuid())
+  team           Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId         String
+  name           String
+  provider       String    // "cloudflare" — only provider with a client in v1
+  apiTokenEnc    String    // encrypted DNS-provider API token — never returned/logged
+  cfAccountId    String?   // optional Cloudflare account id (not needed for plain DNS-record writes)
+  lastVerifiedAt DateTime?
+  createdAt      DateTime  @default(now())
 
   @@index([teamId])
 }
