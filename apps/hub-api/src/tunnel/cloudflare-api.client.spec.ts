@@ -265,6 +265,22 @@ describe("CloudflareApiClient.upsertDnsRecord", () => {
   });
 });
 
+describe("CloudflareApiClient.createDnsRecord", () => {
+  it("POSTs a new record directly (no find-first) — for reconciling sibling records at one name", async () => {
+    const f = mockOnce(200, envelope({ id: "rNew" }));
+    await expect(cf.createDnsRecord("t", "z1", { type: "A", name: "example.com", content: "198.51.100.9" })).resolves.toEqual({ recordId: "rNew" });
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("https://api.cloudflare.com/client/v4/zones/z1/dns_records");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ type: "A", name: "example.com", content: "198.51.100.9", proxied: false, ttl: 1 });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it("throws 502 when create returns no id", async () => {
+    mockOnce(200, envelope({}));
+    await expect(cf.createDnsRecord("t", "z1", { type: "A", name: "x.com", content: "1.1.1.1" })).rejects.toMatchObject({ status: 502 });
+  });
+});
+
 describe("CloudflareApiClient.getZoneSslMode", () => {
   it("returns the zone SSL/TLS mode value", async () => {
     mockOnce(200, envelope({ id: "ssl", value: "full" }));

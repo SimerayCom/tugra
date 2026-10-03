@@ -92,6 +92,30 @@ describe("DnsCredentialsService", () => {
     expect((prisma.dnsCredential!.update as jest.Mock).mock.calls[0][0].data).toEqual({ lastVerifiedAt: expect.any(Date) });
   });
 
+  it("resolveToken decrypts the token for internal use after enforcing 'integrations' on the credential's team", async () => {
+    const requirePermission = jest.fn().mockResolvedValue(undefined);
+    const { svc, crypto } = make({ access: { requirePermission } as unknown as TeamAccessService });
+    const out = await svc.resolveToken("u1", "dc1");
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "integrations");
+    expect(crypto.decrypt).toHaveBeenCalledWith("enc(TOKENVAL)");
+    expect(out).toEqual({ token: "TOKENVAL", cfAccountId: null, provider: "cloudflare", teamId: "t1" });
+  });
+
+  it("resolveToken 404s a missing credential (before any decrypt)", async () => {
+    const prisma = { dnsCredential: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    const { svc, crypto } = make({ prisma });
+    await expect(svc.resolveToken("u1", "nope")).rejects.toBeInstanceOf(NotFoundException);
+    expect(crypto.decrypt).not.toHaveBeenCalled();
+  });
+
+  it("cloudflareCredentialsForTeam lists only that team's cloudflare creds (id + account id, never the token)", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ id: "dc1", cfAccountId: "acc1" }]);
+    const prisma = { dnsCredential: { findMany } } as unknown as PrismaService;
+    const { svc } = make({ prisma });
+    await expect(svc.cloudflareCredentialsForTeam("t1")).resolves.toEqual([{ id: "dc1", cfAccountId: "acc1" }]);
+    expect(findMany.mock.calls[0][0]).toMatchObject({ where: { teamId: "t1", provider: "cloudflare" }, select: { id: true, cfAccountId: true } });
+  });
+
   it("remove / update / test 404 when the credential is missing", async () => {
     const prisma = { dnsCredential: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
     const { svc } = make({ prisma });

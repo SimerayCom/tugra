@@ -644,6 +644,7 @@ model DnsCredential {
   apiTokenEnc    String    // encrypted DNS-provider API token — never returned/logged
   cfAccountId    String?   // optional Cloudflare account id (not needed for plain DNS-record writes)
   lastVerifiedAt DateTime?
+  domains        Domain[]  // domains whose auto-setup used this credential (SetNull on delete)
   createdAt      DateTime  @default(now())
 
   @@index([teamId])
@@ -841,10 +842,39 @@ model Application {
   previews       Application[] @relation("AppPreviews")
   deployments   Deployment[]
   scheduledTasks ScheduledTask[]
+  domains        Domain[]
   createdAt     DateTime     @default(now())
 
   @@index([environmentId])
   @@index([parentAppId])
+}
+
+/**
+ * A custom domain that Tugra set up DNS for on an app (one-click Cloudflare auto-setup). Tracks which provider
+ * credential + zone were used and which records were written, so the UI can show status and a later slice can
+ * clean the records up when the domain changes or the app is deleted. `recordIds` is a JSON array of
+ * { type, name, recordId }. `mode` is "auto" (Tugra created the records) or "manual" (operator copied them).
+ */
+model Domain {
+  id              String      @id @default(cuid())
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  applicationId   String
+  hostname        String      // the custom domain, e.g. "app.example.com"
+  apex            Boolean     @default(false) // hostname is the zone root (so a www CNAME applies)
+  provider        String      // "cloudflare"
+  dnsCredential   DnsCredential? @relation(fields: [dnsCredentialId], references: [id], onDelete: SetNull)
+  dnsCredentialId String?     // the DnsCredential used (SetNull: deleting the credential keeps the history)
+  zoneId          String?     // provider zone the records live in
+  recordIds       Json?       // [{ type, name, recordId }] — what was written, for cleanup
+  mode            String      @default("auto") // "auto" | "manual"
+  status          String      @default("pending") // "pending" | "active" | "error"
+  lastError       String?
+  lastCheckedAt   DateTime?
+  createdAt       DateTime    @default(now())
+
+  @@unique([applicationId, hostname])
+  @@index([applicationId])
+  @@index([dnsCredentialId])
 }
 
 model ScheduledTask {
