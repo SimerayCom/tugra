@@ -8,6 +8,7 @@ import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
 import { Field, TextInput } from "./form";
 import { Modal } from "./modal";
+import { DnsAutoSetup } from "./dns-auto-setup";
 import { useToast } from "./toast";
 
 type Mode = "magic" | "port" | "custom" | "none";
@@ -102,6 +103,7 @@ export function ExposeModal({
               onChange={(e) => setDomain(e.target.value)}
             />
           </Field>
+          <DnsAutoSetup appId={appId} teamId={appQ.data?.teamId} domain={domain} onApplied={onClose} />
         </div>
       )}
       {tunnelReady && appQ.data && (

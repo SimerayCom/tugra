@@ -7418,6 +7418,50 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/domain/manual-records": {
+      "get": {
+        "operationId": "ApplicationsController_manualDomainRecords",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "domain",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeWww",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/domain-options": {
       "put": {
         "operationId": "ApplicationsController_setDomainOptions",

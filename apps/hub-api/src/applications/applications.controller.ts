@@ -450,6 +450,18 @@ export class ApplicationsController {
     return this.apps.autoSetupDomain(user.userId, id, body);
   }
 
+  // The copy-paste DNS records an operator should create by hand (manual fallback when not using Cloudflare).
+  // Read-only + advisory (apps:config in the service): no provider call, just the app's target IP(s) + the host.
+  @Get(":id/domain/manual-records")
+  manualDomainRecords(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("domain") domain: string,
+    @Query("includeWww") includeWww?: string,
+  ) {
+    return this.apps.manualDomainRecords(user.userId, id, { domain, includeWww: includeWww !== "false" });
+  }
+
   @Put(":id/domain-options")
   @HttpCode(200)
   @ApiZodBody(SetDomainOptionsSchema)
