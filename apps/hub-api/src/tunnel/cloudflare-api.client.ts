@@ -25,6 +25,16 @@ export interface IngressRule {
   service: string;
 }
 
+/** A Cloudflare DNS record (the fields the one-click domain auto-setup needs). */
+export interface DnsRecord {
+  id: string;
+  type: string;
+  name: string;
+  content: string;
+  proxied?: boolean;
+  ttl?: number;
+}
+
 /**
  * Thin, injectable Cloudflare API v4 client. Every method takes the operator API
  * token EXPLICITLY (it is never stored on the instance) and the client never
@@ -54,6 +64,61 @@ export class CloudflareApiClient {
     const zone = zones.find((z) => z.name === zoneName) ?? zones[0];
     if (!zone?.id) throw new CloudflareApiError("zone not found or not accessible by this token", 404);
     return zone.id;
+  }
+
+  /** Find the zone whose name is the LONGEST suffix of `hostname` (e.g. `app.foo.co.uk` → `foo.co.uk`). Lists
+   *  the token's accessible zones (up to 50 — a scoped token has few) and picks the longest match. Throws 404
+   *  when none matches (the token can't see the zone). This is the hostname→zone resolver the auto-setup needs,
+   *  unlike findZoneId which requires the exact zone name. */
+  async findZoneForHostname(apiToken: string, hostname: string): Promise<{ zoneId: string; zoneName: string }> {
+    const host = hostname.toLowerCase().replace(/\.$/, "");
+    const zones = await this.request<Array<{ id: string; name: string }>>("GET", "/zones?per_page=50", apiToken);
+    const match = zones
+      .filter((z) => z.name && (host === z.name || host.endsWith(`.${z.name}`)))
+      .sort((a, b) => b.name.length - a.name.length)[0];
+    if (!match?.id) {
+      throw new CloudflareApiError("no accessible Cloudflare zone matches this hostname — add the zone to this API token's scope", 404);
+    }
+    return { zoneId: match.id, zoneName: match.name };
+  }
+
+  /** List a zone's DNS records, optionally filtered by exact name and/or type. */
+  async listDnsRecords(apiToken: string, zoneId: string, filter?: { name?: string; type?: string }): Promise<DnsRecord[]> {
+    const parts: string[] = [];
+    if (filter?.type) parts.push(`type=${encodeURIComponent(filter.type)}`);
+    if (filter?.name) parts.push(`name=${encodeURIComponent(filter.name)}`);
+    const q = parts.length ? `?${parts.join("&")}` : "";
+    return this.request<DnsRecord[]>("GET", `/zones/${encodeURIComponent(zoneId)}/dns_records${q}`, apiToken);
+  }
+
+  /** Create or update ANY DNS record by (type, name). Idempotent: with no `existingRecordId` it looks the record
+   *  up (so a re-run updates instead of 81057/81058-duplicating), then PUTs; otherwise POSTs a new one. Returns
+   *  the record id + whether it was created or updated. `proxied` defaults to false (DNS-only) and `ttl` to auto. */
+  async upsertDnsRecord(
+    apiToken: string,
+    zoneId: string,
+    rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number; existingRecordId?: string | null },
+  ): Promise<{ recordId: string; action: "created" | "updated" }> {
+    const body = { type: rec.type, name: rec.name, content: rec.content, proxied: rec.proxied ?? false, ttl: rec.ttl ?? 1 };
+    let recordId = rec.existingRecordId ?? null;
+    if (!recordId) {
+      const found = await this.listDnsRecords(apiToken, zoneId, { type: rec.type, name: rec.name });
+      recordId = found[0]?.id ?? null;
+    }
+    if (recordId) {
+      await this.request("PUT", `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`, apiToken, body);
+      return { recordId, action: "updated" };
+    }
+    const created = await this.request<{ id?: string }>("POST", `/zones/${encodeURIComponent(zoneId)}/dns_records`, apiToken, body);
+    if (!created?.id) throw new CloudflareApiError("cloudflare did not return a dns record id", 502);
+    return { recordId: created.id, action: "created" };
+  }
+
+  /** The zone's SSL/TLS encryption mode ("off"|"flexible"|"full"|"strict"). The auto-setup reads this to warn
+   *  about the Flexible-SSL + :80→:443-redirect infinite-loop trap before creating proxied records. */
+  async getZoneSslMode(apiToken: string, zoneId: string): Promise<string> {
+    const r = await this.request<{ value?: string }>("GET", `/zones/${encodeURIComponent(zoneId)}/settings/ssl`, apiToken);
+    return r?.value ?? "unknown";
   }
 
   /** POST /accounts/{account}/cfd_tunnel (remotely-managed) → { tunnelId, token }. */
@@ -88,46 +153,22 @@ export class CloudflareApiClient {
     );
   }
 
-  /** Create or update a DNS CNAME → <tunnelId>.cfargotunnel.com (proxied). Idempotent. */
+  /** Create or update a DNS CNAME → <tunnelId>.cfargotunnel.com (proxied). Idempotent. Thin wrapper over the
+   *  generic upsertDnsRecord — same lookup-then-PUT-else-POST behaviour the tunnel flow relies on. */
   async upsertCname(
     apiToken: string,
     zoneId: string,
     opts: { name: string; tunnelId: string; existingRecordId?: string | null },
   ): Promise<{ recordId: string }> {
-    const body = {
+    const { recordId } = await this.upsertDnsRecord(apiToken, zoneId, {
       type: "CNAME",
       name: opts.name,
       content: `${opts.tunnelId}.cfargotunnel.com`,
       proxied: true,
       ttl: 1,
-    };
-    let recordId = opts.existingRecordId ?? null;
-    if (!recordId) {
-      // Look up any existing record so a re-run updates it instead of 81057/81058 (duplicate).
-      const found = await this.request<Array<{ id: string }>>(
-        "GET",
-        `/zones/${encodeURIComponent(zoneId)}/dns_records?type=CNAME&name=${encodeURIComponent(opts.name)}`,
-        apiToken,
-      );
-      recordId = found[0]?.id ?? null;
-    }
-    if (recordId) {
-      await this.request(
-        "PUT",
-        `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`,
-        apiToken,
-        body,
-      );
-      return { recordId };
-    }
-    const created = await this.request<{ id?: string }>(
-      "POST",
-      `/zones/${encodeURIComponent(zoneId)}/dns_records`,
-      apiToken,
-      body,
-    );
-    if (!created?.id) throw new CloudflareApiError("cloudflare did not return a dns record id", 502);
-    return { recordId: created.id };
+      existingRecordId: opts.existingRecordId,
+    });
+    return { recordId };
   }
 
   /** DELETE a DNS record; an already-gone (404) resource resolves normally (idempotent teardown). */

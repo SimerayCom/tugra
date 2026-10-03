@@ -174,3 +174,85 @@ describe("CloudflareApiClient error hygiene", () => {
     expect(msg2).not.toContain("SUPER_SECRET_TOKEN");
   });
 });
+
+// ── DNS auto-setup client extensions (DNS spec S1) ──────────────────────────────────────────────
+describe("CloudflareApiClient.findZoneForHostname", () => {
+  it("picks the LONGEST zone-name suffix of the hostname", async () => {
+    mockOnce(200, envelope([{ id: "zc", name: "co.uk" }, { id: "zf", name: "foo.co.uk" }, { id: "ze", name: "example.com" }]));
+    await expect(cf.findZoneForHostname("t", "app.foo.co.uk")).resolves.toEqual({ zoneId: "zf", zoneName: "foo.co.uk" });
+  });
+  it("matches an exact apex hostname", async () => {
+    mockOnce(200, envelope([{ id: "ze", name: "example.com" }]));
+    await expect(cf.findZoneForHostname("t", "example.com")).resolves.toEqual({ zoneId: "ze", zoneName: "example.com" });
+  });
+  it("throws 404 when no accessible zone matches the hostname", async () => {
+    mockOnce(200, envelope([{ id: "ze", name: "example.com" }]));
+    await expect(cf.findZoneForHostname("t", "app.other.net")).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("CloudflareApiClient.listDnsRecords", () => {
+  it("filters by type + name in the query string", async () => {
+    const f = mockOnce(200, envelope([{ id: "r1", type: "A", name: "example.com", content: "1.2.3.4" }]));
+    await expect(cf.listDnsRecords("t", "z1", { type: "A", name: "example.com" })).resolves.toEqual([
+      { id: "r1", type: "A", name: "example.com", content: "1.2.3.4" },
+    ]);
+    expect(f.mock.calls[0][0]).toBe("https://api.cloudflare.com/client/v4/zones/z1/dns_records?type=A&name=example.com");
+  });
+});
+
+describe("CloudflareApiClient.upsertDnsRecord", () => {
+  it("PUTs an A record (proxied defaults to false, ttl 1) when an existingRecordId is known — 1 call, action updated", async () => {
+    const f = mockOnce(200, envelope({ id: "rA" }));
+    await expect(
+      cf.upsertDnsRecord("t", "z1", { type: "A", name: "example.com", content: "1.2.3.4", existingRecordId: "rA" }),
+    ).resolves.toEqual({ recordId: "rA", action: "updated" });
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("https://api.cloudflare.com/client/v4/zones/z1/dns_records/rA");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ type: "A", name: "example.com", content: "1.2.3.4", proxied: false, ttl: 1 });
+    expect(f).toHaveBeenCalledTimes(1); // no lookup when the id is known
+  });
+  it("looks up then POSTs a new record (action created) when none exists", async () => {
+    const fn = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => envelope([]) }) // lookup empty
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => envelope({ id: "rNew" }) }); // create
+    global.fetch = fn as unknown as typeof fetch;
+    await expect(cf.upsertDnsRecord("t", "z1", { type: "AAAA", name: "example.com", content: "::1", proxied: false })).resolves.toEqual({
+      recordId: "rNew",
+      action: "created",
+    });
+    expect(fn.mock.calls[0][1].method).toBe("GET");
+    expect(fn.mock.calls[1][1].method).toBe("POST");
+  });
+  it("throws 502 when create returns no id", async () => {
+    const fn = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => envelope([]) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => envelope({}) });
+    global.fetch = fn as unknown as typeof fetch;
+    await expect(cf.upsertDnsRecord("t", "z1", { type: "A", name: "x.com", content: "1.1.1.1" })).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe("CloudflareApiClient.getZoneSslMode", () => {
+  it("returns the zone SSL/TLS mode value", async () => {
+    mockOnce(200, envelope({ id: "ssl", value: "full" }));
+    await expect(cf.getZoneSslMode("t", "z1")).resolves.toBe("full");
+  });
+  it("returns 'unknown' when the setting value is absent", async () => {
+    mockOnce(200, envelope({ id: "ssl" }));
+    await expect(cf.getZoneSslMode("t", "z1")).resolves.toBe("unknown");
+  });
+});
+
+// upsertCname still behaves identically after delegating to upsertDnsRecord (regression).
+describe("CloudflareApiClient.upsertCname (post-refactor regression)", () => {
+  it("PUTs the proxied CNAME to *.cfargotunnel.com with the known id, 1 call", async () => {
+    const f = mockOnce(200, envelope({ id: "rec1" }));
+    await expect(cf.upsertCname("t", "z1", { name: "*.example.com", tunnelId: "tid", existingRecordId: "rec1" })).resolves.toEqual({ recordId: "rec1" });
+    expect(JSON.parse(f.mock.calls[0][1].body as string)).toEqual({ type: "CNAME", name: "*.example.com", content: "tid.cfargotunnel.com", proxied: true, ttl: 1 });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
