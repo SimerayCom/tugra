@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -73,6 +74,7 @@ interface RefreshPayload {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -627,20 +629,17 @@ export class AuthService {
     // Fire-and-forget the email: never await the SMTP round-trip in the request path, so response
     // latency doesn't depend on whether the account exists (closes the enumeration TIMING oracle).
     // The token is already persisted, so the link works whenever dispatch completes. Fail-soft: an
-    // unconfigured/failed mailer records the link in the audit log (server-side only, never surfaced
-    // to the requester) so a self-host operator can still deliver it out of band.
+    // unconfigured/failed mailer logs the link to the SERVER CONSOLE (operator-only) so a self-host
+    // operator can deliver it out of band. The link (which embeds the raw token) is NEVER written to
+    // the audit log — the audit API is reachable by read-scoped PATs/team admins and must not leak it.
+    const onSend = (sent: boolean) => {
+      if (!sent) this.logger.warn(`password reset for ${user.email}: mail not delivered — link: ${resetUrl}`);
+      return this.audit.log({ actor: user.id, action: "auth.password.forgot", meta: { delivered: sent } });
+    };
     void this.mail
       .send(user.email, resetPasswordEmail({ name: user.name, resetUrl }))
-      .then((sent) =>
-        this.audit.log({
-          actor: user.id,
-          action: "auth.password.forgot",
-          meta: sent ? { delivered: true } : { delivered: false, resetUrl },
-        }),
-      )
-      .catch(() =>
-        this.audit.log({ actor: user.id, action: "auth.password.forgot", meta: { delivered: false, resetUrl } }),
-      );
+      .then(onSend)
+      .catch(() => onSend(false));
   }
 
   /**
@@ -695,18 +694,16 @@ export class AuthService {
       },
     });
     const verifyUrl = `${webBaseUrl(this.config)}/verify-email?token=${raw}`;
+    // Fail-soft like the reset flow: an unconfigured/failed mailer logs the link to the SERVER CONSOLE
+    // (operator-only), never to the audit log (reachable by read-scoped PATs — must not leak the token).
+    const onSend = (sent: boolean) => {
+      if (!sent) this.logger.warn(`email verification for ${targetEmail}: mail not delivered — link: ${verifyUrl}`);
+      return this.audit.log({ actor: userId, action: "auth.email.verify.sent", meta: { delivered: sent } });
+    };
     void this.mail
       .send(targetEmail, verifyEmailTemplate({ name, verifyUrl }))
-      .then((sent) =>
-        this.audit.log({
-          actor: userId,
-          action: "auth.email.verify.sent",
-          meta: sent ? { delivered: true } : { delivered: false, verifyUrl },
-        }),
-      )
-      .catch(() =>
-        this.audit.log({ actor: userId, action: "auth.email.verify.sent", meta: { delivered: false, verifyUrl } }),
-      );
+      .then(onSend)
+      .catch(() => onSend(false));
   }
 
   /**

@@ -22,6 +22,20 @@ describe("AuditService.list", () => {
     expect(entries[0].actor).toBe("me@x.io"); // resolved to email
   });
 
+  it("strips sensitive keys from meta on read (a stray reset-link URL must not leak via the API)", async () => {
+    const auditFind = jest.fn().mockResolvedValue([
+      { id: "l1", actor: "u1", action: "auth.password.forgot", target: null, meta: { delivered: false, resetUrl: "https://x/reset?token=SECRET", email: "me@x.io" }, createdAt: new Date() },
+    ]);
+    const svc = make({
+      membership: { findMany: jest.fn().mockResolvedValue([{ teamId: "t1", userId: "u1", role: Role.VIEWER }]) },
+      auditLog: { findMany: auditFind },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: "u1", email: "me@x.io" }]) },
+    } as unknown as PrismaService);
+    const { entries } = await svc.list("u1");
+    expect(entries[0].meta).toEqual({ delivered: false, email: "me@x.io" }); // resetUrl stripped, rest kept
+    expect(JSON.stringify(entries[0])).not.toContain("SECRET");
+  });
+
   it("team admins see every member's actions", async () => {
     const membershipFind = jest
       .fn()

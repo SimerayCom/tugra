@@ -80,6 +80,14 @@ export class RegistriesService {
     const existing = await this.prisma.registry.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException("registry not found");
     await this.access.requirePermission(userId, existing.teamId, "integrations");
+    // Credential exfiltration guard: the stored password/token is bound to (url, username). Repointing the URL
+    // (or changing the username) while keeping the stored password would let `test` send that password to a
+    // host the caller now controls. Require the password to be re-supplied whenever the endpoint changes.
+    const urlChanged = dto.url !== undefined && dto.url !== existing.url;
+    const userChanged = dto.username !== undefined && dto.username !== existing.username;
+    if ((urlChanged || userChanged) && !dto.password) {
+      throw new BadRequestException("changing the registry URL or username requires re-entering the password");
+    }
     const r = await this.prisma.registry.update({
       where: { id },
       data: {

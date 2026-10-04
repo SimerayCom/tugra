@@ -1,17 +1,18 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from "@nestjs/common";
-import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { GitSourcesService } from "./git-sources.service";
 import { CreateGitSourceInput, CreateGitSourceSchema } from "./dto";
 
 @ApiTags("git-sources")
-@ApiCookieAuth("session")
+@ApiSecurity("pat")
 @Controller("git-sources")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class GitSourcesController {
   constructor(private readonly svc: GitSourcesService) {}
 

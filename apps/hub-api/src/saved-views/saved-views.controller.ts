@@ -8,19 +8,20 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SavedViewsService } from "./saved-views.service";
 import { CreateSavedViewInput, CreateSavedViewSchema } from "./dto";
 
 @ApiTags("saved-views")
-@ApiCookieAuth("session")
+@ApiSecurity("pat")
 @Controller("saved-views")
-@UseGuards(JwtAuthGuard) // personal UI preference, managed with your login session
+@UseGuards(ApiAuthGuard, ScopesGuard) // personal UI preference; reachable by a session or a PAT (GET=read, POST=write, DELETE=admin)
 export class SavedViewsController {
   constructor(private readonly views: SavedViewsService) {}
 
