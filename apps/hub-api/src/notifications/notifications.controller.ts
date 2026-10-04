@@ -9,19 +9,20 @@ import {
   Put,
   UseGuards,
 } from "@nestjs/common";
-import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
 import { CreateChannelInput, CreateChannelSchema, EVENT_TYPES, UpdateChannelInput, UpdateChannelSchema } from "./dto";
 
 @ApiTags("channels")
-@ApiCookieAuth("session")
+@ApiSecurity("pat")
 @Controller("channels")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class NotificationsController {
   constructor(private readonly svc: NotificationsService) {}
 

@@ -59,6 +59,20 @@ describe("RegistriesService", () => {
     expect(update.mock.calls[1][0].data.passwordEnc).toBe("enc(new)");
   });
 
+  it("rejects a URL/username change without a new password (credential-exfil guard), allows it with one", async () => {
+    const update = jest.fn().mockResolvedValue({ id: "r1", name: "n", teamId: "t1", type: "generic", url: "new.example.com", username: "u", imagePrefix: null, createdAt: new Date() });
+    const prisma = {
+      registry: { findUnique: jest.fn().mockResolvedValue({ id: "r1", teamId: "t1", url: "old.example.com", username: "u" }), update },
+    } as unknown as PrismaService;
+    const svc = make(prisma, { requirePermission: jest.fn().mockResolvedValue(undefined) });
+    // repoint the URL while keeping the stored password → rejected (would let `test` send it to the new host)
+    await expect(svc.update("u1", "r1", { url: "new.example.com" })).rejects.toThrow(/re-entering the password/);
+    expect(update).not.toHaveBeenCalled();
+    // same change WITH a new password → allowed
+    await svc.update("u1", "r1", { url: "new.example.com", password: "fresh" });
+    expect(update.mock.calls[0][0].data.passwordEnc).toBe("enc(fresh)");
+  });
+
   it("list() sets canWrite per the caller's permissions in each registry's team", async () => {
     const row = (id: string, teamId: string) => ({ id, name: id, teamId, type: "generic", url: null, username: "u", imagePrefix: null, createdAt: new Date() });
     const prisma = {

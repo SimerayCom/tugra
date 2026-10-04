@@ -11,11 +11,13 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { Role } from "@prisma/client";
-import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
+import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { TeamsService } from "./teams.service";
 import {
@@ -36,9 +38,9 @@ import {
 } from "./dto";
 
 @ApiTags("teams")
-@ApiCookieAuth("session")
+@ApiSecurity("pat")
 @Controller("teams")
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiAuthGuard, ScopesGuard)
 export class TeamsController {
   constructor(private readonly teams: TeamsService) {}
 
@@ -57,7 +59,9 @@ export class TeamsController {
   }
 
   // Static segments before ":id" so they aren't matched as a team id.
+  // Returns the caller's own pending invites INCLUDING their raw tokens — a PAT needs read:secrets.
   @Get("invitations/mine")
+  @RequireScopes("read:secrets")
   myInvitations(@CurrentUser() user: AuthUser) {
     return this.teams.myInvitations(user.userId);
   }
@@ -105,7 +109,10 @@ export class TeamsController {
     return this.teams.members(user.userId, id);
   }
 
+  // Returns the raw invite token (a tugra_inv_ bearer secret) — a PAT needs read:secrets to receive it.
+  // Membership change that also returns a raw invite token → admin scope (admin satisfies read:secrets too).
   @Post(":id/members/invite")
+  @RequireScopes("admin")
   @ApiZodBody(InviteSchema)
   invite(
     @CurrentUser() user: AuthUser,
@@ -115,7 +122,9 @@ export class TeamsController {
     return this.teams.invite(user.userId, id, body.email, body.role as Role);
   }
 
+  // Lists pending invites INCLUDING their raw tokens — a PAT needs read:secrets to read them.
   @Get(":id/invitations")
+  @RequireScopes("read:secrets")
   invitations(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.teams.teamInvitations(user.userId, id);
   }
@@ -129,6 +138,7 @@ export class TeamsController {
 
   @Put(":id/members/:userId")
   @HttpCode(200)
+  @RequireScopes("admin") // changes a member's role/permissions → admin scope, not plain write
   @ApiZodBody(SetRoleSchema)
   async setRole(
     @CurrentUser() user: AuthUser,
@@ -147,6 +157,7 @@ export class TeamsController {
   }
 
   @Post(":id/roles")
+  @RequireScopes("admin") // defines a permission set → admin scope
   @ApiZodBody(TeamRoleSchema)
   createRole(
     @CurrentUser() user: AuthUser,
@@ -157,6 +168,7 @@ export class TeamsController {
   }
 
   @Put(":id/roles/:roleId")
+  @RequireScopes("admin") // changes a permission set → admin scope
   @ApiZodBody(UpdateTeamRoleSchema)
   updateRole(
     @CurrentUser() user: AuthUser,
@@ -176,6 +188,7 @@ export class TeamsController {
 
   @Patch(":id/members/:userId/access")
   @HttpCode(200)
+  @RequireScopes("admin") // changes a member's access grants → admin scope
   @ApiZodBody(SetMemberAccessSchema)
   async setMemberAccess(
     @CurrentUser() user: AuthUser,

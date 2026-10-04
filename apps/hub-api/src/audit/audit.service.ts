@@ -21,6 +21,20 @@ export interface AuditView {
 const ADMIN: Role[] = [Role.OWNER, Role.ADMIN];
 const PAGE = 100;
 
+// Audit `meta` is free-form JSON written by many call sites; it must never carry a credential, but as
+// defense-in-depth (the audit API is reachable by read-scoped PATs) these keys are stripped on read so a
+// stray/legacy secret (e.g. a reset-link URL) can't be harvested. Keep it conservative + specific.
+const SENSITIVE_META_KEYS = new Set(["token", "secret", "password", "apiToken", "resetUrl", "verifyUrl", "privateKey"]);
+function sanitizeMeta(meta: unknown): unknown {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return meta;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta as Record<string, unknown>)) {
+    if (SENSITIVE_META_KEYS.has(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 export interface AuditPage {
   entries: AuditView[];
   nextCursor: string | null;
@@ -78,7 +92,7 @@ export class AuditService {
       actor: emailById.get(r.actor) ?? r.actor,
       action: r.action,
       target: r.target,
-      meta: r.meta,
+      meta: sanitizeMeta(r.meta),
       createdAt: r.createdAt,
     }));
     // A full page implies there may be older rows; the last id is the next cursor.
