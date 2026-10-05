@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { APP_GUARD } from "@nestjs/core";
+import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { JwtModule } from "@nestjs/jwt";
 import { validateEnv } from "./config/env";
@@ -51,6 +51,7 @@ import { CryptoModule } from "./crypto/crypto.module";
 import { LicenseModule } from "./license/license.module";
 import { ClustersModule } from "./clusters/clusters.module";
 import { McpModule } from "./mcp/mcp.module";
+import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
 
 @Module({
   imports: [
@@ -103,6 +104,8 @@ import { McpModule } from "./mcp/mcp.module";
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: EmailVerifiedGuard },
+    // Per-PAT rate limit (X-RateLimit-* + Retry-After); runs after the auth guard so req.user.tokenId is set.
+    { provide: APP_INTERCEPTOR, useClass: ApiRateLimitInterceptor },
   ],
 })
 export class AppModule {}

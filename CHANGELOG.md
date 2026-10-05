@@ -24,8 +24,11 @@ and orchestrating servers — from a single Raspberry Pi to a fleet.
 - **Personal-access-token API parity** — teams, notification channels, registries, Git sources, cloud
   credentials, the audit log and saved views are now reachable with scope-checked PATs (and the CLI), not
   only a browser session; the same team-permission checks still apply. Token management stays session-only.
-  (Hardened audit-log redaction and team-permission checks.) Broader API work — per-token rate-limit
-  headers, pagination, richer CLI/SDK — is still planned.
+  (Hardened audit-log redaction and team-permission checks.)
+- **Per-token API rate limits** — each personal-access-token request is counted against its own budget (default
+  300 req / 60s, `API_RATE_LIMIT` / `API_RATE_WINDOW_SEC`) on top of the global per-IP throttle; responses carry
+  `X-RateLimit-Limit`/`-Remaining`/`-Reset` and an over-budget call returns `429` with `Retry-After`. Browser
+  sessions are unaffected, and a Redis outage fails open. (Pagination and a richer CLI/SDK are still planned.)
 
 ### Added
 
