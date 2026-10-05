@@ -58,6 +58,24 @@ The instance owner can restrict API (PAT) access without affecting the web app:
 
 Both are managed under **Settings → API access**.
 
+## Rate limits
+
+Every personal-access-token request is counted against a per-token budget (a fixed window in Redis, separate
+from the coarse global per-IP throttle). Each response carries:
+
+- `X-RateLimit-Limit` — the budget per window.
+- `X-RateLimit-Remaining` — requests left in the current window.
+- `X-RateLimit-Reset` — Unix time (seconds) when the window resets.
+
+Over budget returns `429 Too Many Requests` with a `Retry-After` (seconds) header. Browser sessions are not
+per-token limited. The budget and window default to 300 requests / 60s and are set with the `API_RATE_LIMIT`
+and `API_RATE_WINDOW_SEC` environment variables; a Redis outage fails open (requests are allowed, not blocked).
+
+This per-token budget is a second dimension on top of a global **per-IP** throttle (120 requests/min). For a
+client calling from a single IP the per-IP throttle is the binding limit; the per-token budget exists to bound a
+leaked token spread across many IPs. If you drive the API hard from one host, set `API_RATE_LIMIT` with the
+per-IP throttle in mind.
+
 ## Routing notes
 
 The `/api/v1` prefix applies to all REST routes except a few bare, unversioned endpoints —
