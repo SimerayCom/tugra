@@ -7,8 +7,9 @@ can drive directly from scripts or your own tools.
 
 - Base path: **`/api/v1`** (a stable contract; the OpenAPI `info.version` is `1.0.0`, independent of the
   build version).
-- ~160 endpoints covering servers, applications, databases, backups, deployments, monitors,
-  notifications, teams, projects and instance settings.
+- ~250 endpoints covering servers, applications (incl. one-click domain DNS setup), databases, backups,
+  deployments, monitors, notification channels, registries, Git sources, cloud & DNS credentials, teams,
+  the audit log, saved views, projects and instance settings.
 - The committed contract lives at [`apps/hub-api/openapi.json`](../apps/hub-api/openapi.json).
 
 ## Interactive docs & spec
@@ -41,6 +42,12 @@ Every PAT carries a set of scopes; a request needs the scope its route requires.
 Routes without an explicit requirement use a method default: `GET` → `read`, `POST/PUT/PATCH` → `write`,
 `DELETE` → `admin`. `admin` (and the wildcard a browser session holds) satisfies any requirement.
 
+Teams, notification channels, registries, Git sources, cloud credentials, DNS credentials, the audit log and
+saved views accept PATs as well as browser sessions (reads need `read`, mutations `write`, deletes `admin`;
+secret-bearing reads such as team invite tokens need `read:secrets`, and privileged team mutations — invites,
+role and member-access changes — need `admin`). Personal-access-token *management* itself stays session-only
+(a PAT cannot mint, list or revoke tokens).
+
 ## Instance gating
 
 The instance owner can restrict API (PAT) access without affecting the web app:
@@ -58,6 +65,26 @@ The `/api/v1` prefix applies to all REST routes except a few bare, unversioned e
 — which external systems call at fixed paths. The `/agent` and `/terminal` WebSocket upgrades are separate
 and unprefixed.
 
+## DNS auto-setup (custom domains)
+
+Point a custom domain at an app in one call, using a team Cloudflare credential (Cloudflare only in this
+release). Store the credential first, then drive the app-domain routes. The Cloudflare API token is verified
+before it is saved, stored encrypted, and never returned by any response.
+
+| Method & path | Scope | What it does |
+|---|---|---|
+| `GET /dns-credentials` | `read` | List the team's DNS credentials (never the token). |
+| `POST /dns-credentials` | `write` | Store a Cloudflare credential (`teamId`, `name`, `provider:"cloudflare"`, `apiToken`, optional `cfAccountId`); needs the `integrations` team permission. |
+| `PUT /dns-credentials/:id` | `write` | Rename / replace the token. |
+| `POST /dns-credentials/:id/test` | `write` | Re-verify the stored token against Cloudflare. |
+| `DELETE /dns-credentials/:id` | `admin` | Remove a credential. |
+| `POST /apps/:id/domain/auto-setup` | `deploy` | Create the apex `A`/`AAAA` (+ optional `www` `CNAME`) records and wire the app's HTTPS. Body: `domain`, optional `credentialId` (defaults to the team's single Cloudflare credential), `includeWww` (default true), `overwrite` (default false), `dryRun`. `dryRun:true` returns the plan without writing. Records are created **DNS-only** (never proxied). A record that already points elsewhere, or a type-incompatible record (a `CNAME` where an `A` is wanted), is reported as a conflict and only replaced when `overwrite:true`; `TXT`/`MX` records are never touched. |
+| `GET /apps/:id/domain/manual-records?domain=&includeWww=` | `read` | The copy-paste records to create by hand at any other DNS provider (no Cloudflare call). |
+| `POST /apps/:id/domain/verify?hostname=` | `read` | A live public-DNS lookup reporting whether the domain resolves to the app (`active` / `pending` / `error`). Side-effect-free. |
+| `DELETE /apps/:id/domain/dns?hostname=` | `deploy` | Remove the records Tugra created for the domain (only records it created; never a pre-existing one). |
+
+The same flow is available from the CLI (`tugra apps domain`) and from the `setup_app_domain` / `verify_app_domain` MCP tools.
+
 ## MCP server
 
 Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server at
@@ -65,7 +92,7 @@ Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protoco
 plain HTTP (Streamable-HTTP transport, protocol version `2025-06-18`) — no SSE or stdio; `GET /api/v1/mcp`
 returns `405` with `Allow: POST`.
 
-- **Status:** read **and** write. 34 tools total — 17 read + 17 PAT-scoped mutate/ops tools. OAuth for
+- **Status:** read **and** write. 36 tools total — 18 read + 18 PAT-scoped mutate/ops tools. OAuth for
   third-party clients (dynamic client registration, `/authorize`, `/token`, PKCE) is still planned; today a
   PAT is the only credential.
 - **Auth:** the same PAT/session + scope model as the REST API above — a PAT works out of the box, and the
@@ -78,13 +105,15 @@ returns `405` with `Allow: POST`.
   `list_applications`, `get_application`, `list_deployments`, `get_app_logs`, `list_containers`,
   `get_app_env_keys`, `list_servers`, `get_server`, `get_server_capabilities`, `list_clusters`,
   `get_cluster`, `get_cluster_status`, `list_databases`, `get_database`, `list_backups`, `list_monitors`,
-  `get_monitor`. Most need only `read`; `get_app_logs` needs `read:secrets` (logs can contain secrets).
-- **Mutate/ops tools (17):** each is a thin wrapper over the same service method + team-permission check +
+  `get_monitor`, plus `verify_app_domain` (live public-DNS check for an app's custom domain). Most need only
+  `read`; `get_app_logs` needs `read:secrets` (logs can contain secrets).
+- **Mutate/ops tools (18):** each is a thin wrapper over the same service method + team-permission check +
   domain audit the REST API uses, so no new authorization path is introduced. **`deploy` scope:** app
   lifecycle (`deploy_application`, `restart_application`, `stop_application`, `start_application`,
   `rollback_application`, `scale_application` — live scaling), swarm ops (`form_swarm`, `join_swarm_node`,
-  `add_swarm_manager`, `set_ingress_replicas`), and the fleet wedge `fleet_app_action` (fan a reversible
-  lifecycle action across a whole cluster's apps, preview-then-confirm, 25-app cap). **`write` scope:**
+  `add_swarm_manager`, `set_ingress_replicas`), one-click custom-domain DNS (`setup_app_domain`, with a
+  `dryRun` preview), and the fleet wedge `fleet_app_action` (fan a reversible lifecycle action across a whole
+  cluster's apps, preview-then-confirm, 25-app cap). **`write` scope:**
   `set_env_var`, `delete_env_var` (safe single-key merge — values are never returned). **`admin` scope:**
   the irreversible `dissolve_swarm`, `remove_application` (each requires echoing the resource's exact name to
   confirm), and `remove_swarm_manager`, `leave_swarm_node`. `tools/list` returns only the tools the token's
