@@ -5,8 +5,8 @@ import { TeamsService } from "./teams.service";
 
 /**
  * PUBLIC (unauthenticated) invitation preview. Separate from TeamsController because that controller
- * is class-guarded by JwtAuthGuard and there's no per-route bypass. A GET passes the global CSRF /
- * email-verification guards untouched; an explicit throttle caps token probing.
+ * is class-guarded by ApiAuthGuard+ScopesGuard (session or PAT) and there's no per-route bypass. A GET
+ * passes the global CSRF / email-verification guards untouched; an explicit throttle caps token probing.
  */
 @ApiTags("invitations")
 @Controller("invitations")

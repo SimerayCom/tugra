@@ -10,6 +10,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial public release. Tugra is a self-hostable control plane for deploying, monitoring, backing up
 and orchestrating servers — from a single Raspberry Pi to a fleet.
 
+**2026-10-05**
+
+- **One-click Cloudflare DNS setup** — store a Cloudflare API token as a team DNS credential, then set up a
+  custom domain in one step: Tugra creates the apex `A`/`AAAA` records (one per cluster-ingress node for
+  failover) plus an optional `www` `CNAME` and wires the app's HTTPS (`POST /apps/:id/domain/auto-setup`,
+  with dry-run preview and an explicit `overwrite`). Copy-paste records for any other DNS provider
+  (`GET /apps/:id/domain/manual-records`), propagation check (`POST /apps/:id/domain/verify`) and teardown
+  (`DELETE /apps/:id/domain/dns`) are included, as is the `tugra apps domain` CLI command and the
+  `setup_app_domain` / `verify_app_domain` MCP tools. Cloudflare only in this release; records are created
+  DNS-only (never proxied) to avoid the Flexible-SSL redirect loop; a record that points elsewhere is
+  replaced only with `overwrite`, and `TXT`/`MX` records are never touched.
+- **Personal-access-token API parity** — teams, notification channels, registries, Git sources, cloud
+  credentials, the audit log and saved views are now reachable with scope-checked PATs (and the CLI), not
+  only a browser session; the same team-permission checks still apply. Token management stays session-only.
+  (Hardened audit-log redaction and team-permission checks.) Broader API work — per-token rate-limit
+  headers, pagination, richer CLI/SDK — is still planned.
+
 ### Added
 
 - **Deploy** — from Git (Nixpacks / Dockerfile / static-site), Docker Compose, or a container image;
@@ -27,11 +44,11 @@ and orchestrating servers — from a single Raspberry Pi to a fleet.
   reservations (`--reserve-memory`/`--reserve-cpu`) are supported for swarm scheduling; and stop/start now
   waits for the service to actually converge.
 - **MCP server** — a built-in [Model Context Protocol](docs/api.md#mcp-server) server
-  (`POST /api/v1/mcp`) with 34 tools for AI assistants and agents: 17 read tools over applications,
-  servers, clusters, databases and monitors, plus 17 PAT-scoped mutate/ops tools (app lifecycle +
-  live scale, env config, swarm operations, and a preview-then-confirm fleet action). Irreversible
-  tools (dissolve a swarm, remove an app) require echoing the resource name; OAuth for third-party
-  clients is still planned.
+  (`POST /api/v1/mcp`) with 36 tools for AI assistants and agents: 18 read tools over applications,
+  servers, clusters, databases and monitors, plus 18 PAT-scoped mutate/ops tools (app lifecycle +
+  live scale, env config, swarm operations, one-click domain DNS setup/verify, and a preview-then-confirm
+  fleet action). Irreversible tools (dissolve a swarm, remove an app) require echoing the resource name;
+  OAuth for third-party clients is still planned.
 - **Web dashboard** — the Next.js web UI covering deployment, monitoring, backups, teams/projects and
   instance settings.
 - **Public API & CLI** — a versioned REST API (OpenAPI) and the `tugra` CLI.

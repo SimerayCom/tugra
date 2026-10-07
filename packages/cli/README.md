@@ -48,6 +48,7 @@ tugra logout --profile prod   # forget the token locally (does NOT revoke it —
 | `tugra apps ls` | List applications. |
 | `tugra apps deploy <id>` | Trigger a deploy (needs the `deploy` scope). |
 | `tugra apps restart <id>` | Restart an app (needs `deploy`). |
+| `tugra apps domain <id> <domain> [--credential <id>] [--no-www] [--overwrite] [--dry-run]` | One-click Cloudflare DNS setup for a custom domain (needs `deploy`). |
 | `tugra apps logs <id> [--tail <n>]` | Fetch recent app logs. |
 | `tugra db ls` | List databases. |
 | `tugra backup run <dbId>` | Start a database backup (needs `deploy`). |
