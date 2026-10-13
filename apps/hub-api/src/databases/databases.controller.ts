@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
@@ -15,6 +16,7 @@ import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { parseDate, str } from "../audit/audit.controller";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
@@ -62,6 +64,19 @@ export class DatabasesController {
   @ApiZodResponse(DatabaseViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.databases.get(user.userId, id);
+  }
+
+  // This database's audit history (every actor; membership + per-resource access gate it). ?action=&from=&to=&cursor=.
+  @Get(":id/audit")
+  listAudit(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("cursor") cursor?: string,
+    @Query("action") action?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.databases.listAudit(user.userId, id, { cursor: str(cursor), action: str(action), from: parseDate(from), to: parseDate(to) });
   }
 
   @Post(":id/provision")

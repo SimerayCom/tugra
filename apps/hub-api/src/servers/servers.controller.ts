@@ -24,6 +24,7 @@ import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { parseDate, str } from "../audit/audit.controller";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
@@ -77,6 +78,19 @@ export class ServersController {
   @ApiZodResponse(ServerViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.servers.getForUser(user.userId, id);
+  }
+
+  // This server's audit history (every actor; team membership gates it). Optional ?action=&from=&to=&cursor=.
+  @Get(":id/audit")
+  listAudit(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("cursor") cursor?: string,
+    @Query("action") action?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.servers.listAudit(user.userId, id, { cursor: str(cursor), action: str(action), from: parseDate(from), to: parseDate(to) });
   }
 
   @Get(":id/metrics")

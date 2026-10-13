@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
+import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource, resolvePermissions } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
@@ -151,6 +151,12 @@ export class DatabasesService {
     const canWrite = await this.canWriteDatabases(userId, db.teamId);
     const ctx = await loadProjectCtx(this.prisma, db.environmentId);
     return this.view(db, role, canWrite, ctx);
+  }
+
+  /** This database's audit history (every actor). Reuses require()'s membership + per-resource access check. */
+  async listAudit(userId: string, id: string, filters?: AuditFilters) {
+    await this.require(userId, id);
+    return this.audit.listForTarget(id, filters);
   }
 
   async provision(userId: string, id: string): Promise<DatabaseView> {

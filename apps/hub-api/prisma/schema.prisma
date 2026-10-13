@@ -473,6 +473,7 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+  @@index([target, createdAt]) // per-resource audit (GET /apps|servers|databases/:id/audit) filters by target
 }
 
 enum MonitorType {
