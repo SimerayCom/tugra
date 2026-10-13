@@ -18,6 +18,7 @@ import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { parseDate, str } from "../audit/audit.controller";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
@@ -476,6 +477,19 @@ export class ApplicationsController {
   @RequireScopes("deploy")
   cleanupDomainDns(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("hostname") hostname?: string) {
     return this.apps.cleanupDomainDns(user.userId, id, hostname || undefined);
+  }
+
+  // This app's audit history (every actor; apps:config gates it). Optional ?action=&from=&to=&cursor=.
+  @Get(":id/audit")
+  listAudit(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("cursor") cursor?: string,
+    @Query("action") action?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.apps.listAudit(user.userId, id, { cursor: str(cursor), action: str(action), from: parseDate(from), to: parseDate(to) });
   }
 
   @Put(":id/domain-options")

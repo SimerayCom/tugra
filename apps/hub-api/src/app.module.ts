@@ -52,6 +52,7 @@ import { LicenseModule } from "./license/license.module";
 import { ClustersModule } from "./clusters/clusters.module";
 import { McpModule } from "./mcp/mcp.module";
 import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
+import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
 
 @Module({
   imports: [
@@ -106,6 +107,8 @@ import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor
     { provide: APP_GUARD, useClass: EmailVerifiedGuard },
     // Per-PAT rate limit (X-RateLimit-* + Retry-After); runs after the auth guard so req.user.tokenId is set.
     { provide: APP_INTERCEPTOR, useClass: ApiRateLimitInterceptor },
+    // Establishes the per-request audit auth-context (pat+tokenId | session) that AuditService.log stamps.
+    { provide: APP_INTERCEPTOR, useClass: AuditContextInterceptor },
   ],
 })
 export class AppModule {}

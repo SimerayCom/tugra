@@ -1,12 +1,21 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { auditContext } from "./audit-context";
 
 export interface AuditEntry {
   actor: string;
   action: string;
   target?: string;
   meta?: Record<string, unknown>;
+}
+
+/** Filters shared by the team-scoped list and the per-resource list. */
+export interface AuditFilters {
+  action?: string;
+  from?: Date;
+  to?: Date;
+  cursor?: string;
 }
 
 export interface AuditView {
@@ -45,14 +54,17 @@ export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   async log(entry: AuditEntry): Promise<void> {
+    // Stamp HOW the action was authorized (PAT + token id, or session) from the per-request context, so a reader
+    // can tell a token's actions apart from a browser session's. `via`/`tokenId` survive the read-side sanitizer
+    // (they are not secrets). A fire-and-forget log outside the request context simply records no `via`.
+    const ctx = auditContext.getStore();
+    const meta = ctx ? { ...(entry.meta ?? {}), via: ctx.via, ...(ctx.tokenId ? { tokenId: ctx.tokenId } : {}) } : entry.meta;
     await this.prisma.auditLog.create({
       data: {
         actor: entry.actor,
         action: entry.action,
         target: entry.target,
-        ...(entry.meta
-          ? { meta: entry.meta as Prisma.InputJsonValue }
-          : {}),
+        ...(meta ? { meta: meta as Prisma.InputJsonValue } : {}),
       },
     });
   }
@@ -60,9 +72,9 @@ export class AuditService {
   /**
    * Audit entries the user may see. Team OWNER/ADMINs see actions by every
    * member of the selected team (actor-based scope); everyone else sees only
-   * their own actions. No write-side teamId needed.
+   * their own actions. No write-side teamId needed. Optional action/date filters.
    */
-  async list(userId: string, teamId?: string, cursor?: string): Promise<AuditPage> {
+  async list(userId: string, teamId?: string, cursor?: string, filters?: Omit<AuditFilters, "cursor">): Promise<AuditPage> {
     const memberships = await this.prisma.membership.findMany({ where: { userId } });
     const adminTeams = new Set(memberships.filter((m) => ADMIN.includes(m.role)).map((m) => m.teamId));
 
@@ -74,8 +86,29 @@ export class AuditService {
       actors = [userId];
     }
 
+    return this.query({ actor: { in: actors }, ...this.filterWhere(filters) }, cursor);
+  }
+
+  /**
+   * Audit entries for ONE resource (by target id), regardless of actor. Authorization is the caller's — the
+   * resource controller must verify the user may see this resource before calling this. Optional action/date filters.
+   */
+  async listForTarget(targetId: string, filters?: AuditFilters): Promise<AuditPage> {
+    return this.query({ target: targetId, ...this.filterWhere(filters) }, filters?.cursor);
+  }
+
+  private filterWhere(filters?: Omit<AuditFilters, "cursor">): Prisma.AuditLogWhereInput {
+    const where: Prisma.AuditLogWhereInput = {};
+    if (filters?.action) where.action = filters.action;
+    if (filters?.from || filters?.to) {
+      where.createdAt = { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lte: filters.to } : {}) };
+    }
+    return where;
+  }
+
+  private async query(where: Prisma.AuditLogWhereInput, cursor?: string): Promise<AuditPage> {
     const rows = await this.prisma.auditLog.findMany({
-      where: { actor: { in: actors } },
+      where,
       orderBy: { createdAt: "desc" },
       take: PAGE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

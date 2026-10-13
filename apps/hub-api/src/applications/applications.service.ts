@@ -12,7 +12,7 @@ import { z } from "zod";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
 import type { TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
+import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
 // Lazy string-token lookup (ModuleRef) avoids a static applications→tunnel cycle.
 import type { TunnelService } from "../tunnel/tunnel.service";
@@ -1964,6 +1964,13 @@ export class ApplicationsService {
   /** Tear down the Cloudflare records Tugra created for a domain (+ drop the Domain row). */
   cleanupDomainDns(userId: string, id: string, hostname?: string) {
     return this.dns.cleanup(userId, id, hostname);
+  }
+
+  /** The audit history for one app (every actor). Gated by the SAME authz as GET /apps/:id — membership +
+   *  per-resource/project access (require), so a scoped member can't read the audit of an app they can't view. */
+  async listAudit(userId: string, id: string, filters?: AuditFilters) {
+    await this.require(userId, id);
+    return this.audit.listForTarget(id, filters);
   }
 
   /** Every app domain across the user's teams + a live SSL status probe. */

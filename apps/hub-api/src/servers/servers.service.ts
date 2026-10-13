@@ -10,7 +10,7 @@ import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuditService } from "../audit/audit.service";
+import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -263,6 +263,12 @@ export class ServersService {
     const perms = await this.access.membershipPermissions(userId, server.teamId);
     if (!perms) throw new ForbiddenException("not a member of this team");
     return this.toView(server, perms.has("servers:manage"));
+  }
+
+  /** This server's audit history (every actor). Reuses getForUser's membership check as the view gate. */
+  async listAudit(userId: string, id: string, filters?: AuditFilters) {
+    await this.getForUser(userId, id);
+    return this.audit.listForTarget(id, filters);
   }
 
   async deleteForUser(userId: string, id: string, opts?: { destroyVm?: boolean }): Promise<void> {
