@@ -189,9 +189,12 @@ type ServerMsg struct {
 	Sha256        string `json:"sha256"`
 }
 
-// DrainCfg is one external log sink (HTTP endpoint + optional bearer token).
+// DrainCfg is one external log sink. Type selects the payload format: "http" (Tugra batch JSON, the default),
+// "loki" (Grafana Loki push) or "datadog" (Datadog logs intake). Token is a Bearer for http/loki and the
+// DD-API-KEY header for datadog.
 type DrainCfg struct {
 	ID       string `json:"id"`
+	Type     string `json:"type"`
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token"`
 }
