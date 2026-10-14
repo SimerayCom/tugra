@@ -14651,6 +14651,112 @@
       }
     },
     "/api/v1/api-tokens/{id}": {
+      "patch": {
+        "operationId": "ApiTokensController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write",
+                        "deploy",
+                        "admin",
+                        "read:secrets"
+                      ]
+                    },
+                    "minItems": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "lastUsedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "prefix",
+                    "scopes",
+                    "expiresAt",
+                    "lastUsedAt",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "api-tokens"
+        ]
+      },
       "delete": {
         "operationId": "ApiTokensController_revoke",
         "parameters": [
@@ -14666,6 +14772,95 @@
         "responses": {
           "200": {
             "description": ""
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "api-tokens"
+        ]
+      }
+    },
+    "/api/v1/api-tokens/{id}/rotate": {
+      "post": {
+        "operationId": "ApiTokensController_rotate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "view": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "prefix": {
+                          "type": "string"
+                        },
+                        "scopes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "lastUsedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "prefix",
+                        "scopes",
+                        "expiresAt",
+                        "lastUsedAt",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "view"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           }
         },
         "security": [

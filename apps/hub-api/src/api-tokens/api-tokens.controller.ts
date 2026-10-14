@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from "@nestjs/common";
@@ -15,7 +16,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ApiTokensService, ApiTokenViewSchema, CreateApiTokenResultSchema } from "./api-tokens.service";
-import { CreateApiTokenInput, CreateApiTokenSchema } from "./dto";
+import { CreateApiTokenInput, CreateApiTokenSchema, UpdateApiTokenInput, UpdateApiTokenSchema } from "./dto";
 
 @ApiTags("api-tokens")
 @ApiCookieAuth("session")
@@ -38,6 +39,27 @@ export class ApiTokensController {
     @Body(new ZodValidationPipe(CreateApiTokenSchema)) body: CreateApiTokenInput,
   ) {
     return this.tokens.create(user.userId, body);
+  }
+
+  // Rename and/or narrow a token's scopes (never widen). Session-only, like the rest of this controller.
+  @Patch(":id")
+  @HttpCode(200)
+  @ApiZodBody(UpdateApiTokenSchema)
+  @ApiZodResponse(ApiTokenViewSchema)
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(UpdateApiTokenSchema)) body: UpdateApiTokenInput,
+  ) {
+    return this.tokens.update(user.userId, id, body);
+  }
+
+  // Re-issue the secret for an existing token (old one dies immediately); returns the new raw value once.
+  @Post(":id/rotate")
+  @HttpCode(200)
+  @ApiZodResponse(CreateApiTokenResultSchema)
+  rotate(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.tokens.rotate(user.userId, id);
   }
 
   @Delete(":id")
