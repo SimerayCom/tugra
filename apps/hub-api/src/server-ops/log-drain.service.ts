@@ -42,6 +42,7 @@ export class LogDrainService {
       data: {
         serverId,
         name: dto.name,
+        type: dto.type,
         endpoint: dto.endpoint,
         authTokenEnc: dto.token ? this.crypto.encrypt(dto.token) : null,
         enabled: dto.enabled ?? true,
@@ -60,6 +61,7 @@ export class LogDrainService {
       where: { id: drainId },
       data: {
         name: dto.name ?? undefined,
+        type: dto.type ?? undefined,
         endpoint: dto.endpoint ?? undefined,
         enabled: dto.enabled ?? undefined,
         ...(dto.token !== undefined
@@ -86,6 +88,7 @@ export class LogDrainService {
     const rows = await this.prisma.logDrain.findMany({ where: { serverId, enabled: true } });
     const drains = rows.map((d) => ({
       id: d.id,
+      type: d.type,
       endpoint: d.endpoint,
       token: d.authTokenEnc ? this.safeDecrypt(d.authTokenEnc) : "",
     }));

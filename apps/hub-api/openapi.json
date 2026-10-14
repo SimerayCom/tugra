@@ -13567,6 +13567,15 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "http",
+                      "loki",
+                      "datadog"
+                    ],
+                    "default": "http"
+                  },
                   "endpoint": {
                     "type": "string",
                     "format": "uri"
@@ -13626,6 +13635,14 @@
                   "name": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "http",
+                      "loki",
+                      "datadog"
+                    ]
                   },
                   "endpoint": {
                     "type": "string",
