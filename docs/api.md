@@ -9,7 +9,7 @@ can drive directly from scripts or your own tools.
   build version).
 - ~250 endpoints covering servers, applications (incl. one-click domain DNS setup), databases, backups,
   deployments, monitors, notification channels, registries, Git sources, cloud & DNS credentials, teams,
-  the audit log, saved views, projects and instance settings.
+  the audit log, saved views, projects, the app-store template catalog and instance settings.
 - The committed contract lives at [`apps/hub-api/openapi.json`](../apps/hub-api/openapi.json).
 
 ## Interactive docs & spec
@@ -121,7 +121,19 @@ before it is saved, stored encrypted, and never returned by any response.
 
 The same flow is available from the CLI (`tugra apps domain`) and from the `setup_app_domain` / `verify_app_domain` MCP tools.
 
-## MCP server
+## App store (template catalog)
+
+Browse the built-in template catalog and deploy from it over the API. The catalog is public, non-secret
+metadata (name, description, category, icon, docs link) — it never exposes a template's compose file or
+its generated-secret specs.
+
+| Method & path | Scope | What it does |
+|---|---|---|
+| `GET /catalog` | `read` | List every deployable template (gallery metadata only). |
+| `GET /catalog/:slug` | `read` | One template's metadata; `404` if the slug is unknown. |
+| `POST /catalog/:slug/deploy` | `deploy` | Install the template as a new app and (with `deploy:true`) deploy it. Body is the same as `POST /apps/templates/:slug`: `name`, `serverId`, optional `environmentId`, `deploy`, `fields` (install values; secrets auto-generate when omitted), `composeOverride`, `envOverride`. Requires the `deploy` scope (the catalog deploy can stand up and run infrastructure); real authorization — team membership and the `apps:config`/`apps:deploy` permissions on the target server's team — is enforced by the same service path the web UI uses. |
+
+`POST /apps/templates/:slug` remains as the app-centric equivalent of the deploy call.
 
 Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server at
 **`POST /api/v1/mcp`**, so AI assistants and agents can query an instance directly. It's JSON-RPC 2.0 over
