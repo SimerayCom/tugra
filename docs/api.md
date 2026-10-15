@@ -17,6 +17,16 @@ can drive directly from scripts or your own tools.
 - **Swagger UI:** `GET /api/docs` — browse and try endpoints against a running hub.
 - **OpenAPI JSON:** `GET /api/v1/openapi.json` — the machine-readable spec (feed it to a client generator).
 
+## Stability
+
+The committed [`openapi.json`](../apps/hub-api/openapi.json) is the contract. CI enforces it two ways: a
+drift-guard fails if the spec stops matching the code, and an [oasdiff](https://github.com/oasdiff/oasdiff)
+breaking-change check fails a pull request that removes or incompatibly alters a shipped endpoint. A breaking
+change therefore has to be made deliberately: mark the old shape `deprecated` in the spec (an `x-sunset` date
+pins the transition window) and keep serving it, or introduce the new shape under a new API version — rather
+than an incompatible change slipping in by accident. (oasdiff only permits a later removal once the endpoint
+has been deprecated.)
+
 ## Authentication
 
 Two schemes:
