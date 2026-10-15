@@ -80,4 +80,40 @@ describe("TugraClient", () => {
     expect(table).toContain("s1");
     expect(table).toContain("ONLINE");
   });
+
+  it("requestRaw normalizes the path (adds the leading slash, tolerates an /api/v1 prefix, keeps the query)", async () => {
+    const seen: { url: string; method?: string }[] = [];
+    const stub = jest.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), method: init?.method });
+      return res(200, { ok: true });
+    });
+    const c = new TugraClient({ hub: "https://h", token: "t" }, stub);
+    await c.requestRaw("get", "apps"); // no leading slash, lowercase method
+    await c.requestRaw("GET", "/api/v1/servers?teamId=t1"); // included prefix + query preserved
+    expect(seen[0]).toEqual({ url: "https://h/api/v1/apps", method: "GET" });
+    expect(seen[1]).toEqual({ url: "https://h/api/v1/servers?teamId=t1", method: "GET" });
+  });
+
+  it.each([
+    ["apps/x", "https://h/api/v1/apps/x"], // no leading slash
+    ["/api/v1", "https://h/api/v1/"], // bare prefix → root of /api/v1
+    ["/api/v1beta/x", "https://h/api/v1/api/v1beta/x"], // NOT a prefix match (needs / or ? or end)
+  ])("requestRaw normalizes %s → %s", async (input, expected) => {
+    const seen: string[] = [];
+    const stub = jest.fn(async (url: string | URL | Request) => {
+      seen.push(String(url));
+      return res(200, {});
+    });
+    await new TugraClient({ hub: "https://h", token: "t" }, stub).requestRaw("GET", input);
+    expect(seen[0]).toBe(expected);
+  });
+
+  it("requestRaw sends a JSON body for a POST", async () => {
+    const stub = jest.fn(async () => res(201, { id: "a1" }));
+    await new TugraClient({ hub: "https://h", token: "t" }, stub).requestRaw("POST", "/apps", { name: "web" });
+    expect(stub).toHaveBeenCalledWith(
+      "https://h/api/v1/apps",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "web" }) }),
+    );
+  });
 });
