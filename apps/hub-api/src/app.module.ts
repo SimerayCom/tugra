@@ -53,6 +53,7 @@ import { ClustersModule } from "./clusters/clusters.module";
 import { McpModule } from "./mcp/mcp.module";
 import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
 import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
+import { IdempotencyInterceptor } from "./common/idempotency.interceptor";
 
 @Module({
   imports: [
@@ -109,6 +110,8 @@ import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
     { provide: APP_INTERCEPTOR, useClass: ApiRateLimitInterceptor },
     // Establishes the per-request audit auth-context (pat+tokenId | session) that AuditService.log stamps.
     { provide: APP_INTERCEPTOR, useClass: AuditContextInterceptor },
+    // Idempotency-Key replay for POSTs (innermost — closest to the handler it dedupes).
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
   ],
 })
 export class AppModule {}

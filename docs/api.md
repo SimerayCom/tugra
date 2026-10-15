@@ -76,6 +76,14 @@ client calling from a single IP the per-IP throttle is the binding limit; the pe
 leaked token spread across many IPs. If you drive the API hard from one host, set `API_RATE_LIMIT` with the
 per-IP throttle in mind.
 
+## Idempotency
+
+Send an `Idempotency-Key: <unique-value>` header on a `POST` (e.g. creating an app or triggering a deploy) and
+a safe retry won't run twice. The first request with a given key executes and its result is stored for 24h;
+a retry with the same key replays that exact status + body instead of re-running, and a second request that
+arrives while the first is still in flight gets `409`. Keys are scoped to your account + the method + the path.
+It's opt-in (no header → normal behaviour) and fails open (a Redis outage just runs the request).
+
 ## Routing notes
 
 The `/api/v1` prefix applies to all REST routes except a few bare, unversioned endpoints —
