@@ -71,6 +71,15 @@ export class TugraClient {
     return parsed as T;
   }
 
+  /** Generic authenticated request to any API path (the `tugra api` passthrough). The caller may include or
+   *  omit the `/api/v1` prefix and a leading slash; the query string is preserved. */
+  requestRaw<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+    let p = path.startsWith("/") ? path : `/${path}`;
+    p = p.replace(/^\/api\/v1(?=[/?]|$)/, ""); // tolerate an included /api/v1 prefix
+    if (!p.startsWith("/")) p = `/${p}`;
+    return this.request<T>(method.toUpperCase(), p, body);
+  }
+
   listServers(): Promise<Row[]> {
     return this.request("GET", "/servers");
   }

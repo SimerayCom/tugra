@@ -52,6 +52,7 @@ tugra logout --profile prod   # forget the token locally (does NOT revoke it —
 | `tugra apps logs <id> [--tail <n>]` | Fetch recent app logs. |
 | `tugra db ls` | List databases. |
 | `tugra backup run <dbId>` | Start a database backup (needs `deploy`). |
+| `tugra api <method> <path> [--data <json>]` | Raw authenticated request to any API endpoint (e.g. `tugra api GET /apps`) — the whole REST API from the CLI. |
 | `tugra version` | Show CLI + hub version, edition and protocol. |
 
 Add `--json` to any command for raw JSON output (scriptable); omit it for a rendered table.

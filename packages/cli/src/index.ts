@@ -4,6 +4,7 @@ import { CLI_VERSION } from "./version";
 import { printError } from "./output";
 import * as auth from "./commands/auth";
 import * as resources from "./commands/resources";
+import * as api from "./commands/api";
 import * as version from "./commands/version";
 
 const program = new Command();
@@ -14,6 +15,7 @@ program
 
 auth.register(program);
 resources.register(program);
+api.register(program);
 version.register(program);
 
 program.parseAsync(process.argv).catch((err) => {
