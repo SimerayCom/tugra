@@ -60,3 +60,25 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+
+  # Backward-compatibility guard for the public API: fail a PR that makes a BREAKING change to the committed
+  # OpenAPI contract vs the base branch. (The node job's drift-guard already proves the spec matches the code.)
+  openapi-breaking:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - run: go install github.com/oasdiff/oasdiff@latest # TODO pin to a tagged release once reachable
+      - run: echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      # base_ref goes through env (not interpolated into the script) to avoid run-step expression injection.
+      - run: git fetch origin "$BASE" --depth=1
+        env:
+          BASE: ${{ github.base_ref }}
+      - run: scripts/openapi-breaking.sh "origin/$BASE"
+        env:
+          BASE: ${{ github.base_ref }}
