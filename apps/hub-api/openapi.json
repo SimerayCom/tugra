@@ -1223,6 +1223,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3572,7 +3580,16 @@
     "/api/v1/apps": {
       "get": {
         "operationId": "ApplicationsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -11433,7 +11450,16 @@
     "/api/v1/databases": {
       "get": {
         "operationId": "DatabasesController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",

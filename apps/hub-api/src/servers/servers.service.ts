@@ -31,6 +31,7 @@ import {
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
 import { isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
+import { filterByQuery } from "../common/query-filter";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -233,7 +234,7 @@ export class ServersService {
   /** Cross-team: every server across ALL the user's team memberships. */
   async listForUser(
     userId: string,
-    filter?: { teamId?: string; status?: ServerStatus },
+    filter?: { teamId?: string; status?: ServerStatus; q?: string },
   ): Promise<ServerView[]> {
     const permsByTeam = await this.access.permissionsByTeam(userId);
     const teamIds = [...permsByTeam.keys()];
@@ -249,9 +250,11 @@ export class ServersService {
       orderBy: { createdAt: "desc" },
     });
 
-    return servers
+    const views = servers
       .filter((s) => permsByTeam.has(s.teamId))
       .map((s) => this.toView(s, permsByTeam.get(s.teamId)?.has("servers:manage") ?? false));
+    // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
+    return filterByQuery(views, filter?.q, (s) => [s.name, s.hostname, s.publicIp, s.wildcardDomain]);
   }
 
   async getForUser(userId: string, id: string): Promise<ServerView> {

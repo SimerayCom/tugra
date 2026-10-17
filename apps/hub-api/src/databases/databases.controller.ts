@@ -46,8 +46,8 @@ export class DatabasesController {
 
   @Get()
   @ApiZodResponse(DatabaseViewSchema, { isArray: true })
-  list(@CurrentUser() user: AuthUser) {
-    return this.databases.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.databases.list(user.userId, q);
   }
 
   @Post()

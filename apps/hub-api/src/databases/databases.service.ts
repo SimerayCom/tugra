@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource, resolvePermissions } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
+import { filterByQuery } from "../common/query-filter";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
@@ -122,7 +123,7 @@ export class DatabasesService {
     return this.view(db, role, true);
   }
 
-  async list(userId: string): Promise<DatabaseView[]> {
+  async list(userId: string, q?: string): Promise<DatabaseView[]> {
     const access = await this.access.accessByTeam(userId);
     const perms = await this.access.permissionsByTeam(userId);
     const ids = [...access.keys()];
@@ -133,7 +134,7 @@ export class DatabasesService {
     });
     const ctxByEnv = await loadProjectCtxMany(this.prisma, dbs.map((d) => d.environmentId));
     // Per-resource scoping: a restricted member only sees dbs in projects they're granted.
-    return dbs
+    const views = dbs
       .filter((d) => canAccessResource(access.get(d.teamId), d.id, ctxByEnv.get(d.environmentId)?.projectId ?? null))
       .map((d) =>
         this.view(
@@ -143,6 +144,8 @@ export class DatabasesService {
           ctxByEnv.get(d.environmentId),
         ),
       );
+    // `?q`: in-memory substring filter over NON-SECRET fields only (never connectionUri/username/password).
+    return filterByQuery(views, q, (d) => [d.name, d.engine, d.version]);
   }
 
   async get(userId: string, id: string): Promise<DatabaseView> {

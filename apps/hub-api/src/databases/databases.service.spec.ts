@@ -91,6 +91,39 @@ describe("DatabasesService", () => {
     expect(out[0].environmentName).toBe("production");
   });
 
+  describe("list(?q)", () => {
+    const twoDbs = () => {
+      const prisma = {
+        database: {
+          findMany: jest.fn().mockResolvedValue([
+            { ...db, id: "db1", name: "main", engine: "POSTGRES", version: "16", environmentId: "e1" },
+            { ...db, id: "db2", name: "cache", engine: "REDIS", version: "7", environmentId: "e1" },
+          ]),
+        },
+        environment: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const access = {
+        accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: "OWNER", restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+        permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])),
+      } as unknown as TeamAccessService;
+      return make(prisma, access);
+    };
+
+    it("returns ALL databases when q is absent (non-breaking)", async () => {
+      expect((await twoDbs().list("u1")).map((d) => d.name).sort()).toEqual(["cache", "main"]);
+    });
+
+    it("filters by name or engine (case-insensitive)", async () => {
+      expect((await twoDbs().list("u1", "redis")).map((d) => d.name)).toEqual(["cache"]);
+      expect((await twoDbs().list("u1", "MAIN")).map((d) => d.name)).toEqual(["main"]);
+    });
+
+    it("NEVER matches on secret fields — a query equal to the password returns nothing", async () => {
+      // credentials carry password "pw"; it is decrypted into the view but must not be searchable.
+      expect(await twoDbs().list("u1", "pw")).toEqual([]);
+    });
+  });
+
   it("forbids creating a database for a team the user can't write to", async () => {
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },

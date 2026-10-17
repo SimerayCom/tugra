@@ -83,8 +83,8 @@ export class ApplicationsController {
 
   @Get()
   @ApiZodResponse(AppViewSchema, { isArray: true })
-  list(@CurrentUser() user: AuthUser) {
-    return this.apps.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.apps.list(user.userId, q);
   }
 
   // NOTE: must precede `@Get(":id")` so "templates" isn't matched as an app id.
