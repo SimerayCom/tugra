@@ -70,8 +70,9 @@ export class ServersController {
     @CurrentUser() user: AuthUser,
     @Query("teamId") teamId?: string,
     @Query("status") status?: ServerStatus,
+    @Query("q") q?: string,
   ) {
-    return this.servers.listForUser(user.userId, { teamId, status });
+    return this.servers.listForUser(user.userId, { teamId, status, q });
   }
 
   @Get(":id")

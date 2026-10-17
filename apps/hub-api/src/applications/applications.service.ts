@@ -18,6 +18,7 @@ import { TeamAccessService, canAccessResource } from "../common/team-access.serv
 import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
+import { filterByQuery } from "../common/query-filter";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
@@ -596,7 +597,7 @@ export class ApplicationsService {
     return publicManifest(toManifest(tpl), canWrite);
   }
 
-  async list(userId: string): Promise<AppView[]> {
+  async list(userId: string, q?: string): Promise<AppView[]> {
     const access = await this.access.accessByTeam(userId);
     const perms = await this.access.permissionsByTeam(userId);
     const ids = [...access.keys()];
@@ -609,11 +610,13 @@ export class ApplicationsService {
     const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
     const ipByServer = await this.serverIpMap(apps.map((a) => a.serverId));
     // Per-resource scoping: a restricted member only sees apps in projects they're granted.
-    return apps
+    const views = apps
       .filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null))
       .map((a) =>
         this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
       );
+    // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
+    return filterByQuery(views, q, (a) => [a.name, a.domain, a.image, a.gitUrl, a.templateSlug]);
   }
 
   async get(userId: string, id: string): Promise<AppView> {
