@@ -192,4 +192,44 @@ describe("MigratorService", () => {
       expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("s3cr3t");
     });
   });
+
+  describe("unadopt (importer rollback)", () => {
+    it("renames the container back (exit 0) THEN drops the app record + audits", async () => {
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: "", exitCode: 0 }) } as unknown as AgentWsServer;
+      const { svc, apps, agentWs: ws, audit } = make({ agentWs });
+      await svc.unadopt("u1", "s1", "app1", "legacy-web");
+      expect((ws.sendCommand as jest.Mock).mock.calls[0][1]).toContain("docker rename tugra_app1 legacy-web");
+      expect(apps.discardUndeployed as jest.Mock).toHaveBeenCalledWith("app1");
+      expect(audit.log).toHaveBeenCalled();
+    });
+
+    it("treats a vanished container as success (exit 0 via marker) and still drops the record", async () => {
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: "TUGRA_CONTAINER_GONE\n", exitCode: 0 }) } as unknown as AgentWsServer;
+      const { svc, apps } = make({ agentWs });
+      await svc.unadopt("u1", "s1", "app1", "legacy-web");
+      expect(apps.discardUndeployed as jest.Mock).toHaveBeenCalledWith("app1");
+    });
+
+    it("THROWS and does NOT delete the record when the rename fails (non-zero exit) — no false rollback", async () => {
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: "name in use", exitCode: 1 }) } as unknown as AgentWsServer;
+      const { svc, apps } = make({ agentWs });
+      await expect(svc.unadopt("u1", "s1", "app1", "legacy-web")).rejects.toThrow(/could not roll back/);
+      expect(apps.discardUndeployed as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("THROWS and does NOT delete the record when the agent is offline (reject)", async () => {
+      const agentWs = { sendCommand: jest.fn().mockRejectedValue(new Error("agent offline")) } as unknown as AgentWsServer;
+      const { svc, apps } = make({ agentWs });
+      await expect(svc.unadopt("u1", "s1", "app1", "legacy-web")).rejects.toThrow(/agent unavailable/);
+      expect(apps.discardUndeployed as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("forbids a viewer before any agent round-trip", async () => {
+      const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("insufficient role")) } as unknown as TeamAccessService;
+      const agentWs = { sendCommand: jest.fn() } as unknown as AgentWsServer;
+      const { svc } = make({ access, agentWs });
+      await expect(svc.unadopt("u1", "s1", "app1", "legacy-web")).rejects.toThrow(/insufficient role/);
+      expect(agentWs.sendCommand as jest.Mock).not.toHaveBeenCalled();
+    });
+  });
 });

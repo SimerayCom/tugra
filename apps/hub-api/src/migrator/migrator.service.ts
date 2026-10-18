@@ -13,6 +13,7 @@ import {
   buildDiscoverScript,
   buildInspectOneScript,
   buildRenameScript,
+  buildUnadoptScript,
   parseDiscovered,
   NO_DOCKER_MARKER,
   type DiscoveredContainer,
@@ -123,6 +124,29 @@ export class MigratorService {
     // Audit carries the ORIGINAL container name for traceability — never any imported env value.
     await this.audit.log({ actor: userId, action: "app.adopt", target: app.id, meta: { serverId, fromContainer: dto.container } });
     return this.apps.get(userId, app.id);
+  }
+
+  /**
+   * Undo an adoption (importer rollback): rename the Tugra-managed container back to its original name, then
+   * drop the app record. The rename runs via {@link buildUnadoptScript}, which succeeds (exit 0) both when it
+   * renames and when the container is already gone. Only THEN is the record removed. A genuine failure — a
+   * non-zero exit (e.g. the original name is taken) or a rejection (agent offline/timeout) — throws WITHOUT
+   * deleting the record, so the caller records the failure and the task stays retryable (never a false
+   * "rolled back" that orphans a live tugra_<appId> container).
+   */
+  async unadopt(userId: string, serverId: string, appId: string, originalName: string): Promise<void> {
+    await this.requireWrite(userId, serverId);
+    let r: { exitCode: number };
+    try {
+      r = await this.agentWs.sendCommand(serverId, buildUnadoptScript(`tugra_${appId}`, originalName), "deploy", RENAME_TIMEOUT_MS);
+    } catch {
+      throw new ServiceUnavailableException("could not roll back the adoption (agent unavailable)");
+    }
+    if (r.exitCode !== 0) {
+      throw new ServiceUnavailableException("could not roll back the adoption (rename failed — the original name may be taken)");
+    }
+    await this.apps.discardUndeployed(appId);
+    await this.audit.log({ actor: userId, action: "app.unadopt", target: appId, meta: { serverId, toContainer: originalName } });
   }
 
   private async requireWrite(userId: string, serverId: string): Promise<{ teamId: string }> {

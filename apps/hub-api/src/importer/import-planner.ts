@@ -48,9 +48,11 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
     volumes: volItems.size,
     blockers: items.reduce((n, it) => n + it.risks.filter((r) => r.level === "blocker").length, 0),
   };
-  // Deterministic: depends only on the plan content + options (no time/random). Warnings are advisory and
-  // intentionally excluded from the hash — they must not perturb the executor's confirmToken.
-  const planHash = createHash("sha256").update(JSON.stringify({ items, options })).digest("hex").slice(0, 32);
+  // Deterministic: depends only on the plan content + options (no time/random). Items are sorted by their
+  // itemRef first, so the hash is independent of discovery order (two scans of an unchanged host hash equal
+  // — the apply-time stale-guard relies on this). Warnings are advisory and intentionally excluded.
+  const sorted = [...items].sort((a, b) => (a.itemRef < b.itemRef ? -1 : a.itemRef > b.itemRef ? 1 : 0));
+  const planHash = createHash("sha256").update(JSON.stringify({ items: sorted, options })).digest("hex").slice(0, 32);
   return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, warnings: fleet.warnings, planHash };
 }
 

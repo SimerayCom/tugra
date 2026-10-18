@@ -81,6 +81,21 @@ export function buildRenameScript(from: string, to: string): string {
   return `docker rename ${from} ${to}`;
 }
 
+/** Printed by {@link buildUnadoptScript} when the container to restore no longer exists (nothing to undo). */
+export const CONTAINER_GONE_MARKER = "TUGRA_CONTAINER_GONE";
+
+/**
+ * Rollback of an adoption: rename `from` (tugra_<appId>) back to `to` (the original name) ONLY if it still
+ * exists; otherwise print {@link CONTAINER_GONE_MARKER} and exit 0 (nothing to undo). This lets `unadopt`
+ * distinguish "already gone / restored" (exit 0 → safe to drop the record) from a genuine rename failure
+ * such as a name collision or an offline agent (non-zero exit / rejection → keep the record, stay retryable).
+ */
+export function buildUnadoptScript(from: string, to: string): string {
+  assertValidContainerRef(from);
+  assertValidContainerRef(to);
+  return `if docker container inspect ${from} >/dev/null 2>&1; then docker rename ${from} ${to}; else echo ${CONTAINER_GONE_MARKER}; fi`;
+}
+
 function stripSlash(name: string): string {
   return name.startsWith("/") ? name.slice(1) : name;
 }
