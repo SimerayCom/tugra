@@ -227,6 +227,7 @@ export class BackupsService {
         encrypted: input.encrypted,
         key: input.encryptionKey ?? "",
         gzip: input.gzip,
+        pgFormat: input.pgFormat,
       }),
       kind: RestoreKind.IMPORT_URL,
       createdBy: userId,
