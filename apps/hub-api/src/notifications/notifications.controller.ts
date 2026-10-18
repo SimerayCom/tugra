@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
@@ -27,8 +28,8 @@ export class NotificationsController {
   constructor(private readonly svc: NotificationsService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser) {
-    return this.svc.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.svc.list(user.userId, q);
   }
 
   /** The canonical, subscribable notification event ids — the single source the web UI renders from

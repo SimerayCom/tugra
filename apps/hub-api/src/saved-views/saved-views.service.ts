@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/commo
 import { SavedView } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { filterByQuery } from "../common/query-filter";
 import type { CreateSavedViewInput } from "./dto";
 
 export interface SavedViewView {
@@ -22,13 +23,14 @@ export class SavedViewsService {
   ) {}
 
   /** A user's own views + every view shared with a team they belong to. */
-  async list(userId: string): Promise<SavedViewView[]> {
+  async list(userId: string, q?: string): Promise<SavedViewView[]> {
     const permsByTeam = await this.access.permissionsByTeam(userId);
     const views = await this.prisma.savedView.findMany({
       where: { OR: [{ userId }, { teamId: { in: [...permsByTeam.keys()] } }] },
       orderBy: { createdAt: "asc" },
     });
-    return views.map((v) => this.view(v, this.mayDelete(v, userId, permsByTeam)));
+    const mapped = views.map((v) => this.view(v, this.mayDelete(v, userId, permsByTeam)));
+    return filterByQuery(mapped, q, (v) => [v.name, v.status, ...v.tags]);
   }
 
   async create(userId: string, dto: CreateSavedViewInput): Promise<SavedViewView> {

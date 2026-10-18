@@ -4,6 +4,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CloudProviderFactory } from "./providers/provider-factory.service";
+import { filterByQuery } from "../common/query-filter";
 import type { CreateCloudCredentialInput, UpdateCloudCredentialInput } from "./dto";
 
 export interface CloudCredentialView {
@@ -41,7 +42,7 @@ export class CloudCredentialsService {
     return { id: r.id, name: r.name, teamId: r.teamId, provider: r.provider, createdAt: r.createdAt, canWrite };
   }
 
-  async list(userId: string): Promise<CloudCredentialView[]> {
+  async list(userId: string, q?: string): Promise<CloudCredentialView[]> {
     const perms = await this.access.permissionsByTeam(userId);
     const teamIds = [...perms.keys()];
     if (!teamIds.length) return [];
@@ -49,7 +50,8 @@ export class CloudCredentialsService {
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
+    const views = rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
+    return filterByQuery(views, q, (c) => [c.name, c.provider]);
   }
 
   async create(userId: string, dto: CreateCloudCredentialInput): Promise<CloudCredentialView> {

@@ -31,8 +31,8 @@ export class SharedVariablesController {
   @Get()
   @UseInterceptors(new RedactSecretsInterceptor(["value"]))
   @ApiZodResponse(SharedVarViewSchema, { isArray: true })
-  list(@CurrentUser() user: AuthUser, @Query("teamId") teamId: string) {
-    return this.vars.list(user.userId, teamId);
+  list(@CurrentUser() user: AuthUser, @Query("teamId") teamId: string, @Query("q") q?: string) {
+    return this.vars.list(user.userId, teamId, q);
   }
 
   @Post()

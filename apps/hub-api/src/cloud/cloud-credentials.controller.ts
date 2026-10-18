@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -17,8 +17,8 @@ export class CloudCredentialsController {
   constructor(private readonly svc: CloudCredentialsService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser) {
-    return this.svc.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.svc.list(user.userId, q);
   }
 
   @Post()

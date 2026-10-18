@@ -5,6 +5,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { registryLoginPrelude, registryLogoutSteps, type RegistryAuth } from "../deploy/deploy-script";
+import { filterByQuery } from "../common/query-filter";
 import type { CreateRegistryInput, UpdateRegistryInput } from "./dto";
 
 export interface RegistryView {
@@ -48,7 +49,7 @@ export class RegistriesService {
     };
   }
 
-  async list(userId: string): Promise<RegistryView[]> {
+  async list(userId: string, q?: string): Promise<RegistryView[]> {
     const perms = await this.access.permissionsByTeam(userId);
     const teamIds = [...perms.keys()];
     if (!teamIds.length) return [];
@@ -56,7 +57,8 @@ export class RegistriesService {
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
+    const views = rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
+    return filterByQuery(views, q, (r) => [r.name, r.type, r.url, r.imagePrefix]);
   }
 
   async create(userId: string, dto: CreateRegistryInput): Promise<RegistryView> {

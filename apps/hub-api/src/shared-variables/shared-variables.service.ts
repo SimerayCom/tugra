@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { filterByQuery } from "../common/query-filter";
 
 export const SharedVarViewSchema = z.object({
   id: z.string(),
@@ -29,7 +30,7 @@ export class SharedVariablesService {
     private readonly crypto: CryptoService,
   ) {}
 
-  async list(userId: string, teamId: string): Promise<SharedVarView[]> {
+  async list(userId: string, teamId: string, q?: string): Promise<SharedVarView[]> {
     const perms = await this.access.permissionsByTeam(userId);
     const teamPerms = perms.get(teamId);
     if (!teamPerms) throw new ForbiddenException("not a member of this team");
@@ -38,7 +39,7 @@ export class SharedVariablesService {
       where: { teamId },
       orderBy: { key: "asc" },
     });
-    return vars.map((v) => ({
+    const views = vars.map((v) => ({
       id: v.id,
       teamId: v.teamId,
       key: v.key,
@@ -46,6 +47,8 @@ export class SharedVariablesService {
       canWrite,
       createdAt: v.createdAt,
     }));
+    // Key only: never x.value (decrypted secret, would be a match oracle).
+    return filterByQuery(views, q, (x) => [x.key]);
   }
 
   async upsert(userId: string, teamId: string, key: string, value: string): Promise<SharedVarView> {

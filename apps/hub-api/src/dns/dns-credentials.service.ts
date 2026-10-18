@@ -4,6 +4,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { CloudflareApiClient } from "../tunnel/cloudflare-api.client";
+import { filterByQuery } from "../common/query-filter";
 import type { CreateDnsCredentialInput, UpdateDnsCredentialInput } from "./dto";
 
 export interface DnsCredentialView {
@@ -55,12 +56,13 @@ export class DnsCredentialsService {
     };
   }
 
-  async list(userId: string): Promise<DnsCredentialView[]> {
+  async list(userId: string, q?: string): Promise<DnsCredentialView[]> {
     const perms = await this.access.permissionsByTeam(userId);
     const teamIds = [...perms.keys()];
     if (!teamIds.length) return [];
     const rows = await this.prisma.dnsCredential.findMany({ where: { teamId: { in: teamIds } }, orderBy: { createdAt: "desc" } });
-    return rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
+    const views = rows.map((r) => this.view(r, perms.get(r.teamId)?.has("integrations") ?? false));
+    return filterByQuery(views, q, (c) => [c.name, c.provider]);
   }
 
   async create(userId: string, dto: CreateDnsCredentialInput): Promise<DnsCredentialView> {
