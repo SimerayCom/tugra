@@ -24,5 +24,14 @@
   "databasesSection": "Databases",
   "volumesSection": "Volumes",
   "none": "None",
-  "applyNote": "Preview looks right? The apply step (create these on a target Tugra server) arrives next."
+  "target": "Target server",
+  "targetHint": "Where the imported apps are created in Tugra. Databases and volumes are not copied yet.",
+  "noTarget": "Add a server to this team first, then come back to import.",
+  "apply": "Import to Tugra",
+  "applying": "Starting…",
+  "timelineTitle": "Importing",
+  "cancel": "Cancel",
+  "cancelling": "Cancelling…",
+  "unresolvedEnv": "{n} env vars need a value",
+  "failedCount": "{n} failed"
 }

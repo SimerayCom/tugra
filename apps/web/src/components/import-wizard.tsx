@@ -4,10 +4,10 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Card, Btn, EmptyState } from "./ui";
+import { Card, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
-import { planSummary, itemsByKind, riskTone } from "../lib/import";
-import type { ImportPlan, ImportPlanItem, ImportRiskLevel } from "../lib/types";
+import { planSummary, itemsByKind, riskTone, opProgress } from "../lib/import";
+import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportTaskStatus } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -15,47 +15,68 @@ const toneColor: Record<"danger" | "warning" | "info", string> = {
   info: "var(--c-tx3)",
 };
 
-/** The Coolify import wizard: connect to a Coolify instance, then preview (dry-run) everything it runs as a
- *  secret-free import plan. Apply (create on a target Tugra server) is the next step. Local-docker container
- *  adoption has its own UI on a server's page. */
+function statusColor(s: ImportTaskStatus): string {
+  if (s === "DONE") return "var(--c-g)";
+  if (s === "FAILED" || s === "FAILED_VERIFY") return "var(--c-r)";
+  if (s === "SKIPPED" || s === "ROLLED_BACK" || s === "CANCELLED") return "var(--c-tx3)";
+  return "var(--c-am)"; // PENDING | RUNNING | AWAITING_CUTOVER
+}
+
+/** The Coolify import wizard: connect → preview (secret-free plan) → apply onto a target Tugra server →
+ *  watch the live timeline. Local-docker container adoption keeps its own UI on a server's page. */
 export function ImportWizard() {
   const t = useT();
   const toast = useToast();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
+  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+
   const [teamId, setTeamId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const [opId, setOpId] = useState<string | null>(null);
 
   const effectiveTeam = teamId || teams[0]?.id || "";
 
   const planM = useMutation({
-    mutationFn: (sessionId: string) => api.importPlan({ sourceKind: "coolify", sessionId }),
+    mutationFn: (sid: string) => api.importPlan({ sourceKind: "coolify", sessionId: sid }),
     onSuccess: setPlan,
     onError: (e) => toast((e as Error).message, "error"),
   });
   const connect = useMutation({
     mutationFn: () => api.importConnect({ sourceKind: "coolify", teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim() }),
-    onSuccess: (s) => planM.mutate(s.sessionId),
+    onSuccess: (s) => {
+      setSessionId(s.sessionId);
+      planM.mutate(s.sessionId);
+    },
     onError: (e) => toast((e as Error).message || t("import.connectFailed"), "error"),
   });
 
-  const busy = connect.isPending || planM.isPending;
+  const reset = () => {
+    setPlan(null);
+    setSessionId(null);
+    setOpId(null);
+    setToken("");
+    connect.reset();
+    planM.reset();
+  };
 
-  if (plan) {
+  if (opId) return <Timeline opId={opId} onReset={reset} />;
+
+  if (plan && sessionId) {
     return (
       <PlanView
         plan={plan}
-        onReset={() => {
-          setPlan(null);
-          setToken("");
-          connect.reset();
-          planM.reset();
-        }}
+        servers={servers.filter((s) => s.teamId === effectiveTeam).map((s) => ({ id: s.id, name: s.name }))}
+        sessionId={sessionId}
+        onApplied={setOpId}
+        onReset={reset}
       />
     );
   }
 
+  const busy = connect.isPending || planM.isPending;
   return (
     <Card style={{ padding: 20, maxWidth: 560 }}>
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("import.sourceCoolify")}</div>
@@ -86,10 +107,32 @@ export function ImportWizard() {
   );
 }
 
-function PlanView({ plan, onReset }: { plan: ImportPlan; onReset: () => void }) {
+function PlanView({
+  plan,
+  servers,
+  sessionId,
+  onApplied,
+  onReset,
+}: {
+  plan: ImportPlan;
+  servers: { id: string; name: string }[];
+  sessionId: string;
+  onApplied: (opId: string) => void;
+  onReset: () => void;
+}) {
   const t = useT();
+  const toast = useToast();
   const s = planSummary(plan);
   const groups = itemsByKind(plan);
+  const [targetServerId, setTargetServerId] = useState("");
+  const target = targetServerId || servers[0]?.id || "";
+
+  const apply = useMutation({
+    mutationFn: () => api.importApply({ sourceKind: "coolify", sessionId, targetServerId: target, planHash: plan.planHash }),
+    onSuccess: (r) => onApplied(r.opId),
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
       <Card style={{ padding: 20 }}>
@@ -113,13 +156,89 @@ function PlanView({ plan, onReset }: { plan: ImportPlan; onReset: () => void }) 
             </ul>
           </div>
         )}
-        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "14px 0 0" }}>{t("import.applyNote")}</p>
+
+        <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
+        <label style={label} htmlFor="imp-target">{t("import.target")}</label>
+        {servers.length === 0 ? (
+          <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.noTarget")}</p>
+        ) : (
+          <select id="imp-target" style={{ ...field, maxWidth: 320 }} value={target} onChange={(e) => setTargetServerId(e.target.value)}>
+            {servers.map((sv) => (
+              <option key={sv.id} value={sv.id}>{sv.name}</option>
+            ))}
+          </select>
+        )}
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-4px 0 12px" }}>{t("import.targetHint")}</p>
+        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || !s.runnable}>
+          {apply.isPending ? t("import.applying") : t("import.apply")}
+        </Btn>
       </Card>
 
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
       {groups.volume.length > 0 && <Section title={t("import.volumesSection")} items={groups.volume} />}
     </div>
+  );
+}
+
+function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
+  const t = useT();
+  const toast = useToast();
+  const { data: op } = useQuery({
+    queryKey: ["import-op", opId],
+    queryFn: () => api.getImportOperation(opId),
+    refetchInterval: (q) => {
+      const d = q.state.data as ImportOperation | undefined;
+      return d && opProgress(d).settled ? false : 2000;
+    },
+  });
+
+  const cancel = useMutation({
+    mutationFn: () => api.cancelImport(opId),
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+
+  if (!op) {
+    return (
+      <Card style={{ padding: 20, maxWidth: 720, display: "flex", alignItems: "center", gap: 10 }}>
+        <Spinner /> {t("import.timelineTitle")}
+      </Card>
+    );
+  }
+
+  const prog = opProgress(op);
+  return (
+    <Card style={{ padding: 20, maxWidth: 720 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>{t("import.timelineTitle")} <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}>· {op.status}</span></div>
+        {!prog.settled && (
+          <Btn variant="ghost" onClick={() => cancel.mutate()} disabled={cancel.isPending || op.cancelRequested}>
+            {cancel.isPending || op.cancelRequested ? t("import.cancelling") : t("import.cancel")}
+          </Btn>
+        )}
+        {prog.settled && <Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>}
+      </div>
+
+      <div role="progressbar" aria-valuenow={prog.pct} aria-valuemin={0} aria-valuemax={100} style={{ height: 8, background: "var(--c-sur)", borderRadius: 4, overflow: "hidden", marginBottom: 6 }}>
+        <div style={{ width: `${prog.pct}%`, height: "100%", background: prog.failed > 0 ? "var(--c-am)" : "var(--c-g)", transition: "width .4s" }} />
+      </div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 14 }}>
+        {prog.done}/{prog.total} · {prog.pct}%{prog.failed > 0 ? ` · ${t("import.failedCount", { n: prog.failed })}` : ""}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {op.tasks.map((task, i) => (
+          <div key={task.itemRef ?? i} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, fontSize: 12, borderBottom: "1px solid var(--c-bd)", paddingBottom: 6 }}>
+            <span style={{ color: statusColor(task.status), fontWeight: 600, minWidth: 90 }}>{task.status}</span>
+            <span className="mono" style={{ flex: 1, wordBreak: "break-all" }}>{task.name ?? task.itemRef}</span>
+            {typeof task.unresolvedEnv === "number" && task.unresolvedEnv > 0 && (
+              <span style={{ color: "var(--c-am)" }}>{t("import.unresolvedEnv", { n: task.unresolvedEnv })}</span>
+            )}
+            {task.message && <span style={{ color: "var(--c-tx3)", flexBasis: "100%", paddingLeft: 98 }}>{task.message}</span>}
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
