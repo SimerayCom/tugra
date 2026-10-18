@@ -12,6 +12,7 @@
   "uptime": "Uptime",
   "servers": "Servers",
   "clusters": "Clusters",
+  "import": "Import",
   "sources": "Git Sources",
   "registries": "Container Registries",
   "cloudCredentials": "Cloud Providers",
