@@ -15,5 +15,6 @@ import { CoolifyClientFactory } from "./sources/coolify-client.factory";
   imports: [MigratorModule, CryptoModule, ApplicationsModule],
   controllers: [ImporterController],
   providers: [ImporterService, ImportExecutorService, CoolifyClientFactory],
+  exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}
