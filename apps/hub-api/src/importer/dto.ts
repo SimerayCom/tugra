@@ -1,11 +1,19 @@
 import { z } from "zod";
 
-/** Request body for the dry-run import plan. Only `local-docker` is wired so far (S4b); the remote source
- *  adapters (Coolify/Dokploy/…) land in later slices and will extend this union. */
-export const ImportPlanRequestSchema = z.object({
-  sourceKind: z.literal("local-docker"),
-  serverId: z.string().min(1),
+/** Connect an external source PaaS (store an encrypted, short-lived session). Coolify so far. */
+export const ImportConnectSchema = z.object({
+  sourceKind: z.literal("coolify"),
+  teamId: z.string().min(1),
+  baseUrl: z.string().url().max(2048),
+  token: z.string().min(1).max(4096),
 });
+export type ImportConnectInput = z.infer<typeof ImportConnectSchema>;
+
+/** Request body for the dry-run import plan: a local server to adopt, or a connected remote session. */
+export const ImportPlanRequestSchema = z.discriminatedUnion("sourceKind", [
+  z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1) }),
+  z.object({ sourceKind: z.literal("coolify"), sessionId: z.string().min(1) }),
+]);
 export type ImportPlanRequestInput = z.infer<typeof ImportPlanRequestSchema>;
 
 /** Apply a previously-previewed plan. `planHash` binds the apply to the exact plan the caller reviewed:

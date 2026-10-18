@@ -705,6 +705,23 @@ model BulkTask {
   @@index([opId])
 }
 
+/// A short-lived, encrypted connection to an external source PaaS (e.g. Coolify) for the importer. The API
+/// token is stored encrypted-at-rest (CryptoService); baseUrl is non-secret. Scoped to a team + its creator.
+model ImportSession {
+  id         String    @id @default(cuid())
+  teamId     String
+  actorId    String
+  sourceKind String // "coolify" (future: dokploy | caprover | dokku)
+  baseUrl    String // the external instance base URL (non-secret)
+  tokenEnc   String // CryptoService-encrypted API token — never returned by any endpoint
+  status     String    @default("active") // active | revoked
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  @@index([teamId])
+}
+
 enum AppStatus {
   NEW
   RUNNING
