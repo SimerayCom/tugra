@@ -12,6 +12,10 @@
     "lint": {},
     "test": {
       "dependsOn": ["^build"]
+    },
+    "@tugra/cli#test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "../../apps/hub-api/openapi.json"]
     }
   }
 }
