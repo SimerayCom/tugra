@@ -154,19 +154,28 @@ export function buildRestoreScript(db: DbSpec, filename: string, dest: Destinati
 export function buildImportScript(
   db: DbSpec,
   url: string,
-  opts: { encrypted: boolean; key: string; gzip: boolean },
+  opts: { encrypted: boolean; key: string; gzip: boolean; pgFormat?: "custom" | "sql" },
 ): string {
   const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
-  // A `.dump[.gz][.gpg]` object is a Postgres CUSTOM-format archive → pg_restore (this lets a migration
-  // URL exported from another Tugra DB backup import cleanly). Anything else is plain SQL fed to psql
-  // (sql-loose: fail-loud but not forced-atomic, since an external dump's transaction structure is
-  // unknown). Match the URL's PATH only (end-anchored) — a `.dump`-like tail in a query param must NOT
-  // flip the mode. Only affects Postgres. Unparseable URL → default sql-loose.
-  let pgMode: PgMode = "sql-loose";
-  try {
-    if (/\.dump(\.gz)?(\.gpg)?$/i.test(new URL(url).pathname)) pgMode = "custom";
-  } catch {
-    /* not a parseable URL — leave sql-loose (psql fail-loud) */
+  // (Postgres only.) `pgFormat` is an EXPLICIT override for a foreign dump whose extension lies — e.g.
+  // Coolify names its custom-format Postgres dumps `.dmp`, which the extension sniff below would misread as
+  // plain SQL and feed to psql, failing on the binary archive. When `pgFormat` is unset we fall back to the
+  // sniff: a `.dump[.gz][.gpg]` object is a CUSTOM-format archive → pg_restore (so a URL exported from
+  // another Tugra backup imports cleanly); anything else is plain SQL fed to psql (sql-loose: fail-loud but
+  // not forced-atomic, since an external dump's transaction structure is unknown). Match the URL PATH only
+  // (end-anchored) — a `.dump`-like tail in a query param must NOT flip the mode. Unparseable URL → sql-loose.
+  let pgMode: PgMode;
+  if (opts.pgFormat === "custom") {
+    pgMode = "custom";
+  } else if (opts.pgFormat === "sql") {
+    pgMode = "sql-loose";
+  } else {
+    pgMode = "sql-loose";
+    try {
+      if (/\.dump(\.gz)?(\.gpg)?$/i.test(new URL(url).pathname)) pgMode = "custom";
+    } catch {
+      /* not a parseable URL — leave sql-loose (psql fail-loud) */
+    }
   }
   return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip, pgMode);
 }

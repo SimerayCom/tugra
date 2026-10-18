@@ -198,6 +198,18 @@ describe("backup-script", () => {
       expect(s).toContain("psql");
     });
 
+    it("pgFormat:'custom' forces pg_restore for a foreign dump whose extension lies (Coolify .dmp)", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://x/backup.dmp.gz", { encrypted: false, key: "", gzip: true, pgFormat: "custom" });
+      expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
+      expect(s).not.toContain(" psql ");
+    });
+
+    it("pgFormat:'sql' forces psql even when the URL ends in .dump (explicit override beats the sniff)", () => {
+      const s = buildImportScript(spec("POSTGRES"), "https://x/2026.dump.gz", { encrypted: false, key: "", gzip: true, pgFormat: "sql" });
+      expect(s).toContain("psql -v ON_ERROR_STOP=1 -U 'tugra'");
+      expect(s).not.toContain("pg_restore");
+    });
+
     it("a .dump only in the query string does NOT flip to custom (path-anchored detection)", () => {
       const s = buildImportScript(spec("POSTGRES"), "https://host/plain-export.sql?ref=https://o/x.dump", { encrypted: false, key: "", gzip: false });
       expect(s).not.toContain("pg_restore");

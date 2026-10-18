@@ -25,6 +25,10 @@ export const ImportFromUrlSchema = z
     gzip: z.boolean().default(true),
     encrypted: z.boolean().default(false),
     encryptionKey: z.string().optional(),
+    // Postgres only: force the restore mode for a foreign dump whose extension lies. Coolify names its
+    // custom-format (pg_dump -Fc) dumps `.dmp`, which the extension sniff would misread as plain SQL and
+    // feed to psql — failing on the binary archive. Set "custom" for such dumps, "sql" for a plain SQL file.
+    pgFormat: z.enum(["custom", "sql"]).optional(),
   })
   .refine((d) => !d.encrypted || !!d.encryptionKey, {
     message: "encryptionKey is required when encrypted is true",

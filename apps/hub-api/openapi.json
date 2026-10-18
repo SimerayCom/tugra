@@ -20900,6 +20900,13 @@
                   },
                   "encryptionKey": {
                     "type": "string"
+                  },
+                  "pgFormat": {
+                    "type": "string",
+                    "enum": [
+                      "custom",
+                      "sql"
+                    ]
                   }
                 },
                 "required": [
