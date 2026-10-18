@@ -577,6 +577,61 @@ export interface BulkOperation {
   tasks: BulkTask[];
 }
 
+// ── importer (Coolify / local-docker fleet import) ──
+export type ImportRiskLevel = "info" | "warn" | "blocker";
+export interface ImportRisk {
+  level: ImportRiskLevel;
+  code: string;
+  message: string;
+}
+export interface ImportPlanItem {
+  itemRef: string;
+  kind: "app" | "database" | "volume";
+  name: string;
+  proposed: Record<string, unknown>;
+  risks: ImportRisk[];
+  dependsOn: string[];
+}
+export interface ImportPlan {
+  sourceKind: string;
+  mode: "copy" | "takeover";
+  items: ImportPlanItem[];
+  totals: { apps: number; databases: number; volumes: number; blockers: number };
+  warnings: string[];
+  planHash: string;
+}
+/** The short-lived encrypted connection returned by import_connect. */
+export interface ImportSession {
+  sessionId: string;
+  expiresAt: string;
+}
+export type ImportTaskStatus =
+  | "PENDING" | "RUNNING" | "DONE" | "FAILED" | "SKIPPED" | "ROLLED_BACK" | "FAILED_VERIFY" | "AWAITING_CUTOVER" | "CANCELLED";
+export interface ImportOpTask {
+  itemRef: string | null;
+  kind: string;
+  name: string | null;
+  status: ImportTaskStatus;
+  resourceType: string | null;
+  resourceId: string | null;
+  message: string | null;
+  unresolvedEnv?: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+export type ImportOpState = "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED" | "CANCELLED";
+export interface ImportOperation {
+  id: string;
+  sourceKind: string | null;
+  serverId: string | null;
+  planHash: string | null;
+  status: ImportOpState;
+  cancelRequested: boolean;
+  createdAt: string;
+  totals: { total: number; done: number; failed: number; skipped: number; running: number; pending: number; cancelled: number; rolledBack: number };
+  tasks: ImportOpTask[];
+}
+
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export type AppSource = "IMAGE" | "GIT" | "COMPOSE";
