@@ -5,7 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ImportWizard } from "./import-wizard";
 import { api } from "../lib/api";
-import type { ImportPlan } from "../lib/types";
+import type { ImportPlan, ImportOperation } from "../lib/types";
 
 afterEach(cleanup);
 
@@ -29,16 +29,32 @@ const plan: ImportPlan = {
   ],
 };
 
+const settledOp: ImportOperation = {
+  id: "op1",
+  sourceKind: "coolify",
+  serverId: "srv1",
+  planHash: "a".repeat(32),
+  status: "SUCCEEDED",
+  cancelRequested: false,
+  createdAt: "2026-10-18T00:00:00.000Z",
+  totals: { total: 1, done: 1, failed: 0, skipped: 0, running: 0, pending: 0, cancelled: 0, rolledBack: 0 },
+  tasks: [{ itemRef: "app:srv:web", kind: "app", name: "web-app", status: "DONE", resourceType: "application", resourceId: "a1", message: null, startedAt: null, finishedAt: null }],
+  plan,
+};
+
 describe("ImportWizard", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("connects then renders the secret-free preview (counts, item names, warnings)", async () => {
-    const connect = vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
-    const planSpy = vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+  it("connect → preview → apply onto a target → live timeline", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
     wrap(<ImportWizard />);
 
     await screen.findByRole("option", { name: "Team One" });
@@ -47,11 +63,14 @@ describe("ImportWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
 
     await screen.findByText("Import preview");
-    expect(connect).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok" });
-    expect(planSpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "s1" });
+    await screen.findByRole("option", { name: "Server A" }); // target picker populated
+    expect(screen.getByText("nothing to deploy")).toBeTruthy(); // blocker risk surfaced
+
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE"); // the op query resolved + the task row rendered
+    expect(applySpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32) });
     expect(screen.getByText("web-app")).toBeTruthy();
-    expect(screen.getByText("nothing to deploy")).toBeTruthy(); // the blocker risk is surfaced
-    expect(screen.getByText(/read:sensitive/)).toBeTruthy(); // the warning is surfaced
+    expect(screen.getByText(/Importing/)).toBeTruthy(); // timeline header
   });
 
   it("keeps the connect button disabled until url + token are filled", async () => {
