@@ -73,6 +73,23 @@ function slug(name: string): string {
   return s || "tugra";
 }
 
+// A shell-SAFE OCI image reference: optional registry host[:port] / repo path / optional :tag / optional
+// @sha256 digest. The character set excludes every shell metacharacter, so a caller-supplied image cannot
+// inject into the `docker` command even if a script builder forgets to quote it. (createForImport also gates
+// a custom image behind apps:config — running one is an app-image-level privilege.)
+const DB_IMAGE_RE =
+  /^([a-z0-9][a-z0-9.-]*(:[0-9]{1,5})?\/)?[a-z0-9][a-z0-9._/-]{0,200}(:[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$/;
+function assertValidDbImage(image: string): string {
+  if (image.length > 255 || !DB_IMAGE_RE.test(image)) throw new BadRequestException("invalid database image reference");
+  return image;
+}
+
+// A safe SQL/identifier for a caller-supplied DB name or username. public create() derives these from slug()
+// (always safe); the importer may pass them, so re-assert the invariant the engine scripts rely on (e.g. the
+// ClickHouse backup/restore splices the database name into a query). A valid DB version tag is similar.
+const DB_IDENT_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$/;
+const DB_VERSION_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
 @Injectable()
 export class DatabasesService {
   constructor(
@@ -100,26 +117,112 @@ export class DatabasesService {
       password: randomBytes(24).toString("base64url"),
       database: slug(dto.name),
     };
+    const view = await this.persistDatabase(userId, server, {
+      name: dto.name,
+      engine,
+      version,
+      image: resolveImage(engine, version),
+      hostPort: dto.hostPort ?? null,
+      environmentId,
+      creds,
+    });
+    await this.audit.log({ actor: userId, action: "database.create", target: view.id });
+    return view;
+  }
+
+  /**
+   * Internal: create a DB record with CALLER-SUPPLIED credentials and optionally a custom image, for the
+   * migrator/importer so a moved app's existing DATABASE_URL keeps working. NOT exposed on the public DTO
+   * (the public create() always mints fresh credentials); the image is validated to a shell-safe OCI ref.
+   */
+  async createForImport(
+    userId: string,
+    input: {
+      name: string;
+      serverId: string;
+      engine: DbEngine;
+      version?: string;
+      image?: string;
+      username: string;
+      password: string;
+      database: string;
+      hostPort?: number;
+      environmentId?: string;
+    },
+  ): Promise<DatabaseView> {
+    const server = await this.prisma.server.findUnique({ where: { id: input.serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "databases");
+    // A custom image runs arbitrary code on the host (like an IMAGE-source app), so require the same
+    // app-image privilege rather than letting plain `databases` permission reach it.
+    if (input.image) await this.access.requirePermission(userId, server.teamId, "apps:config");
+    // Re-assert the identifier invariants that public create()'s slug() guarantees — some engine scripts
+    // (ClickHouse) splice the database name into a query, so an arbitrary name would be an injection vector.
+    if (!DB_IDENT_RE.test(input.username)) throw new BadRequestException("invalid database username");
+    if (!DB_IDENT_RE.test(input.database)) throw new BadRequestException("invalid database name");
+    if (!input.password || input.password.length > 256) throw new BadRequestException("invalid database password");
+    if (input.environmentId) await this.assertEnvInTeam(input.environmentId, server.teamId);
+    const environmentId =
+      input.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
+    const version = input.version ?? defaultVersion(input.engine);
+    if (!DB_VERSION_RE.test(version)) throw new BadRequestException("invalid database version");
+    const image = input.image ? assertValidDbImage(input.image) : resolveImage(input.engine, version);
+    const creds: DbCredentials = {
+      username: input.username,
+      password: input.password,
+      database: input.database,
+    };
+    const view = await this.persistDatabase(userId, server, {
+      name: input.name,
+      engine: input.engine,
+      version,
+      image,
+      hostPort: input.hostPort ?? null,
+      environmentId,
+      creds,
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "database.import_create",
+      target: view.id,
+      meta: { engine: input.engine, customImage: Boolean(input.image) },
+    });
+    return view;
+  }
+
+  /** Shared DB-record creation: persist + grant-on-create + return the writer view. Callers audit. */
+  private async persistDatabase(
+    userId: string,
+    server: { id: string; teamId: string },
+    fields: {
+      name: string;
+      engine: DbEngine;
+      version: string;
+      image: string;
+      hostPort: number | null;
+      environmentId: string;
+      creds: DbCredentials;
+    },
+  ): Promise<DatabaseView> {
     const db = await this.prisma.database.create({
       data: {
-        name: dto.name,
-        engine,
-        version,
-        image: resolveImage(engine, version),
-        port: enginePort(engine),
-        hostPort: dto.hostPort ?? null,
-        environmentId,
-        serverId: dto.serverId,
+        name: fields.name,
+        engine: fields.engine,
+        version: fields.version,
+        image: fields.image,
+        port: enginePort(fields.engine),
+        hostPort: fields.hostPort,
+        environmentId: fields.environmentId,
+        serverId: server.id,
         teamId: server.teamId,
-        credentials: this.crypto.encrypt(JSON.stringify(creds)),
+        credentials: this.crypto.encrypt(JSON.stringify(fields.creds)),
         status: DbStatus.NEW,
       },
     });
     // Grant-on-create: the creator keeps access to what they made even if later restricted.
     await this.access.grantResourceAccess(userId, server.teamId, db.id);
-    await this.audit.log({ actor: userId, action: "database.create", target: db.id });
     const role = (await this.access.teamRole(userId, server.teamId))!;
-    // Creator just passed the 'databases' permission gate above, so they can write.
+    // Creator just passed the 'databases' permission gate, so they can write.
     return this.view(db, role, true);
   }
 

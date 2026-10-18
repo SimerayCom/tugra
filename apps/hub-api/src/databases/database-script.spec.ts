@@ -49,11 +49,11 @@ describe("database-script — extra engines (Dilim 17)", () => {
     expect(engineCommand("MARIADB", creds)).toBe("");
   });
 
-  it("connection URIs: redis-family + clickhouse + mariadb", () => {
-    expect(connectionInfo(spec("KEYDB")).uri).toBe("redis://:p@ss@tugra_db_db1:6379");
-    expect(connectionInfo(spec("DRAGONFLY")).uri).toBe("redis://:p@ss@tugra_db_db1:6379");
-    expect(connectionInfo(spec("MARIADB")).uri).toBe("mysql://tugra:p@ss@tugra_db_db1:3306/appdb");
-    expect(connectionInfo(spec("CLICKHOUSE")).uri).toBe("clickhouse://tugra:p@ss@tugra_db_db1:9000/appdb");
+  it("connection URIs: redis-family + clickhouse + mariadb (password percent-encoded)", () => {
+    expect(connectionInfo(spec("KEYDB")).uri).toBe("redis://:p%40ss@tugra_db_db1:6379");
+    expect(connectionInfo(spec("DRAGONFLY")).uri).toBe("redis://:p%40ss@tugra_db_db1:6379");
+    expect(connectionInfo(spec("MARIADB")).uri).toBe("mysql://tugra:p%40ss@tugra_db_db1:3306/appdb");
+    expect(connectionInfo(spec("CLICKHOUSE")).uri).toBe("clickhouse://tugra:p%40ss@tugra_db_db1:9000/appdb");
   });
 
   it("supportsBackup: every engine now supported (incl. Dragonfly + ClickHouse)", () => {
@@ -153,10 +153,10 @@ describe("database-script", () => {
 
   describe("connectionInfo", () => {
     it("builds an engine-specific URI with the container name as host", () => {
-      expect(connectionInfo(spec("POSTGRES")).uri).toBe("postgresql://tugra:p@ss@tugra_db_db1:5432/appdb");
-      expect(connectionInfo(spec("MYSQL")).uri).toBe("mysql://tugra:p@ss@tugra_db_db1:3306/appdb");
-      expect(connectionInfo(spec("REDIS")).uri).toBe("redis://:p@ss@tugra_db_db1:6379");
-      expect(connectionInfo(spec("MONGO")).uri).toBe("mongodb://tugra:p@ss@tugra_db_db1:27017");
+      expect(connectionInfo(spec("POSTGRES")).uri).toBe("postgresql://tugra:p%40ss@tugra_db_db1:5432/appdb");
+      expect(connectionInfo(spec("MYSQL")).uri).toBe("mysql://tugra:p%40ss@tugra_db_db1:3306/appdb");
+      expect(connectionInfo(spec("REDIS")).uri).toBe("redis://:p%40ss@tugra_db_db1:6379");
+      expect(connectionInfo(spec("MONGO")).uri).toBe("mongodb://tugra:p%40ss@tugra_db_db1:27017");
       expect(connectionInfo(spec("POSTGRES")).internalHost).toBe("tugra_db_db1");
     });
   });
