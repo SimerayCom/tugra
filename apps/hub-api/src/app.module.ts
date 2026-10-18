@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { JwtModule } from "@nestjs/jwt";
 import { validateEnv } from "./config/env";
@@ -55,6 +55,7 @@ import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor
 import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
 import { IdempotencyInterceptor } from "./common/idempotency.interceptor";
 import { PaginationInterceptor } from "./common/pagination.interceptor";
+import { ApiExceptionFilter } from "./common/api-exception.filter";
 
 @Module({
   imports: [
@@ -116,6 +117,8 @@ import { PaginationInterceptor } from "./common/pagination.interceptor";
     // Opt-in ?limit/?cursor pagination for @Paginated() list handlers; innermost, so it slices only the
     // handler's (already-authorized, already-redacted) array output.
     { provide: APP_INTERCEPTOR, useClass: PaginationInterceptor },
+    // Normalize every thrown error to the single { statusCode, error, message } ApiError shape.
+    { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],
 })
 export class AppModule {}

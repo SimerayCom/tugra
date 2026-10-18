@@ -3,6 +3,7 @@ import { ApiBody, ApiResponse, DocumentBuilder, SwaggerModule } from "@nestjs/sw
 import type { OpenAPIObject } from "@nestjs/swagger";
 import * as zodToJsonSchemaModule from "zod-to-json-schema";
 import type { ZodTypeAny } from "zod";
+import { ApiErrorSchema } from "../common/api-error";
 
 // zod-to-json-schema's own recursive return type makes tsc blow up (TS2589) when it's instantiated. Cast
 // the module through `unknown` to a flattened signature so that deep type is never read.
@@ -42,7 +43,49 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     )
     .addCookieAuth("tg_access", { type: "apiKey", description: "Browser session cookie." }, "session")
     .build();
-  return SwaggerModule.createDocument(app, config);
+  const doc = SwaggerModule.createDocument(app, config);
+  attachErrorResponses(doc);
+  return doc;
+}
+
+/**
+ * Document the uniform error contract: register the shared `ApiError` component and attach the error
+ * responses each operation can actually return, referencing that one component by `$ref`. Additive only —
+ * it never touches an operation's success (2xx) responses or any error response already declared — so it
+ * is non-breaking (oasdiff-safe). Rules per operation (codes added in a fixed order for byte-stable output):
+ *   400 when it has a request body · 401 + 403 when it requires auth · 404 when it has a path param ·
+ *   429 + 500 always. The `/mcp` endpoint is skipped (it speaks JSON-RPC, not this shape).
+ */
+function attachErrorResponses(doc: OpenAPIObject): void {
+  const components = ((doc as any).components ??= {});
+  (components.schemas ??= {}).ApiError = toSchema(ApiErrorSchema);
+  const errorResponse = (description: string) => ({
+    description,
+    content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },
+  });
+  const METHODS = ["get", "put", "post", "delete", "patch"] as const;
+
+  for (const [path, item] of Object.entries(doc.paths ?? {})) {
+    if (path === "/api/v1/mcp") continue; // the MCP endpoint speaks JSON-RPC, not this error shape
+    for (const method of METHODS) {
+      const op = (item as any)[method];
+      if (!op) continue;
+      const responses = (op.responses ??= {});
+      const secured = Array.isArray(op.security) && op.security.length > 0;
+      const hasBody = Boolean(op.requestBody);
+      const hasPathParam = Array.isArray(op.parameters) && op.parameters.some((p: any) => p?.in === "path");
+      const toAdd: Array<[string, string]> = [];
+      if (hasBody) toAdd.push(["400", "Invalid or malformed request."]);
+      if (secured) toAdd.push(["401", "Missing or invalid authentication."]);
+      if (secured) toAdd.push(["403", "Authenticated but not permitted (scope or team permission)."]);
+      if (hasPathParam) toAdd.push(["404", "Resource not found."]);
+      toAdd.push(["429", "Rate limit exceeded; see Retry-After."]);
+      toAdd.push(["500", "Unexpected server error."]);
+      for (const [code, description] of toAdd) {
+        if (!responses[code]) responses[code] = errorResponse(description);
+      }
+    }
+  }
 }
 
 /** Build + mount the docs: Swagger UI at /api/docs (outside the Nest router, so the /api/v1 prefix doesn't

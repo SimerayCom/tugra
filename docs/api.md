@@ -94,6 +94,27 @@ a retry with the same key replays that exact status + body instead of re-running
 arrives while the first is still in flight gets `409`. Keys are scoped to your account + the method + the path.
 It's opt-in (no header → normal behaviour) and fails open (a Redis outage just runs the request).
 
+## Errors
+
+Every error response shares one shape (the `ApiError` schema in the OpenAPI document):
+
+```json
+{ "statusCode": 404, "error": "Not Found", "message": "application not found" }
+```
+
+- `statusCode` — the HTTP status, repeated in the body.
+- `error` — the status reason phrase.
+- `message` — a human-readable message, **or an array of messages**: field-validation failures (`400`)
+  return `message` as a list of `"field: reason"` strings.
+
+The HTTP status is authoritative (`401` unauthenticated, `403` authenticated-but-forbidden, `404` not found,
+`409` conflict, `423` locked, `429` rate-limited, …). A `429` also carries `Retry-After` and the
+`X-RateLimit-*` headers. Server-side faults return a generic `500` (`"Internal server error"`) — details are
+logged on the server and never leaked in the response.
+
+Two surfaces use their own error format by design: the [MCP endpoint](#mcp-server) returns JSON-RPC error
+objects, and the browser OAuth/OIDC callbacks redirect with an `?error=` query string instead of a JSON body.
+
 ## Pagination
 
 Collection list endpoints (`GET /apps`, `/servers`, `/databases`, `/projects`, `/teams`, `/monitors`,
