@@ -24967,29 +24967,67 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "sourceKind": {
-                    "type": "string",
-                    "enum": [
-                      "local-docker"
-                    ]
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "local-docker"
+                        ]
+                      },
+                      "serverId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "planHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{32}$"
+                      }
+                    },
+                    "required": [
+                      "sourceKind",
+                      "serverId",
+                      "planHash"
+                    ],
+                    "additionalProperties": false
                   },
-                  "serverId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "planHash": {
-                    "type": "string",
-                    "pattern": "^[a-f0-9]{32}$"
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "coolify"
+                        ]
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "targetServerId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "environmentId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "planHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{32}$"
+                      }
+                    },
+                    "required": [
+                      "sourceKind",
+                      "sessionId",
+                      "targetServerId",
+                      "planHash"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "sourceKind",
-                  "serverId",
-                  "planHash"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           }

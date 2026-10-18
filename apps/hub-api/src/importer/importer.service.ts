@@ -78,17 +78,8 @@ export class ImporterService {
       }
     }
 
-    // coolify: resolve the owned, unexpired session → decrypt token → discover over the SSRF-safe client.
-    const session = await this.prisma.importSession.findUnique({ where: { id: input.sessionId } });
-    if (!session || session.sourceKind !== "coolify") throw new NotFoundException("import session not found");
-    if (session.actorId !== userId) throw new ForbiddenException("not your import session");
-    if (session.status !== "active" || session.expiresAt.getTime() < Date.now()) {
-      throw new BadRequestException("import session expired or revoked — reconnect");
-    }
-    await this.access.requirePermission(userId, session.teamId, "apps:config");
-
-    const token = this.crypto.decrypt(session.tokenEnc);
-    const source = new CoolifySource(this.coolify.create(session.baseUrl, token));
+    // coolify: resolve the owned, unexpired session → discover over the SSRF-safe client.
+    const { source, session } = await this.openSession(userId, input.sessionId);
     try {
       const fleet = await source.discover();
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
@@ -96,5 +87,22 @@ export class ImporterService {
     } finally {
       await source.close();
     }
+  }
+
+  /**
+   * Resolve an owned, active, unexpired Coolify session into a live {@link CoolifySource} (SSRF-safe client,
+   * token decrypted in memory). Enforces session ownership + the session team's apps:config. Shared by the
+   * plan path and the apply executor so session authz lives in exactly one place. The caller must close() it.
+   */
+  async openSession(userId: string, sessionId: string): Promise<{ source: CoolifySource; session: { id: string; teamId: string } }> {
+    const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.sourceKind !== "coolify") throw new NotFoundException("import session not found");
+    if (session.actorId !== userId) throw new ForbiddenException("not your import session");
+    if (session.status !== "active" || session.expiresAt.getTime() < Date.now()) {
+      throw new BadRequestException("import session expired or revoked — reconnect");
+    }
+    await this.access.requirePermission(userId, session.teamId, "apps:config");
+    const token = this.crypto.decrypt(session.tokenEnc);
+    return { source: new CoolifySource(this.coolify.create(session.baseUrl, token)), session: { id: session.id, teamId: session.teamId } };
   }
 }

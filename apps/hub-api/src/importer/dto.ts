@@ -17,10 +17,17 @@ export const ImportPlanRequestSchema = z.discriminatedUnion("sourceKind", [
 export type ImportPlanRequestInput = z.infer<typeof ImportPlanRequestSchema>;
 
 /** Apply a previously-previewed plan. `planHash` binds the apply to the exact plan the caller reviewed:
- *  the server re-plans and refuses (409) if the host changed since. */
-export const ImportApplySchema = z.object({
-  sourceKind: z.literal("local-docker"),
-  serverId: z.string().min(1),
-  planHash: z.string().regex(/^[a-f0-9]{32}$/, "invalid planHash"),
-});
+ *  the server re-plans and refuses (409) if the source changed since. local-docker adopts in place; coolify
+ *  COPIES each app onto `targetServerId` (a fresh Tugra server/cluster). */
+const planHash = z.string().regex(/^[a-f0-9]{32}$/, "invalid planHash");
+export const ImportApplySchema = z.discriminatedUnion("sourceKind", [
+  z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1), planHash }),
+  z.object({
+    sourceKind: z.literal("coolify"),
+    sessionId: z.string().min(1),
+    targetServerId: z.string().min(1),
+    environmentId: z.string().min(1).optional(),
+    planHash,
+  }),
+]);
 export type ImportApplyInput = z.infer<typeof ImportApplySchema>;
