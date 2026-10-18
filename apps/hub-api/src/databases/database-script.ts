@@ -150,18 +150,22 @@ export function connectionInfo(db: DbSpec): ConnectionInfo {
   const { scheme } = ENGINES[db.engine];
   const host = dbContainerName(db);
   const { username, password, database } = db.credentials;
-  const auth = username ? `${username}:${password}@` : `:${password}@`;
+  // URL-encode credentials in the URI so an imported password containing `@ : / # %` etc. yields a valid
+  // connection string (generated base64url creds are URL-safe, so this is a no-op for DBs created by Tugra).
+  // The returned username/password/database fields stay RAW — only the `uri` is encoded.
+  const e = encodeURIComponent;
+  const auth = username ? `${e(username)}:${e(password)}@` : `:${e(password)}@`;
   const redisFamily = db.engine === "REDIS" || db.engine === "KEYDB" || db.engine === "DRAGONFLY";
   let uri: string;
   if (db.engine === "LIBSQL") {
     // sqld speaks HTTP with no built-in auth in v1 — a plain host:port URL, no credentials.
     uri = `${scheme}://${host}:${db.port}`;
   } else if (redisFamily) {
-    uri = `${scheme}://:${password}@${host}:${db.port}`;
+    uri = `${scheme}://:${e(password)}@${host}:${db.port}`;
   } else if (db.engine === "MONGO") {
     uri = `${scheme}://${auth}${host}:${db.port}`;
   } else {
-    uri = `${scheme}://${auth}${host}:${db.port}/${database}`;
+    uri = `${scheme}://${auth}${host}:${db.port}/${e(database)}`;
   }
   return { internalHost: host, port: db.port, username, password, database, uri };
 }

@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { DatabasesService } from "./databases.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -151,6 +151,94 @@ describe("DatabasesService", () => {
     await make(prisma, access, {}, teamDefaults).create("u1", { name: "main", serverId: "s1", engine: "POSTGRES" });
     expect(teamDefaults.resolveDefaultEnvironmentId).toHaveBeenCalledWith("t1");
     expect(create.mock.calls[0][0].data.environmentId).toBe("env-default");
+  });
+
+  describe("createForImport", () => {
+    const setup = () => {
+      const create = jest.fn().mockImplementation(({ data }) => ({ id: "dbi", createdAt: new Date(), ...data }));
+      const prisma = {
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+        database: { create },
+      } as unknown as PrismaService;
+      const access = {
+        requirePermission: jest.fn().mockResolvedValue(undefined),
+        teamRole: jest.fn().mockResolvedValue("OWNER"),
+      } as unknown as TeamAccessService;
+      return { svc: make(prisma, access), create };
+    };
+    const input = {
+      name: "orders", serverId: "s1", engine: "POSTGRES" as const,
+      username: "app_user", password: "app_pw", database: "app_db",
+    };
+
+    it("persists CALLER-SUPPLIED credentials (not random) so the app's DATABASE_URL keeps working", async () => {
+      const { svc, create } = setup();
+      const view = await svc.createForImport("u1", input);
+      // the writer view decrypts the stored credentials — they are exactly what was supplied
+      expect(view.username).toBe("app_user");
+      expect(view.password).toBe("app_pw");
+      expect(view.database).toBe("app_db");
+      expect(create.mock.calls[0][0].data.credentials).toBe(
+        `enc:${JSON.stringify({ username: "app_user", password: "app_pw", database: "app_db" })}`,
+      );
+    });
+
+    it("keeps a custom image when supplied, and defaults to the resolved engine image otherwise", async () => {
+      const { svc, create } = setup();
+      await svc.createForImport("u1", { ...input, image: "pgvector/pgvector:pg16" });
+      expect(create.mock.calls[0][0].data.image).toBe("pgvector/pgvector:pg16");
+
+      const { svc: svc2, create: create2 } = setup();
+      await svc2.createForImport("u1", input); // no image
+      expect(create2.mock.calls[0][0].data.image).toMatch(/postgres/);
+    });
+
+    it("rejects an image reference with shell metacharacters (injection guard)", async () => {
+      const { svc, create } = setup();
+      await expect(
+        svc.createForImport("u1", { ...input, image: "postgres:16; rm -rf /" }),
+      ).rejects.toThrow(BadRequestException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a private-registry image with a host:port", async () => {
+      const { svc, create } = setup();
+      await svc.createForImport("u1", { ...input, image: "registry.internal:5000/pg:16" });
+      expect(create.mock.calls[0][0].data.image).toBe("registry.internal:5000/pg:16");
+    });
+
+    it("rejects an unsafe database name or username (ClickHouse-injection guard)", async () => {
+      const { svc, create } = setup();
+      await expect(svc.createForImport("u1", { ...input, database: 'x" ; SELECT 1' })).rejects.toThrow(BadRequestException);
+      await expect(svc.createForImport("u1", { ...input, username: "u`whoami`" })).rejects.toThrow(BadRequestException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("requires apps:config (not just databases) for a custom image", async () => {
+      const create = jest.fn();
+      const prisma = {
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+        database: { create },
+      } as unknown as PrismaService;
+      const access = {
+        requirePermission: jest.fn().mockImplementation((_u: string, _t: string, perm: string) =>
+          perm === "apps:config" ? Promise.reject(new ForbiddenException("no apps:config")) : Promise.resolve(undefined),
+        ),
+        teamRole: jest.fn().mockResolvedValue("OWNER"),
+      } as unknown as TeamAccessService;
+      await expect(
+        make(prisma, access).createForImport("u1", { ...input, image: "pgvector/pgvector:pg16" }),
+      ).rejects.toThrow(/no apps:config/);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("still enforces the databases permission", async () => {
+      const prisma = {
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+      await expect(make(prisma, access).createForImport("u1", input)).rejects.toThrow(/nope/);
+    });
   });
 
   it("uses the chosen environment and validates it, without resolving a default", async () => {
