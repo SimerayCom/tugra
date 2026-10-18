@@ -44,6 +44,18 @@ describe("OpenAPI document", () => {
     expect(doc.paths["/version"]).toBeDefined();
   });
 
+  it("documents the uniform ApiError error contract", () => {
+    expect(doc.components?.schemas?.ApiError).toMatchObject({ type: "object", required: ["statusCode", "error", "message"] });
+    // a secured, path-param operation carries the standard error responses, all referencing ApiError.
+    const op = (doc.paths["/api/v1/apps/{id}"] as Record<string, any>).get;
+    for (const code of ["401", "403", "404", "429", "500"]) {
+      expect(op.responses[code]?.content?.["application/json"]?.schema?.$ref).toBe("#/components/schemas/ApiError");
+    }
+    // success responses are untouched, and /mcp (JSON-RPC) is exempt.
+    expect((doc.paths["/api/v1/apps"] as Record<string, any>).get.responses["200"]).toBeDefined();
+    expect((doc.paths["/api/v1/mcp"] as Record<string, any>).post.responses["500"]).toBeUndefined();
+  });
+
   it("matches the committed openapi.json (drift-guard)", () => {
     if (process.env.UPDATE_OPENAPI) {
       fs.writeFileSync(OPENAPI_PATH, serialized);
