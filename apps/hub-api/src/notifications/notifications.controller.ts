@@ -19,6 +19,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { NotificationsService } from "./notifications.service";
 import { CreateChannelInput, CreateChannelSchema, EVENT_TYPES, UpdateChannelInput, UpdateChannelSchema } from "./dto";
+import { Paginated } from "../common/pagination.decorator";
 
 @ApiTags("channels")
 @ApiSecurity("pat")
@@ -28,6 +29,7 @@ export class NotificationsController {
   constructor(private readonly svc: NotificationsService) {}
 
   @Get()
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.svc.list(user.userId, q);
   }

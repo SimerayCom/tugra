@@ -14,6 +14,7 @@ import {
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { Paginated } from "../common/pagination.decorator";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { parseDate, str } from "../audit/audit.controller";
@@ -46,6 +47,7 @@ export class DatabasesController {
 
   @Get()
   @ApiZodResponse(DatabaseViewSchema, { isArray: true })
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.databases.list(user.userId, q);
   }

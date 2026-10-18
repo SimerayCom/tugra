@@ -20,6 +20,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { SharedVariablesService, SharedVarViewSchema } from "./shared-variables.service";
 import { SetSharedVarInput, SetSharedVarSchema } from "./dto";
+import { Paginated } from "../common/pagination.decorator";
 
 @ApiTags("shared-variables")
 @ApiSecurity("pat")
@@ -31,6 +32,7 @@ export class SharedVariablesController {
   @Get()
   @UseInterceptors(new RedactSecretsInterceptor(["value"]))
   @ApiZodResponse(SharedVarViewSchema, { isArray: true })
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("teamId") teamId: string, @Query("q") q?: string) {
     return this.vars.list(user.userId, teamId, q);
   }

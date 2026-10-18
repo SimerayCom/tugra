@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { Paginated } from "../common/pagination.decorator";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -36,6 +37,7 @@ export class ProjectsController {
 
   @Get()
   @ApiZodResponse(ProjectViewSchema, { isArray: true })
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.projects.list(user.userId, q);
   }

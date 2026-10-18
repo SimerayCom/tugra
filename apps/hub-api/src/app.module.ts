@@ -54,6 +54,7 @@ import { McpModule } from "./mcp/mcp.module";
 import { ApiRateLimitInterceptor } from "./api-tokens/api-rate-limit.interceptor";
 import { AuditContextInterceptor } from "./audit/audit-context.interceptor";
 import { IdempotencyInterceptor } from "./common/idempotency.interceptor";
+import { PaginationInterceptor } from "./common/pagination.interceptor";
 
 @Module({
   imports: [
@@ -110,8 +111,11 @@ import { IdempotencyInterceptor } from "./common/idempotency.interceptor";
     { provide: APP_INTERCEPTOR, useClass: ApiRateLimitInterceptor },
     // Establishes the per-request audit auth-context (pat+tokenId | session) that AuditService.log stamps.
     { provide: APP_INTERCEPTOR, useClass: AuditContextInterceptor },
-    // Idempotency-Key replay for POSTs (innermost — closest to the handler it dedupes).
+    // Idempotency-Key replay for POSTs (closest-but-one to the handler it dedupes).
     { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
+    // Opt-in ?limit/?cursor pagination for @Paginated() list handlers; innermost, so it slices only the
+    // handler's (already-authorized, already-redacted) array output.
+    { provide: APP_INTERCEPTOR, useClass: PaginationInterceptor },
   ],
 })
 export class AppModule {}
