@@ -153,7 +153,8 @@ export type CoexistenceStrategy = "two-box" | "side-by-side" | "swap-proxy";
 
 export interface ImportOptions {
   sourceKind: string;
-  targetServerId: string; // default target; serverMap overrides per source server
+  targetServerId?: string; // default target; serverMap overrides per source server. Unset for a remote-source
+  // dry-run plan, where the target is only chosen at apply time.
   serverMap?: Record<string, string>; // foreign serverRef → Tugra serverId/clusterId
   targetClusterId?: string;
   environmentId?: string;

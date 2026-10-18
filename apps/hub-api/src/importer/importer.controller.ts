@@ -9,7 +9,14 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ImporterService } from "./importer.service";
 import { ImportExecutorService } from "./import-executor.service";
-import { ImportPlanRequestSchema, type ImportPlanRequestInput, ImportApplySchema, type ImportApplyInput } from "./dto";
+import {
+  ImportConnectSchema,
+  type ImportConnectInput,
+  ImportPlanRequestSchema,
+  type ImportPlanRequestInput,
+  ImportApplySchema,
+  type ImportApplyInput,
+} from "./dto";
 
 @ApiTags("import")
 @ApiSecurity("pat")
@@ -21,10 +28,22 @@ export class ImporterController {
     private readonly executor: ImportExecutorService,
   ) {}
 
+  /** Connect an external source PaaS (Coolify): verify reachability + store an encrypted, expiring session. */
+  @Post("connect")
+  @RequireScopes("write")
+  @ApiZodBody(ImportConnectSchema)
+  connect(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportConnectSchema)) body: ImportConnectInput,
+  ) {
+    return this.importer.connect(user.userId, body);
+  }
+
   /**
    * Dry-run import plan: preview the Tugra resources an import would create, with per-item risks. No
    * mutation and no secret VALUES (only env keys/counts). The plan reveals env keys, so it requires the
    * `read:secrets` scope — the same scope as the migrator's discover — overriding the POST "write" default.
+   * Accepts a local server (`serverId`) to adopt, or a connected remote session (`sessionId`).
    */
   @Post("plan")
   @RequireScopes("read:secrets")
