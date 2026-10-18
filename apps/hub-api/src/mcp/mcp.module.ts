@@ -5,6 +5,7 @@ import { ClustersModule } from "../clusters/clusters.module";
 import { DatabasesModule } from "../databases/databases.module";
 import { BackupsModule } from "../backups/backups.module";
 import { MonitorsModule } from "../monitors/monitors.module";
+import { ImporterModule } from "../importer/importer.module";
 import { McpController } from "./mcp.controller";
 import { McpService } from "./mcp.service";
 
@@ -15,7 +16,7 @@ import { McpService } from "./mcp.service";
  * MCP adds no new authorization path; it is a JSON-RPC surface over the existing capabilities.
  */
 @Module({
-  imports: [ApplicationsModule, ServersModule, ClustersModule, DatabasesModule, BackupsModule, MonitorsModule],
+  imports: [ApplicationsModule, ServersModule, ClustersModule, DatabasesModule, BackupsModule, MonitorsModule, ImporterModule],
   controllers: [McpController],
   providers: [McpService],
 })

@@ -7,9 +7,9 @@ function tool(name: string) {
 }
 
 const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain"];
-const WRITE_TOOLS = ["set_env_var", "delete_env_var"];
-const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node"];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply"];
+const WRITE_TOOLS = ["set_env_var", "delete_env_var", "import_connect"];
+const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback"];
 
 describe("MCP_TOOLS catalog", () => {
   it("every tool has a valid scope + name/description/inputSchema", () => {
@@ -28,10 +28,55 @@ describe("MCP_TOOLS catalog", () => {
       else if (WRITE_TOOLS.includes(t.name)) expect(t.scope).toBe("write");
       else expect(["read", "read:secrets"]).toContain(t.scope);
     }
-    // the write-scoped tools are EXACTLY the env-config ones (mirror PUT :id/env's default scope)
+    // the write-scoped tools are EXACTLY the env-config ones + import_connect (store an encrypted session)
     expect(MCP_TOOLS.filter((t) => t.scope === "write").map((t) => t.name).sort()).toEqual([...WRITE_TOOLS].sort());
     // the destructive/admin tier must not be reachable with a mere deploy/write token
     for (const name of ADMIN_TOOLS) expect(tool(name).scope).toBe("admin");
+  });
+
+  describe("mutate: fleet import (Phase2)", () => {
+    const mk = () => {
+      const importer = { connect: jest.fn().mockResolvedValue({ sessionId: "s1", expiresAt: new Date(0) }), plan: jest.fn().mockResolvedValue({ planHash: "h" }) };
+      const executor = { apply: jest.fn().mockResolvedValue({ opId: "op1" }), status: jest.fn().mockResolvedValue({ id: "op1" }), rollback: jest.fn().mockResolvedValue({ id: "op1" }) };
+      return { deps: { importer, executor } as unknown as McpDeps, importer, executor };
+    };
+
+    it("import_connect delegates to importer.connect and marks the token sensitive (redacted from audit)", async () => {
+      const { deps, importer } = mk();
+      const res = await tool("import_connect").execute(deps, "u1", { sourceKind: "coolify", teamId: "t1", baseUrl: "https://c.example.com", token: "TOK" });
+      expect(importer.connect).toHaveBeenCalledWith("u1", { sourceKind: "coolify", teamId: "t1", baseUrl: "https://c.example.com", token: "TOK" });
+      expect(res).toMatchObject({ sessionId: "s1" });
+      expect(tool("import_connect").sensitiveArgs).toContain("token");
+    });
+
+    it("import_plan routes local-docker vs coolify, rejecting an unknown source", async () => {
+      const { deps, importer } = mk();
+      await tool("import_plan").execute(deps, "u1", { sourceKind: "local-docker", serverId: "srv1" });
+      expect(importer.plan).toHaveBeenCalledWith("u1", { sourceKind: "local-docker", serverId: "srv1" });
+      await tool("import_plan").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1" });
+      expect(importer.plan).toHaveBeenCalledWith("u1", { sourceKind: "coolify", sessionId: "s1" });
+      await expect(Promise.resolve().then(() => tool("import_plan").execute(deps, "u1", { sourceKind: "nope" }))).rejects.toThrow(/local-docker.*coolify/);
+    });
+
+    it("import_apply binds the planHash + target to executor.apply", async () => {
+      const { deps, executor } = mk();
+      await tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h" });
+      expect(executor.apply).toHaveBeenCalledWith("u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", environmentId: undefined, planHash: "h" });
+    });
+
+    it("import_status (read) delegates to executor.status", async () => {
+      const { deps, executor } = mk();
+      expect(tool("import_status").scope).toBe("read");
+      await tool("import_status").execute(deps, "u1", { opId: "op1" });
+      expect(executor.status).toHaveBeenCalledWith("u1", "op1");
+    });
+
+    it("import_rollback requires confirmName to equal the opId", async () => {
+      const { deps, executor } = mk();
+      await expect(Promise.resolve().then(() => tool("import_rollback").execute(deps, "u1", { opId: "op1" }))).rejects.toThrow(/confirmName/);
+      await tool("import_rollback").execute(deps, "u1", { opId: "op1", confirmName: "op1" });
+      expect(executor.rollback).toHaveBeenCalledWith("u1", "op1");
+    });
   });
 
   describe("mutate: application lifecycle (Phase2a)", () => {

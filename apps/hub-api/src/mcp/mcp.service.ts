@@ -8,6 +8,8 @@ import { SwarmService } from "../clusters/swarm.service";
 import { DatabasesService } from "../databases/databases.service";
 import { BackupsService } from "../backups/backups.service";
 import { MonitorsService } from "../monitors/monitors.service";
+import { ImporterService } from "../importer/importer.service";
+import { ImportExecutorService } from "../importer/import-executor.service";
 import { MCP_TOOLS, type McpDeps, type McpTool } from "./mcp-tools";
 import { sanitizeToolResult } from "./tool-result-sanitizer";
 
@@ -48,9 +50,11 @@ export class McpService {
     databases: DatabasesService,
     backups: BackupsService,
     monitors: MonitorsService,
+    importer: ImporterService,
+    executor: ImportExecutorService,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, servers, clusters, swarm, databases, backups, monitors };
+    this.deps = { apps, servers, clusters, swarm, databases, backups, monitors, importer, executor };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */
