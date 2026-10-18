@@ -75,8 +75,38 @@ describe("CoolifySource", () => {
     });
   });
 
-  it("fetchSecrets is not wired yet (throws clearly)", async () => {
-    await expect(new CoolifySource(new FakeClient({})).fetchSecrets("db-1")).rejects.toThrow(/not wired/);
-    expect(new CoolifySource(new FakeClient({})).capabilities()).toEqual({ apiRead: true, sshRead: false, dbDataDump: false, volumeRead: false });
+  describe("fetchSecrets (read:sensitive env resolution)", () => {
+    it("returns resolved values (real_value preferred) and reports unresolvable keys", async () => {
+      const client = new FakeClient({
+        "/applications/app-1/envs": [
+          { key: "PLAIN", value: "v1" },
+          { key: "SHARED", is_shared: true, value: "{{team.X}}", real_value: "resolved-x" }, // real_value wins
+          { key: "LOCKED", is_shown_once: true }, // no value exposed even to sensitive tokens → unresolved
+          { key: "PLAIN", value: "preview-copy", is_preview: true }, // preview twin → skipped
+        ],
+      });
+      const res = await new CoolifySource(client).fetchSecrets("app-1");
+      expect(res.values).toEqual({ PLAIN: "v1", SHARED: "resolved-x" });
+      expect(res.unresolved.map((e) => e.key)).toEqual(["LOCKED"]);
+    });
+
+    it("keeps a dangerous key like __proto__ as a real entry (null-proto values), never silently dropped", async () => {
+      const client = new FakeClient({ "/applications/app-1/envs": [{ key: "__proto__", real_value: "x" }, { key: "NORMAL", value: "y" }] });
+      const res = await new CoolifySource(client).fetchSecrets("app-1");
+      expect(Object.keys(res.values).sort()).toEqual(["NORMAL", "__proto__"]);
+      expect(res.values["__proto__"]).toBe("x");
+      expect(res.unresolved).toEqual([]);
+    });
+
+    it("reports every key unresolved when the token lacks read:sensitive (no values returned)", async () => {
+      const client = new FakeClient({ "/applications/app-1/envs": [{ key: "A" }, { key: "B", is_shared: true }] });
+      const res = await new CoolifySource(client).fetchSecrets("app-1");
+      expect(res.values).toEqual({});
+      expect(res.unresolved.map((e) => e.key).sort()).toEqual(["A", "B"]);
+    });
+
+    it("capabilities are read-only (api)", () => {
+      expect(new CoolifySource(new FakeClient({})).capabilities()).toEqual({ apiRead: true, sshRead: false, dbDataDump: false, volumeRead: false });
+    });
   });
 });
