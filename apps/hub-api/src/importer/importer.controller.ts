@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -8,14 +8,18 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ImporterService } from "./importer.service";
-import { ImportPlanRequestSchema, type ImportPlanRequestInput } from "./dto";
+import { ImportExecutorService } from "./import-executor.service";
+import { ImportPlanRequestSchema, type ImportPlanRequestInput, ImportApplySchema, type ImportApplyInput } from "./dto";
 
 @ApiTags("import")
 @ApiSecurity("pat")
 @Controller("import")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class ImporterController {
-  constructor(private readonly importer: ImporterService) {}
+  constructor(
+    private readonly importer: ImporterService,
+    private readonly executor: ImportExecutorService,
+  ) {}
 
   /**
    * Dry-run import plan: preview the Tugra resources an import would create, with per-item risks. No
@@ -30,5 +34,38 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportPlanRequestSchema)) body: ImportPlanRequestInput,
   ) {
     return this.importer.plan(user.userId, body);
+  }
+
+  /** Apply a reviewed plan (bulk-adopts the host's standalone containers). Deploy-tier: it takes over
+   *  running workloads. `planHash` must match a fresh re-plan or the apply is refused (409). */
+  @Post("apply")
+  @RequireScopes("deploy")
+  @ApiZodBody(ImportApplySchema)
+  apply(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportApplySchema)) body: ImportApplyInput,
+  ) {
+    return this.executor.apply(user.userId, body);
+  }
+
+  /** Poll an import operation's progress (read-only). */
+  @Get("operations/:opId")
+  status(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
+    return this.executor.status(user.userId, opId);
+  }
+
+  /** Request cancellation of an in-flight import (stops launching new adoptions; running ones finish). */
+  @Post("operations/:opId/cancel")
+  @RequireScopes("deploy")
+  cancel(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
+    return this.executor.cancel(user.userId, opId);
+  }
+
+  /** Undo an import's completed adoptions (renames each container back + drops its app record). Admin-tier:
+   *  destructive. */
+  @Post("operations/:opId/rollback")
+  @RequireScopes("admin")
+  rollback(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
+    return this.executor.rollback(user.userId, opId);
   }
 }

@@ -661,6 +661,7 @@ enum BulkTaskStatus {
   ROLLED_BACK // a completed item whose created resources were undone by a rollback
   FAILED_VERIFY // the step ran but a post-step verification (row counts, health) failed
   AWAITING_CUTOVER // staged and ready, waiting for an explicit cutover step
+  CANCELLED // a not-yet-started item abandoned because the operation was cancelled
 }
 
 model BulkOperation {
@@ -673,6 +674,9 @@ model BulkOperation {
   kind      String     @default("command")
   planId    String? // the ImportPlan (or similar) this operation executes, when applicable
   meta      Json? // operation-level metadata (secret-free), e.g. the import source + target server
+  // Cooperative cancel: set by a cancel request; the in-flight fan-out reads it before starting each
+  // remaining task and stops launching new ones (a task already RUNNING is left to finish).
+  cancelRequestedAt DateTime?
   tasks     BulkTask[]
   createdAt DateTime   @default(now())
 }
@@ -697,6 +701,7 @@ model BulkTask {
   startedAt    DateTime?
   finishedAt   DateTime?
 
+  @@unique([opId, itemRef]) // idempotency: one task per plan item per operation (legacy null itemRefs are distinct)
   @@index([opId])
 }
 

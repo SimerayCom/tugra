@@ -3,8 +3,10 @@ import {
   buildDiscoverScript,
   buildInspectOneScript,
   buildRenameScript,
+  buildUnadoptScript,
   parseDiscovered,
   CONTAINER_REF_RE,
+  CONTAINER_GONE_MARKER,
   NO_DOCKER_MARKER,
 } from "./discover-script";
 
@@ -52,6 +54,14 @@ describe("discover-script", () => {
       expect(buildRenameScript("web", "tugra_clx1")).toBe("docker rename web tugra_clx1");
       expect(() => buildRenameScript("ok", "bad name")).toThrow(/invalid/);
       expect(() => buildRenameScript("bad;name", "ok")).toThrow(/invalid/);
+    });
+    it("buildUnadoptScript renames only if the container exists, else marks it gone (both validated)", () => {
+      const s = buildUnadoptScript("tugra_clx1", "web");
+      expect(s).toContain("docker container inspect tugra_clx1");
+      expect(s).toContain("docker rename tugra_clx1 web");
+      expect(s).toContain(`echo ${CONTAINER_GONE_MARKER}`);
+      expect(() => buildUnadoptScript("ok", "bad name")).toThrow(/invalid/);
+      expect(() => buildUnadoptScript("a; rm -rf /", "ok")).toThrow(/invalid/);
     });
   });
 
