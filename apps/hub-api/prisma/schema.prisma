@@ -657,12 +657,22 @@ enum BulkTaskStatus {
   DONE
   FAILED
   SKIPPED
+  // Added for multi-step orchestrated operations (e.g. the importer executor):
+  ROLLED_BACK // a completed item whose created resources were undone by a rollback
+  FAILED_VERIFY // the step ran but a post-step verification (row counts, health) failed
+  AWAITING_CUTOVER // staged and ready, waiting for an explicit cutover step
 }
 
 model BulkOperation {
-  id        String     @id @default(cuid())
-  actorId   String
-  command   String
+  id      String @id @default(cuid())
+  actorId String
+  // `command` is the raw fan-out command for kind="command" (the original/only use); orchestrated kinds
+  // (e.g. kind="import") leave it empty and describe the work on the tasks instead.
+  command String
+  // Generalization for orchestrated operations. kind="command" is the legacy fan-out path, unchanged.
+  kind      String     @default("command")
+  planId    String? // the ImportPlan (or similar) this operation executes, when applicable
+  meta      Json? // operation-level metadata (secret-free), e.g. the import source + target server
   tasks     BulkTask[]
   createdAt DateTime   @default(now())
 }
@@ -675,8 +685,17 @@ model BulkTask {
   status     BulkTaskStatus @default(PENDING)
   exitCode   Int?
   output     String?
-  startedAt  DateTime?
-  finishedAt DateTime?
+  // Generalization: a task can be one typed item of an orchestrated plan rather than a shell command.
+  kind         String   @default("command") // "command" (legacy) | "app" | "database" | "volume" | ...
+  itemRef      String? // the plan item this task realizes (idempotency key on re-run)
+  resourceType String? // the Tugra resource this task created, for rollback (e.g. "database")
+  resourceId   String? // its id
+  result       Json? // structured result (secret-free)
+  steps        Json? // ordered [{ name, status, startedAt?, finishedAt?, detail? }] for multi-step items
+  dependsOn    String[] @default([]) // itemRefs that must finish first (topological ordering)
+  compensation Json? // how to undo this task's effect on rollback
+  startedAt    DateTime?
+  finishedAt   DateTime?
 
   @@index([opId])
 }
