@@ -50,7 +50,7 @@ export class ImportExecutorService {
     }
     await this.assertNoInflight(input.serverId);
     const seeds = seedTasks(plan, fleet);
-    const op = await this.createOp(userId, "local-docker", input.serverId, plan.planHash);
+    const op = await this.createOp(userId, "local-docker", input.serverId, plan.planHash, { plan });
 
     const byId = new Map<string, TaskSeed>();
     for (const s of seeds) {
@@ -90,7 +90,7 @@ export class ImportExecutorService {
       await this.access.requirePermission(userId, server.teamId, "apps:config");
       await this.assertNoInflight(input.targetServerId);
 
-      const op = await this.createOp(userId, "coolify", input.targetServerId, plan.planHash, { sessionId: input.sessionId });
+      const op = await this.createOp(userId, "coolify", input.targetServerId, plan.planHash, { sessionId: input.sessionId, plan });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
       const already = await this.alreadyImported(input.targetServerId, plan.items.map((i) => i.itemRef), op.id);
@@ -313,8 +313,9 @@ export class ImportExecutorService {
   }
 }
 
-/** Shape the owned operation into a secret-free status view (internal compensation/meta are not exposed). */
-function toStatusView(op: {
+/** Shape the owned operation into a secret-free status view (internal compensation is not exposed). Includes
+ *  the persisted plan snapshot so a failed/partial import's full picture survives for a post-mortem. */
+export function toStatusView(op: {
   id: string;
   planId: string | null;
   meta: unknown;
@@ -334,11 +335,15 @@ function toStatusView(op: {
 }) {
   const statuses = op.tasks.map((t) => t.status as TaskStatus);
   const count = (s: TaskStatus) => statuses.filter((x) => x === s).length;
+  const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; plan?: unknown }) : {};
   return {
     id: op.id,
-    sourceKind: typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string }).sourceKind ?? null : null,
-    serverId: typeof op.meta === "object" && op.meta ? (op.meta as { serverId?: string }).serverId ?? null : null,
+    sourceKind: meta.sourceKind ?? null,
+    serverId: meta.serverId ?? null,
     planHash: op.planId,
+    // The secret-free plan captured at apply time — the durable record of what the import discovered +
+    // intended, independent of any later re-discovery. Null for legacy ops that predate this.
+    plan: meta.plan ?? null,
     status: deriveOpStatus(statuses),
     cancelRequested: !!op.cancelRequestedAt,
     createdAt: op.createdAt,

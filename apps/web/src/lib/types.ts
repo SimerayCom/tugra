@@ -630,6 +630,8 @@ export interface ImportOperation {
   createdAt: string;
   totals: { total: number; done: number; failed: number; skipped: number; running: number; pending: number; cancelled: number; rolledBack: number };
   tasks: ImportOpTask[];
+  /** The secret-free plan captured at apply time — the durable record of what the import found + intended. */
+  plan?: ImportPlan | null;
 }
 
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
