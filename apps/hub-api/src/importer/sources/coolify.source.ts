@@ -1,4 +1,4 @@
-import type { ForeignFleet } from "../foreign-fleet";
+import type { ForeignEnv, ForeignFleet } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets } from "../import-source";
 import {
   buildCoolifyFleet,
@@ -92,9 +92,28 @@ export class CoolifySource implements ImportSource {
     return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, volumesByResource, warnings });
   }
 
-  async fetchSecrets(_ref: string): Promise<FetchedSecrets> {
-    // Needs a read:sensitive token + the encrypted-session store — arrives with the executor wiring (S2).
-    throw new Error("coolify fetchSecrets is not wired yet (planned for the Phase2 executor slice)");
+  /**
+   * Resolve one application's REAL environment values at apply time (requires a read:sensitive token). Coolify
+   * returns `value` (+ `real_value`, with shared/magic {{refs}} already expanded) only to a sensitive token;
+   * otherwise those fields are absent and the key is reported `unresolved` so the executor fails loud rather
+   * than deploying with a missing value. Preview twins are skipped. These values are consumed SERVER-SIDE
+   * only — never returned to the client.
+   */
+  async fetchSecrets(ref: string): Promise<FetchedSecrets> {
+    const raw = await this.client.get<unknown>(`/applications/${ref}/envs`);
+    const envs = Array.isArray(raw) ? (raw as CoolifyEnv[]) : [];
+    const values: Record<string, string> = Object.create(null); // null-proto: a key like "__proto__" is a real entry, not the setter
+    const unresolved: ForeignEnv[] = [];
+    for (const e of envs) {
+      if (!e || typeof e.key !== "string" || e.is_preview === true) continue;
+      const v = e.real_value ?? e.value; // real_value resolves shared/magic references
+      if (typeof v === "string") {
+        values[e.key] = v;
+      } else {
+        unresolved.push({ key: e.key, secret: true, ref: e.is_shared ? { type: "shared" } : e.is_coolify ? { type: "magic" } : undefined });
+      }
+    }
+    return { values, unresolved };
   }
 
   async close(): Promise<void> {}

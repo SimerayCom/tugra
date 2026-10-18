@@ -74,6 +74,8 @@ export interface CoolifyEnv {
   is_shared?: boolean;
   is_coolify?: boolean; // SERVICE_* magic var
   is_preview?: boolean; // preview-deployment twin — the /envs list merges these in; must be filtered out
+  value?: string; // read:sensitive-gated — present only when resolving secrets (fetchSecrets), never in discover
+  real_value?: string; // read:sensitive-gated — value with shared/magic {{refs}} resolved
 }
 export interface CoolifyVolume {
   name?: string | null;
