@@ -15,7 +15,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "generate:api": "openapi-typescript ../../apps/hub-api/openapi.json -o src/generated/schema.ts"
   },
   "dependencies": {
     "commander": "^12.1.0"
@@ -24,6 +25,7 @@
     "@types/jest": "^29.5.14",
     "@types/node": "^20.0.0",
     "jest": "^29.7.0",
+    "openapi-typescript": "^7.13.0",
     "ts-jest": "^29.2.5",
     "typescript": "^5.7.0"
   }
