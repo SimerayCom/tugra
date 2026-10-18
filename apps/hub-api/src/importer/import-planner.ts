@@ -48,9 +48,10 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
     volumes: volItems.size,
     blockers: items.reduce((n, it) => n + it.risks.filter((r) => r.level === "blocker").length, 0),
   };
-  // Deterministic: depends only on the plan content + options (no time/random).
+  // Deterministic: depends only on the plan content + options (no time/random). Warnings are advisory and
+  // intentionally excluded from the hash — they must not perturb the executor's confirmToken.
   const planHash = createHash("sha256").update(JSON.stringify({ items, options })).digest("hex").slice(0, 32);
-  return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, planHash };
+  return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, warnings: fleet.warnings, planHash };
 }
 
 function planDatabase(db: ForeignDb): ImportPlanItem {

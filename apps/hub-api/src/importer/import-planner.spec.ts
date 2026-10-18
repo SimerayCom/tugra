@@ -80,4 +80,11 @@ describe("planImport", () => {
     expect(plan.planHash).toMatch(/^[a-f0-9]{32}$/);
     expect(planImport(fleet, opts).planHash).toBe(plan.planHash);
   });
+
+  it("carries source-level warnings through to the plan, but never into the planHash", () => {
+    expect(plan.warnings).toEqual([]);
+    const withWarn = planImport({ ...fleet, warnings: ["3 compose-managed container(s) skipped"] }, opts);
+    expect(withWarn.warnings).toEqual(["3 compose-managed container(s) skipped"]);
+    expect(withWarn.planHash).toBe(plan.planHash); // advisory warnings must not perturb the hash
+  });
 });
