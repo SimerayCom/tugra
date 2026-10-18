@@ -94,6 +94,28 @@ a retry with the same key replays that exact status + body instead of re-running
 arrives while the first is still in flight gets `409`. Keys are scoped to your account + the method + the path.
 It's opt-in (no header → normal behaviour) and fails open (a Redis outage just runs the request).
 
+## Pagination
+
+Collection list endpoints (`GET /apps`, `/servers`, `/databases`, `/projects`, `/teams`, `/monitors`,
+`/channels`, `/registries`, `/git-sources`, `/cloud-credentials`, `/dns-credentials`, `/backup-destinations`,
+`/shared-variables`, `/saved-views`, `/apps/domains`) accept an **opt-in** `?limit`:
+
+- Without `?limit` the endpoint returns the full array exactly as before — pagination changes nothing.
+- With `?limit=N` (1–200; larger is clamped) the response is the first `N` items, plus headers:
+  - `X-Total-Count` — the total number of items you can see.
+  - `X-Limit` — the effective page size (so you can tell a clamp happened).
+  - `X-Next-Cursor` — an **opaque** cursor for the next page, present only when more items remain.
+- Pass it back as `?cursor=<value>` (together with the same `?limit`) to fetch the next page. Combine with
+  `?q=` to paginate a filtered list.
+
+The body shape never changes — it's always a bare array — so this is backward-compatible. An invalid
+`?limit` (not a positive integer) is ignored and the full list is returned; the absence of `X-Limit` tells
+you pagination was not applied. The cursor is a **positional offset** and is treated as opaque (its format
+may change): it is a best-effort snapshot, not a stable keyset. If items are added or removed between pages —
+or when several rows share the same sort timestamp — a page boundary can skip or repeat an item, so do not
+assume exact continuity. (A future release may add keyset cursors for exact continuity.) Pagination bounds the **response size**, not the server's work —
+the full set is still read and authorized in memory — so it is not a substitute for rate limiting.
+
 ## Routing notes
 
 The `/api/v1` prefix applies to all REST routes except a few bare, unversioned endpoints —

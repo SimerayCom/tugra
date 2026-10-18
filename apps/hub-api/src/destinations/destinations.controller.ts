@@ -16,6 +16,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { Paginated } from "../common/pagination.decorator";
 import { DestinationsService, DestinationViewSchema } from "./destinations.service";
 import { CreateDestinationInput, CreateDestinationSchema } from "./dto";
 
@@ -28,6 +29,7 @@ export class DestinationsController {
 
   @Get()
   @ApiZodResponse(DestinationViewSchema, { isArray: true })
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.destinations.list(user.userId, q);
   }

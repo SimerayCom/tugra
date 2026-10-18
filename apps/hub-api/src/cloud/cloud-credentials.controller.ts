@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, UseGu
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { Paginated } from "../common/pagination.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
@@ -17,6 +18,7 @@ export class CloudCredentialsController {
   constructor(private readonly svc: CloudCredentialsService) {}
 
   @Get()
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.svc.list(user.userId, q);
   }

@@ -14,6 +14,7 @@ import {
 import { Role } from "@prisma/client";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
+import { Paginated } from "../common/pagination.decorator";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -46,6 +47,7 @@ export class TeamsController {
   constructor(private readonly teams: TeamsService) {}
 
   @Get()
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.teams.list(user.userId, q);
   }

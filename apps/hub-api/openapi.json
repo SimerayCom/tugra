@@ -1226,11 +1226,32 @@
           },
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -2164,11 +2185,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -2475,11 +2517,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -3601,11 +3664,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -5440,11 +5524,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -9694,11 +9799,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -11304,11 +11430,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -11498,11 +11645,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -13740,11 +13908,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -14860,11 +15049,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -15697,11 +15907,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -15818,11 +16049,32 @@
           },
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -16000,11 +16252,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -16228,11 +16501,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {
@@ -17232,11 +17526,32 @@
         "parameters": [
           {
             "name": "q",
-            "required": true,
+            "required": false,
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Case-insensitive substring filter over the list's non-secret name/label fields."
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "description": "Opt-in pagination: max items to return (1–200; larger is clamped). Omit for the full list."
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from a previous page's `X-Next-Cursor` response header."
           }
         ],
         "responses": {

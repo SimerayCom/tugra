@@ -17,6 +17,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { Paginated } from "../common/pagination.decorator";
 import { MonitorsService, MonitorViewSchema } from "./monitors.service";
 import {
   BulkMonitorChannelsInput,
@@ -36,6 +37,7 @@ export class MonitorsController {
 
   @Get()
   @ApiZodResponse(MonitorViewSchema, { isArray: true })
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.monitors.list(user.userId, q);
   }

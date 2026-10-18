@@ -17,6 +17,7 @@ import {
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { Paginated } from "../common/pagination.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { parseDate, str } from "../audit/audit.controller";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -83,6 +84,7 @@ export class ApplicationsController {
 
   @Get()
   @ApiZodResponse(AppViewSchema, { isArray: true })
+  @Paginated()
   list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.apps.list(user.userId, q);
   }
@@ -108,6 +110,7 @@ export class ApplicationsController {
   // Likewise precedes `@Get(":id")` — central domain + live SSL overview.
   @Get("domains")
   @ApiZodResponse(DomainViewSchema, { isArray: true })
+  @Paginated()
   listDomains(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
     return this.apps.listDomains(user.userId, q);
   }

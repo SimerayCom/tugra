@@ -22,6 +22,7 @@ interface ReqLike {
 }
 import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { Paginated } from "../common/pagination.decorator";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { parseDate, str } from "../audit/audit.controller";
@@ -66,6 +67,7 @@ export class ServersController {
 
   @Get()
   @ApiZodResponse(ServerViewSchema, { isArray: true })
+  @Paginated()
   list(
     @CurrentUser() user: AuthUser,
     @Query("teamId") teamId?: string,

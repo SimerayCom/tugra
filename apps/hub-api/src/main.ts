@@ -10,7 +10,19 @@ async function bootstrap() {
   configureApp(app); // /api/v1 prefix (+ webhook/oauth/health/version exemptions)
   // Mount Swagger UI (/api/docs) + the JSON contract (/api/v1/openapi.json) after the prefix is applied.
   setupOpenApi(app);
-  app.enableCors();
+  // Expose the custom response headers so browser (cross-origin) clients can read them; origin/credentials
+  // behaviour is unchanged (bare defaults). Covers pagination + the existing per-PAT rate-limit headers.
+  app.enableCors({
+    exposedHeaders: [
+      "X-Total-Count",
+      "X-Limit",
+      "X-Next-Cursor",
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset",
+      "Retry-After",
+    ],
+  });
   const port = process.env.HUB_PORT ? Number(process.env.HUB_PORT) : 3000;
   await app.listen(port);
   // eslint-disable-next-line no-console
