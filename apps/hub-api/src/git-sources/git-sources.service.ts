@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { filterByQuery } from "../common/query-filter";
 import type { CreateGitSourceInput } from "./dto";
 
 const GH_API = "https://api.github.com";
@@ -54,7 +55,7 @@ export class GitSourcesService {
     };
   }
 
-  async list(userId: string): Promise<GitSourceView[]> {
+  async list(userId: string, q?: string): Promise<GitSourceView[]> {
     const permsByTeam = await this.access.permissionsByTeam(userId);
     const teamIds = [...permsByTeam.keys()];
     if (!teamIds.length) return [];
@@ -62,7 +63,8 @@ export class GitSourcesService {
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((s) => this.view(s, permsByTeam.get(s.teamId)?.has("integrations") ?? false));
+    const views = rows.map((s) => this.view(s, permsByTeam.get(s.teamId)?.has("integrations") ?? false));
+    return filterByQuery(views, q, (g) => [g.name, g.provider, g.appSlug, g.htmlUrl]);
   }
 
   async create(userId: string, dto: CreateGitSourceInput): Promise<GitSourceView> {

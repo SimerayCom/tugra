@@ -1977,8 +1977,10 @@ export class ApplicationsService {
   }
 
   /** Every app domain across the user's teams + a live SSL status probe. */
-  async listDomains(userId: string): Promise<DomainView[]> {
-    const apps = (await this.list(userId)).filter((a) => a.domain);
+  async listDomains(userId: string, q?: string): Promise<DomainView[]> {
+    const withDomain = (await this.list(userId)).filter((a) => a.domain);
+    // Apply `?q` over domain-level fields BEFORE the live per-domain SSL probe, so only matches are probed.
+    const apps = filterByQuery(withDomain, q, (a) => [a.name, a.domain, a.url, a.domainRedirect]);
     return Promise.all(
       apps.map(async (a) => ({
         id: a.id,

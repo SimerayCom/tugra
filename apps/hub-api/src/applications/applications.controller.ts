@@ -108,8 +108,8 @@ export class ApplicationsController {
   // Likewise precedes `@Get(":id")` — central domain + live SSL overview.
   @Get("domains")
   @ApiZodResponse(DomainViewSchema, { isArray: true })
-  listDomains(@CurrentUser() user: AuthUser) {
-    return this.apps.listDomains(user.userId);
+  listDomains(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.apps.listDomains(user.userId, q);
   }
 
   @Post("templates/:slug")

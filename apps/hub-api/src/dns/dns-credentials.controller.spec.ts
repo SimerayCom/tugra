@@ -19,7 +19,7 @@ describe("DnsCredentialsController", () => {
   it("delegates list/create/update/test/remove to the service with the token-resolved user", async () => {
     const { ctrl, svc } = make();
     await ctrl.list(USER);
-    expect(svc.list).toHaveBeenCalledWith("u1");
+    expect(svc.list).toHaveBeenCalledWith("u1", undefined); // q is the optional ?q filter (absent here)
     await ctrl.create(USER, { teamId: "t1", name: "cf", provider: "cloudflare", apiToken: "x" } as never);
     expect(svc.create).toHaveBeenCalledWith("u1", expect.objectContaining({ provider: "cloudflare" }));
     await ctrl.update(USER, "dc1", { name: "r" } as never);

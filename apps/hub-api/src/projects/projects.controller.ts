@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
@@ -35,8 +36,8 @@ export class ProjectsController {
 
   @Get()
   @ApiZodResponse(ProjectViewSchema, { isArray: true })
-  list(@CurrentUser() user: AuthUser) {
-    return this.projects.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.projects.list(user.userId, q);
   }
 
   @Post()

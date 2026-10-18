@@ -36,8 +36,8 @@ export class MonitorsController {
 
   @Get()
   @ApiZodResponse(MonitorViewSchema, { isArray: true })
-  list(@CurrentUser() user: AuthUser) {
-    return this.monitors.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.monitors.list(user.userId, q);
   }
 
   @Post()

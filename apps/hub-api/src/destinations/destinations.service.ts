@@ -9,6 +9,7 @@ import { BackupDestination, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { filterByQuery } from "../common/query-filter";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { buildDestinationTestScript } from "../backups/backup-script";
@@ -95,7 +96,7 @@ export class DestinationsService {
     return this.view(dest, role, true);
   }
 
-  async list(userId: string): Promise<DestinationView[]> {
+  async list(userId: string, q?: string): Promise<DestinationView[]> {
     const [roleByTeam, permsByTeam] = await Promise.all([
       this.access.roleByTeam(userId),
       this.access.permissionsByTeam(userId),
@@ -106,9 +107,10 @@ export class DestinationsService {
       where: { teamId: { in: ids } },
       orderBy: { createdAt: "desc" },
     });
-    return dests.map((d) =>
+    const views = dests.map((d) =>
       this.view(d, roleByTeam.get(d.teamId)!, permsByTeam.get(d.teamId)?.has("integrations") ?? false),
     );
+    return filterByQuery(views, q, (d) => [d.name, d.type, d.s3Bucket, d.s3Region, d.s3Endpoint, d.s3Prefix]);
   }
 
   async get(userId: string, id: string): Promise<DestinationView> {

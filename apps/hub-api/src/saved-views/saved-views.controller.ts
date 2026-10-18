@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
@@ -26,8 +27,8 @@ export class SavedViewsController {
   constructor(private readonly views: SavedViewsService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser) {
-    return this.views.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.views.list(user.userId, q);
   }
 
   @Post()

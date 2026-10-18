@@ -16,6 +16,7 @@ import { teamInviteEmail } from "../mail/templates";
 import { TeamAccessService } from "../common/team-access.service";
 import { TeamDefaultsService } from "./team-defaults.service";
 import { webBaseUrl } from "../common/web-url";
+import { filterByQuery } from "../common/query-filter";
 
 const MANAGE: Role[] = [Role.OWNER, Role.ADMIN];
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -74,7 +75,7 @@ export class TeamsService {
     private readonly config: ConfigService,
   ) {}
 
-  async list(userId: string): Promise<TeamView[]> {
+  async list(userId: string, q?: string): Promise<TeamView[]> {
     const roles = await this.access.roleByTeam(userId);
     const ids = [...roles.keys()];
     if (!ids.length) return [];
@@ -83,12 +84,13 @@ export class TeamsService {
       include: { _count: { select: { memberships: true } } },
       orderBy: { createdAt: "asc" },
     });
-    return teams.map((t) => ({
+    const views = teams.map((t) => ({
       id: t.id,
       name: t.name,
       role: roles.get(t.id)!,
       memberCount: t._count.memberships,
     }));
+    return filterByQuery(views, q, (t) => [t.name, t.role]);
   }
 
   async get(userId: string, id: string): Promise<TeamView> {

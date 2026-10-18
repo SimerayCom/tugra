@@ -2161,7 +2161,16 @@
     "/api/v1/channels": {
       "get": {
         "operationId": "NotificationsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -2463,7 +2472,16 @@
     "/api/v1/monitors": {
       "get": {
         "operationId": "MonitorsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -5419,7 +5437,16 @@
     "/api/v1/apps/domains": {
       "get": {
         "operationId": "ApplicationsController_listDomains",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -9664,7 +9691,16 @@
     "/api/v1/git-sources": {
       "get": {
         "operationId": "GitSourcesController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -11265,7 +11301,16 @@
     "/api/v1/dns-credentials": {
       "get": {
         "operationId": "DnsCredentialsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -13692,7 +13737,16 @@
     "/api/v1/backup-destinations": {
       "get": {
         "operationId": "DestinationsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -14803,7 +14857,16 @@
     "/api/v1/cloud-credentials": {
       "get": {
         "operationId": "CloudCredentialsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -15631,7 +15694,16 @@
     "/api/v1/saved-views": {
       "get": {
         "operationId": "SavedViewsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -15738,6 +15810,14 @@
         "parameters": [
           {
             "name": "teamId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
             "required": true,
             "in": "query",
             "schema": {
@@ -15917,7 +15997,16 @@
     "/api/v1/registries": {
       "get": {
         "operationId": "RegistriesController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -16136,7 +16225,16 @@
     "/api/v1/projects": {
       "get": {
         "operationId": "ProjectsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -17131,7 +17229,16 @@
     "/api/v1/teams": {
       "get": {
         "operationId": "TeamsController_list",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""

@@ -72,6 +72,35 @@ describe("SharedVariablesService", () => {
     expect(list[0].canWrite).toBe(true);
   });
 
+  describe("list(?q)", () => {
+    // A WRITER (ALL_PERMS) so the decrypted `value` is actually populated in the view — the exact condition
+    // under which a value-oracle would be possible if `value` were searchable.
+    const twoVars = () => {
+      const prisma = {
+        sharedVariable: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: "v1", teamId: "t1", key: "FOO", valueEnc: "enc:bar", createdAt: new Date() },
+            { id: "v2", teamId: "t1", key: "DB_PASSWORD", valueEnc: "enc:supersecret", createdAt: new Date() },
+          ]),
+        },
+      } as unknown as PrismaService;
+      const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])) } as unknown as TeamAccessService;
+      return make(prisma, access);
+    };
+
+    it("filters by KEY (case-insensitive)", async () => {
+      expect((await twoVars().list("u1", "t1", "db")).map((v) => v.key)).toEqual(["DB_PASSWORD"]);
+    });
+
+    it("NEVER matches on the decrypted value — a query equal to a secret value returns nothing", async () => {
+      expect(await twoVars().list("u1", "t1", "supersecret")).toEqual([]);
+    });
+
+    it("returns all when q is absent (non-breaking)", async () => {
+      expect((await twoVars().list("u1", "t1")).length).toBe(2);
+    });
+  });
+
   it("resolvedMap decrypts all team variables", async () => {
     const prisma = {
       sharedVariable: { findMany: jest.fn().mockResolvedValue([

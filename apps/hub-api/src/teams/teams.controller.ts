@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { Role } from "@prisma/client";
@@ -45,8 +46,8 @@ export class TeamsController {
   constructor(private readonly teams: TeamsService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser) {
-    return this.teams.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.teams.list(user.userId, q);
   }
 
   @Post()

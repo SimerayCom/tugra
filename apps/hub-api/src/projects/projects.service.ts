@@ -10,6 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessProject } from "../common/team-access.service";
 import { appUrl } from "../common/app-url";
+import { filterByQuery } from "../common/query-filter";
 
 export const ProjectResourceSchema = z.object({
   id: z.string(),
@@ -55,7 +56,7 @@ export class ProjectsService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(userId: string): Promise<ProjectView[]> {
+  async list(userId: string, q?: string): Promise<ProjectView[]> {
     const access = await this.access.accessByTeam(userId);
     const perms = await this.access.permissionsByTeam(userId);
     const teamIds = [...access.keys()];
@@ -79,7 +80,7 @@ export class ProjectsService {
     ]);
     const appByEnv = countBy(apps);
     const dbByEnv = countBy(dbs);
-    return projects.map((p) => ({
+    const views = projects.map((p) => ({
       id: p.id,
       teamId: p.teamId,
       name: p.name,
@@ -96,6 +97,7 @@ export class ProjectsService {
       })),
       createdAt: p.createdAt,
     }));
+    return filterByQuery(views, q, (p) => [p.name, ...p.environments.map((e) => e.name)]);
   }
 
   async get(userId: string, id: string): Promise<ProjectView> {

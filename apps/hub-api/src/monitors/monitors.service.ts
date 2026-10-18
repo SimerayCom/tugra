@@ -13,6 +13,7 @@ import { MonitorRunnerService } from "./runner.service";
 import { MonitorSchedulerService } from "./scheduler.service";
 import { uptimePercent } from "./transition";
 import { planTargets } from "../bulk/bulk.service";
+import { filterByQuery } from "../common/query-filter";
 import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
 export const MonitorViewSchema = z.object({
@@ -77,7 +78,7 @@ export class MonitorsService {
     return this.view(m, Role.OWNER, true);
   }
 
-  async list(userId: string): Promise<MonitorView[]> {
+  async list(userId: string, q?: string): Promise<MonitorView[]> {
     const access = await this.access.accessByTeam(userId);
     const perms = await this.access.permissionsByTeam(userId);
     const ids = [...access.keys()];
@@ -89,9 +90,10 @@ export class MonitorsService {
     // Per-resource scoping: a monitor's project is its app's project. A restricted member only sees
     // monitors for apps in their granted projects; standalone monitors (no app) are hidden from them.
     const projectByApp = await this.projectIdsForApps(rows.map((m) => m.appId));
-    return rows
+    const views = rows
       .filter((m) => canAccessResource(access.get(m.teamId), m.appId ?? m.id, m.appId ? projectByApp.get(m.appId) ?? null : null))
       .map((m) => this.view(m, access.get(m.teamId)!.role, perms.get(m.teamId)?.has('monitors') ?? false));
+    return filterByQuery(views, q, (m) => [m.name, m.type]);
   }
 
   /** Owning project id per app id, for monitor scoping (batched, no N+1). */

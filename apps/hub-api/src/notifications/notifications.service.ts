@@ -14,6 +14,7 @@ import { type NotificationEvent } from "./event";
 import { WebhookConfigSchema } from "./dto";
 import { assertSafeHost, assertSafeUrl, SsrfError } from "./safe-url";
 import { NotificationQueueService } from "./queue.service";
+import { filterByQuery } from "../common/query-filter";
 
 export interface ChannelView {
   id: string;
@@ -50,7 +51,7 @@ export class NotificationsService {
     return { id: c.id, name: c.name, type: c.type, teamId: c.teamId, enabled: c.enabled, eventTypes: c.eventTypes, canWrite };
   }
 
-  async list(userId: string): Promise<ChannelView[]> {
+  async list(userId: string, q?: string): Promise<ChannelView[]> {
     const permsByTeam = await this.access.permissionsByTeam(userId);
     const teamIds = [...permsByTeam.keys()];
     if (!teamIds.length) return [];
@@ -58,7 +59,8 @@ export class NotificationsService {
       where: { teamId: { in: teamIds } },
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((c) => this.view(c, permsByTeam.get(c.teamId)?.has("integrations") ?? false));
+    const views = rows.map((c) => this.view(c, permsByTeam.get(c.teamId)?.has("integrations") ?? false));
+    return filterByQuery(views, q, (c) => [c.name, c.type]);
   }
 
   // The user-controlled host/URL field per provider type (telegram is a fixed api.telegram.org host).

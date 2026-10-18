@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
@@ -27,8 +28,8 @@ export class DestinationsController {
 
   @Get()
   @ApiZodResponse(DestinationViewSchema, { isArray: true })
-  list(@CurrentUser() user: AuthUser) {
-    return this.destinations.list(user.userId);
+  list(@CurrentUser() user: AuthUser, @Query("q") q?: string) {
+    return this.destinations.list(user.userId, q);
   }
 
   @Post()
