@@ -9,5 +9,6 @@ import { MigratorService } from "./migrator.service";
   imports: [AgentGatewayModule, ApplicationsModule],
   controllers: [MigratorController],
   providers: [MigratorService],
+  exports: [MigratorService], // the importer's local-docker source reuses discover()
 })
 export class MigratorModule {}

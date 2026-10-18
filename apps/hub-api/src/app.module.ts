@@ -30,6 +30,7 @@ import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { MigratorModule } from "./migrator/migrator.module";
+import { ImporterModule } from "./importer/importer.module";
 import { CloudModule } from "./cloud/cloud.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
 import { DnsModule } from "./dns/dns.module";
@@ -82,6 +83,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     DestinationsModule,
     ServerOpsModule,
     MigratorModule,
+    ImporterModule, // competitor/local-docker fleet importer (dry-run plan in S4b)
     CloudModule,
     TunnelModule,
     DnsModule,

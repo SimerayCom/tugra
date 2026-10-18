@@ -170,6 +170,10 @@ export interface ImportPlan {
   mode: ImportMode;
   items: ImportPlanItem[];
   totals: { apps: number; databases: number; volumes: number; blockers: number };
-  /** Deterministic hash of (items + options) — the executor requires it (confirmToken forge/stale guard). */
+  /** Source-level notices that are NOT per-item (e.g. "N compose-managed containers skipped"). Carried
+   *  through from the discovered fleet so the review UI can show what the plan does NOT cover. */
+  warnings: string[];
+  /** Deterministic hash of (items + options) — the executor requires it (confirmToken forge/stale guard).
+   *  Advisory `warnings` are deliberately NOT hashed: they must not change the executor's idempotency key. */
   planHash: string;
 }
