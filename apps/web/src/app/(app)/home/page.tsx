@@ -4,13 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, ExternalLink, MoreVertical } from "lucide-react";
+import { Boxes, ExternalLink, MoreVertical, Star } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { launcherTiles, type LauncherTile } from "../../../lib/launcher";
+import { loadPins, savePins, togglePin, filterTiles, sortByPins } from "../../../lib/launcher-prefs";
 import { appColor } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
+import { TextInput } from "../../../components/form";
 import { ErrorState } from "../../../components/error-state";
 import { ExposeModal } from "../../../components/expose-modal";
 import { TileActionsSheet } from "../../../components/tile-actions-sheet";
@@ -41,6 +43,19 @@ export default function HomePage() {
   const remoteTarget = servers.find((s) => s.isLocal) ?? (servers.length === 1 ? servers[0] : undefined);
   const [exposeFor, setExposeFor] = useState<string | null>(null);
   const [actionsFor, setActionsFor] = useState<LauncherTile | null>(null);
+  const [q, setQ] = useState("");
+  // Pins are a per-browser convenience (localStorage). Load after mount so SSR and hydration match.
+  const [pins, setPins] = useState<Set<string>>(new Set());
+  useEffect(() => setPins(loadPins()), []);
+  // Re-read storage at toggle time so a second tab's pins aren't clobbered (merge, not last-write-wins).
+  const onTogglePin = (id: string) => {
+    const next = togglePin(loadPins(), id);
+    savePins(next);
+    setPins(next);
+  };
+  // Only apply the search filter while the search box is actually shown, so a leftover query can't keep
+  // filtering after the app count drops at or below the threshold (the box — and the way to clear q — is gone).
+  const visible = sortByPins(filterTiles(tiles, tiles.length > 5 ? q : ""), pins);
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -63,11 +78,22 @@ export default function HomePage() {
           {t("home.noApps")}
         </EmptyState>
       ) : (
-        <div style={grid}>
-          {tiles.map((tile) => (
-            <Tile key={tile.id} tile={tile} t={t} onManage={() => setActionsFor(tile)} onExpose={() => setExposeFor(tile.id)} />
-          ))}
-        </div>
+        <>
+          {tiles.length > 5 && (
+            <div style={{ maxWidth: 360, marginBottom: 14 }}>
+              <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("home.search")} aria-label={t("home.search")} />
+            </div>
+          )}
+          {visible.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("home.noSearchMatch")}</div>
+          ) : (
+            <div style={grid}>
+              {visible.map((tile) => (
+                <Tile key={tile.id} tile={tile} t={t} pinned={pins.has(tile.id)} onManage={() => setActionsFor(tile)} onExpose={() => setExposeFor(tile.id)} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {exposeFor &&
@@ -85,6 +111,8 @@ export default function HomePage() {
       {actionsFor && (
         <TileActionsSheet
           tile={actionsFor}
+          pinned={pins.has(actionsFor.id)}
+          onTogglePin={() => onTogglePin(actionsFor.id)}
           onClose={() => setActionsFor(null)}
           onExpose={(id) => setExposeFor(id)}
         />
@@ -93,7 +121,7 @@ export default function HomePage() {
   );
 }
 
-function Tile({ tile, t, onManage, onExpose }: { tile: LauncherTile; t: ReturnType<typeof useT>; onManage: () => void; onExpose: () => void }) {
+function Tile({ tile, t, pinned, onManage, onExpose }: { tile: LauncherTile; t: ReturnType<typeof useT>; pinned?: boolean; onManage: () => void; onExpose: () => void }) {
   const manageLabel = t("home.manage");
   const menuBtn = (
     <button
@@ -113,6 +141,7 @@ function Tile({ tile, t, onManage, onExpose }: { tile: LauncherTile; t: ReturnTy
           <AppLogo templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={26} />
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {pinned && <Star size={13} color="var(--c-a)" fill="var(--c-a)" role="img" aria-label={t("home.pinned")} />}
           <span title={tile.status} style={{ width: 9, height: 9, borderRadius: "50%", background: appColor(tile.status) }} />
           {(tile.url || tile.canWrite) && menuBtn}
         </div>
