@@ -187,6 +187,29 @@ type ServerMsg struct {
 	TargetVersion string `json:"targetVersion"`
 	Image         string `json:"image"`
 	Sha256        string `json:"sha256"`
+	// File ops (type "fs_req", CASA-FILES): Op (list/stat/read), Volume (docker volume), Path (volume-relative).
+	Op     string `json:"op,omitempty"`
+	Volume string `json:"volume,omitempty"`
+	Path   string `json:"path,omitempty"`
+}
+
+// FsEntry: one listing entry (metadata only — never content; a symlink is reported, never dereferenced).
+type FsEntry struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"` // file | dir | symlink | other
+	Size  int64  `json:"size"`
+	Mode  string `json:"mode"`  // rwx permission string
+	Mtime int64  `json:"mtime"` // unix seconds
+}
+
+// FsResult: Agent -> Hub, the result of an fs_req.
+type FsResult struct {
+	Type      string    `json:"type"` // "fs_result"
+	ReqID     string    `json:"reqId"`
+	OK        bool      `json:"ok"`
+	Error     string    `json:"error,omitempty"`
+	Entries   []FsEntry `json:"entries,omitempty"`
+	Truncated bool      `json:"truncated,omitempty"` // true when the listing was capped (maxEntries)
 }
 
 // DrainCfg is one external log sink. Type selects the payload format: "http" (Tugra batch JSON, the default),
@@ -221,6 +244,11 @@ func CanonicalLogStart(streamID, target string, tail int, follow bool, since, se
 // CanonicalAgentUpdate mirrors @tugra/shared canonicalAgentUpdate (byte-identical input).
 func CanonicalAgentUpdate(reqID, targetVersion, image, sha256, capability string) string {
 	return "aupd\n" + reqID + "\n" + targetVersion + "\n" + image + "\n" + sha256 + "\n" + capability
+}
+
+// CanonicalFs mirrors @tugra/shared canonicalFs (byte-identical input).
+func CanonicalFs(reqID, op, volume, path, capability string) string {
+	return "fs\n" + reqID + "\n" + op + "\n" + volume + "\n" + path + "\n" + capability
 }
 
 // ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).

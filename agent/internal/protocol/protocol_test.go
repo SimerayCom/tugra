@@ -25,6 +25,10 @@ func TestCanonicalStrings(t *testing.T) {
 	if got := CanonicalAgentUpdate("r1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "deadbeef", "deploy"); got != "aupd\nr1\n0.2.0\nghcr.io/simeraycom/tugra-agent:0.2.0\ndeadbeef\ndeploy" {
 		t.Fatalf("CanonicalAgentUpdate mismatch: %q", got)
 	}
+	// Must be byte-identical to @tugra/shared canonicalFs (any drift → every fs_req rejected).
+	if got := CanonicalFs("r1", "list", "tugra_appv_x_data", "sub/dir", "files"); got != "fs\nr1\nlist\ntugra_appv_x_data\nsub/dir\nfiles" {
+		t.Fatalf("CanonicalFs mismatch: %q", got)
+	}
 }
 
 func hubKeyB64(t *testing.T, pub ed25519.PublicKey) string {

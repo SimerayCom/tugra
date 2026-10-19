@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, canonicalLogStart, canonicalAgentUpdate } from "./index";
+import { PROTOCOL_VERSION, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
 import type {
   MetricsSample,
   EnrollMsg,
@@ -61,6 +61,14 @@ describe("shared protocol", () => {
     // to protocol_test.go's CanonicalAgentUpdate assertion.
     expect(canonicalAgentUpdate("r1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "deadbeef", "deploy")).toBe(
       "aupd\nr1\n0.2.0\nghcr.io/simeraycom/tugra-agent:0.2.0\ndeadbeef\ndeploy",
+    );
+  });
+
+  it("builds a byte-stable canonicalFs (must match the Go agent's CanonicalFs)", () => {
+    // Any drift from the Go builder → every signed fs_req is rejected. Keep this fixture identical
+    // to protocol_test.go's CanonicalFs assertion.
+    expect(canonicalFs("r1", "list", "tugra_appv_x_data", "sub/dir", "files")).toBe(
+      "fs\nr1\nlist\ntugra_appv_x_data\nsub/dir\nfiles",
     );
   });
 
