@@ -191,7 +191,9 @@ export class AuthService {
       const firstUser =
         (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
       const created = await tx.user.create({
-        data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser },
+        // DEFAULT_UI_MODE lets a turnkey single-box install start the owner in Home mode (CASA-INSTALL-3);
+        // unset falls back to the schema default ("fleet").
+        data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser, uiMode: this.config.get<string>("DEFAULT_UI_MODE") === "home" ? "home" : "fleet" },
       });
       const team = await tx.team.create({
         data: { name: name ? `${name}'s Team` : "My Team" },

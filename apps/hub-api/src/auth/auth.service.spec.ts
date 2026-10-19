@@ -512,9 +512,10 @@ describe("AuthService — turnkey local-server auto-provision (LOCAL_AGENT_ENROL
     } as unknown as PrismaService;
     return { prisma, serverCreate, updateMany };
   }
-  function svc(token: string | undefined, prisma: PrismaService, settings: Record<string, unknown> = { initializedAt: null, allowRegistration: false }): AuthService {
+  function svc(token: string | undefined, prisma: PrismaService, settings: Record<string, unknown> = { initializedAt: null, allowRegistration: false }, defaultUiMode?: string): AuthService {
     const cfg = {
-      get: (k: string) => (k === "LOCAL_AGENT_ENROLL_TOKEN" ? token : k === "JWT_ACCESS_SECRET" ? "access-secret-aaaaaaaaaaaa" : k === "JWT_REFRESH_SECRET" ? "refresh-secret-bbbbbbbbbbbb" : undefined),
+      get: (k: string) =>
+        k === "LOCAL_AGENT_ENROLL_TOKEN" ? token : k === "DEFAULT_UI_MODE" ? defaultUiMode : k === "JWT_ACCESS_SECRET" ? "access-secret-aaaaaaaaaaaa" : k === "JWT_REFRESH_SECRET" ? "refresh-secret-bbbbbbbbbbbb" : undefined,
     } as unknown as ConfigService;
     const instanceSettings = { get: jest.fn().mockResolvedValue(settings), update: jest.fn() } as unknown as InstanceSettingsService;
     const s = new AuthService(
@@ -547,6 +548,17 @@ describe("AuthService — turnkey local-server auto-provision (LOCAL_AGENT_ENROL
     const s = svc("local-enroll-token-xyz", prisma, { initializedAt: new Date(), allowRegistration: true });
     await s.register("later@x.io", "password123");
     expect(serverCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates the user in the uiMode given by DEFAULT_UI_MODE (home for a turnkey install), else fleet", async () => {
+    const home = prismaWithServer();
+    await svc(undefined, home.prisma, { initializedAt: null, allowRegistration: false }, "home").register("a@x.io", "password123");
+    expect(home.serverCreate).not.toHaveBeenCalled(); // token unset → no local server
+    expect((home.prisma.user.create as jest.Mock)).toHaveBeenCalledWith({ data: expect.objectContaining({ uiMode: "home" }) });
+
+    const fleet = prismaWithServer();
+    await svc(undefined, fleet.prisma, { initializedAt: null, allowRegistration: false }).register("b@x.io", "password123");
+    expect((fleet.prisma.user.create as jest.Mock)).toHaveBeenCalledWith({ data: expect.objectContaining({ uiMode: "fleet" }) });
   });
 });
 

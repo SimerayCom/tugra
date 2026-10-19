@@ -41,6 +41,7 @@ const s = (
   seal: null,
   tags: [],
   capabilities: [],
+  isLocal: false,
   provider: null,
   providerServerId: null,
   canWrite,

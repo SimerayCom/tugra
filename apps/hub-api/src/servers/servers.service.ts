@@ -78,6 +78,7 @@ export const ServerViewSchema = z.object({
   seal: z.string().nullable(),
   tags: z.array(z.string()),
   capabilities: z.array(z.string()), // granted agent capabilities the hub may act on; [] = none (fail-safe)
+  isLocal: z.boolean(), // the box the hub itself runs on (auto-provisioned at first-owner reg on a turnkey install)
   provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
   providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
   canWrite: z.boolean(),
@@ -596,6 +597,7 @@ export class ServersService {
       seal: string | null;
       tags?: string[];
       capabilities?: string[];
+      isLocal?: boolean;
       provider?: string | null;
       providerServerId?: string | null;
     },
@@ -637,6 +639,7 @@ export class ServersService {
       seal: s.seal,
       tags: s.tags ?? [],
       capabilities: s.capabilities ?? [],
+      isLocal: s.isLocal ?? false,
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
       canWrite,

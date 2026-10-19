@@ -91,7 +91,7 @@ function Wizard() {
       {step === "create-admin" && <CreateAdminStep t={t} onDone={() => go("instance-basics")} />}
       {step === "instance-basics" && <InstanceBasicsStep t={t} onNext={() => go("add-first-server")} onSkip={() => go("done")} />}
       {step === "add-first-server" && (
-        <AddServerStep t={t} serverId={serverId} onServer={(id) => go("add-first-server", id)} onNext={() => go("first-workload")} onSkip={() => go("done")} />
+        <AddServerStep t={t} serverId={serverId} onServer={(id) => go("add-first-server", id)} onNext={(srv) => go("first-workload", srv)} onSkip={() => go("done")} />
       )}
       {step === "first-workload" && (
         <FirstWorkloadStep
@@ -101,11 +101,12 @@ function Wizard() {
           onSkip={() => go("done")}
         />
       )}
-      {step === "done" && <DoneStep t={t} onFinish={() => router.replace("/dashboard")} />}
+      {/* A Home-mode owner (turnkey single-box) finishes on the launcher, not the fleet dashboard. */}
+      {step === "done" && <DoneStep t={t} toHome={user?.uiMode === "home"} onFinish={() => router.replace(user?.uiMode === "home" ? "/home" : "/dashboard")} />}
 
       {isSkippable(step) && (
         <div style={{ marginTop: 16, textAlign: "center" }}>
-          <button type="button" onClick={() => router.replace("/dashboard")} style={linkBtn}>{t("onboarding.skipAll")}</button>
+          <button type="button" onClick={() => router.replace(user?.uiMode === "home" ? "/home" : "/dashboard")} style={linkBtn}>{t("onboarding.skipAll")}</button>
         </div>
       )}
     </Card>
@@ -238,9 +239,46 @@ function InstanceBasicsStep({ t, onNext, onSkip }: { t: Tr; onNext: () => void; 
   );
 }
 
-function AddServerStep({ t, serverId, onServer, onNext, onSkip }: { t: Tr; serverId: string | null; onServer: (id: string) => void; onNext: () => void; onSkip: () => void }) {
+function AddServerStep({ t, serverId, onServer, onNext, onSkip }: { t: Tr; serverId: string | null; onServer: (id: string) => void; onNext: (srv?: string) => void; onSkip: () => void }) {
+  // Turnkey single-box: the local box is already auto-provisioned as "This machine" (CASA-INSTALL-2), so
+  // skip the manual add form entirely and show it connecting.
+  const { data: servers = [], isPending } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
+  // Wait for the list before deciding — otherwise the manual add form flashes (and could be submitted) on a
+  // turnkey box before the local server loads, creating a stray duplicate server.
+  if (isPending) return <CenteredSpinner />;
+  const pinnedLocal = serverId ? (servers.find((s) => s.id === serverId)?.isLocal ?? false) : false;
+  const local = servers.find((s) => s.isLocal);
+  // A pinned ?server that IS the local box (e.g. resuming after a refresh) → the local view, not the remote
+  // install-command UI. Otherwise an unpinned local box → carry its id forward so first-workload links point at it.
+  if (pinnedLocal) return <LocalServerStep t={t} serverId={serverId!} onNext={() => onNext(serverId!)} onSkip={onSkip} />;
+  if (!serverId && local) return <LocalServerStep t={t} serverId={local.id} onNext={() => onNext(local.id)} onSkip={onSkip} />;
   if (!serverId) return <CreateServerForm t={t} onServer={onServer} onSkip={onSkip} />;
-  return <WaitForServer t={t} serverId={serverId} onNext={onNext} onSkip={onSkip} />;
+  return <WaitForServer t={t} serverId={serverId} onNext={() => onNext()} onSkip={onSkip} />;
+}
+
+/** Turnkey path: "This machine" is enrolling itself — no install command. Shows live status and lets the
+ *  owner continue (the agent finishes connecting in the background). */
+function LocalServerStep({ t, serverId, onNext, onSkip }: { t: Tr; serverId: string; onNext: () => void; onSkip: () => void }) {
+  const { data } = useQuery({
+    queryKey: ["server-install", serverId],
+    queryFn: () => api.getServerInstall(serverId),
+    refetchInterval: 4000,
+    refetchOnWindowFocus: false,
+  });
+  const online = data?.status === "ONLINE";
+  return (
+    <>
+      <p style={{ fontSize: 14, color: "var(--c-tx2)", margin: "0 0 16px" }}>{t("onboarding.localServerBody")}</p>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 18px", fontSize: 14 }}>
+        <span style={{ width: 9, height: 9, borderRadius: "50%", background: online ? "var(--c-g)" : "var(--c-am)" }} />
+        {online ? t("onboarding.localServerConnected") : t("onboarding.localServerConnecting")}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn onClick={onNext} style={{ flex: 1 }}>{t("onboarding.localServerContinue")}</Btn>
+        <Btn variant="ghost" onClick={onSkip}>{t("onboarding.skip")}</Btn>
+      </div>
+    </>
+  );
 }
 
 function CreateServerForm({ t, onServer, onSkip }: { t: Tr; onServer: (id: string) => void; onSkip: () => void }) {
@@ -375,11 +413,11 @@ function FirstWorkloadStep({ t, onGit, onAppStore, onSkip }: { t: Tr; onGit: () 
   );
 }
 
-function DoneStep({ t, onFinish }: { t: Tr; onFinish: () => void }) {
+function DoneStep({ t, onFinish, toHome }: { t: Tr; onFinish: () => void; toHome?: boolean }) {
   return (
     <>
       <p style={{ fontSize: 14, color: "var(--c-tx2)", margin: "0 0 18px" }}>{t("onboarding.doneBody")}</p>
-      <Btn onClick={onFinish} style={{ width: "100%" }}>{t("onboarding.goToDashboard")}</Btn>
+      <Btn onClick={onFinish} style={{ width: "100%" }}>{t(toHome ? "onboarding.goToLauncher" : "onboarding.goToDashboard")}</Btn>
     </>
   );
 }

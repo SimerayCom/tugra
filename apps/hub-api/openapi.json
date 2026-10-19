@@ -2522,6 +2522,9 @@
                           "type": "string"
                         }
                       },
+                      "isLocal": {
+                        "type": "boolean"
+                      },
                       "provider": {
                         "type": "string",
                         "nullable": true
@@ -2568,6 +2571,7 @@
                       "seal",
                       "tags",
                       "capabilities",
+                      "isLocal",
                       "provider",
                       "providerServerId",
                       "canWrite"
@@ -2876,6 +2880,9 @@
                         "type": "string"
                       }
                     },
+                    "isLocal": {
+                      "type": "boolean"
+                    },
                     "provider": {
                       "type": "string",
                       "nullable": true
@@ -2922,6 +2929,7 @@
                     "seal",
                     "tags",
                     "capabilities",
+                    "isLocal",
                     "provider",
                     "providerServerId",
                     "canWrite"

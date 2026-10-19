@@ -134,16 +134,44 @@ describe("WelcomePage wizard", () => {
   it("add-first-server: does NOT create on mount; creates only on click, then pins ?server=", async () => {
     h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
     h.search = "step=add-first-server"; // no ?server → create form
+    vi.spyOn(api, "listServers").mockResolvedValue([]); // no local box → manual add form
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "My Team", role: "OWNER" }] as never);
     const create = vi.spyOn(api, "createServer").mockResolvedValue({ server: { id: "srv1" }, enrollToken: "e", installCommand: "cmd" } as never);
     wrap();
-    // mounted, but no server created yet
+    // the manual add form appears once the (empty) server list loads — and no server is created on mount
+    const nameField = await screen.findByLabelText("Server name");
     expect(create).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Server name"), { target: { value: "prod-1" } });
+    fireEvent.change(nameField, { target: { value: "prod-1" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "Create server" })).not.toHaveProperty("disabled", true));
     fireEvent.click(screen.getByRole("button", { name: "Create server" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith("prod-1", "t1"));
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=add-first-server&server=srv1"));
+  });
+
+  it("add-first-server: auto-shows 'This machine' connecting (no manual add form) when a local server exists", async () => {
+    h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=add-first-server";
+    vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv-local", name: "This machine", isLocal: true, status: "PENDING" }] as never);
+    vi.spyOn(api, "getServerInstall").mockResolvedValue({ status: "PENDING", installCommand: null, expiresAt: null } as never);
+    wrap();
+    expect(await screen.findByText("Connecting this machine…")).toBeTruthy();
+    expect(screen.queryByLabelText("Server name")).toBeNull(); // manual add form is skipped
+  });
+
+  it("done: a Home-mode owner finishes on the launcher (/home), a Fleet owner on /dashboard", () => {
+    h.auth = { user: { id: "u1", isInstanceOwner: true, uiMode: "home" } as PublicUser, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=done";
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Go to your apps" })); // label matches the /home destination
+    expect(nav.replace).toHaveBeenCalledWith("/home");
+
+    cleanup();
+    nav.replace.mockClear();
+    h.auth = { user: { id: "u1", isInstanceOwner: true, uiMode: "fleet" } as PublicUser, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=done";
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Go to dashboard" }));
+    expect(nav.replace).toHaveBeenCalledWith("/dashboard");
   });
 
   it("shows a spinner (no redirect) while status is still unknown", () => {
