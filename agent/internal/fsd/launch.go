@@ -27,7 +27,11 @@ var knownOps = map[string]bool{"list": true}
 //
 // DAC_READ_SEARCH only matters to an attacker who can already execute code inside the helper; the helper
 // runs ONLY this list code with no shell, no network and a read-only root, so it is not a usable primitive.
-func BuildHelperArgs(image, volume, op, path string) ([]string, error) {
+//
+// name is a caller-generated container name (--name): it gives the launcher a handle to force-remove the
+// daemon-owned container if the op times out (exec.CommandContext kills only the `docker run` CLI, not the
+// container). It must match Docker's container-name charset.
+func BuildHelperArgs(image, volume, op, path, name string) ([]string, error) {
 	if err := validateVolume(volume); err != nil {
 		return nil, err
 	}
@@ -37,8 +41,12 @@ func BuildHelperArgs(image, volume, op, path string) ([]string, error) {
 	if image == "" || strings.HasPrefix(image, "-") {
 		return nil, errors.New("invalid image reference")
 	}
+	if !nameRe.MatchString(name) {
+		return nil, errors.New("invalid container name")
+	}
 	return []string{
 		"docker", "run", "--rm",
+		"--name", name,
 		"--network", "none",
 		"--read-only",
 		"--cap-drop", "ALL",

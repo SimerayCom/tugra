@@ -20,6 +20,11 @@ type Config struct {
 	// CapsBypass (--caps=all / TUGRA_CAPS=all) disables the fail-closed allowlist entirely — an
 	// explicit operator/upgrade escape hatch. Persistent: the hub's pushed set never overrides it.
 	CapsBypass bool
+	// AgentImage (TUGRA_AGENT_IMAGE) is the agent's OWN digest-pinned image, re-invoked as the sandboxed
+	// `fsd` helper for file operations (CASA-FILES). It is learned locally, never from the hub, so the hub
+	// cannot substitute a malicious image. Empty ⇒ file operations are UNAVAILABLE (fail-closed); the
+	// install/compose layer (INSTALL-1) sets it. Only ever used when the "files" capability is granted.
+	AgentImage string
 }
 
 // Store persists what we learn at enrollment so reconnects use key auth.
