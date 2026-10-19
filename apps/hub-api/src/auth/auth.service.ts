@@ -10,7 +10,7 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { Role, VerificationPurpose } from "@prisma/client";
+import { Prisma, Role, ServerStatus, VerificationPurpose } from "@prisma/client";
 import * as argon2 from "argon2";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -113,6 +113,31 @@ export class AuthService {
   }
 
   /**
+   * Turnkey single-box install (CASA-INSTALL-2): when LOCAL_AGENT_ENROLL_TOKEN is configured, provision the
+   * local box as the first server ("This machine") in the SAME transaction as the first-owner claim,
+   * pre-seeded with the agent's enroll token so the bundled local agent enrolls within seconds — the operator
+   * never pastes an install command. A no-op when the token is unset (every manual/remote install today), so
+   * existing behavior is unchanged. Runs only in a first-user branch, so it provisions at most once.
+   */
+  private async provisionLocalServer(tx: Prisma.TransactionClient, teamId: string): Promise<void> {
+    const token = this.config.get<string>("LOCAL_AGENT_ENROLL_TOKEN");
+    if (!token) return;
+    await tx.server.create({
+      data: {
+        name: "This machine",
+        teamId,
+        enrollToken: token,
+        // 24h to enroll (vs the 1h manual token): the local agent may start a little after the hub on first boot.
+        enrollTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: ServerStatus.PENDING,
+        isLocal: true,
+        // Mirror ServersService DEFAULT_CAPABILITIES (least privilege — the interactive terminal is opt-in).
+        capabilities: ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"],
+      },
+    });
+  }
+
+  /**
    * First-run claim gate. When SETUP_CODE is configured AND the instance is not yet initialized, the very
    * first account can only be created with the matching code — closing the window where a random visitor
    * who reaches a freshly-installed box on a LAN/public IP claims the owner account. A no-op once the
@@ -175,6 +200,7 @@ export class AuthService {
         data: { userId: created.id, teamId: team.id, role: Role.OWNER },
       });
       await this.teamDefaults.ensureDefaults(team.id, tx);
+      if (firstUser) await this.provisionLocalServer(tx, team.id); // turnkey single-box: auto-add "This machine"
       return created;
     });
 
@@ -214,6 +240,7 @@ export class AuthService {
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
         });
         await this.teamDefaults.ensureDefaults(team.id, tx);
+        if (firstUser) await this.provisionLocalServer(tx, team.id); // turnkey single-box: auto-add "This machine"
         return created;
       });
       await this.audit.log({ actor: user.id, action: "auth.register", meta: { provider: "github" } });
@@ -262,6 +289,7 @@ export class AuthService {
           data: { userId: created.id, teamId: team.id, role: Role.OWNER },
         });
         await this.teamDefaults.ensureDefaults(team.id, tx);
+        if (firstUser) await this.provisionLocalServer(tx, team.id); // turnkey single-box: auto-add "This machine"
         return created;
       });
       await this.audit.log({ actor: user.id, action: "auth.register", meta: { provider: "oidc" } });

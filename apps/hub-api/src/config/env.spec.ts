@@ -34,6 +34,16 @@ describe("validateEnv — HUB_SIGNING_KEY fail-closed", () => {
   });
 });
 
+describe("validateEnv — LOCAL_AGENT_ENROLL_TOKEN fail-closed", () => {
+  it("rejects a short/guessable turnkey enroll token", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", LOCAL_AGENT_ENROLL_TOKEN: "changeme" })).toThrow(/LOCAL_AGENT_ENROLL_TOKEN/);
+  });
+  it("accepts a high-entropy token (≥32 chars) and leaves it unset otherwise", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", LOCAL_AGENT_ENROLL_TOKEN: "a".repeat(48) })).not.toThrow();
+    expect(() => validateEnv({ ...base, NODE_ENV: "development" })).not.toThrow(); // optional
+  });
+});
+
 describe("validateEnv — retention", () => {
   it("defaults raw metric retention to 48h, heartbeat to 30d, and rollup to 30d", () => {
     const env = validateEnv({ ...base, NODE_ENV: "development" });

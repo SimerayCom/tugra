@@ -492,6 +492,64 @@ describe("AuthService.register — registration gating", () => {
   });
 });
 
+describe("AuthService — turnkey local-server auto-provision (LOCAL_AGENT_ENROLL_TOKEN)", () => {
+  function prismaWithServer() {
+    const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "a@x.io", name: null, emailVerified: false, twoFaEnabled: false, uiMode: "fleet" });
+    const serverCreate = jest.fn().mockResolvedValue({ id: "srv1" });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 }); // first user by default
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null), create: userCreate },
+      teamInvitation: { findFirst: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
+        cb({
+          user: { create: userCreate },
+          team: { create: jest.fn().mockResolvedValue({ id: "t1" }) },
+          membership: { create: jest.fn().mockResolvedValue({}) },
+          instanceSettings: { updateMany },
+          server: { create: serverCreate },
+        }),
+      ),
+    } as unknown as PrismaService;
+    return { prisma, serverCreate, updateMany };
+  }
+  function svc(token: string | undefined, prisma: PrismaService, settings: Record<string, unknown> = { initializedAt: null, allowRegistration: false }): AuthService {
+    const cfg = {
+      get: (k: string) => (k === "LOCAL_AGENT_ENROLL_TOKEN" ? token : k === "JWT_ACCESS_SECRET" ? "access-secret-aaaaaaaaaaaa" : k === "JWT_REFRESH_SECRET" ? "refresh-secret-bbbbbbbbbbbb" : undefined),
+    } as unknown as ConfigService;
+    const instanceSettings = { get: jest.fn().mockResolvedValue(settings), update: jest.fn() } as unknown as InstanceSettingsService;
+    const s = new AuthService(
+      prisma, new JwtService({}), cfg, {} as CryptoService, {} as TotpService,
+      { log: jest.fn() } as unknown as AuditService, new FakeRedis() as unknown as RedisService,
+      { ensureDefaults: jest.fn().mockResolvedValue(undefined) } as unknown as TeamDefaultsService, mail, instanceSettings,
+    );
+    jest.spyOn(s, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    return s;
+  }
+
+  it("provisions a PENDING 'This machine' server for the first owner when the token is set", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc("local-enroll-token-xyz", prisma).register("a@x.io", "password123");
+    expect(serverCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ name: "This machine", teamId: "t1", enrollToken: "local-enroll-token-xyz", isLocal: true, status: "PENDING" }),
+    });
+  });
+
+  it("does NOT provision a local server when the token is unset (manual/remote install unchanged)", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc(undefined, prisma).register("a@x.io", "password123");
+    expect(serverCreate).not.toHaveBeenCalled();
+  });
+
+  it("does NOT provision for a non-first user even with the token set", async () => {
+    const { prisma, serverCreate, updateMany } = prismaWithServer();
+    updateMany.mockResolvedValue({ count: 0 }); // already initialized → not the first user
+    // registration open so a later user proceeds past the gate
+    const s = svc("local-enroll-token-xyz", prisma, { initializedAt: new Date(), allowRegistration: true });
+    await s.register("later@x.io", "password123");
+    expect(serverCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe("AuthService — first-run setup code (SETUP_CODE)", () => {
   function prismaFresh() {
     const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "a@x.io", name: null, emailVerified: false, twoFaEnabled: false, uiMode: "fleet" });

@@ -60,6 +60,15 @@ export const envSchema = z
   // a random visitor can't claim the owner account before you do. Irrelevant once initialized; unset = off
   // (dev/e2e/existing installs behave exactly as before). Generated + printed by scripts/install.sh.
   SETUP_CODE: z.string().min(1).optional(),
+  // Turnkey single-box install only: the enroll token the bundled local agent uses. When set, the first
+  // owner registration auto-provisions the local box as the "This machine" server (CASA-INSTALL-2) so no
+  // agent command is pasted. Unset everywhere else (manual/remote enrollment unchanged). FAIL CLOSED on a
+  // weak value: the enroll endpoint authenticates an agent by this token alone, so a guessable one would let
+  // a rogue agent claim "This machine" during the enrollment window. install.sh generates a 48-char hex token.
+  LOCAL_AGENT_ENROLL_TOKEN: z
+    .string()
+    .min(32, "LOCAL_AGENT_ENROLL_TOKEN must be at least 32 chars — a high-entropy enroll token, not a guessable value")
+    .optional(),
   // Set to "true" only when the hub sits behind a trusted reverse proxy, so the
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
