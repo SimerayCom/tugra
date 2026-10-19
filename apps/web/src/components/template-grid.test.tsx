@@ -69,4 +69,29 @@ describe("TemplateGrid", () => {
     expect(screen.getByText("Ghost")).toBeTruthy();
     expect(screen.queryByText("WordPress")).toBeNull();
   });
+
+  it("shows a Running badge + an Open link for a running install, and no badge for an uninstalled template", () => {
+    const installed = new Map([["ghost", { count: 1, running: true, firstId: "g1", url: "https://g.example.com" }]]);
+    wrap(<TemplateGrid templates={tpls} onPick={vi.fn()} installed={installed} />);
+    expect(screen.getByText("Running")).toBeTruthy();
+    const open = screen.getByRole("link", { name: /Open/ });
+    expect(open.getAttribute("href")).toBe("https://g.example.com");
+    // an uninstalled template has no Installed/Running badge
+    expect(screen.queryByText("Installed")).toBeNull();
+  });
+
+  it("shows an Installed badge with a count and NO Open link for a stopped install", () => {
+    const installed = new Map([["n8n", { count: 2, running: false, firstId: "n1", url: null }]]);
+    wrap(<TemplateGrid templates={tpls} onPick={vi.fn()} installed={installed} />);
+    expect(screen.getByText("Installed ×2")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Open/ })).toBeNull();
+  });
+
+  it("the Open link does not trigger the card's onPick", () => {
+    const onPick = vi.fn();
+    const installed = new Map([["ghost", { count: 1, running: true, firstId: "g1", url: "https://g.example.com" }]]);
+    wrap(<TemplateGrid templates={tpls} onPick={onPick} installed={installed} />);
+    fireEvent.click(screen.getByRole("link", { name: /Open/ }));
+    expect(onPick).not.toHaveBeenCalled();
+  });
 });

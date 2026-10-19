@@ -12,6 +12,7 @@ import { ErrorState } from "../../../components/error-state";
 import { TemplateGrid } from "../../../components/template-grid";
 import { InstallModal } from "../../../components/install-modal";
 import { Skeleton, SkeletonText } from "../../../components/skeleton";
+import { installedBySlug } from "../../../lib/installed";
 import type { Template } from "../../../lib/types";
 
 export default function AppStorePage() {
@@ -20,6 +21,10 @@ export default function AppStorePage() {
   const { user } = useAuth();
   const [installing, setInstalling] = useState<Template | null>(null);
   const { data: templates = [], isLoading, isError, refetch } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
+  // Same query key as the Home launcher, so an install there reflects here without a refetch. Non-fatal: if the
+  // apps list can't load, the store simply shows no installed badges.
+  const { data: apps = [] } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const installed = installedBySlug(apps);
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040 }}>
@@ -53,6 +58,7 @@ export default function AppStorePage() {
       ) : (
         <TemplateGrid
           templates={templates}
+          installed={installed}
           onPick={(tpl) =>
             user?.uiMode === "home"
               ? setInstalling(tpl)
