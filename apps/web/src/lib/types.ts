@@ -200,6 +200,9 @@ export interface InstanceStatus {
   edition: string;
   /** OIDC single sign-on is enabled + fully configured on a Pro+ edition → show the SSO login button. */
   ssoEnabled: boolean;
+  /** The instance was installed with a first-run setup code and no owner has claimed it yet → the welcome
+   *  form must ask for the code. Only the boolean is exposed, never the code. */
+  setupCodeRequired?: boolean;
 }
 
 /** Owner license status (GET/PATCH /instance/license). The token is write-only (never returned) —

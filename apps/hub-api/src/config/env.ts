@@ -55,6 +55,11 @@ export const envSchema = z
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
   // Web origin the OAuth callback hands tokens back to (the SPA).
   WEB_PUBLIC_URL: z.string().url().default("http://localhost:3001"),
+  // Optional first-run claim code. When set AND the instance is not yet initialized, the FIRST account can
+  // only be created with the matching code — so on a freshly installed box reachable on a LAN/public IP,
+  // a random visitor can't claim the owner account before you do. Irrelevant once initialized; unset = off
+  // (dev/e2e/existing installs behave exactly as before). Generated + printed by scripts/install.sh.
+  SETUP_CODE: z.string().min(1).optional(),
   // Set to "true" only when the hub sits behind a trusted reverse proxy, so the
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.

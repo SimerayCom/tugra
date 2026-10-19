@@ -160,11 +160,11 @@ export async function apiFetch<T>(
 // ── typed endpoints ────────────────────────────────────────────────
 
 export const api = {
-  async register(email: string, password: string, name?: string) {
+  async register(email: string, password: string, name?: string, setupCode?: string) {
     // The hub sets the httpOnly session cookies on the response; we only need the user back.
     const out = await apiFetch<{ user: PublicUser; tokens: TokenPair }>(
       "/auth/register",
-      { method: "POST", body: JSON.stringify({ email, password, name }) },
+      { method: "POST", body: JSON.stringify({ email, password, name, setupCode }) },
       false,
     );
     return out.user;

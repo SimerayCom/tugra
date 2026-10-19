@@ -12,7 +12,7 @@ import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { Role, VerificationPurpose } from "@prisma/client";
 import * as argon2 from "argon2";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
@@ -48,6 +48,15 @@ const PASSWORD_RESET_RATE_WINDOW = 60; // seconds
 
 // Email verification: a longer-lived emailed token (people verify hours later, from another device).
 const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Constant-time comparison of a provided setup code against the expected one. Compares SHA-256 digests so
+ *  it is fixed-time regardless of the two lengths (timingSafeEqual itself requires equal-length buffers and
+ *  a length mismatch would otherwise leak via an early throw). */
+function setupCodeMatches(provided: string, expected: string): boolean {
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
 
 export interface TokenPair {
   accessToken: string;
@@ -103,6 +112,28 @@ export class AuthService {
     }
   }
 
+  /**
+   * First-run claim gate. When SETUP_CODE is configured AND the instance is not yet initialized, the very
+   * first account can only be created with the matching code — closing the window where a random visitor
+   * who reaches a freshly-installed box on a LAN/public IP claims the owner account. A no-op once the
+   * instance is initialized (the code is irrelevant after the owner is claimed) or when no code is set
+   * (dev/e2e/existing installs are unchanged). `canSupplyCode` is false for OAuth/OIDC first sign-in — those
+   * flows can't carry a code, so they are refused during bootstrap and the owner must claim via the setup
+   * form first. The compare is constant-time over SHA-256 digests (no length leak, no early-exit).
+   */
+  private async assertSetupCode(provided: string | undefined, canSupplyCode: boolean): Promise<void> {
+    const expected = this.config.get<string>("SETUP_CODE");
+    if (!expected) return; // no code configured → unchanged behavior
+    const s = await this.instanceSettings.get();
+    if (s.initializedAt != null) return; // already bootstrapped → code no longer applies
+    if (!canSupplyCode) {
+      throw new ForbiddenException("this instance needs first-run setup — create the owner account with the setup code first");
+    }
+    if (!provided || !setupCodeMatches(provided, expected)) {
+      throw new UnauthorizedException("invalid setup code");
+    }
+  }
+
   /** A non-expired team invitation for this email = a pending invite (accepted invites are deleted).
    *  Invites are stored lowercased (TeamsService.invite) and matched case-insensitively everywhere else
    *  (accept/decline/list), so normalize here too — otherwise a mixed-case invitee is wrongly gated. */
@@ -117,12 +148,14 @@ export class AuthService {
     email: string,
     password: string,
     name?: string,
+    setupCode?: string,
   ): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
       throw new ConflictException("email already registered");
     }
     await this.assertRegistrationAllowed(email); // gate closed self-service signups (invites bypass)
+    await this.assertSetupCode(setupCode, true); // first-run owner-claim gate (no-op unless bootstrapping w/ a code)
 
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 
@@ -165,6 +198,7 @@ export class AuthService {
       // A NEW OAuth account is a registration → same gate + first-user ownership as password register.
       // (Existing users fall through to the `else` login path and are never gated.)
       await this.assertRegistrationAllowed(email);
+      await this.assertSetupCode(undefined, false); // bootstrapping w/ a setup code → owner must claim via the form first
       const passwordHash = await argon2.hash(randomUUID(), { type: argon2.argon2id });
       user = await this.prisma.$transaction(async (tx) => {
         const firstUser =
@@ -212,6 +246,7 @@ export class AuthService {
       if (allowedDomains.length > 0 && (!domain || !allowedDomains.includes(domain))) {
         throw new ForbiddenException("your email domain is not permitted to sign in");
       }
+      await this.assertSetupCode(undefined, false); // bootstrapping w/ a setup code → owner must claim via the form first
       const passwordHash = await argon2.hash(randomUUID(), { type: argon2.argon2id });
       user = await this.prisma.$transaction(async (tx) => {
         const firstUser =

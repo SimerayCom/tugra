@@ -111,6 +111,10 @@ ensure_env JWT_REFRESH_SECRET    "$(rand_b64 24)"
 ensure_env SECRETS_ENCRYPTION_KEY "$(rand_b64 24)"
 ensure_env HUB_SIGNING_KEY       "$(rand_b64 32)"   # decodes to exactly 32 bytes (ed25519 seed)
 ensure_env POSTGRES_PASSWORD     "$(rand_hex 24)"   # url-safe (no @ : / ? in a hex string)
+# Only a FRESH install (no SETUP_CODE yet) advertises the owner-claim code. A re-run of an already-set-up
+# install must not print a misleading "enter this to claim owner" line (the gate is a no-op once claimed).
+FRESH_SETUP_CODE=0; env_has SETUP_CODE || FRESH_SETUP_CODE=1
+ensure_env SETUP_CODE            "$(rand_hex 4)"    # first-run owner-claim code (8 hex chars); printed below if fresh
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"
@@ -169,3 +173,7 @@ if [ -z "$DOMAIN" ]; then
   printf '  For TLS + a public domain, front the stack with a reverse proxy and re-run with --domain <host>.\n'
 fi
 printf '  Create the first (owner) account in the web UI, then add your first server.\n'
+if [ "$FRESH_SETUP_CODE" -eq 1 ]; then
+  printf '  Setup code (enter it when creating the owner account): %s\n' "$(env_get SETUP_CODE)"
+  printf '  It stops anyone else who reaches this box from claiming the owner account first. Recover it later with: grep SETUP_CODE %s\n' "$ENV_FILE"
+fi

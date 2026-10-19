@@ -64,14 +64,30 @@ describe("WelcomePage wizard", () => {
   it("create-admin: registers the owner then advances to instance-basics", async () => {
     h.auth = { user: null, loading: false, initialized: false, reload: vi.fn() };
     h.search = "step=create-admin";
+    vi.spyOn(api, "getInstanceStatus").mockResolvedValue({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: false });
     const reg = vi.spyOn(api, "register").mockResolvedValue({} as PublicUser);
     wrap();
+    expect(screen.queryByLabelText("Setup code")).toBeNull(); // not required → no field
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "owner@x.co" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "supersecret1" } });
     fireEvent.click(screen.getByRole("button", { name: "Create account & continue" }));
-    await waitFor(() => expect(reg).toHaveBeenCalledWith("owner@x.co", "supersecret1", undefined));
+    await waitFor(() => expect(reg).toHaveBeenCalledWith("owner@x.co", "supersecret1", undefined, undefined));
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=instance-basics"));
     expect(h.auth.reload).toHaveBeenCalled();
+  });
+
+  it("create-admin: shows the Setup code field when required and passes the code to register", async () => {
+    h.auth = { user: null, loading: false, initialized: false, reload: vi.fn() };
+    h.search = "step=create-admin";
+    vi.spyOn(api, "getInstanceStatus").mockResolvedValue({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: true });
+    const reg = vi.spyOn(api, "register").mockResolvedValue({} as PublicUser);
+    wrap();
+    const codeField = await screen.findByLabelText("Setup code");
+    fireEvent.change(codeField, { target: { value: "abcd1234" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "owner@x.co" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "supersecret1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create account & continue" }));
+    await waitFor(() => expect(reg).toHaveBeenCalledWith("owner@x.co", "supersecret1", undefined, "abcd1234"));
   });
 
   it("redirects to /login once initialized and logged out", () => {

@@ -1197,6 +1197,10 @@
                   "name": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "setupCode": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
