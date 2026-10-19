@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
@@ -2700,5 +2700,54 @@ describe("ApplicationsService.listDomains", () => {
     expect(res).toHaveLength(1);
     expect(res[0]).toMatchObject({ id: "app1", appId: "app1", appStatus: "RUNNING", teamId: "t1", name: "web", domain: "shop.acme.dev" });
     expect(res[0].ssl.state).toBe("ok");
+  });
+});
+
+describe("ApplicationsService listFiles (CASA-FILES)", () => {
+  const app = { id: "app1", teamId: "t1", serverId: "s1", volumes: [{ name: "data", path: "/data" }] };
+
+  it("resolves the app's declared volume to its docker volume and sends a signed fs_req", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const listing = { entries: [{ name: "f", type: "file", size: 1, mode: "rw-r--r--", mtime: 2 }], truncated: false };
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendFsReq: jest.fn().mockResolvedValue(listing),
+    } as unknown as AgentWsServer;
+    const res = await make(prisma, access, agentWs).listFiles("u1", "app1", "data", "sub/dir");
+    expect(agentWs.sendFsReq).toHaveBeenCalledWith("s1", "list", "tugra_appv_app1_data", "sub/dir");
+    expect(res).toEqual(listing);
+  });
+
+  it("rejects a volume the app does not declare (never an arbitrary docker volume)", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(true), sendFsReq: jest.fn() } as unknown as AgentWsServer;
+    await expect(make(prisma, access, agentWs).listFiles("u1", "app1", "etc", "")).rejects.toBeInstanceOf(BadRequestException);
+    expect(agentWs.sendFsReq).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsafe path before touching the agent", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(true), sendFsReq: jest.fn() } as unknown as AgentWsServer;
+    await expect(make(prisma, access, agentWs).listFiles("u1", "app1", "data", "../escape")).rejects.toBeInstanceOf(BadRequestException);
+    expect(agentWs.sendFsReq).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an offline agent as 503 (never a raw 500)", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(false), sendFsReq: jest.fn() } as unknown as AgentWsServer;
+    await expect(make(prisma, access, agentWs).listFiles("u1", "app1", "data", "")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(agentWs.sendFsReq).not.toHaveBeenCalled();
+  });
+
+  it("requires write permission (writer-only, like logs)", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(true), sendFsReq: jest.fn() } as unknown as AgentWsServer;
+    await expect(make(prisma, access, agentWs).listFiles("u1", "app1", "data", "")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(agentWs.sendFsReq).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import {
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Prisma, Role, ServerStatus } from "@prisma/client";
+import { AGENT_CAPABILITIES } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -42,7 +43,11 @@ const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk",
 // "swarm" (Docker Swarm formation) is opt-in like "terminal": granted explicitly per server, NEVER in
 // DEFAULT_CAPABILITIES and never backfilled — joining a swarm changes a box's trust topology (it accepts
 // raft/gossip that can affect other nodes), a bigger step than deploying one app on it.
-const ALL_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs", "swarm"];
+// "files" (read/list an app volume via the sandboxed fsd helper, CASA-FILES) is likewise opt-in and
+// default-OFF: it exposes application data, so an operator must grant it explicitly per server.
+// The full grantable set is the shared AGENT_CAPABILITIES source of truth (same list the grant-API schema
+// validates against — they can't drift). DEFAULT_CAPABILITIES above is the least-privilege subset.
+const ALL_CAPABILITIES: readonly string[] = AGENT_CAPABILITIES;
 
 export const ServerViewSchema = z.object({
   id: z.string(),

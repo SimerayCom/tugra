@@ -10,7 +10,7 @@ import { Observable } from "rxjs";
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
-import type { TeamPermission } from "@tugra/shared";
+import type { FsEntry, TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
@@ -24,6 +24,7 @@ import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
 import { ContainerMetricsService, type AppContainerMetrics } from "../metrics/container-metrics.service";
 import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
+import { assertSafeFsPath } from "../common/fs-path";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
@@ -52,6 +53,7 @@ import {
   registryImageRef,
   parseImageDigest,
   containerName,
+  appVolumeName,
   type AppSpec,
   type AppVolume,
   type AppConfigMount,
@@ -1412,6 +1414,28 @@ export class ApplicationsService {
       60_000,
     );
     return { output: r.output.slice(0, 65536) };
+  }
+
+  /**
+   * List files/dirs inside one of the app's DECLARED volumes (CASA-FILES, read-only metadata only — never
+   * content). The volume must be one the app declares (never an arbitrary docker volume). The path is
+   * validated here (defense-in-depth) before it is sent; the agent re-validates and runs the listing
+   * inside a sandboxed, read-only, network-less helper container (os.Root-confined). Writer-only, like logs.
+   */
+  async listFiles(
+    userId: string,
+    id: string,
+    volumeName: string,
+    path = "",
+  ): Promise<{ entries: FsEntry[]; truncated: boolean }> {
+    const app = await this.requireWrite(userId, id);
+    const declared =
+      Array.isArray(app.volumes) &&
+      (app.volumes as Array<{ name?: string }>).some((v) => v?.name === volumeName);
+    if (!declared) throw new BadRequestException("unknown volume for this app");
+    const rel = assertSafeFsPath(path);
+    if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
+    return this.agentWs.sendFsReq(app.serverId, "list", appVolumeName(app, volumeName), rel);
   }
 
   /**

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AGENT_CAPABILITIES } from "@tugra/shared";
 import { DOMAIN_RE } from "../../applications/dto";
 
 export const CreateServerSchema = z.object({
@@ -7,9 +8,11 @@ export const CreateServerSchema = z.object({
 });
 export type CreateServerInput = z.infer<typeof CreateServerSchema>;
 
-// Granted agent capabilities the hub will sign commands for on this server.
+// Granted agent capabilities the hub will sign commands for on this server. Derived from the shared
+// AGENT_CAPABILITIES source of truth so a new capability (e.g. "swarm"/"files") can never be grantable
+// in the service yet silently rejected here.
 export const SetCapabilitiesSchema = z.object({
-  capabilities: z.array(z.enum(["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"])),
+  capabilities: z.array(z.enum(AGENT_CAPABILITIES)),
 });
 export type SetCapabilitiesInput = z.infer<typeof SetCapabilitiesSchema>;
 
