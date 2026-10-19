@@ -53,4 +53,31 @@ describe("TileActionsSheet", () => {
     expect(screen.queryByText("Logs")).toBeNull();
     expect(screen.queryByText("Update")).toBeNull();
   });
+
+  it("offers Pin/Unpin when onTogglePin is wired, and toggles + closes on click", () => {
+    const onTogglePin = vi.fn();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <ConfirmProvider>
+            <TileActionsSheet tile={tile()} pinned={false} onTogglePin={onTogglePin} onClose={onClose} onExpose={vi.fn()} />
+          </ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByText("Pin to top"));
+    expect(onTogglePin).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <ConfirmProvider>
+            <TileActionsSheet tile={tile()} pinned onTogglePin={onTogglePin} onClose={onClose} onExpose={vi.fn()} />
+          </ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Unpin")).toBeTruthy();
+  });
 });

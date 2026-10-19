@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Globe, Play, RefreshCw, RotateCw, ScrollText, Square, Trash2, type LucideIcon } from "lucide-react";
+import { ExternalLink, Globe, Pin, PinOff, Play, RefreshCw, RotateCw, ScrollText, Square, Trash2, type LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { tileActions, type LauncherTile, type TileAction } from "../lib/launcher";
 import { useT } from "../i18n/provider";
@@ -15,10 +15,14 @@ import { useConfirm } from "./confirm";
 /** Manage an installed app from the Home launcher (open/start/stop/restart/domain/uninstall). */
 export function TileActionsSheet({
   tile,
+  pinned,
+  onTogglePin,
   onClose,
   onExpose,
 }: {
   tile: LauncherTile;
+  pinned?: boolean;
+  onTogglePin?: () => void;
   onClose: () => void;
   onExpose: (id: string) => void;
 }) {
@@ -113,6 +117,18 @@ export function TileActionsSheet({
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {onTogglePin && (
+            <button
+              onClick={() => { onTogglePin(); onClose(); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
+                padding: "11px 12px", borderRadius: "var(--r1)", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
+                background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)",
+              }}
+            >
+              {pinned ? <PinOff size={16} /> : <Pin size={16} />} {t(pinned ? "home.unpin" : "home.pin")}
+            </button>
+          )}
           {tileActions(tile.status, !!tile.url, tile.canWrite).map((action) => {
             const Icon = ICON[action];
             const danger = action === "uninstall";
