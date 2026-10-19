@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Globe, Pin, PinOff, Play, RefreshCw, RotateCw, ScrollText, Square, Trash2, type LucideIcon } from "lucide-react";
+import { ExternalLink, FolderOpen, Globe, Pin, PinOff, Play, RefreshCw, RotateCw, ScrollText, Square, Trash2, type LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { tileActions, type LauncherTile, type TileAction } from "../lib/launcher";
 import { useT } from "../i18n/provider";
 import { Modal } from "./modal";
 import { Btn, Spinner } from "./ui";
+import { AppFilesCard } from "./app-files-card";
 import { AppLogo } from "./app-logo";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
@@ -31,11 +32,19 @@ export function TileActionsSheet({
   const confirm = useConfirm();
   const qc = useQueryClient();
   const [showLogs, setShowLogs] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
 
   const logs = useQuery({
     queryKey: ["apps", tile.id, "logs"],
     queryFn: () => api.getAppLogs(tile.id, 200),
     enabled: showLogs,
+  });
+
+  // The tile doesn't carry volumes; fetch the app lazily when the files view opens (no navigation — Home-safe).
+  const appForFiles = useQuery({
+    queryKey: ["app", tile.id],
+    queryFn: () => api.getApp(tile.id),
+    enabled: showFiles,
   });
 
   const run = useMutation({
@@ -52,6 +61,7 @@ export function TileActionsSheet({
   const ICON: Record<TileAction, LucideIcon> = {
     open: ExternalLink,
     logs: ScrollText,
+    files: FolderOpen,
     start: Play,
     restart: RotateCw,
     update: RefreshCw,
@@ -68,6 +78,9 @@ export function TileActionsSheet({
         return;
       case "logs":
         setShowLogs(true); // open the inline logs view (no navigation — works in Home mode)
+        return;
+      case "files":
+        setShowFiles(true); // open the inline files browser (no navigation — works in Home mode)
         return;
       case "start":
       case "update": // redeploy: pull latest + restart (same deploy endpoint)
@@ -97,7 +110,20 @@ export function TileActionsSheet({
         <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tile.name}</div>
       </div>
 
-      {showLogs ? (
+      {showFiles ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {appForFiles.isPending ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: 16 }}><Spinner /></div>
+          ) : appForFiles.isError ? (
+            <div style={{ fontSize: 13, color: "var(--c-r)", padding: 8 }}>{t("home.filesError")}</div>
+          ) : (
+            <AppFilesCard id={tile.id} volumes={appForFiles.data?.volumes ?? []} />
+          )}
+          <div>
+            <Btn variant="ghost" onClick={() => setShowFiles(false)}>{t("home.logsBack")}</Btn>
+          </div>
+        </div>
+      ) : showLogs ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {logs.isPending ? (
             <div style={{ display: "flex", justifyContent: "center", padding: 16 }}><Spinner /></div>

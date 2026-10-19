@@ -16,6 +16,7 @@ import type {
   SavedView,
   Application,
   AppVolume,
+  FileListing,
   BulkOperation,
   Backup,
   Restore,
@@ -889,6 +890,10 @@ export const api = {
   },
   getAppLogs(id: string, tail?: number) {
     return apiFetch<{ output: string }>(`/apps/${id}/logs${tail ? `?tail=${tail}` : ""}`);
+  },
+  listAppFiles(id: string, volume: string, path = "") {
+    const qs = new URLSearchParams({ volume, ...(path ? { path } : {}) });
+    return apiFetch<FileListing>(`/apps/${id}/files?${qs}`);
   },
   listAppContainers(id: string) {
     return apiFetch<{ containers: { name: string; state: string }[] }>(`/apps/${id}/containers`);

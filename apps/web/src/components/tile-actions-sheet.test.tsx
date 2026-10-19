@@ -47,6 +47,22 @@ describe("TileActionsSheet", () => {
     await waitFor(() => expect(deploy).toHaveBeenCalledWith("a1"));
   });
 
+  it("Files opens an inline file browser (fetches the app's volumes, no navigation)", async () => {
+    vi.spyOn(api, "getApp").mockResolvedValue({ volumes: [{ name: "data", path: "/data" }] } as never);
+    vi.spyOn(api, "listAppFiles").mockResolvedValue({
+      entries: [{ name: "config.yml", type: "file", size: 10, mode: "rw-r--r--", mtime: 1 }],
+      truncated: false,
+    });
+    wrap(<TileActionsSheet tile={tile()} onClose={vi.fn()} onExpose={vi.fn()} />);
+    fireEvent.click(screen.getByText("Files"));
+    expect(await screen.findByText("config.yml")).toBeTruthy();
+    expect(api.getApp).toHaveBeenCalledWith("a1");
+    expect(api.listAppFiles).toHaveBeenCalledWith("a1", "data", "");
+    // Back returns to the action list
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByText("Update")).toBeTruthy();
+  });
+
   it("hides Logs/Update (write actions) from a viewer — only Open", () => {
     wrap(<TileActionsSheet tile={tile({ canWrite: false })} onClose={vi.fn()} onExpose={vi.fn()} />);
     expect(screen.getByText("Open")).toBeTruthy();
