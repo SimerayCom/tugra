@@ -3,6 +3,7 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
+import { ConfirmProvider } from "./confirm";
 import { ImportWizard } from "./import-wizard";
 import { api } from "../lib/api";
 import type { ImportPlan, ImportOperation } from "../lib/types";
@@ -13,7 +14,9 @@ let qc: QueryClient;
 const wrap = (ui: React.ReactNode) =>
   render(
     <QueryClientProvider client={qc}>
-      <I18nProvider>{ui}</I18nProvider>
+      <I18nProvider>
+        <ConfirmProvider>{ui}</ConfirmProvider>
+      </I18nProvider>
     </QueryClientProvider>,
   );
 
@@ -71,6 +74,32 @@ describe("ImportWizard", () => {
     expect(applySpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32) });
     expect(screen.getByText("web-app")).toBeTruthy();
     expect(screen.getByText(/Importing/)).toBeTruthy(); // timeline header
+  });
+
+  it("offers rollback on a settled op with a created app, and runs it after confirm", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+    const rb = vi.spyOn(api, "rollbackImport").mockResolvedValue({
+      ...settledOp,
+      tasks: [{ ...settledOp.tasks[0], status: "ROLLED_BACK" }],
+    });
+    wrap(<ImportWizard />);
+
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByRole("option", { name: "Server A" });
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE");
+
+    fireEvent.click(screen.getByRole("button", { name: "Roll back" })); // Timeline button
+    await screen.findByText("Roll back this import?"); // confirm dialog
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" })); // dialog confirm
+    await screen.findByText("ROLLED_BACK");
+    expect(rb).toHaveBeenCalledWith("op1");
   });
 
   it("keeps the connect button disabled until url + token are filled", async () => {
