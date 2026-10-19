@@ -285,7 +285,7 @@ export class DnsAutomationService {
     if (targetIps.v4.length === 0) {
       throw new BadRequestException("the app's server/cluster has no public IPv4 address to point DNS at");
     }
-    const { zoneId, zoneName } = await this.cf.findZoneForHostname(cred.token, hostname);
+    const { zoneId, zoneName } = await this.cf.findZoneForHostname(cred.token, hostname, cred.cfAccountId);
     const apex = hostname === zoneName;
     const sslMode = await this.cf.getZoneSslMode(cred.token, zoneId).catch(() => "unknown");
     const overwrite = input.overwrite ?? false;

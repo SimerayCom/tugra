@@ -206,17 +206,64 @@ describe("CloudflareApiClient error hygiene", () => {
 
 // ── DNS auto-setup client extensions (DNS spec S1) ──────────────────────────────────────────────
 describe("CloudflareApiClient.findZoneForHostname", () => {
-  it("picks the LONGEST zone-name suffix of the hostname", async () => {
-    mockOnce(200, envelope([{ id: "zc", name: "co.uk" }, { id: "zf", name: "foo.co.uk" }, { id: "ze", name: "example.com" }]));
+  /** A fake fetch that answers each GET /zones?name=<n> from a name→zones map (simulating exact-name lookups
+   *  that work regardless of how many zones the token can see). Records the names queried, in order. */
+  function mockZonesByName(byName: Record<string, Array<{ id: string; name: string }>>): { queried: string[] } {
+    const queried: string[] = [];
+    global.fetch = jest.fn((url: string) => {
+      const m = /[?&]name=([^&]+)/.exec(url);
+      const name = m ? decodeURIComponent(m[1]) : "";
+      queried.push(name);
+      return Promise.resolve({ ok: true, status: 200, json: async () => envelope(byName[name] ?? []) });
+    }) as unknown as typeof fetch;
+    return { queried };
+  }
+
+  it("resolves by EXACT-NAME lookup, most specific first — the longest suffix wins without listing all zones", async () => {
+    const { queried } = mockZonesByName({ "foo.co.uk": [{ id: "zf", name: "foo.co.uk" }], "example.com": [{ id: "ze", name: "example.com" }] });
     await expect(cf.findZoneForHostname("t", "app.foo.co.uk")).resolves.toEqual({ zoneId: "zf", zoneName: "foo.co.uk" });
+    // stops as soon as foo.co.uk hits; never queries the bare TLD
+    expect(queried).toEqual(["app.foo.co.uk", "foo.co.uk"]);
   });
-  it("matches an exact apex hostname", async () => {
-    mockOnce(200, envelope([{ id: "ze", name: "example.com" }]));
-    await expect(cf.findZoneForHostname("t", "example.com")).resolves.toEqual({ zoneId: "ze", zoneName: "example.com" });
+
+  it("finds a child zone that would sit far past the first 50 listed zones (the >50-zone bug)", async () => {
+    mockZonesByName({ "sub.example.com": [{ id: "zchild", name: "sub.example.com" }], "example.com": [{ id: "zparent", name: "example.com" }] });
+    // most-specific-first means the child zone wins even though a plain list would have surfaced the parent first
+    await expect(cf.findZoneForHostname("t", "mail.sub.example.com")).resolves.toEqual({ zoneId: "zchild", zoneName: "sub.example.com" });
   });
-  it("throws 404 when no accessible zone matches the hostname", async () => {
-    mockOnce(200, envelope([{ id: "ze", name: "example.com" }]));
+
+  it("scopes every lookup to account.id when provided", async () => {
+    const f = mockZonesByName({ "example.com": [{ id: "ze", name: "example.com" }] });
+    await cf.findZoneForHostname("t", "example.com", "acct-123");
+    expect(f).toBeTruthy();
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain("account.id=acct-123");
+  });
+
+  it("throws 409 when the zone name exists in more than one account (no accountId to disambiguate)", async () => {
+    mockZonesByName({ "example.com": [{ id: "zA", name: "example.com" }, { id: "zB", name: "example.com" }] });
+    await expect(cf.findZoneForHostname("t", "example.com")).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("throws 404 when no candidate resolves", async () => {
+    mockZonesByName({});
     await expect(cf.findZoneForHostname("t", "app.other.net")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("rejects a hostname with fewer than 2 labels (400) and never calls the API", async () => {
+    const { queried } = mockZonesByName({});
+    await expect(cf.findZoneForHostname("t", "localhost")).rejects.toMatchObject({ status: 400 });
+    expect(queried).toEqual([]);
+  });
+
+  it("propagates a 403 instead of reporting it as a missing zone", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403, json: async () => envelope(null, false, [{ message: "forbidden" }]) }) as unknown as typeof fetch;
+    await expect(cf.findZoneForHostname("t", "app.example.com")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("strips a leading wildcard before resolving", async () => {
+    const { queried } = mockZonesByName({ "example.com": [{ id: "ze", name: "example.com" }] });
+    await expect(cf.findZoneForHostname("t", "*.example.com")).resolves.toEqual({ zoneId: "ze", zoneName: "example.com" });
+    expect(queried).toEqual(["example.com"]);
   });
 });
 

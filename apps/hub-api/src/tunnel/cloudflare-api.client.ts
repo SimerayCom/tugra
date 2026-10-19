@@ -90,20 +90,41 @@ export class CloudflareApiClient {
     return zone.id;
   }
 
-  /** Find the zone whose name is the LONGEST suffix of `hostname` (e.g. `app.foo.co.uk` → `foo.co.uk`). Lists
-   *  the token's accessible zones (up to 50 — a scoped token has few) and picks the longest match. Throws 404
-   *  when none matches (the token can't see the zone). This is the hostname→zone resolver the auto-setup needs,
-   *  unlike findZoneId which requires the exact zone name. */
-  async findZoneForHostname(apiToken: string, hostname: string): Promise<{ zoneId: string; zoneName: string }> {
-    const host = hostname.toLowerCase().replace(/\.$/, "");
-    const zones = await this.request<Array<{ id: string; name: string }>>("GET", "/zones?per_page=50", apiToken);
-    const match = zones
-      .filter((z) => z.name && (host === z.name || host.endsWith(`.${z.name}`)))
-      .sort((a, b) => b.name.length - a.name.length)[0];
-    if (!match?.id) {
-      throw new CloudflareApiError("no accessible Cloudflare zone matches this hostname — add the zone to this API token's scope", 404);
+  /** Find the Cloudflare zone for a hostname by EXACT-NAME lookup on each suffix candidate, most specific first
+   *  (e.g. `mail.sub.example.com` → tries `mail.sub.example.com`, `sub.example.com`, `example.com`), returning
+   *  the first that resolves — the longest suffix by construction. This replaces listing the token's zones: a
+   *  single `GET /zones?per_page=50` reads only the first page, so a token that can see MANY zones (100+, across
+   *  accounts) would silently miss any zone past it and could pick the wrong parent. A handful of exact `?name=`
+   *  lookups is correct and cheap at any scale. When `accountId` is set every lookup is scoped to that account
+   *  (disambiguating a zone name that exists in more than one account); without it, a name found in 2+ accounts is
+   *  a 409 rather than a guess. Throws 404 when no candidate matches. Non-404 API errors (401/403/429) propagate —
+   *  a bad token is never reported as "zone not found". */
+  async findZoneForHostname(apiToken: string, hostname: string, accountId?: string | null): Promise<{ zoneId: string; zoneName: string }> {
+    const host = hostname.trim().toLowerCase().replace(/\.$/, "").replace(/^\*\./, "");
+    const labels = host.split(".").filter(Boolean);
+    if (labels.length < 2) {
+      throw new CloudflareApiError("invalid hostname for zone lookup — need at least a registrable domain", 400);
     }
-    return { zoneId: match.id, zoneName: match.name };
+    const acct = accountId ? `&account.id=${encodeURIComponent(accountId)}` : "";
+    // Most specific first; stop at a 2-label candidate (never query a bare TLD). An empty result just advances to
+    // the next, shorter candidate — a wasted `co.uk`-style lookup self-corrects because `foo.co.uk` is tried first.
+    for (let i = 0; i <= labels.length - 2; i++) {
+      const candidate = labels.slice(i).join(".");
+      const zones = await this.request<Array<{ id: string; name: string }>>(
+        "GET",
+        `/zones?name=${encodeURIComponent(candidate)}&per_page=50${acct}`,
+        apiToken,
+      );
+      const matches = zones.filter((z) => z.name?.toLowerCase() === candidate && z.id);
+      if (matches.length === 1) return { zoneId: matches[0].id, zoneName: matches[0].name };
+      if (matches.length > 1) {
+        throw new CloudflareApiError(
+          `the zone "${candidate}" exists in more than one Cloudflare account for this token — set the account id on the DNS credential to disambiguate`,
+          409,
+        );
+      }
+    }
+    throw new CloudflareApiError("no accessible Cloudflare zone matches this hostname — add the zone to this API token's scope", 404);
   }
 
   /** List a zone's DNS records, optionally filtered by exact name and/or type. */

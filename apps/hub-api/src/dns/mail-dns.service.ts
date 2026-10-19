@@ -163,7 +163,7 @@ export class MailDnsService {
     const domain = desired[0].name; // MX is always first and lives at the (normalized) mail domain
     const mailHost = desired[0].content.replace(/\.$/, "");
 
-    const { zoneId, zoneName } = await this.cf.findZoneForHostname(cred.token, domain);
+    const { zoneId, zoneName } = await this.cf.findZoneForHostname(cred.token, domain, cred.cfAccountId);
     const overwrite = req.overwrite ?? false;
     const records: PlannedMailRecord[] = [];
     for (const d of desired) records.push(...(await this.reconcile(cred.token, zoneId, d, overwrite)));
