@@ -7,6 +7,7 @@ import {
   type SecretSpec,
   type TemplateDef,
 } from "./catalog";
+import { TEMPLATE_META_OVERLAY, deriveBadges } from "./catalog-meta";
 import { publicManifest, toManifest, validateConfigMountTarget } from "./template-manifest";
 
 const secretKey = (s: SecretSpec): string => (typeof s === "string" ? s : s.key);
@@ -187,5 +188,43 @@ describe("template catalog", () => {
 
   it("buildTemplateEnv is empty for a template with no secrets/env", () => {
     expect(buildTemplateEnv(TEMPLATES.adminer)).toEqual({});
+  });
+
+  // ── CASA-UX-3: presentation overlay (tagline/tags/featured/badges) ──
+
+  it("every overlay slug is a real catalog slug (a typo fails here, not silently)", () => {
+    for (const slug of Object.keys(TEMPLATE_META_OVERLAY)) {
+      expect(`${slug}:${slug in TEMPLATES}`).toBe(`${slug}:true`);
+    }
+  });
+
+  it("marks a healthy set of featured templates", () => {
+    const featured = templateMetaList().filter((m) => m.featured);
+    expect(featured.length).toBeGreaterThanOrEqual(10);
+    // featured implies the overlay set it
+    for (const m of featured) expect(TEMPLATE_META_OVERLAY[m.slug]?.featured).toBe(true);
+  });
+
+  it("merges the overlay tagline/tags/featured onto a template's meta", () => {
+    const nc = templateMetaList().find((m) => m.slug === "nextcloud")!;
+    expect(nc.tagline).toBeTruthy();
+    expect(nc.tags).toContain("files");
+    expect(nc.featured).toBe(true);
+  });
+
+  it("derives a 'db' badge for a stack that bundles a database, and none for a db-less app", () => {
+    expect(deriveBadges(TEMPLATES.wordpress.composeFile)).toContain("db"); // mariadb
+    expect(deriveBadges(TEMPLATES.directus.composeFile)).toContain("db"); // postgres
+    expect(deriveBadges(TEMPLATES.adminer.composeFile)).not.toContain("db"); // ui only
+    expect(deriveBadges(TEMPLATES.redis.composeFile)).not.toContain("db"); // cache, not a db badge
+    // and it surfaces on the public meta
+    expect(templateMetaList().find((m) => m.slug === "wordpress")!.badges).toContain("db");
+  });
+
+  it("overlay fields never introduce a composeFile/secrets leak into the meta", () => {
+    for (const m of templateMetaList()) {
+      expect(m).not.toHaveProperty("composeFile");
+      expect(m).not.toHaveProperty("secrets");
+    }
   });
 });

@@ -15698,6 +15698,24 @@
                       },
                       "documentation": {
                         "type": "string"
+                      },
+                      "tagline": {
+                        "type": "string"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "featured": {
+                        "type": "boolean"
+                      },
+                      "badges": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
                     },
                     "required": [
@@ -15804,6 +15822,24 @@
                     },
                     "documentation": {
                       "type": "string"
+                    },
+                    "tagline": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "featured": {
+                      "type": "boolean"
+                    },
+                    "badges": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
