@@ -6,6 +6,7 @@
   "skipAll": "Skip setup",
   "finish": "Finish",
   "goToDashboard": "Go to dashboard",
+  "goToLauncher": "Go to your apps",
   "createFailed": "Something went wrong. Please try again.",
 
   "welcomeHeading": "Welcome to Tugra",
@@ -31,6 +32,10 @@
 
   "serverHeading": "Connect your first server",
   "serverBody": "Give it a name — you'll get a one-line command to run on the machine.",
+  "localServerBody": "This machine is being connected automatically — no command to run.",
+  "localServerConnecting": "Connecting this machine…",
+  "localServerConnected": "This machine is connected.",
+  "localServerContinue": "Continue",
   "serverName": "Server name",
   "team": "Team",
   "createServer": "Create server",

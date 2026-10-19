@@ -69,6 +69,9 @@ export const envSchema = z
     .string()
     .min(32, "LOCAL_AGENT_ENROLL_TOKEN must be at least 32 chars — a high-entropy enroll token, not a guessable value")
     .optional(),
+  // The uiMode new accounts get by default. A turnkey single-box install sets "home" so the owner lands on
+  // the launcher (CASA-INSTALL-3); unset → "home"/"fleet" falls back to the schema default ("fleet").
+  DEFAULT_UI_MODE: z.enum(["fleet", "home"]).optional(),
   // Set to "true" only when the hub sits behind a trusted reverse proxy, so the
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
