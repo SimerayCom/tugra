@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { Template } from "../lib/types";
+import type { InstalledInfo } from "../lib/installed";
 import { filterTemplates, presentCategories, groupByCategory } from "../lib/template-filter";
 import { TemplateLogo } from "../lib/template-icons";
 import { useT } from "../i18n/provider";
@@ -19,13 +20,30 @@ const sectionHeading: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8, margin: "0 0 12px",
   fontSize: 12, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--c-tx2)",
 };
+const openLink: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: "var(--c-a)", display: "inline-flex", alignItems: "center", gap: 3 };
+const installedPill = (running: boolean): React.CSSProperties => ({
+  fontSize: 11, fontWeight: 600, padding: "1px 8px", borderRadius: 999, alignSelf: "flex-start", whiteSpace: "nowrap",
+  color: running ? "var(--c-g)" : "var(--c-tx3)",
+  background: running ? "color-mix(in srgb, var(--c-g) 15%, transparent)" : "color-mix(in srgb, var(--c-tx) 8%, transparent)",
+});
 
 /**
  * Browseable app-store template gallery: free-text search + category chips +
  * icon cards. Shared by the New-resource wizard and the standalone /app-store
- * page; the caller decides what a card click does via onPick.
+ * page; the caller decides what a card click does via onPick. When `installed`
+ * is supplied (keyed by template slug), a card shows an Installed/Running badge
+ * and, for a running install, an Open link — so the user opens it instead of
+ * deploying a duplicate.
  */
-export function TemplateGrid({ templates, onPick }: { templates: Template[]; onPick: (tpl: Template) => void }) {
+export function TemplateGrid({
+  templates,
+  onPick,
+  installed,
+}: {
+  templates: Template[];
+  onPick: (tpl: Template) => void;
+  installed?: Map<string, InstalledInfo>;
+}) {
   const t = useT();
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
@@ -36,7 +54,9 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
   const grouped = cat === "all" && q.trim() === "";
   const groups = grouped ? groupByCategory(templates) : [];
 
-  const renderTile = (tpl: Template) => (
+  const renderTile = (tpl: Template) => {
+    const inst = installed?.get(tpl.slug);
+    return (
     <button
       key={tpl.slug}
       type="button"
@@ -49,6 +69,19 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
       <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>{tpl.name}</span>
         <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{tpl.description}</span>
+        {inst && (
+          <span style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
+            <span style={installedPill(inst.running)}>
+              {inst.running ? t("resources.storeRunning") : t("resources.storeInstalled")}
+              {inst.count > 1 ? ` ×${inst.count}` : ""}
+            </span>
+            {inst.url && (
+              <a href={inst.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={openLink}>
+                {t("resources.storeOpen")} <ExternalLink size={11} />
+              </a>
+            )}
+          </span>
+        )}
       </span>
       {tpl.documentation && (
         <a
@@ -64,7 +97,8 @@ export function TemplateGrid({ templates, onPick }: { templates: Template[]; onP
         </a>
       )}
     </button>
-  );
+    );
+  };
 
   return (
     <>
