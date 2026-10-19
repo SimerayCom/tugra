@@ -10,6 +10,7 @@
 
 import {
   dbContainerName,
+  type DbCredentials,
   type DbEngine,
   type DbSpec,
 } from "../databases/database-script";
@@ -55,11 +56,12 @@ function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
-/** Engine-specific command that writes the raw dump to stdout. */
-function dumpToStdout(db: DbSpec): string {
-  const name = dbContainerName(db);
-  const { username, password, database } = db.credentials;
-  switch (db.engine) {
+/** Engine-specific command that writes the raw dump of `name` (a DB container) to stdout. Exported +
+ *  parameterized on (engine, container, creds) so BOTH Tugra's own backups and the importer's SSH data-plane
+ *  share one source of truth — a dump therefore always matches what Tugra restores. */
+export function dumpDbToStdout(engine: DbEngine, name: string, creds: DbCredentials): string {
+  const { username, password, database } = creds;
+  switch (engine) {
     case "POSTGRES":
       // -Fc custom format (enables pg_restore --clean/--if-exists on restore);
       // -Z0 leave compression to the shared `| gzip` stage; --no-owner/--no-acl
@@ -97,6 +99,11 @@ function dumpToStdout(db: DbSpec): string {
     case "LIBSQL":
       throw new Error("backup not supported for libsql"); // unreachable — gated by supportsBackup()
   }
+}
+
+/** A managed Tugra database's dump command — the DbSpec-shaped wrapper over {@link dumpDbToStdout}. */
+function dumpToStdout(db: DbSpec): string {
+  return dumpDbToStdout(db.engine, dbContainerName(db), db.credentials);
 }
 
 // Quote a value that is embedded inside an already single-quoted `sh -c` string.
