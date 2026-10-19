@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeTags } from "../common/tags";
 import type { Scope } from "../api-tokens/scopes";
 import type { ApplicationsService } from "../applications/applications.service";
 import type { ServersService } from "../servers/servers.service";
@@ -110,6 +111,11 @@ const FLEET_CONCURRENCY = 5;
 function fleetToken(action: string, clusterId: string, ids: string[]): string {
   return createHash("sha256").update(`${action}|${clusterId}|${[...ids].sort().join(",")}`).digest("hex").slice(0, 16);
 }
+
+/** Cap on the apps returned by the fleet_list_apps overview — bounds the payload; `truncated` flags above it. */
+const MAX_FLEET_LIST = 200;
+/** Valid Application statuses (mirrors the Prisma AppStatus enum) — fleet_list_apps validates its status filter. */
+const APP_STATUSES = new Set(["NEW", "RUNNING", "STOPPED", "FAILED"]);
 
 /** Reduce a Deployment row to LLM-safe metadata: drop the raw build `logs` blob AND the `configSnapshot`
  *  (whose `composeFile` stores user compose YAML verbatim — commonly with hard-coded secrets, and gated behind
@@ -647,6 +653,133 @@ export const MCP_TOOLS: McpTool[] = [
       const opId = reqStr(a, "opId");
       requireConfirmName(a, opId, "import operation"); // echo the opId to confirm the irreversible undo
       return d.executor.rollback(userId, opId);
+    },
+  },
+
+  // ── read: fleet aggregators (agent-native fleet-first) ────────────────────────────────────────────
+  // One-call fleet views so an agent doesn't have to loop list_applications + per-cluster calls itself.
+  // All scope:"read" and pass userId straight through — every result is already scoped DB-side to what the
+  // caller can see (apps.list / clusters.list resolve team + per-resource access), so filtering their
+  // output here can never widen visibility.
+  {
+    name: "fleet_list_apps",
+    description:
+      "Fleet overview: list applications across the caller's teams in ONE call, with optional filters — clusterId, serverId, status (NEW|RUNNING|STOPPED|FAILED), tag. Returns slim records (id, name, status, clusterId, serverId, domain, tags). Read-only; already scoped to apps the caller can access. Capped at " +
+      String(MAX_FLEET_LIST) +
+      " (the `truncated` flag is set above that).",
+    scope: "read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        clusterId: { type: "string" },
+        serverId: { type: "string" },
+        status: { type: "string", enum: ["NEW", "RUNNING", "STOPPED", "FAILED"] },
+        tag: { type: "string" },
+      },
+    },
+    execute: async (d, userId, a) => {
+      const clusterId = optStr(a, "clusterId");
+      const serverId = optStr(a, "serverId");
+      // Stored tags are canonicalized (normalizeTags: lowercase/trim/[a-z0-9-]); normalize the filter the
+      // same way so "Prod" matches "prod" (mirrors the case-insensitive status filter). A tag that
+      // normalizes to nothing stays a defined "" so the filter still applies and matches nothing.
+      const rawTag = optStr(a, "tag");
+      const tag = rawTag === undefined ? undefined : (normalizeTags([rawTag])[0] ?? "");
+      let status = optStr(a, "status");
+      if (status) {
+        status = status.toUpperCase();
+        if (!APP_STATUSES.has(status)) throw new Error(`invalid status: must be one of ${[...APP_STATUSES].join(", ")}`);
+      }
+      const all = (await d.apps.list(userId)) as Array<{
+        id: string;
+        name: string;
+        status: string;
+        clusterId: string | null;
+        serverId: string;
+        domain: string | null;
+        tags?: string[];
+      }>;
+      const matched = all.filter(
+        (app) =>
+          (!clusterId || app.clusterId === clusterId) &&
+          (!serverId || app.serverId === serverId) &&
+          (!status || app.status === status) &&
+          (tag === undefined || (app.tags ?? []).includes(tag)),
+      );
+      const apps = matched.slice(0, MAX_FLEET_LIST).map((app) => ({
+        id: app.id,
+        name: app.name,
+        status: app.status,
+        clusterId: app.clusterId,
+        serverId: app.serverId,
+        domain: app.domain ?? null,
+        tags: app.tags ?? [],
+      }));
+      return { ok: true, total: matched.length, count: apps.length, truncated: matched.length > apps.length, apps };
+    },
+  },
+  {
+    name: "fleet_health_rollup",
+    description:
+      "Fleet health: per-cluster node + app health (online/offline/pending nodes; running/stopped/failed/new apps) plus fleet-wide totals, in ONE call. Optional teamId filter. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { teamId: { type: "string" } } },
+    execute: async (d, userId, a) => {
+      const teamId = optStr(a, "teamId");
+      const clusters = (await d.clusters.list(userId, teamId)) as Array<{ id: string; name: string; swarmStatus: string }>;
+      const rollups = await Promise.all(
+        clusters.map(async (c) => {
+          try {
+            const detail = (await d.clusters.get(userId, c.id)) as {
+              health?: { nodes: Record<string, number>; apps: Record<string, number> };
+            };
+            return { id: c.id, name: c.name, swarmStatus: c.swarmStatus, health: detail.health ?? null };
+          } catch (e) {
+            // One cluster's health failing (e.g. a transient race) must not sink the whole rollup.
+            return { id: c.id, name: c.name, swarmStatus: c.swarmStatus, health: null, error: e instanceof Error ? e.message : "health unavailable" };
+          }
+        }),
+      );
+      const totals = {
+        nodes: { online: 0, offline: 0, pending: 0, total: 0 },
+        apps: { running: 0, stopped: 0, failed: 0, new: 0, total: 0 },
+      };
+      for (const r of rollups) {
+        if (!r.health) continue;
+        for (const k of Object.keys(totals.nodes) as Array<keyof typeof totals.nodes>) totals.nodes[k] += Number(r.health.nodes?.[k] ?? 0);
+        for (const k of Object.keys(totals.apps) as Array<keyof typeof totals.apps>) totals.apps[k] += Number(r.health.apps?.[k] ?? 0);
+      }
+      return { ok: true, clusterCount: clusters.length, clusters: rollups, totals };
+    },
+  },
+  {
+    name: "fleet_status",
+    description:
+      "Fleet summary: total clusters/servers/apps, the app-status breakdown (running/stopped/failed/new), and cluster/server status tallies, in ONE call. Optional teamId narrows the summary to one team. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { teamId: { type: "string" } } },
+    execute: async (d, userId, a) => {
+      const teamId = optStr(a, "teamId");
+      const [clusters, apps, servers] = (await Promise.all([
+        d.clusters.list(userId, teamId),
+        d.apps.list(userId),
+        // clusters.list + servers.listForUser both take the teamId filter (still perm-checked server-side,
+        // so it can't widen); apps.list isn't team-parameterised, so narrow apps by teamId in-memory below.
+        d.servers.listForUser(userId, teamId ? { teamId } : undefined),
+      ])) as [Array<{ swarmStatus: string }>, Array<{ status: string; teamId: string }>, Array<{ status: string }>];
+      const teamApps = teamId ? apps.filter((x) => x.teamId === teamId) : apps;
+      const appStatus: Record<string, number> = { RUNNING: 0, STOPPED: 0, FAILED: 0, NEW: 0 };
+      for (const x of teamApps) if (x.status in appStatus) appStatus[x.status] += 1;
+      const bySwarmStatus: Record<string, number> = {};
+      for (const c of clusters) bySwarmStatus[c.swarmStatus] = (bySwarmStatus[c.swarmStatus] ?? 0) + 1;
+      const byServerStatus: Record<string, number> = {};
+      for (const s of servers) byServerStatus[s.status] = (byServerStatus[s.status] ?? 0) + 1;
+      return {
+        ok: true,
+        clusters: { total: clusters.length, bySwarmStatus },
+        servers: { total: servers.length, byStatus: byServerStatus },
+        apps: { total: teamApps.length, running: appStatus.RUNNING, stopped: appStatus.STOPPED, failed: appStatus.FAILED, new: appStatus.NEW },
+      };
     },
   },
 ];
