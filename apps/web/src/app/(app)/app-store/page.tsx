@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Store } from "lucide-react";
@@ -11,6 +11,7 @@ import { EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TemplateGrid } from "../../../components/template-grid";
 import { InstallModal } from "../../../components/install-modal";
+import { AppDetailSheet } from "../../../components/app-detail-sheet";
 import { Skeleton, SkeletonText } from "../../../components/skeleton";
 import { installedBySlug } from "../../../lib/installed";
 import type { Template } from "../../../lib/types";
@@ -20,6 +21,13 @@ export default function AppStorePage() {
   const router = useRouter();
   const { user } = useAuth();
   const [installing, setInstalling] = useState<Template | null>(null);
+  const [detailFor, setDetailFor] = useState<Template | null>(null);
+  // Install handoff shared by a card's detail sheet and a direct pick: home deploys inline, fleet hands to the
+  // full New-resource wizard with the chosen template preselected.
+  const install = (tpl: Template) => (user?.uiMode === "home" ? setInstalling(tpl) : router.push(`/resources/new?template=${tpl.slug}`));
+  // Stable identity so a background ['apps'] refetch (window focus) doesn't re-run the detail sheet's Modal
+  // effect and yank keyboard focus back to the first element.
+  const closeDetail = useCallback(() => setDetailFor(null), []);
   const { data: templates = [], isLoading, isError, refetch } = useQuery({ queryKey: ["templates"], queryFn: () => api.listTemplates() });
   // Same query key as the Home launcher, so an install there reflects here without a refetch. Non-fatal: if the
   // apps list can't load, the store simply shows no installed badges.
@@ -56,14 +64,14 @@ export default function AppStorePage() {
       ) : templates.length === 0 ? (
         <EmptyState icon={Store} title={t("resources.storeTitle")}>{t("resources.noMatches")}</EmptyState>
       ) : (
-        <TemplateGrid
-          templates={templates}
-          installed={installed}
-          onPick={(tpl) =>
-            user?.uiMode === "home"
-              ? setInstalling(tpl)
-              : router.push(`/resources/new?template=${tpl.slug}`)
-          }
+        <TemplateGrid templates={templates} installed={installed} onPick={install} onDetails={setDetailFor} />
+      )}
+      {detailFor && (
+        <AppDetailSheet
+          template={detailFor}
+          installed={installed.get(detailFor.slug)}
+          onInstall={() => { const tpl = detailFor; setDetailFor(null); install(tpl); }}
+          onClose={closeDetail}
         />
       )}
       {installing && <InstallModal template={installing} onClose={() => setInstalling(null)} />}
