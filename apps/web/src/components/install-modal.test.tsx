@@ -123,4 +123,29 @@ describe("InstallModal", () => {
     expect(screen.getByText("Compose file")).toBeTruthy();
     expect(screen.getByText("Environment overrides")).toBeTruthy();
   });
+
+  // ── CASA-UX-5: live install progress ──
+
+  it("after install, shows the live progress and a ready state with an Open link when the app is RUNNING", async () => {
+    vi.spyOn(api, "createFromTemplate").mockResolvedValue({ id: "app1", status: "RUNNING", url: "https://ghost.example.com" } as never);
+    vi.spyOn(api, "getApp").mockResolvedValue({ id: "app1", status: "RUNNING", url: "https://ghost.example.com" } as never);
+    wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText("Password *"), { target: { value: "hunter2" } });
+    fireEvent.click(await screen.findByText("Install"));
+    expect(await screen.findByText(/is ready/)).toBeTruthy();
+    const open = screen.getByRole("link", { name: /Open/ });
+    expect(open.getAttribute("href")).toBe("https://ghost.example.com");
+  });
+
+  it("after a FAILED install shows a Retry (and fetches a log tail)", async () => {
+    vi.spyOn(api, "createFromTemplate").mockResolvedValue({ id: "app1", status: "FAILED", url: null } as never);
+    vi.spyOn(api, "getApp").mockResolvedValue({ id: "app1", status: "FAILED", url: null } as never);
+    const logs = vi.spyOn(api, "getAppLogs").mockResolvedValue({ output: "boom: port in use" });
+    wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText("Password *"), { target: { value: "hunter2" } });
+    fireEvent.click(await screen.findByText("Install"));
+    expect(await screen.findByText(/failed to install/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    await waitFor(() => expect(logs).toHaveBeenCalledWith("app1", 40));
+  });
 });
