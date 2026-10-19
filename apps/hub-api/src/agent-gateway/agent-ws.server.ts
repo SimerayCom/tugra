@@ -11,10 +11,11 @@ import { WebSocket, WebSocketServer } from "ws";
 import type {
   AgentCapability,
   AgentMessage,
+  FsEntry,
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate } from "@tugra/shared";
+import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 
 /** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
@@ -54,6 +55,19 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+/** The result of one file op (CASA-FILES): metadata-only listing, or an error. */
+export interface FsListing {
+  entries: FsEntry[];
+  truncated: boolean;
+}
+
+interface FsPending {
+  serverId: string;
+  resolve: (r: FsListing) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
 /**
  * Raw WebSocket server for agents. Agents dial OUT to /agent (zero inbound port
  * on managed servers). Protocol is the JSON contract in @tugra/shared.
@@ -66,6 +80,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly state = new WeakMap<WebSocket, ConnState>();
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
+  private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver (CASA-FILES)
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
   private readonly logStreamsByServer = new Map<string, Set<string>>(); // serverId → streamIds (disconnect teardown)
@@ -249,6 +264,21 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           }
           return;
         }
+        case "fs_result": {
+          // Only accept a reply on an authed socket, and only for a request WE registered for THIS server
+          // (a reply from a different agent must never resolve another's pending file op).
+          if (!st.authed || !st.serverId) return;
+          const p = this.fsPending.get(msg.reqId);
+          if (!p || p.serverId !== st.serverId) return;
+          clearTimeout(p.timer);
+          this.fsPending.delete(msg.reqId);
+          if (msg.ok) {
+            p.resolve({ entries: msg.entries ?? [], truncated: msg.truncated ?? false });
+          } else {
+            p.reject(new Error(msg.error || "file operation failed"));
+          }
+          return;
+        }
         default:
           return;
       }
@@ -293,6 +323,32 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     });
   }
 
+  /**
+   * Send a signed file operation to a connected agent and await its result (CASA-FILES). Fail-closed on
+   * the "files" capability: never sign an fs_req for a server that hasn't been granted it. The agent runs
+   * the op inside a sandboxed, read-only helper container; this only ever returns metadata, never content.
+   */
+  async sendFsReq(serverId: string, op: "list", volume: string, path: string, timeoutMs = 35_000): Promise<FsListing> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      throw new Error("agent offline");
+    }
+    const capability: AgentCapability = "files";
+    if (!(await this.isCapabilityGranted(serverId, capability))) {
+      throw new ForbiddenException(`capability "${capability}" is not granted for this server`);
+    }
+    const reqId = randomUUID();
+    return new Promise<FsListing>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.fsPending.delete(reqId);
+        reject(new Error("file operation timed out"));
+      }, timeoutMs);
+      timer.unref?.();
+      this.fsPending.set(reqId, { serverId, resolve, reject, timer });
+      this.send(socket, this.signOutbound({ type: "fs_req", reqId, op, volume, path, capability }));
+    });
+  }
+
   /** Sign command/term_start (capability included) so the agent can verify + scope. */
   private signOutbound(msg: Record<string, unknown>): Record<string, unknown> {
     if (msg.type === "command") {
@@ -333,6 +389,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.targetVersion as string,
           msg.image as string,
           msg.sha256 as string,
+          msg.capability as string,
+        ),
+      );
+    } else if (msg.type === "fs_req") {
+      msg.sig = this.hubSign.sign(
+        canonicalFs(
+          msg.reqId as string,
+          msg.op as string,
+          msg.volume as string,
+          msg.path as string,
           msg.capability as string,
         ),
       );
@@ -459,6 +525,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       clearTimeout(p.timer);
       this.pending.delete(reqId);
       this.chunkListeners.delete(reqId);
+      p.reject(new Error("agent disconnected"));
+    }
+    for (const [reqId, p] of this.fsPending) {
+      if (p.serverId !== serverId) continue;
+      clearTimeout(p.timer);
+      this.fsPending.delete(reqId);
       p.reject(new Error("agent disconnected"));
     }
   }

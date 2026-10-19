@@ -179,6 +179,18 @@ export class ApplicationsController {
     return this.apps.appLogs(user.userId, id, tail ? Number(tail) : undefined);
   }
 
+  /** List files in one of the app's declared volumes (CASA-FILES, read-only metadata). */
+  @Get(":id/files")
+  @RequireScopes("read:secrets") // file listings may expose sensitive application data
+  listFiles(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("volume") volume: string,
+    @Query("path") path?: string,
+  ) {
+    return this.apps.listFiles(user.userId, id, volume, path ?? "");
+  }
+
   /** Per-container metrics history for the app's Metrics tab (read-level). */
   @Get(":id/metrics/containers")
   containerMetrics(

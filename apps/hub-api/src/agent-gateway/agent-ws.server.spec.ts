@@ -244,6 +244,78 @@ describe("AgentWsServer live container-log streams", () => {
   });
 });
 
+describe("AgentWsServer file ops (CASA-FILES)", () => {
+  // A server whose granted set includes "files" (default-off capability).
+  function fsHarness(caps: string[] = [...ALL_CAPS, "files"]) {
+    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
+    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
+    (server as any).sockets.set("s1", socket);
+    const lastSent = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    const deliver = (msg: object) => (server as any).onMessage(socket, JSON.stringify(msg));
+    return { server, socket, lastSent, deliver };
+  }
+
+  it("signs fs_req (canonicalFs) and resolves on fs_result", async () => {
+    const { server, lastSent, deliver } = fsHarness();
+    const p = server.sendFsReq("s1", "list", "tugra_appv_x_data", "sub/dir");
+    await flush();
+    const sent = lastSent();
+    expect(sent.type).toBe("fs_req");
+    expect(sent.op).toBe("list");
+    expect(sent.volume).toBe("tugra_appv_x_data");
+    expect(sent.path).toBe("sub/dir");
+    expect(sent.capability).toBe("files");
+    expect(sent.sig).toBe("SIG"); // signOutbound stamped canonicalFs
+    await deliver({ type: "fs_result", reqId: sent.reqId, ok: true, entries: [{ name: "a", type: "file", size: 1, mode: "rw-r--r--", mtime: 2 }], truncated: true });
+    await expect(p).resolves.toEqual({ entries: [{ name: "a", type: "file", size: 1, mode: "rw-r--r--", mtime: 2 }], truncated: true });
+  });
+
+  it("rejects when the fs_result reports an error", async () => {
+    const { server, lastSent, deliver } = fsHarness();
+    const p = server.sendFsReq("s1", "list", "tugra_appv_x_data", "");
+    await flush();
+    await deliver({ type: "fs_result", reqId: lastSent().reqId, ok: false, error: "not a directory" });
+    await expect(p).rejects.toThrow(/not a directory/);
+  });
+
+  it("refuses to sign fs_req when 'files' is not granted (fail-closed, default-off)", async () => {
+    const { server, socket } = fsHarness(ALL_CAPS); // ALL_CAPS deliberately excludes "files"
+    await expect(server.sendFsReq("s1", "list", "tugra_appv_x_data", "")).rejects.toThrow(/not granted/);
+    expect(socket.send).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the agent is offline", async () => {
+    const { server } = fsHarness();
+    await expect(server.sendFsReq("ghost", "list", "v", "")).rejects.toThrow(/offline/);
+  });
+
+  it("ignores an fs_result whose serverId doesn't match the pending request (cross-agent isolation)", async () => {
+    const { server, lastSent, deliver } = fsHarness();
+    const p = server.sendFsReq("s1", "list", "v", "");
+    await flush();
+    const reqId = lastSent().reqId;
+    // A reply arriving on a DIFFERENT authed socket must not resolve s1's pending op.
+    const other = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(other, { nonce: "n", serverId: "s2", authed: true });
+    await (server as any).onMessage(other, JSON.stringify({ type: "fs_result", reqId, ok: true, entries: [] }));
+    expect((server as any).fsPending.has(reqId)).toBe(true); // still pending — foreign reply ignored
+    // the legitimate reply resolves it
+    await deliver({ type: "fs_result", reqId, ok: true, entries: [], truncated: false });
+    await expect(p).resolves.toEqual({ entries: [], truncated: false });
+  });
+
+  it("rejects a pending fs op when the agent disconnects", async () => {
+    const { server } = fsHarness();
+    const p = server.sendFsReq("s1", "list", "v", "");
+    await flush();
+    (server as any).rejectPendingFor("s1");
+    await expect(p).rejects.toThrow(/disconnected/);
+    expect((server as any).fsPending.size).toBe(0);
+  });
+});
+
 describe("AgentWsServer container metrics ingest", () => {
   const batch = {
     type: "container_metrics",

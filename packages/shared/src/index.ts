@@ -152,19 +152,28 @@ export interface FsResultMsg {
   truncated?: boolean; // true when the listing was capped at the agent's maxEntries limit
 }
 
+/**
+ * Every capability the hub can grant a server (and the agent can locally allowlist). This is the SINGLE
+ * SOURCE OF TRUTH: the hub's grantable set and the grant-API validation schema both derive from it, so a
+ * new capability can never be added in one place and silently rejected by the other. "terminal", "swarm"
+ * and "files" are opt-in (granted explicitly per server), never in a default grant.
+ */
+export const AGENT_CAPABILITIES = [
+  "deploy",
+  "database",
+  "backup",
+  "cleanup",
+  "bulk",
+  "terminal",
+  "schedule",
+  "patch",
+  "logs",
+  "swarm",
+  "files", // read/list an app volume's files via the sandboxed fsd helper (CASA-FILES); default-off
+] as const;
+
 /** What a command is for — the agent can locally allowlist these. */
-export type AgentCapability =
-  | "deploy"
-  | "database"
-  | "backup"
-  | "cleanup"
-  | "bulk"
-  | "terminal"
-  | "schedule"
-  | "patch"
-  | "logs"
-  | "swarm"
-  | "files"; // read/list an app volume's files via the sandboxed fsd helper (CASA-FILES); default-off
+export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
 
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
@@ -467,7 +476,8 @@ export type AgentMessage =
   | TermOutputMsg
   | TermExitMsg
   | LogChunkMsg
-  | LogExitMsg;
+  | LogExitMsg
+  | FsResultMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
@@ -482,4 +492,5 @@ export type HubMessage =
   | LogStartMsg
   | LogStopMsg
   | LogDrainsMsg
-  | CapabilitiesMsg;
+  | CapabilitiesMsg
+  | FsReqMsg;
