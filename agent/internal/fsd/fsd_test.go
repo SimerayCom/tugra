@@ -150,9 +150,12 @@ func TestListTruncatesHugeDir(t *testing.T) {
 }
 
 func TestBuildHelperArgsHasAllHardeningFlags(t *testing.T) {
-	args, err := BuildHelperArgs("ghcr.io/simeraycom/tugra-agent@sha256:abc", "tugra_appv_x_data", "list", "sub/dir")
+	args, err := BuildHelperArgs("ghcr.io/simeraycom/tugra-agent@sha256:abc", "tugra_appv_x_data", "list", "sub/dir", "tugra-fsd-deadbeef")
 	if err != nil {
 		t.Fatalf("BuildHelperArgs: %v", err)
+	}
+	if !containsSeq(args, []string{"--name", "tugra-fsd-deadbeef"}) {
+		t.Errorf("args missing --name handle; got %v", args)
 	}
 	for _, want := range [][]string{
 		{"--network", "none"},
@@ -180,17 +183,21 @@ func TestBuildHelperArgsHasAllHardeningFlags(t *testing.T) {
 
 func TestBuildHelperArgsRejectsUnsafeInput(t *testing.T) {
 	img := "ghcr.io/simeraycom/tugra-agent@sha256:abc"
-	cases := []struct{ name, image, volume, op string }{
-		{"host-root volume", img, "/", "list"},
-		{"host-path volume", img, "/etc", "list"},
-		{"mount-field injection", img, "v,dst=/host", "list"},
-		{"colon injection", img, "v:/host:rw", "list"},
-		{"unknown op", img, "tugra_appv_x_data", "write"},
-		{"flag-like image", "-v/host:/host", "tugra_appv_x_data", "list"},
-		{"empty image", "", "tugra_appv_x_data", "list"},
+	cases := []struct {
+		name, image, volume, op, cname string
+	}{
+		{"host-root volume", img, "/", "list", "tugra-fsd-x"},
+		{"host-path volume", img, "/etc", "list", "tugra-fsd-x"},
+		{"mount-field injection", img, "v,dst=/host", "list", "tugra-fsd-x"},
+		{"colon injection", img, "v:/host:rw", "list", "tugra-fsd-x"},
+		{"unknown op", img, "tugra_appv_x_data", "write", "tugra-fsd-x"},
+		{"flag-like image", "-v/host:/host", "tugra_appv_x_data", "list", "tugra-fsd-x"},
+		{"empty image", "", "tugra_appv_x_data", "list", "tugra-fsd-x"},
+		{"bad container name", img, "tugra_appv_x_data", "list", "../evil"},
+		{"empty container name", img, "tugra_appv_x_data", "list", ""},
 	}
 	for _, c := range cases {
-		if _, err := BuildHelperArgs(c.image, c.volume, c.op, "p"); err == nil {
+		if _, err := BuildHelperArgs(c.image, c.volume, c.op, "p", c.cname); err == nil {
 			t.Errorf("%s: BuildHelperArgs = nil error, want rejection", c.name)
 		}
 	}

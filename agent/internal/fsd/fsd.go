@@ -35,6 +35,9 @@ const maxEntries = 10000
 // the mount into a host bind or to smuggle extra mount fields.
 var volumeRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
+// nameRe is Docker's container-name charset, used for the launcher's generated --name handle.
+var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
 // validateVolume rejects any value that is not a plain Docker named volume (see volumeRe).
 func validateVolume(v string) error {
 	if !volumeRe.MatchString(v) {

@@ -17,6 +17,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/dockerstats"
 	"github.com/SimerayCom/tugra/agent/internal/drains"
 	"github.com/SimerayCom/tugra/agent/internal/exec"
+	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/hostinfo"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
 	"github.com/SimerayCom/tugra/agent/internal/logs"
@@ -30,7 +31,8 @@ const (
 	metricsInterval        = 5 * time.Second
 	containerStatsInterval = 15 * time.Second // per-container `docker stats` — slower than host metrics
 	commandTimeout         = 20 * time.Second
-	hostInfoInterval       = 12 * time.Hour // refresh hardware/OS inventory periodically
+	hostInfoInterval       = 12 * time.Hour  // refresh hardware/OS inventory periodically
+	fsOpTimeout            = 30 * time.Second // hard wall-clock bound on one sandboxed file op (CASA-FILES)
 )
 
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics
@@ -317,6 +319,31 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 						updating.Store(false) // failed before handoff → allow a future retry
 					}
 				}(m.ReqID, m.TargetVersion, m.Image, m.Sha256)
+			case "fs_req":
+				// Same fail-closed order as command: verify the hub signature, then the capability.
+				if !protocol.VerifySig(hubPub, protocol.CanonicalFs(m.ReqID, m.Op, m.Volume, m.Path, m.Capability), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected fs_req: invalid or missing hub signature")
+					continue
+				}
+				if !cs.allows(m.Capability) {
+					fmt.Fprintln(os.Stderr, "rejected fs_req: capability not allowed:", m.Capability)
+					continue
+				}
+				go func(reqID, op, volume, path string) {
+					// Fail closed: with no locally-configured agent image there is no helper to launch.
+					if cfg.AgentImage == "" {
+						_ = send(protocol.FsResult{Type: "fs_result", ReqID: reqID, OK: false, Error: "file operations are not configured on this agent"})
+						return
+					}
+					c, cancel := context.WithTimeout(ctx, fsOpTimeout)
+					defer cancel()
+					entries, truncated, err := fsd.Launch(c, cfg.AgentImage, volume, op, path)
+					if err != nil {
+						_ = send(protocol.FsResult{Type: "fs_result", ReqID: reqID, OK: false, Error: err.Error()})
+						return
+					}
+					_ = send(protocol.FsResult{Type: "fs_result", ReqID: reqID, OK: true, Entries: entries, Truncated: truncated})
+				}(m.ReqID, m.Op, m.Volume, m.Path)
 			}
 		}
 	}()
