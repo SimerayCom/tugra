@@ -17,6 +17,7 @@ import (
 
 	"github.com/SimerayCom/tugra/agent/internal/client"
 	"github.com/SimerayCom/tugra/agent/internal/config"
+	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
@@ -25,6 +26,13 @@ import (
 var Version = "0.0.0-dev"
 
 func main() {
+	// The `fsd` subcommand re-invokes this same binary INSIDE the sandboxed helper container
+	// (see internal/fsd/launch.go). It must run before flag.Parse touches os.Args, takes no hub
+	// connection, and exits with the helper's status code.
+	if len(os.Args) > 1 && os.Args[1] == "fsd" {
+		os.Exit(fsd.RunCLI(os.Args[2:]))
+	}
+
 	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com/agent")
 	token := flag.String("token", envOr("TUGRA_TOKEN", ""), "enrollment token (first run only)")
 	caps := flag.String("caps", envOr("TUGRA_CAPS", ""), "\"all\" to disable the fail-closed allowlist (operator/upgrade escape); otherwise the hub pushes the granted set — a bootstrap list here is only used before the hub connects")

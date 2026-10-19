@@ -107,6 +107,50 @@ export function canonicalAgentUpdate(
 ): string {
   return `aupd\n${reqId}\n${targetVersion}\n${image}\n${sha256}\n${capability}`;
 }
+/** Signed payload for a file operation (CASA-FILES). `op` is the action (list/stat/read), `volume` the
+ *  app volume key, `path` the volume-relative path. `capability` last binds the grant into the signature
+ *  (anti-relabel), mirroring the others. The agent verifies this before launching the sandboxed fsd helper. */
+export function canonicalFs(
+  reqId: string,
+  op: string,
+  volume: string,
+  path: string,
+  capability: string,
+): string {
+  return `fs\n${reqId}\n${op}\n${volume}\n${path}\n${capability}`;
+}
+
+/** One entry in a file listing — metadata only, never content. A symlink is reported as "symlink" and is
+ *  NEVER dereferenced. */
+export interface FsEntry {
+  name: string;
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mode: string; // rwx permission string, e.g. "rwxr-xr-x"
+  mtime: number; // unix seconds
+}
+/** Hub -> Agent: a signed file operation (list/stat/read) scoped to one app volume. */
+export interface FsReqMsg {
+  type: "fs_req";
+  reqId: string;
+  op: "list";
+  // The docker volume name the hub resolved from the app. MUST be a plain named volume matching
+  // /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/ — the agent re-validates this (fsd.validateVolume) before it
+  // becomes a `--mount src=` arg, so a host-path or mount-field injection can never escape to the host.
+  volume: string;
+  path: string; // volume-relative path
+  capability?: AgentCapability;
+  sig?: string;
+}
+/** Agent -> Hub: the result of an fs_req. */
+export interface FsResultMsg {
+  type: "fs_result";
+  reqId: string;
+  ok: boolean;
+  error?: string;
+  entries?: FsEntry[];
+  truncated?: boolean; // true when the listing was capped at the agent's maxEntries limit
+}
 
 /** What a command is for — the agent can locally allowlist these. */
 export type AgentCapability =
@@ -119,7 +163,8 @@ export type AgentCapability =
   | "schedule"
   | "patch"
   | "logs"
-  | "swarm";
+  | "swarm"
+  | "files"; // read/list an app volume's files via the sandboxed fsd helper (CASA-FILES); default-off
 
 export type ServerStatus = "PENDING" | "ONLINE" | "OFFLINE";
 
