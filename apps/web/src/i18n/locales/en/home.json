@@ -47,10 +47,17 @@
   "uninstall": "Uninstall",
   "uninstallConfirm": "Uninstall {name}? This removes the app and its data.",
   "actionDone": "Done",
+  "actionFailed": "That action failed.",
+  "logsError": "Couldn't load logs.",
+  "logsRefresh": "Refresh",
   "action_open": "Open",
+  "action_logs": "Logs",
   "action_start": "Start",
   "action_restart": "Restart",
+  "action_update": "Update",
   "action_stop": "Stop",
   "action_expose": "Expose",
-  "action_uninstall": "Uninstall"
+  "action_uninstall": "Uninstall",
+  "logsBack": "Back",
+  "logsEmpty": "No logs yet."
 }
