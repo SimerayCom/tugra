@@ -169,6 +169,17 @@ describe("bestReportedIp", () => {
     expect(bestReportedIp(["127.0.0.1", "::1"])).toBeNull();
     expect(bestReportedIp([])).toBeNull();
   });
+  it("prefers a real LAN IPv4 over a docker-bridge 172.x, regardless of order (home-box reachability)", () => {
+    expect(bestReportedIp(["172.17.0.1", "192.168.1.50"])).toBe("192.168.1.50");
+    expect(bestReportedIp(["192.168.1.50", "172.17.0.1"])).toBe("192.168.1.50");
+    expect(bestReportedIp(["172.18.0.1", "10.0.0.5"])).toBe("10.0.0.5");
+  });
+  it("still uses a docker-bridge 172.x when it is the only candidate", () => {
+    expect(bestReportedIp(["172.17.0.1"])).toBe("172.17.0.1");
+  });
+  it("a public IPv4 still beats everything, incl. a real LAN IP", () => {
+    expect(bestReportedIp(["192.168.1.50", "172.17.0.1", "203.0.113.7"])).toBe("203.0.113.7");
+  });
 });
 
 describe("reconcileReportedIp", () => {
