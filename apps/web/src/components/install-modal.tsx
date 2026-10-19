@@ -4,16 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, XCircle } from "lucide-react";
 import { api } from "../lib/api";
 import { autoServerId, installableServers } from "../lib/install";
+import { installPhase } from "../lib/install-progress";
 import { useT } from "../i18n/provider";
 import { Btn, Spinner } from "./ui";
 import { Field, Select, TextInput, fieldStyle } from "./form";
 import { Modal } from "./modal";
 import { TemplateLogo } from "../lib/template-icons";
 import { TemplateFields, validateFields } from "./template-fields";
-import { useToast } from "./toast";
-import type { Template } from "../lib/types";
+import type { Application, Template } from "../lib/types";
 
 /** Parse a KEY=VALUE-per-line textarea into an env record (blank lines / `#` comments skipped). */
 function parseEnvLines(text: string): Record<string, string> {
@@ -34,8 +35,6 @@ function parseEnvLines(text: string): Record<string, string> {
  */
 export function InstallModal({ template, onClose }: { template: Template; onClose: () => void }) {
   const t = useT();
-  const toast = useToast();
-  const router = useRouter();
   const qc = useQueryClient();
 
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
@@ -46,6 +45,8 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
   const [advanced, setAdvanced] = useState(false);
   const [composeOverride, setComposeOverride] = useState("");
   const [envText, setEnvText] = useState("");
+  // Once the app is created, the modal switches from the form to a live install-progress view.
+  const [created, setCreated] = useState<Application | null>(null);
 
   // Servers load async; auto-pick the sole online server once they arrive.
   useEffect(() => {
@@ -106,10 +107,11 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
         ...(Object.keys(envOverride).length ? { envOverride } : {}),
       });
     },
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["apps"] });
-      toast(t("home.installed", { name: name.trim() }), "success");
-      router.push("/home");
+    onSuccess: async (app) => {
+      await qc.invalidateQueries({ queryKey: ["apps"], exact: true });
+      // Keep the modal open and switch to a live progress view instead of a toast + redirect, so the user
+      // watches the app come up and gets a one-tap Open when it's ready (CASA-UX-5).
+      setCreated(app);
     },
   });
 
@@ -128,6 +130,10 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
         </div>
       </div>
 
+      {created ? (
+        <InstallProgress app={created} name={name.trim()} onClose={onClose} />
+      ) : (
+      <>
       {online.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--c-tx3)", lineHeight: 1.5 }}>
           {t("home.noServer")}{" "}
@@ -212,6 +218,124 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
           {install.isPending ? t("home.installing") : t("home.install")}
         </Btn>
       </div>
+      </>
+      )}
     </Modal>
+  );
+}
+
+/**
+ * Live install-progress view (CASA-UX-5): polls the just-created app until it is running or failed, turning a
+ * one-click install into a "installing → ready, Open" moment. On failure it shows a short log tail and a Retry.
+ */
+// An <a> styled like a primary Btn — a real link (keyboard/middle-click/new-tab all work) without nesting a
+// <button> inside an <a> (invalid). Mirrors Btn's primary look.
+const openLinkBtn: React.CSSProperties = {
+  fontFamily: "inherit", fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: "var(--r1)",
+  border: "1px solid transparent", background: "var(--c-a)", color: "#0d0d11", textDecoration: "none",
+  display: "inline-flex", alignItems: "center", gap: 6,
+};
+const POLL_CAP_MS = 10 * 60_000; // give a slow deploy up to ~10 min before showing a "taking longer" fallback
+
+function InstallProgress({ app, name, onClose }: { app: Application; name: string; onClose: () => void }) {
+  const t = useT();
+  const router = useRouter();
+  const qc = useQueryClient();
+  const [retrying, setRetrying] = useState(false);
+  const [expired, setExpired] = useState(false);
+
+  // Client-side cap: a deploy that never reaches RUNNING/FAILED can't poll forever.
+  useEffect(() => {
+    const id = setTimeout(() => setExpired(true), POLL_CAP_MS);
+    return () => clearTimeout(id);
+  }, []);
+
+  const { data: live } = useQuery({
+    queryKey: ["apps", app.id],
+    queryFn: () => api.getApp(app.id),
+    initialData: app,
+    refetchInterval: (q) => {
+      const s = (q.state.data as Application | undefined)?.status;
+      if (q.state.status === "error") return false; // stop hammering a 404/401/etc — show the error state
+      if (s === "RUNNING") return false; // ready → stop
+      if (expired) return false; // gave it long enough
+      if (s === "FAILED" && !retrying) return false; // rest on the failure screen until the user retries
+      return 3000; // installing, or failed right after a retry
+    },
+  });
+  const phase = installPhase(live?.status);
+
+  // Reflect a finished (or re-deployed-to-running) app in the launcher list.
+  useEffect(() => {
+    if (phase === "running") qc.invalidateQueries({ queryKey: ["apps"], exact: true });
+  }, [phase, qc]);
+  // A retry's redeploy moving the app off FAILED ends the retry cycle.
+  useEffect(() => {
+    if (phase !== "failed") setRetrying(false);
+  }, [phase]);
+
+  const retry = useMutation({
+    mutationFn: () => api.deployApp(app.id),
+    onSuccess: () => {
+      setRetrying(true); // re-enable polling so the new deploy's progress shows
+      qc.invalidateQueries({ queryKey: ["apps", app.id, "logs"] }); // refresh the stale log tail
+    },
+  });
+  const { data: logs } = useQuery({
+    queryKey: ["apps", app.id, "logs"],
+    queryFn: () => api.getAppLogs(app.id, 40),
+    enabled: phase === "failed",
+  });
+
+  const goHome = () => { onClose(); router.push("/home"); };
+  const center: React.CSSProperties = { display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "20px 8px", textAlign: "center" };
+
+  // Cap reached while still coming up → stop spinning, point the user at Home.
+  if (expired && phase === "installing") {
+    return (
+      <div role="status" aria-live="polite" style={center}>
+        <div style={{ fontWeight: 600 }}>{t("home.installProgressSlow", { name })}</div>
+        <Btn variant="ghost" onClick={goHome}>{t("home.installGoHome")}</Btn>
+      </div>
+    );
+  }
+
+  return (
+    <div role="status" aria-live="polite" style={center}>
+      {phase === "installing" && (
+        <>
+          <Spinner />
+          <div style={{ fontWeight: 600 }}>{t("home.installProgressInstalling", { name })}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("home.installProgressWait")}</div>
+          <Btn variant="ghost" onClick={goHome}>{t("home.installGoHome")}</Btn>
+        </>
+      )}
+      {phase === "running" && (
+        <>
+          <CheckCircle2 size={40} color="var(--c-g)" aria-hidden />
+          <div style={{ fontWeight: 600 }}>{t("home.installProgressReady", { name })}</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+            {live?.url && <a href={live.url} target="_blank" rel="noreferrer" style={openLinkBtn}>{t("home.open")}</a>}
+            <Btn variant="ghost" onClick={goHome}>{t("home.installGoHome")}</Btn>
+          </div>
+        </>
+      )}
+      {phase === "failed" && (
+        <>
+          <XCircle size={40} color="var(--c-r)" aria-hidden />
+          <div style={{ fontWeight: 600 }}>{t("home.installProgressFailed", { name })}</div>
+          {logs?.output && (
+            <pre tabIndex={0} aria-label={t("home.installLogs")} style={{ width: "100%", maxHeight: 160, overflow: "auto", textAlign: "left", fontSize: 11, lineHeight: 1.4, background: "var(--c-bg)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              {logs.output.slice(-2000)}
+            </pre>
+          )}
+          {retry.isError && <div style={{ color: "var(--c-r)", fontSize: 12 }}>{(retry.error as Error).message}</div>}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+            <Btn onClick={() => retry.mutate()} disabled={retry.isPending}>{retry.isPending ? t("home.installRetrying") : t("home.installRetry")}</Btn>
+            <Btn variant="ghost" onClick={goHome}>{t("home.installGoHome")}</Btn>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
