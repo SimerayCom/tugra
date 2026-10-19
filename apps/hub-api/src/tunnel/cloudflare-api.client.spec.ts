@@ -263,6 +263,11 @@ describe("CloudflareApiClient.upsertDnsRecord", () => {
     global.fetch = fn as unknown as typeof fetch;
     await expect(cf.upsertDnsRecord("t", "z1", { type: "A", name: "x.com", content: "1.1.1.1" })).rejects.toMatchObject({ status: 502 });
   });
+  it("PUTs an MX record's priority when repointing a known record", async () => {
+    const f = mockOnce(200, envelope({ id: "rMx" }));
+    await cf.upsertDnsRecord("t", "z1", { type: "MX", name: "example.com", content: "mail.example.com.", priority: 10, existingRecordId: "rMx" });
+    expect(JSON.parse(f.mock.calls[0][1].body as string)).toEqual({ type: "MX", name: "example.com", content: "mail.example.com.", proxied: false, ttl: 1, priority: 10 });
+  });
 });
 
 describe("CloudflareApiClient.createDnsRecord", () => {
@@ -278,6 +283,14 @@ describe("CloudflareApiClient.createDnsRecord", () => {
   it("throws 502 when create returns no id", async () => {
     mockOnce(200, envelope({}));
     await expect(cf.createDnsRecord("t", "z1", { type: "A", name: "x.com", content: "1.1.1.1" })).rejects.toMatchObject({ status: 502 });
+  });
+  it("sends priority in the body ONLY for a record that supplies one (MX), never on an A/TXT", async () => {
+    const f = mockOnce(200, envelope({ id: "rMx" }));
+    await cf.createDnsRecord("t", "z1", { type: "MX", name: "example.com", content: "mail.example.com.", priority: 10 });
+    expect(JSON.parse(f.mock.calls[0][1].body as string)).toEqual({ type: "MX", name: "example.com", content: "mail.example.com.", proxied: false, ttl: 1, priority: 10 });
+    const g = mockOnce(200, envelope({ id: "rTxt" }));
+    await cf.createDnsRecord("t", "z1", { type: "TXT", name: "example.com", content: "v=spf1 mx ~all" });
+    expect(JSON.parse(g.mock.calls[0][1].body as string)).not.toHaveProperty("priority");
   });
 });
 

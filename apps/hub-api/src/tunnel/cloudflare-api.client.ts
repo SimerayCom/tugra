@@ -25,7 +25,8 @@ export interface IngressRule {
   service: string;
 }
 
-/** A Cloudflare DNS record (the fields the one-click domain auto-setup needs). */
+/** A Cloudflare DNS record (the fields the one-click domain auto-setup needs). `priority` is present only on
+ *  records that carry one (MX, SRV) — mail auto-setup reads/writes it. */
 export interface DnsRecord {
   id: string;
   type: string;
@@ -33,6 +34,7 @@ export interface DnsRecord {
   content: string;
   proxied?: boolean;
   ttl?: number;
+  priority?: number;
 }
 
 /**
@@ -119,9 +121,9 @@ export class CloudflareApiClient {
   async upsertDnsRecord(
     apiToken: string,
     zoneId: string,
-    rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number; existingRecordId?: string | null },
+    rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number; priority?: number; existingRecordId?: string | null },
   ): Promise<{ recordId: string; action: "created" | "updated" }> {
-    const body = { type: rec.type, name: rec.name, content: rec.content, proxied: rec.proxied ?? false, ttl: rec.ttl ?? 1 };
+    const body = dnsRecordBody(rec);
     let recordId = rec.existingRecordId ?? null;
     if (!recordId) {
       const found = await this.listDnsRecords(apiToken, zoneId, { type: rec.type, name: rec.name });
@@ -142,9 +144,9 @@ export class CloudflareApiClient {
   async createDnsRecord(
     apiToken: string,
     zoneId: string,
-    rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number },
+    rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number; priority?: number },
   ): Promise<{ recordId: string }> {
-    const body = { type: rec.type, name: rec.name, content: rec.content, proxied: rec.proxied ?? false, ttl: rec.ttl ?? 1 };
+    const body = dnsRecordBody(rec);
     const created = await this.request<{ id?: string }>("POST", `/zones/${encodeURIComponent(zoneId)}/dns_records`, apiToken, body);
     if (!created?.id) throw new CloudflareApiError("cloudflare did not return a dns record id", 502);
     return { recordId: created.id };
@@ -264,6 +266,14 @@ export class CloudflareApiClient {
       clearTimeout(timer);
     }
   }
+}
+
+/** The Cloudflare DNS-record request body. `priority` is sent ONLY when supplied (MX/SRV need it; CF rejects it
+ *  on an A/TXT/CNAME), so a missing priority never reaches the API as an explicit null. */
+function dnsRecordBody(rec: { type: string; name: string; content: string; proxied?: boolean; ttl?: number; priority?: number }): Record<string, unknown> {
+  const body: Record<string, unknown> = { type: rec.type, name: rec.name, content: rec.content, proxied: rec.proxied ?? false, ttl: rec.ttl ?? 1 };
+  if (rec.priority !== undefined) body.priority = rec.priority;
+  return body;
 }
 
 /** cloudflared requires the final ingress rule to be a hostname-less catch-all. */

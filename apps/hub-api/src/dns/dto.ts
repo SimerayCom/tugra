@@ -18,3 +18,18 @@ export const UpdateDnsCredentialSchema = z.object({
   cfAccountId: z.string().min(1).nullable().optional(),
 });
 export type UpdateDnsCredentialInput = z.infer<typeof UpdateDnsCredentialSchema>;
+
+/** Preview or apply the mail-deliverability DNS records (MX/SPF/DMARC/DKIM) for a domain, via a team DNS
+ *  credential. The record values themselves are derived server-side (buildMailDnsRecords); the body only supplies
+ *  the domain, the mail host, an optional DKIM key the mail server generated, and the DMARC knobs. `overwrite`
+ *  opts into replacing an existing (foreign) mail record instead of surfacing it as a conflict. */
+export const MailDnsRequestSchema = z.object({
+  credentialId: z.string().min(1),
+  domain: z.string().min(1),
+  mailHost: z.string().min(1),
+  dkim: z.object({ selector: z.string().min(1), publicKey: z.string().min(1) }).optional(),
+  dmarcPolicy: z.enum(["none", "quarantine", "reject"]).optional(),
+  dmarcReportTo: z.string().min(1).optional(),
+  overwrite: z.boolean().optional(),
+});
+export type MailDnsRequestInput = z.infer<typeof MailDnsRequestSchema>;
