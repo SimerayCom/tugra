@@ -35,6 +35,17 @@ describe("filterTemplates", () => {
     expect(filterTemplates(list, "wiki", "cms").map((t) => t.slug)).toEqual(["wikijs"]);
     expect(filterTemplates(list, "grafana", "cms")).toHaveLength(0);
   });
+
+  it("matches the curated tagline and tags (CASA-UX-3)", () => {
+    const tagged: Template[] = [
+      { slug: "immich", name: "Immich", category: "media", description: "", tagline: "Google Photos alternative", tags: ["photos", "backup", "gallery"] },
+      { slug: "ghost", name: "Ghost", category: "cms", description: "Publishing platform" },
+    ];
+    // a tag that appears in neither name nor description
+    expect(filterTemplates(tagged, "gallery", "all").map((t) => t.slug)).toEqual(["immich"]);
+    // a word only in the tagline
+    expect(filterTemplates(tagged, "alternative", "all").map((t) => t.slug)).toEqual(["immich"]);
+  });
 });
 
 describe("presentCategories", () => {

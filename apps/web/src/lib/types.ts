@@ -713,6 +713,10 @@ export interface Template {
   icon?: string;
   logo?: string;
   documentation?: string;
+  tagline?: string;
+  tags?: string[];
+  featured?: boolean;
+  badges?: string[];
 }
 
 // Mirrors the hub's PublicManifest / FormField (apps/hub-api/src/templates/template-manifest.ts) —

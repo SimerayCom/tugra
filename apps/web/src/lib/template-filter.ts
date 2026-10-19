@@ -23,7 +23,8 @@ export function filterTemplates(templates: Template[], q: string, cat: string): 
   return templates.filter((tpl) => {
     if (cat !== "all" && tpl.category !== cat) return false;
     if (!needle) return true;
-    return `${tpl.name} ${tpl.description} ${tpl.category}`.toLowerCase().includes(needle);
+    const hay = `${tpl.name} ${tpl.description} ${tpl.category} ${tpl.tagline ?? ""} ${(tpl.tags ?? []).join(" ")}`;
+    return hay.toLowerCase().includes(needle);
   });
 }
 

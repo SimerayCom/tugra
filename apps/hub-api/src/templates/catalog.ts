@@ -7,6 +7,7 @@
 import { randomBytes } from "node:crypto";
 import generated from "./catalog.generated.json";
 import type { ConfigMount, ExposePort } from "./template-manifest";
+import { TEMPLATE_META_OVERLAY, deriveBadges } from "./catalog-meta";
 
 export type TemplateCategory =
   | "cms"
@@ -53,7 +54,8 @@ export interface TemplateDef {
   variables?: Record<string, string>;
 }
 
-/** Public metadata for the gallery — never exposes composeFile or secrets. */
+/** Public metadata for the gallery — never exposes composeFile or secrets. The CASA-UX-3 presentation fields
+ *  (tagline/tags/featured/badges) are optional and come from the curated overlay + a build-time badge derive. */
 export interface TemplateMeta {
   slug: string;
   name: string;
@@ -62,6 +64,10 @@ export interface TemplateMeta {
   icon?: string;
   logo?: string;
   documentation?: string;
+  tagline?: string; // short one-liner (curated overlay)
+  tags?: string[]; // extra search terms (curated overlay)
+  featured?: boolean; // show in the Featured shelf (curated overlay)
+  badges?: string[]; // capability badges (curated + derived, e.g. "db")
 }
 
 /** Hand-curated, host-port'd templates — these win over generated on slug clash. */
@@ -620,17 +626,32 @@ export function buildCatalog(remote: Record<string, TemplateDef> = {}): Record<s
 /** Full BUNDLED catalog (no remote overlay) — the always-present offline base. */
 export const TEMPLATES: Record<string, TemplateDef> = buildCatalog();
 
-/** Gallery metadata for a set of templates (no composeFile / secrets). Defaults to the bundled set. */
+/** Gallery metadata for a set of templates (no composeFile / secrets). Defaults to the bundled set. Merges the
+ *  curated presentation overlay (tagline/tags/featured) and derives capability badges from the compose at build
+ *  time — so the store gets richer data without the raw compose ever leaving the server. */
 export function templateMetaList(catalog: Record<string, TemplateDef> = TEMPLATES): TemplateMeta[] {
-  return Object.values(catalog).map(({ slug, name, description, category, icon, logo, documentation }) => ({
-    slug,
-    name,
-    description,
-    category,
-    icon,
-    logo,
-    documentation,
-  }));
+  return Object.values(catalog).map((tpl) => {
+    const o = TEMPLATE_META_OVERLAY[tpl.slug];
+    const badges = uniq([...(o?.badges ?? []), ...deriveBadges(tpl.composeFile)]);
+    const meta: TemplateMeta = {
+      slug: tpl.slug,
+      name: tpl.name,
+      description: tpl.description,
+      category: tpl.category,
+      icon: tpl.icon,
+      logo: tpl.logo,
+      documentation: tpl.documentation,
+    };
+    if (o?.tagline) meta.tagline = o.tagline;
+    if (o?.tags?.length) meta.tags = o.tags;
+    if (o?.featured) meta.featured = true;
+    if (badges.length) meta.badges = badges;
+    return meta;
+  });
+}
+
+function uniq(xs: string[]): string[] {
+  return [...new Set(xs)];
 }
 
 const SECRET_SYMBOLS = "!@#$%^&*-_=+";
