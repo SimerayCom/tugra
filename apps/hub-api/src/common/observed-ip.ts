@@ -20,6 +20,13 @@ export function isCgnatV4(ip: string): boolean {
   return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
 }
 
+/** The 172.16.0.0/12 slice Docker hands its bridge networks (default bridge 172.17, user networks 172.18-31).
+ *  It is a valid RFC1918 range, but an agent reporting one is almost always exposing a docker-internal address
+ *  that is NOT reachable from other devices — so a real LAN IP (10.x / 192.168.x) is preferred over it. */
+export function isDockerBridgeV4(ip: string): boolean {
+  return /^172\.(1[6-9]|2\d|3[01])\./.test(normalizeIp(ip));
+}
+
 /** Strip an IPv4-mapped IPv6 prefix (::ffff:1.2.3.4 → 1.2.3.4) so a mapped address
  *  is judged and stored as its underlying IPv4, never as an opaque "IPv6". */
 export function normalizeIp(ip: string): string {
@@ -102,13 +109,18 @@ export function isSsrfSafeIp(ip: string, allowPrivate: boolean): boolean {
   return true;
 }
 
-/** Best reachable candidate from agent-reported interface IPs: public IPv4 > private IPv4 > any non-loopback. */
+/** Best reachable candidate from agent-reported interface IPs:
+ *  public IPv4 > real-LAN private IPv4 (10.x / 192.168.x) > any other IPv4 (incl. docker-bridge 172.x) > any
+ *  non-loopback. The LAN-over-docker-bridge preference matters for a home/single-box server: the agent reports
+ *  both its docker bridge (172.17.x) and its real LAN address (192.168.x), and only the LAN one is reachable
+ *  from other devices — picking the bridge IP would make every app's URL a dead docker-internal link. */
 export function bestReportedIp(reportedIps: string[]): string | null {
   // Normalize first so an IPv4-mapped address is treated (and stored) as its IPv4,
   // not misclassified as an "IPv6" and dropped into publicIpv6 unstripped.
   const usable = reportedIps.map(normalizeIp).filter((ip) => ip && isIP(ip) !== 0 && !isLoopbackIp(ip));
   return (
     usable.find((ip) => !isIpv6(ip) && !isPrivateV4(ip)) ??
+    usable.find((ip) => !isIpv6(ip) && isPrivateV4(ip) && !isDockerBridgeV4(ip)) ??
     usable.find((ip) => !isIpv6(ip)) ??
     usable[0] ??
     null
