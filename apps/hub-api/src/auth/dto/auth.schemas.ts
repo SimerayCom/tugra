@@ -4,6 +4,9 @@ export const RegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, "password must be at least 8 chars"),
   name: z.string().min(1).optional(),
+  // First-run owner-claim code, required only on a fresh instance installed with SETUP_CODE set (the
+  // welcome form shows the field iff GET /instance/status reports setupCodeRequired). Ignored otherwise.
+  setupCode: z.string().min(1).optional(),
 });
 export type RegisterInput = z.infer<typeof RegisterSchema>;
 

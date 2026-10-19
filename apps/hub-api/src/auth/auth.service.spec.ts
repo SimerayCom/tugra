@@ -492,6 +492,84 @@ describe("AuthService.register — registration gating", () => {
   });
 });
 
+describe("AuthService — first-run setup code (SETUP_CODE)", () => {
+  function prismaFresh() {
+    const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "a@x.io", name: null, emailVerified: false, twoFaEnabled: false, uiMode: "fleet" });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(null), create: userCreate },
+      teamInvitation: { findFirst: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) =>
+        cb({
+          user: { create: userCreate },
+          team: { create: jest.fn().mockResolvedValue({ id: "t1" }) },
+          membership: { create: jest.fn().mockResolvedValue({}) },
+          instanceSettings: { updateMany },
+        }),
+      ),
+    } as unknown as PrismaService;
+    return { prisma, userCreate, updateMany };
+  }
+  function svcWith(code: string | undefined, initializedAt: Date | null, allowRegistration: boolean, prisma: PrismaService): AuthService {
+    const cfg = {
+      get: (k: string) =>
+        k === "SETUP_CODE" ? code : k === "JWT_ACCESS_SECRET" ? "access-secret-aaaaaaaaaaaa" : k === "JWT_REFRESH_SECRET" ? "refresh-secret-bbbbbbbbbbbb" : undefined,
+    } as unknown as ConfigService;
+    const instanceSettings = { get: jest.fn().mockResolvedValue({ initializedAt, allowRegistration }), update: jest.fn() } as unknown as InstanceSettingsService;
+    const svc = new AuthService(
+      prisma,
+      new JwtService({}),
+      cfg,
+      {} as CryptoService,
+      {} as TotpService,
+      { log: jest.fn() } as unknown as AuditService,
+      new FakeRedis() as unknown as RedisService,
+      { ensureDefaults: jest.fn().mockResolvedValue(undefined) } as unknown as TeamDefaultsService,
+      mail,
+      instanceSettings,
+    );
+    jest.spyOn(svc, "issueTokens").mockResolvedValue({ accessToken: "a", refreshToken: "b" });
+    return svc;
+  }
+
+  it("rejects the first register with a missing or wrong code and writes NOTHING", async () => {
+    const { prisma } = prismaFresh();
+    const svc = svcWith("abcd1234", null, false, prisma);
+    await expect(svc.register("a@x.io", "password123")).rejects.toThrow(/setup code/i);
+    await expect(svc.register("a@x.io", "password123", undefined, "wrong")).rejects.toThrow(/setup code/i);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows the first register with the correct code (becomes owner)", async () => {
+    const { prisma, userCreate } = prismaFresh();
+    const svc = svcWith("abcd1234", null, false, prisma);
+    await svc.register("a@x.io", "password123", undefined, "abcd1234");
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ isInstanceOwner: true }) });
+  });
+
+  it("is a no-op when no SETUP_CODE is configured (default/dev behavior unchanged)", async () => {
+    const { prisma, userCreate } = prismaFresh();
+    const svc = svcWith(undefined, null, false, prisma);
+    await svc.register("a@x.io", "password123"); // no code needed
+    expect(userCreate).toHaveBeenCalled();
+  });
+
+  it("is a no-op once the instance is initialized (code is only for the first claim)", async () => {
+    const { prisma, userCreate, updateMany } = prismaFresh();
+    updateMany.mockResolvedValue({ count: 0 }); // already initialized → not the first user
+    const svc = svcWith("abcd1234", new Date(), true, prisma); // registration open
+    await svc.register("later@x.io", "password123"); // no code supplied, still succeeds
+    expect(userCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ isInstanceOwner: false }) });
+  });
+
+  it("refuses an OAuth first sign-in during bootstrap (can't carry a code) — owner must claim via the form first", async () => {
+    const { prisma } = prismaFresh();
+    const svc = svcWith("abcd1234", null, false, prisma);
+    await expect(svc.loginWithGithub("gh@x.io", "GH")).rejects.toThrow(/setup/i);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe("AuthService.loginWithGithub", () => {
   it("creates a user + team + membership on first GitHub sign-in (and owns the instance)", async () => {
     const userCreate = jest.fn().mockResolvedValue({ id: "u1", email: "gh@x.io", name: "GH" });

@@ -1,5 +1,6 @@
 import { Controller, Get } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
+import { ConfigService } from "@nestjs/config";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { currentEdition, editionAtLeast } from "../common/edition";
 
@@ -7,12 +8,15 @@ import { currentEdition, editionAtLeast } from "../common/edition";
  * Public onboarding/instance status. No `@UseGuards` → unauthenticated by default (auth is opt-in per
  * controller here), like Health/Version. The web root reads this before any login to decide whether a
  * fresh instance should show the welcome/onboarding flow instead of the login page. Returns only
- * non-secret bootstrap state: `{ initialized, allowRegistration, edition }`.
+ * non-secret bootstrap state: `{ initialized, allowRegistration, edition, ssoEnabled, setupCodeRequired }`.
  */
 @ApiTags("instance")
 @Controller("instance")
 export class InstanceController {
-  constructor(private readonly instance: InstanceSettingsService) {}
+  constructor(
+    private readonly instance: InstanceSettingsService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Get("status")
   async status() {
@@ -28,6 +32,9 @@ export class InstanceController {
       ssoEnabled:
         editionAtLeast(currentEdition(), "pro") &&
         !!(s.oidcEnabled && s.oidcIssuer && s.oidcClientId && s.oidcClientSecretEnc),
+      // Whether the welcome form must ask for the first-run setup code: a code is configured AND the
+      // owner has not been claimed yet. Exposes ONLY the boolean — never the code itself.
+      setupCodeRequired: !!this.config.get<string>("SETUP_CODE") && s.initializedAt == null,
     };
   }
 }

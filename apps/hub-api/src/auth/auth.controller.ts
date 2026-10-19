@@ -72,7 +72,7 @@ export class AuthController {
   ) {
     // Dual-mode: also set httpOnly session cookies for the browser, while keeping `tokens` in the
     // body so PAT/CLI/e2e bearer clients are unaffected.
-    const result = await this.auth.register(body.email, body.password, body.name);
+    const result = await this.auth.register(body.email, body.password, body.name, body.setupCode);
     setAuthCookies(res, result.tokens);
     return result;
   }

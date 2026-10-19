@@ -51,6 +51,8 @@ describe("scripts/install.sh", () => {
       expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/tugra:.+@postgres:5432\/tugra\?schema=public$/);
       expect(env.REDIS_URL).toBe("redis://redis:6379"); // unauthenticated (BullMQ)
       expect(env.NODE_ENV).toBe("production");
+      // First-run owner-claim code (8 hex chars) — closes the first-visitor-claims-owner window.
+      expect(env.SETUP_CODE).toMatch(/^[0-9a-f]{8}$/);
     });
 
     it("uses COOKIE_SECURE=false for the http quick-start (else login dies over http)", () => {
@@ -77,7 +79,7 @@ describe("scripts/install.sh", () => {
       const first = parseEnv(readFileSync(envPath, "utf8"));
       run(["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"], envPath);
       const second = parseEnv(readFileSync(envPath, "utf8"));
-      for (const k of ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "SECRETS_ENCRYPTION_KEY", "HUB_SIGNING_KEY", "POSTGRES_PASSWORD"]) {
+      for (const k of ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "SECRETS_ENCRYPTION_KEY", "HUB_SIGNING_KEY", "POSTGRES_PASSWORD", "SETUP_CODE"]) {
         expect(second[k]).toBe(first[k]);
       }
     });

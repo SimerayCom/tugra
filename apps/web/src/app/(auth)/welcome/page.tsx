@@ -137,15 +137,20 @@ function CreateAdminStep({ t, onDone }: { t: Tr; onDone: () => void }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [setupCode, setSetupCode] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // A fresh box installed with SETUP_CODE needs the code to claim the owner account (closes the
+  // first-visitor-wins window). The status endpoint exposes only the boolean, never the code.
+  const { data: status } = useQuery({ queryKey: ["instance-status"], queryFn: () => api.getInstanceStatus() });
+  const needsCode = status?.setupCodeRequired ?? false;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
     setBusy(true);
     try {
-      await api.register(email, password, name || undefined);
+      await api.register(email, password, name || undefined, setupCode || undefined);
       await reload(); // becomes the logged-in owner; initialized flips true
       onDone();
     } catch (e) {
@@ -158,6 +163,11 @@ function CreateAdminStep({ t, onDone }: { t: Tr; onDone: () => void }) {
     <>
       <p style={{ fontSize: 14, color: "var(--c-tx2)", margin: "0 0 16px" }}>{t("onboarding.adminBody")}</p>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {needsCode && (
+          <Field label={t("onboarding.setupCode")} htmlFor="ob-setup-code" hint={t("onboarding.setupCodeHint")}>
+            <TextInput id="ob-setup-code" value={setupCode} onChange={(e) => setSetupCode(e.target.value)} required autoFocus />
+          </Field>
+        )}
         <Field label={t("onboarding.name")} htmlFor="ob-name">
           <TextInput id="ob-name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
