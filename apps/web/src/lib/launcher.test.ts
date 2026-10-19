@@ -61,16 +61,16 @@ describe("deriveLinkKind", () => {
 });
 
 describe("tileActions", () => {
-  it("offers open/logs/restart/update/stop/expose/uninstall for a running app with a url", () => {
-    expect(tileActions("RUNNING", true, true)).toEqual(["open", "logs", "restart", "update", "stop", "expose", "uninstall"]);
+  it("offers open/logs/files/restart/update/stop/expose/uninstall for a running app with a url", () => {
+    expect(tileActions("RUNNING", true, true)).toEqual(["open", "logs", "files", "restart", "update", "stop", "expose", "uninstall"]);
   });
 
-  it("offers start/expose/uninstall for a fresh domainless app (no logs/update before first deploy)", () => {
+  it("offers start/expose/uninstall for a fresh domainless app (no logs/files/update before first deploy)", () => {
     expect(tileActions("NEW", false, true)).toEqual(["start", "expose", "uninstall"]);
   });
 
-  it("offers open/logs/start/expose/uninstall for a stopped app that has a domain", () => {
-    expect(tileActions("STOPPED", true, true)).toEqual(["open", "logs", "start", "expose", "uninstall"]);
+  it("offers open/logs/files/start/expose/uninstall for a stopped app that has a domain", () => {
+    expect(tileActions("STOPPED", true, true)).toEqual(["open", "logs", "files", "start", "expose", "uninstall"]);
   });
 
   it("offers only 'open' to a viewer (no write/read-internal actions)", () => {

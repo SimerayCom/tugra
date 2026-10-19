@@ -61,6 +61,12 @@ body {
 .mono {
   font-family: var(--font-mono);
 }
+/* Hide a non-essential column on narrow screens (e.g. the file-browser modified-time column). */
+@media (max-width: 480px) {
+  .hide-narrow {
+    display: none !important;
+  }
+}
 
 /* Mobile: 16px form controls so iOS Safari never auto-zooms on focus.
    Scoped to the small breakpoint so desktop typography is untouched. */

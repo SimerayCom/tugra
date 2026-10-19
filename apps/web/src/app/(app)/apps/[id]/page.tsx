@@ -13,6 +13,7 @@ import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { useContainerLogStream } from "../../../../hooks/useContainerLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
+import { AppFilesCard } from "../../../../components/app-files-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
@@ -30,7 +31,7 @@ import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
 import { useToast } from "../../../../components/toast";
-import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
@@ -103,6 +104,8 @@ export default function AppDetailPage() {
     { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length },
     { key: "metrics", label: t("apps.tabMetrics") },
     { key: "logs", label: t("apps.tabLogs") },
+    // Files listing is writer-only (the hub endpoint requires write permission), like logs/config.
+    ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles") }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
@@ -407,6 +410,12 @@ export default function AppDetailPage() {
             !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
           )}
         </>
+      )}
+
+      {tab === "files" && appData.canWrite && (
+        <SectionCard title={t("apps.files.title")} desc={t("apps.files.desc")}>
+          <AppFilesCard id={id} volumes={appData.volumes} />
+        </SectionCard>
       )}
     </div>
   );

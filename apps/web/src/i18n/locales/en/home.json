@@ -57,6 +57,7 @@
   "logsRefresh": "Refresh",
   "action_open": "Open",
   "action_logs": "Logs",
+  "action_files": "Files",
   "action_start": "Start",
   "action_restart": "Restart",
   "action_update": "Update",
@@ -64,5 +65,6 @@
   "action_expose": "Expose",
   "action_uninstall": "Uninstall",
   "logsBack": "Back",
-  "logsEmpty": "No logs yet."
+  "logsEmpty": "No logs yet.",
+  "filesError": "Couldn't load this app's files."
 }

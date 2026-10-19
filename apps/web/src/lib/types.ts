@@ -649,6 +649,19 @@ export interface AppVolume {
   path: string;
 }
 
+/** One entry in an app-volume file listing (CASA-FILES, metadata only — never content). */
+export interface FileEntry {
+  name: string;
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mode: string; // rwx permission string
+  mtime: number; // unix seconds
+}
+export interface FileListing {
+  entries: FileEntry[];
+  truncated: boolean; // the folder had more entries than the agent's cap
+}
+
 export interface ScheduledTask {
   id: string;
   name: string;

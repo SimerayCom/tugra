@@ -64,7 +64,7 @@ function rank(t: LauncherTile): number {
 }
 
 // Per-app management actions offered on a launcher tile, given its state.
-export type TileAction = "open" | "logs" | "start" | "restart" | "update" | "stop" | "expose" | "uninstall";
+export type TileAction = "open" | "logs" | "files" | "start" | "restart" | "update" | "stop" | "expose" | "uninstall";
 
 export function tileActions(status: AppStatus, hasUrl: boolean, canWrite: boolean): TileAction[] {
   const running = status === "RUNNING";
@@ -72,7 +72,7 @@ export function tileActions(status: AppStatus, hasUrl: boolean, canWrite: boolea
   if (hasUrl) actions.push("open");
   // Everything below mutates the app or reads its internals → only offered to writers (viewers 403).
   if (!canWrite) return actions;
-  if (status !== "NEW") actions.push("logs"); // a never-deployed app has no logs yet
+  if (status !== "NEW") actions.push("logs", "files"); // a never-deployed app has no logs/volume yet
   if (!running) actions.push("start"); // deploy = build+run, works from NEW/STOPPED/FAILED
   if (running) actions.push("restart", "update", "stop"); // "update" = redeploy (pull latest + restart)
   // "Expose" always available to writers: give a urlless app an instant URL, or
