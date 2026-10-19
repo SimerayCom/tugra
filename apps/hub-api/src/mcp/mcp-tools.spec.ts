@@ -21,6 +21,14 @@ describe("MCP_TOOLS catalog", () => {
     }
   });
 
+  it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
+    // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
+    // remove a tool, bump this number AND those docs in the same commit.
+    expect(MCP_TOOLS).toHaveLength(44);
+    // Names are unique.
+    expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
+  });
+
   it("mutate tools carry the scope of their REST route: config=write, deploy-tier ops=deploy, destructive=admin; else read", () => {
     for (const t of MCP_TOOLS) {
       if (DEPLOY_TOOLS.includes(t.name)) expect(t.scope).toBe("deploy");
@@ -510,5 +518,127 @@ describe("MCP_TOOLS catalog", () => {
     await expect(Promise.resolve().then(() => tool("get_application").execute(deps, "u1", {}))).rejects.toThrow(
       /missing required argument: id/,
     );
+  });
+});
+
+describe("read: fleet aggregators", () => {
+  const apps = [
+    { id: "a1", name: "web", status: "RUNNING", clusterId: "c1", serverId: "s1", domain: "web.io", tags: ["prod"] },
+    { id: "a2", name: "api", status: "STOPPED", clusterId: "c1", serverId: "s2", domain: null, tags: ["prod", "backend"] },
+    { id: "a3", name: "lab", status: "RUNNING", clusterId: null, serverId: "s2", domain: null, tags: ["dev"], teamId: "t2" },
+  ].map((a) => ({ teamId: "t1", ...a }));
+
+  describe("fleet_list_apps", () => {
+    const run = (args: Record<string, unknown>, list = apps) =>
+      tool("fleet_list_apps").execute({ apps: { list: jest.fn().mockResolvedValue(list) } } as unknown as McpDeps, "u1", args) as Promise<{
+        total: number;
+        count: number;
+        truncated: boolean;
+        apps: Array<{ id: string; status: string }>;
+      }>;
+
+    it("returns all apps (slim) with no filter", async () => {
+      const r = await run({});
+      expect(r.total).toBe(3);
+      expect(r.apps.map((a) => a.id)).toEqual(["a1", "a2", "a3"]);
+      // slim projection — no internal fields leaked
+      expect(Object.keys(r.apps[0]).sort()).toEqual(["clusterId", "domain", "id", "name", "serverId", "status", "tags"]);
+    });
+
+    it("filters by clusterId, serverId, status and tag", async () => {
+      expect((await run({ clusterId: "c1" })).apps.map((a) => a.id)).toEqual(["a1", "a2"]);
+      expect((await run({ serverId: "s2" })).apps.map((a) => a.id)).toEqual(["a2", "a3"]);
+      expect((await run({ status: "running" })).apps.map((a) => a.id)).toEqual(["a1", "a3"]); // case-insensitive
+      expect((await run({ tag: "backend" })).apps.map((a) => a.id)).toEqual(["a2"]);
+    });
+
+    it("normalizes the tag filter so differently-cased/spaced input still matches stored tags", async () => {
+      // Stored tags are canonicalized (lowercase/trim); the filter must match "Prod" / " prod " to "prod".
+      expect((await run({ tag: "Prod" })).apps.map((a) => a.id)).toEqual(["a1", "a2"]);
+      expect((await run({ tag: "  prod " })).apps.map((a) => a.id)).toEqual(["a1", "a2"]);
+      // A tag that normalizes to nothing matches nothing (not "ignore the filter").
+      expect((await run({ tag: "!!!" })).total).toBe(0);
+    });
+
+    it("rejects an invalid status", async () => {
+      await expect(run({ status: "PENDING" })).rejects.toThrow(/invalid status/);
+    });
+
+    it("caps + flags truncation for a very large fleet", async () => {
+      const big = Array.from({ length: 205 }, (_, i) => ({ teamId: "t1", id: `x${i}`, name: `x${i}`, status: "RUNNING", clusterId: "c1", serverId: "s1", domain: null, tags: [] }));
+      const r = await run({}, big);
+      expect(r.total).toBe(205);
+      expect(r.count).toBe(200);
+      expect(r.truncated).toBe(true);
+    });
+  });
+
+  describe("fleet_health_rollup", () => {
+    it("aggregates per-cluster health into fleet totals and survives one cluster failing", async () => {
+      const list = jest.fn().mockResolvedValue([
+        { id: "c1", name: "prod", swarmStatus: "active" },
+        { id: "c2", name: "staging", swarmStatus: "none" },
+      ]);
+      const get = jest
+        .fn()
+        .mockResolvedValueOnce({ health: { nodes: { online: 2, offline: 0, pending: 0, total: 2 }, apps: { running: 3, stopped: 1, failed: 0, new: 0, total: 4 } } })
+        .mockRejectedValueOnce(new Error("cluster unreachable"));
+      const r = (await tool("fleet_health_rollup").execute({ clusters: { list, get } } as unknown as McpDeps, "u1", {})) as {
+        clusterCount: number;
+        clusters: Array<{ id: string; health: unknown; error?: string }>;
+        totals: { nodes: { online: number; total: number }; apps: { running: number; total: number } };
+      };
+      expect(r.clusterCount).toBe(2);
+      expect(r.totals.nodes.online).toBe(2);
+      expect(r.totals.apps.running).toBe(3);
+      expect(r.totals.apps.total).toBe(4);
+      expect(r.clusters[1].health).toBeNull();
+      expect(r.clusters[1].error).toMatch(/unreachable/);
+    });
+  });
+
+  describe("fleet_status", () => {
+    it("summarizes clusters/servers/apps with status breakdowns", async () => {
+      const deps = {
+        clusters: { list: jest.fn().mockResolvedValue([{ swarmStatus: "active" }, { swarmStatus: "none" }]) },
+        apps: { list: jest.fn().mockResolvedValue(apps) },
+        servers: { listForUser: jest.fn().mockResolvedValue([{ status: "ONLINE" }, { status: "OFFLINE" }, { status: "ONLINE" }]) },
+      } as unknown as McpDeps;
+      const r = (await tool("fleet_status").execute(deps, "u1", {})) as {
+        clusters: { total: number; bySwarmStatus: Record<string, number> };
+        servers: { total: number; byStatus: Record<string, number> };
+        apps: { total: number; running: number; stopped: number };
+      };
+      expect(r.clusters.total).toBe(2);
+      expect(r.clusters.bySwarmStatus).toEqual({ active: 1, none: 1 });
+      expect(r.servers).toEqual({ total: 3, byStatus: { ONLINE: 2, OFFLINE: 1 } });
+      expect(r.apps).toMatchObject({ total: 3, running: 2, stopped: 1 });
+    });
+
+    it("narrows apps by teamId and passes the teamId filter through to every team-aware service", async () => {
+      const clusterList = jest.fn().mockResolvedValue([]);
+      const serverList = jest.fn().mockResolvedValue([{ status: "ONLINE" }]);
+      const deps = {
+        clusters: { list: clusterList },
+        apps: { list: jest.fn().mockResolvedValue(apps) },
+        servers: { listForUser: serverList },
+      } as unknown as McpDeps;
+      const r = (await tool("fleet_status").execute(deps, "u1", { teamId: "t2" })) as { apps: { total: number } };
+      expect(r.apps.total).toBe(1); // only a3 is team t2
+      // teamId must reach clusters.list and servers.listForUser (both re-check perms server-side).
+      expect(clusterList).toHaveBeenCalledWith("u1", "t2");
+      expect(serverList).toHaveBeenCalledWith("u1", { teamId: "t2" });
+    });
+
+    it("omits the teamId filter when none is given", async () => {
+      const serverList = jest.fn().mockResolvedValue([]);
+      const deps = {
+        clusters: { list: jest.fn().mockResolvedValue([]) },
+        apps: { list: jest.fn().mockResolvedValue([]) },
+        servers: { listForUser: serverList },
+      } as unknown as McpDeps;
+      await tool("fleet_status").execute(deps, "u1", {});
+      expect(serverList).toHaveBeenCalledWith("u1", undefined);
+    });
   });
 });
