@@ -42,6 +42,7 @@ const s = (
   tags: [],
   capabilities: [],
   isLocal: false,
+  proxyBind: "public",
   provider: null,
   providerServerId: null,
   canWrite,

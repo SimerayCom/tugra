@@ -79,6 +79,7 @@ export const ServerViewSchema = z.object({
   tags: z.array(z.string()),
   capabilities: z.array(z.string()), // granted agent capabilities the hub may act on; [] = none (fail-safe)
   isLocal: z.boolean(), // the box the hub itself runs on (auto-provisioned at first-owner reg on a turnkey install)
+  proxyBind: z.string(), // how the reverse proxy publishes :80/:443 — "public" | "loopback" | "none"
   provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
   providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
   canWrite: z.boolean(),
@@ -394,6 +395,8 @@ export class ServersService {
           ? this.crypto.encrypt(JSON.stringify(cfg.dnsCreds))
           : null;
     }
+    // Proxy bind mode (CASA-INSTALL-5) — persisted here; applied when the proxy is (re)started.
+    if (cfg.proxyBind !== undefined) data.proxyBind = cfg.proxyBind;
 
     await this.prisma.server.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "server.network.update", target: id });
@@ -598,6 +601,7 @@ export class ServersService {
       tags?: string[];
       capabilities?: string[];
       isLocal?: boolean;
+      proxyBind?: string;
       provider?: string | null;
       providerServerId?: string | null;
     },
@@ -640,6 +644,7 @@ export class ServersService {
       tags: s.tags ?? [],
       capabilities: s.capabilities ?? [],
       isLocal: s.isLocal ?? false,
+      proxyBind: s.proxyBind ?? "public",
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
       canWrite,

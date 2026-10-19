@@ -299,6 +299,7 @@ export interface ServerView {
   tags: string[];
   capabilities: string[]; // granted agent capabilities; [] = all
   isLocal: boolean; // the box the hub runs on (auto-provisioned on a turnkey single-box install)
+  proxyBind: string; // how the reverse proxy publishes :80/:443 — "public" | "loopback" | "none"
   provider: string | null; // cloud provider that created this VM (null = manually enrolled)
   providerServerId: string | null; // provider-side id (present once created; enables destroy-VM)
   canWrite: boolean;

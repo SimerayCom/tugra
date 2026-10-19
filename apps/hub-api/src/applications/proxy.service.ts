@@ -28,27 +28,33 @@ export class ProxyService {
       );
     }
     const email = this.config.get<string>("ACME_EMAIL");
-    const dns = await this.dnsConfig(serverId);
+    // CASA-INSTALL-5: this runs on EVERY domained deploy and recreates the proxy (docker rm -f + run), so it
+    // MUST honor the server's bind mode — otherwise a deploy would silently re-publish :80/:443 (reverting a
+    // loopback/none server) or fail where another web server holds those ports. Default servers stay public.
+    const { bind, ...dns } = await this.proxyConfig(serverId);
     await this.agentWs.sendCommand(
       serverId,
-      buildProxySetupScript({ acmeEmail: email, ...dns }),
+      buildProxySetupScript({ acmeEmail: email, bind, ...dns }),
       "deploy",
       60_000,
     );
   }
 
-  /** The server's DNS-01 provider + decrypted creds, when certMode is "le-dns". */
-  private async dnsConfig(
+  /** The server's proxy bind mode + its DNS-01 provider/decrypted creds (the latter only when certMode is
+   *  "le-dns"). bind is always returned (defaults to the column's "public") so every proxy (re)creation —
+   *  here and in ProxyOpsService.start — applies the same binding and the two call sites cannot drift. */
+  private async proxyConfig(
     serverId: string,
-  ): Promise<{ dnsProvider?: string | null; dnsCreds?: Record<string, string> | null }> {
+  ): Promise<{ bind?: string | null; dnsProvider?: string | null; dnsCreds?: Record<string, string> | null }> {
     const s = await this.prisma.server
-      .findUnique({ where: { id: serverId }, select: { certMode: true, dnsProvider: true, dnsCredsEnc: true } })
+      .findUnique({ where: { id: serverId }, select: { certMode: true, dnsProvider: true, dnsCredsEnc: true, proxyBind: true } })
       .catch(() => null);
-    if (!s || s.certMode !== "le-dns" || !s.dnsProvider || !s.dnsCredsEnc) return {};
+    const bind = s?.proxyBind;
+    if (!s || s.certMode !== "le-dns" || !s.dnsProvider || !s.dnsCredsEnc) return { bind };
     try {
-      return { dnsProvider: s.dnsProvider, dnsCreds: JSON.parse(this.crypto.decrypt(s.dnsCredsEnc)) };
+      return { bind, dnsProvider: s.dnsProvider, dnsCreds: JSON.parse(this.crypto.decrypt(s.dnsCredsEnc)) };
     } catch {
-      return {}; // unreadable creds → set up the proxy without the DNS resolver (fail-safe)
+      return { bind }; // unreadable creds → set up the proxy without the DNS resolver (fail-safe)
     }
   }
 }

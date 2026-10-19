@@ -37,6 +37,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   tags: [],
   capabilities: [],
   isLocal: false,
+  proxyBind: "public",
   provider: null,
   providerServerId: null,
   canWrite,
