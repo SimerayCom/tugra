@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Box, GitBranch, Layers } from "lucide-react";
-import { launcherTiles, launcherIcon, tileActions } from "./launcher";
+import { launcherTiles, launcherIcon, tileActions, tilePhase, deriveLinkKind } from "./launcher";
 import type { Application } from "./types";
 
 const app = (over: Partial<Application>): Application =>
@@ -23,6 +23,40 @@ describe("launcherTiles", () => {
     ]);
     expect(t).toMatchObject({ id: "z", url: "https://z.io", status: "FAILED", templateSlug: "n8n", templateLogo: "n8n" });
     expect(launcherTiles([])).toEqual([]);
+  });
+
+  it("derives phase and linkKind on each tile", () => {
+    const [tunnel, ip] = launcherTiles([
+      app({ id: "a", name: "a", url: "https://a.tunnel.io", status: "RUNNING", domain: "a.tunnel.io", tunnelExposed: true }),
+      app({ id: "b", name: "b", url: "http://10.0.0.5:8080", status: "FAILED", domain: null, tunnelExposed: false }),
+    ]);
+    expect(tunnel).toMatchObject({ phase: "running", linkKind: "tunnel", tunnelExposed: true });
+    expect(ip).toMatchObject({ phase: "failed", linkKind: "ip" });
+  });
+});
+
+describe("tilePhase", () => {
+  it("maps every AppStatus to a plain-language phase", () => {
+    expect(tilePhase("RUNNING")).toBe("running");
+    expect(tilePhase("STOPPED")).toBe("stopped");
+    expect(tilePhase("FAILED")).toBe("failed");
+    expect(tilePhase("NEW")).toBe("new");
+  });
+});
+
+describe("deriveLinkKind", () => {
+  it("none when there is no url", () => {
+    expect(deriveLinkKind({ url: null, domain: null, tunnelExposed: false })).toBe("none");
+    expect(deriveLinkKind({ url: null, domain: "x.io", tunnelExposed: true })).toBe("none");
+  });
+  it("tunnel wins over a plain domain", () => {
+    expect(deriveLinkKind({ url: "https://x.io", domain: "x.io", tunnelExposed: true })).toBe("tunnel");
+  });
+  it("domain when a real hostname is set but not tunnelled", () => {
+    expect(deriveLinkKind({ url: "https://x.io", domain: "x.io", tunnelExposed: false })).toBe("domain");
+  });
+  it("ip when the url is a bare address with no domain", () => {
+    expect(deriveLinkKind({ url: "http://10.0.0.5:8080", domain: null, tunnelExposed: false })).toBe("ip");
   });
 });
 

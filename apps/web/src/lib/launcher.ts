@@ -1,18 +1,49 @@
 import { Box, GitBranch, Layers, type LucideIcon } from "lucide-react";
 import type { Application, AppStatus, AppSource } from "./types";
 
+// A launcher tile's lifecycle state, derived from AppStatus for a plain-language label.
+export type TilePhase = "running" | "stopped" | "failed" | "new";
+// How an app is reachable — drives whether "Open" is shown as secure or flagged as a raw IP link.
+export type LinkKind = "tunnel" | "domain" | "ip" | "none";
+
 // One tile on the Home launcher: an installed app you can open in the browser.
 export interface LauncherTile {
   id: string;
   name: string;
   url: string | null; // pre-built public URL, or null when the app has no domain yet
   status: AppStatus;
+  phase: TilePhase; // derived from status — for the tile's status label
+  linkKind: LinkKind; // derived from url/domain/tunnelExposed — tunnel/domain are secure, ip is flagged
   source: AppSource;
   templateSlug: string | null; // catalog slug → brand logo, when installed from a template
   templateLogo: string | null;
   exposeMode: string; // current exposure — seeds the Expose modal so it reflects reality
   domain: string | null;
+  tunnelExposed: boolean; // reachable via Cloudflare tunnel (secure, no open port)
   canWrite: boolean;
+}
+
+/** Plain-language lifecycle state for the tile's status label. */
+export function tilePhase(status: AppStatus): TilePhase {
+  switch (status) {
+    case "RUNNING":
+      return "running";
+    case "STOPPED":
+      return "stopped";
+    case "FAILED":
+      return "failed";
+    default:
+      return "new";
+  }
+}
+
+/** How the app is reachable. A tunnel or a real domain is HTTPS/secure; a bare http://ip:port link works but is
+ *  flagged so the user can add a secure link. `none` = no URL yet. */
+export function deriveLinkKind(t: { url: string | null; domain: string | null; tunnelExposed: boolean }): LinkKind {
+  if (!t.url) return "none";
+  if (t.tunnelExposed) return "tunnel";
+  if (t.domain) return "domain";
+  return "ip";
 }
 
 const SOURCE_ICON: Record<AppSource, LucideIcon> = {
@@ -57,11 +88,14 @@ export function launcherTiles(apps: Application[]): LauncherTile[] {
       name: a.name,
       url: a.url,
       status: a.status,
+      phase: tilePhase(a.status),
+      linkKind: deriveLinkKind({ url: a.url, domain: a.domain, tunnelExposed: a.tunnelExposed }),
       source: a.source,
       templateSlug: a.templateSlug,
       templateLogo: a.templateLogo,
       exposeMode: a.exposeMode,
       domain: a.domain,
+      tunnelExposed: a.tunnelExposed,
       canWrite: a.canWrite,
     }))
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
