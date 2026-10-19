@@ -271,6 +271,7 @@ export class ApplicationsService {
       wildcardDomain: string | null;
       magicSuffix: string | null;
       certMode: string;
+      proxyBind: string;
     },
     source: string,
     // For a COMPOSE app, the resolved web service (or null) — magic is only offered
@@ -284,7 +285,12 @@ export class ApplicationsService {
       // caller passing https:false would show http:// while Traefik serves HTTPS.
       return { domain: input.domain, https: true, exposeMode: "custom", domainKind: "custom", certType: "le-http" };
     }
-    if (exposeMode === "magic" && (source !== "COMPOSE" || !!composeWebService)) {
+    // A tunnel-only proxy (CASA-INSTALL-5 bind:"none") publishes no host port, so a magic domain built from the
+    // box IP (sslip) would resolve to an unbound address — a dead link. Skip auto-magic ONLY when such a server
+    // has no wildcard: with a wildcard (a tunnel gives the server one), magicDomain yields <label>.<wildcard>,
+    // which the Cloudflare tunnel routes — so those apps still get a working, tunnel-reachable domain.
+    const tunnelOnlyNoWildcard = server.proxyBind === "none" && !server.wildcardDomain;
+    if (exposeMode === "magic" && !tunnelOnlyNoWildcard && (source !== "COMPOSE" || !!composeWebService)) {
       const suffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
       const magic = magicDomain({
         name: input.name,
@@ -316,7 +322,7 @@ export class ApplicationsService {
     const server = await this.prisma.server
       .findUnique({
         where: { id: serverId },
-        select: { publicIp: true, publicIpv6: true, wildcardDomain: true, magicSuffix: true },
+        select: { publicIp: true, publicIpv6: true, wildcardDomain: true, magicSuffix: true, proxyBind: true },
       })
       .catch(() => null);
     if (!server) return;
@@ -324,7 +330,18 @@ export class ApplicationsService {
       .findMany({ where: { serverId, domainKind: "magic", isPreview: false } })
       .catch(() => [] as Application[]);
     const suffix = server.magicSuffix ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io";
+    // A server switched to tunnel-only with no wildcard can no longer serve a box-IP magic (sslip) domain —
+    // those existing magic apps would keep a dead URL. Clear them to domainless (the operator tunnel-exposes
+    // them to get a real hostname). Matches the resolveExpose guard for new apps.
+    const dropMagic = server.proxyBind === "none" && !server.wildcardDomain;
     for (const app of apps) {
+      if (dropMagic) {
+        if (app.domain) {
+          await this.prisma.application.update({ where: { id: app.id }, data: { domain: null, domainKind: "none" } }).catch(() => undefined);
+          await this.syncMonitor(app.id).catch(() => undefined);
+        }
+        continue;
+      }
       const label = (app.domain ?? "").split(".")[0]; // {slug}-{hash} — keep the URL stable
       const next = magicDomain({
         name: app.name,

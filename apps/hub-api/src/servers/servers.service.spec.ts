@@ -549,6 +549,16 @@ describe("ServersService.setNetwork", () => {
     expect(regenerateMagicForServer).toHaveBeenCalledWith("s1");
   });
 
+  it("persists the proxy bind mode (CASA-INSTALL-5)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { proxyBind: "none" });
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { proxyBind: "none" } });
+  });
+
   it("pins a manual public IP (ipSource=manual) so observations no longer clobber it", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

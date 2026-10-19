@@ -298,6 +298,10 @@ model Server {
   // single-box install (CASA-INSTALL-2) so the user never pastes an agent command. Drives home-mode
   // reachability heuristics (CASA-INSTALL-6). Manually-enrolled servers are false.
   isLocal              Boolean      @default(false)
+  // How the server's reverse proxy publishes :80/:443 (CASA-INSTALL-5): "public" (default, all interfaces)
+  // | "loopback" (127.0.0.1 only, behind a front proxy) | "none" (no host port — tunnel-only, coexists with
+  // another web server on the box). Applied when the proxy is (re)started.
+  proxyBind            String       @default("public")
   // Cloud-provisioned servers only (null for manually-enrolled): the provider that created the VM,
   // its provider-side server id (needed to destroy it), and the credential used (SetNull so deleting
   // the credential leaves the server intact but drops its destroy-VM ability).

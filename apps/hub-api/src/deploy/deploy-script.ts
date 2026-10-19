@@ -864,7 +864,7 @@ export const PROXY_DNS_ENV_PATH = `${PROXY_DNS_ENV_DIR}/dns.env`;
  * --env-file (never `-e`/argv), so they never appear on the process list.
  */
 export function buildProxySetupScript(
-  opts: { acmeEmail?: string | null; dnsProvider?: string | null; dnsCreds?: Record<string, string> | null } = {},
+  opts: { acmeEmail?: string | null; dnsProvider?: string | null; dnsCreds?: Record<string, string> | null; bind?: string | null } = {},
 ): string {
   const email = opts.acmeEmail || "admin@example.com";
   const dns =
@@ -872,10 +872,21 @@ export function buildProxySetupScript(
       ? { provider: opts.dnsProvider, creds: opts.dnsCreds }
       : null;
 
+  // How the proxy binds the host's :80/:443 (CASA-INSTALL-5), so Tugra can share a box that already runs
+  // something on those ports (e.g. CloudPanel's nginx):
+  //  - "public" (default): publish on all interfaces — unchanged behavior.
+  //  - "loopback": publish on 127.0.0.1 only — reachable through a front proxy on the box, not from outside.
+  //  - "none": publish nothing — the proxy is reachable only on the tugra-proxy docker network, i.e. via the
+  //    Cloudflare tunnel (cloudflared hits Traefik by container name); zero open host ports.
+  // Traefik's own entrypoints stay on :80/:443 inside the container either way.
+  const bind = opts.bind === "loopback" || opts.bind === "none" ? opts.bind : "public";
+  const portPublish =
+    bind === "none" ? [] : [bind === "loopback" ? "-p 127.0.0.1:80:80 -p 127.0.0.1:443:443" : "-p 80:80 -p 443:443"];
+
   const runArgs = [
     `docker run -d --name ${PROXY_NAME} --restart unless-stopped`,
     `--network ${PROXY_NETWORK}`,
-    "-p 80:80 -p 443:443",
+    ...portPublish,
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
     "-v /etc/tugra/letsencrypt:/letsencrypt",
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.

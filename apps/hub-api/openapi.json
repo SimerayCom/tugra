@@ -2525,6 +2525,9 @@
                       "isLocal": {
                         "type": "boolean"
                       },
+                      "proxyBind": {
+                        "type": "string"
+                      },
                       "provider": {
                         "type": "string",
                         "nullable": true
@@ -2572,6 +2575,7 @@
                       "tags",
                       "capabilities",
                       "isLocal",
+                      "proxyBind",
                       "provider",
                       "providerServerId",
                       "canWrite"
@@ -2883,6 +2887,9 @@
                     "isLocal": {
                       "type": "boolean"
                     },
+                    "proxyBind": {
+                      "type": "string"
+                    },
                     "provider": {
                       "type": "string",
                       "nullable": true
@@ -2930,6 +2937,7 @@
                     "tags",
                     "capabilities",
                     "isLocal",
+                    "proxyBind",
                     "provider",
                     "providerServerId",
                     "canWrite"
@@ -3778,6 +3786,14 @@
                     "type": "string",
                     "maxLength": 64,
                     "nullable": true
+                  },
+                  "proxyBind": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "loopback",
+                      "none"
+                    ]
                   }
                 },
                 "additionalProperties": false

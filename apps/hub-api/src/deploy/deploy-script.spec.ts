@@ -643,6 +643,32 @@ describe("deploy-script", () => {
     expect(Buffer.from(m![1], "base64").toString()).toBe("CF_DNS_API_TOKEN=s3cr3t-token");
   });
 
+  it("publishes :80/:443 on all interfaces by default, and byte-identically for bind:'public' (CASA-INSTALL-5 regression)", () => {
+    const base = buildProxySetupScript({ acmeEmail: "me@x.com" });
+    expect(base).toContain("-p 80:80 -p 443:443");
+    // bind:'public' must be byte-identical to the default (no behavior change for existing servers)
+    expect(buildProxySetupScript({ acmeEmail: "me@x.com", bind: "public" })).toBe(base);
+    // an unknown/empty bind also falls back to public
+    expect(buildProxySetupScript({ acmeEmail: "me@x.com", bind: null })).toBe(base);
+    expect(buildProxySetupScript({ acmeEmail: "me@x.com", bind: "bogus" })).toBe(base);
+  });
+
+  it("binds :80/:443 to loopback only for bind:'loopback' (front-proxy coexistence)", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", bind: "loopback" });
+    expect(s).toContain("-p 127.0.0.1:80:80 -p 127.0.0.1:443:443");
+    expect(s).not.toContain("-p 80:80 -p 443:443");
+  });
+
+  it("publishes NO host ports for bind:'none' (tunnel-only; coexists with another web server on :80/:443)", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", bind: "none" });
+    expect(s).not.toContain("-p 80:80");
+    expect(s).not.toContain("127.0.0.1:80");
+    expect(s).not.toMatch(/ -p \d/); // no port-publish flag at all
+    // the proxy still runs + listens internally (entrypoints) — reachable via the tunnel on the docker network
+    expect(s).toContain("--entrypoints.web.address=:80");
+    expect(s).toContain(PROXY_IMAGE);
+  });
+
   it("start/restart scripts target the app container (no rebuild)", () => {
     expect(buildStartScript({ id: "abc" })).toBe("docker start tugra_abc");
     expect(buildRestartScript({ id: "abc" })).toBe("docker restart tugra_abc");

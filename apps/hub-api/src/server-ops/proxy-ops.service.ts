@@ -50,7 +50,10 @@ export class ProxyOpsService {
     await this.requireWrite(userId, serverId);
     const email = this.config.get<string>("ACME_EMAIL");
     const dns = await this.dnsConfig(serverId);
-    await this.agentWs.sendCommand(serverId, buildProxySetupScript({ acmeEmail: email, ...dns }), "deploy", PROXY_TIMEOUT_MS);
+    // The bind mode (CASA-INSTALL-5) is applied here — `start` recreates the proxy container, so changing it
+    // and re-starting the proxy publishes :80/:443 differently (public / loopback / tunnel-only).
+    const s = await this.prisma.server.findUnique({ where: { id: serverId }, select: { proxyBind: true } }).catch(() => null);
+    await this.agentWs.sendCommand(serverId, buildProxySetupScript({ acmeEmail: email, bind: s?.proxyBind, ...dns }), "deploy", PROXY_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.proxy.start", target: serverId });
     return this.statusAfter(serverId);
   }

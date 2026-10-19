@@ -28,6 +28,10 @@ export const NetworkSettingsSchema = z
     dnsProvider: z.string().trim().max(64).nullable().optional(),
     dnsCreds: z.record(z.string()).nullable().optional(),
     customCertResolver: z.string().trim().max(64).nullable().optional(),
+    // How the reverse proxy publishes :80/:443 (CASA-INSTALL-5). Takes effect when the proxy is RECREATED —
+    // the next deploy of a domained app, or a proxy Start — NOT on a plain proxy Restart (which keeps the
+    // running container's port bindings).
+    proxyBind: z.enum(["public", "loopback", "none"]).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field" });
 export type NetworkSettingsInput = z.infer<typeof NetworkSettingsSchema>;
