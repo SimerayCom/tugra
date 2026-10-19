@@ -33,5 +33,9 @@
   "cancel": "Cancel",
   "cancelling": "Cancelling…",
   "unresolvedEnv": "{n} env vars need a value",
-  "failedCount": "{n} failed"
+  "failedCount": "{n} failed",
+  "rollback": "Roll back",
+  "rollingBack": "Rolling back…",
+  "rollbackTitle": "Roll back this import?",
+  "rollbackBody": "Removes the apps this import created on the target server. Apps you have deployed since are kept. This cannot be undone."
 }

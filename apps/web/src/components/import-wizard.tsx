@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Card, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
+import { useConfirm } from "./confirm";
 import { planSummary, itemsByKind, riskTone, opProgress } from "../lib/import";
 import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportTaskStatus } from "../lib/types";
 
@@ -184,6 +185,8 @@ function PlanView({
 function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
   const t = useT();
   const toast = useToast();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data: op } = useQuery({
     queryKey: ["import-op", opId],
     queryFn: () => api.getImportOperation(opId),
@@ -197,6 +200,15 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
     mutationFn: () => api.cancelImport(opId),
     onError: (e) => toast((e as Error).message, "error"),
   });
+  const rollback = useMutation({
+    mutationFn: () => api.rollbackImport(opId),
+    onSuccess: (updated) => qc.setQueryData(["import-op", opId], updated),
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+  const onRollback = async () => {
+    const ok = await confirm({ title: t("import.rollbackTitle"), body: t("import.rollbackBody"), danger: true });
+    if (ok) rollback.mutate();
+  };
 
   if (!op) {
     return (
@@ -207,6 +219,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
   }
 
   const prog = opProgress(op);
+  const canRollback = prog.settled && op.tasks.some((task) => task.status === "DONE" && task.resourceType === "application");
   return (
     <Card style={{ padding: 20, maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
@@ -214,6 +227,11 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
         {!prog.settled && (
           <Btn variant="ghost" onClick={() => cancel.mutate()} disabled={cancel.isPending || op.cancelRequested}>
             {cancel.isPending || op.cancelRequested ? t("import.cancelling") : t("import.cancel")}
+          </Btn>
+        )}
+        {canRollback && (
+          <Btn variant="ghost" onClick={onRollback} disabled={rollback.isPending}>
+            {rollback.isPending ? t("import.rollingBack") : t("import.rollback")}
           </Btn>
         )}
         {prog.settled && <Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>}
