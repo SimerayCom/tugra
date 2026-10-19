@@ -14,6 +14,7 @@ import { Btn, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { ExposeModal } from "../../../components/expose-modal";
 import { TileActionsSheet } from "../../../components/tile-actions-sheet";
+import { RemoteAccessCard } from "../../../components/remote-access-card";
 import { AppLogo } from "../../../components/app-logo";
 
 const grid: React.CSSProperties = {
@@ -32,7 +33,12 @@ export default function HomePage() {
   }, [user?.uiMode, router]);
 
   const { data: apps = [], isLoading, isError, refetch } = useQuery({ queryKey: ["apps"], queryFn: () => api.listApps() });
+  const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const tiles = launcherTiles(apps);
+  // Remote access targets the home box: the auto-provisioned "This machine", else the ONE server a home
+  // user has (home mode hides the Servers page, so this card is their only path to a tunnel). Never fall
+  // back to an arbitrary one of several servers — that could configure a tunnel on an unrelated box.
+  const remoteTarget = servers.find((s) => s.isLocal) ?? (servers.length === 1 ? servers[0] : undefined);
   const [exposeFor, setExposeFor] = useState<string | null>(null);
   const [actionsFor, setActionsFor] = useState<LauncherTile | null>(null);
 
@@ -40,6 +46,9 @@ export default function HomePage() {
     <div style={{ padding: "var(--page-pad)" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("home.title")}</h1>
       <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 20px" }}>{t("home.subtitle")}</p>
+
+      {/* Only an operator who can manage the server (servers:manage) can set up a tunnel — hide it otherwise. */}
+      {remoteTarget?.canWrite && <RemoteAccessCard serverId={remoteTarget.id} />}
 
       {isError && tiles.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
@@ -128,6 +137,9 @@ function Tile({ tile, t, onManage, onExpose }: { tile: LauncherTile; t: ReturnTy
           <ExternalLink size={12} /> {t("home.open")}
         </div>
       ) : null}
+      {tile.linkKind === "tunnel" && (
+        <div style={{ fontSize: 10, fontWeight: 600, color: "var(--c-g)", marginTop: 5 }}>{t("home.availableAnywhere")}</div>
+      )}
     </>
   );
 
