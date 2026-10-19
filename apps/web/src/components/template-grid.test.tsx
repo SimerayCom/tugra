@@ -94,4 +94,42 @@ describe("TemplateGrid", () => {
     fireEvent.click(screen.getByRole("link", { name: /Open/ }));
     expect(onPick).not.toHaveBeenCalled();
   });
+
+  // ── CASA-UX-4: featured shelf, richer cards, detail handoff ──
+
+  const rich: Template[] = [
+    { slug: "immich", name: "Immich", description: "Long description of Immich.", category: "productivity", featured: true, tagline: "Google Photos alternative", badges: ["db"] },
+    { slug: "ghost", name: "Ghost", description: "Publishing platform", category: "cms" },
+  ];
+
+  it("renders a Featured shelf (with a count) for featured templates on the unfiltered view", () => {
+    wrap(<TemplateGrid templates={rich} onPick={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: /Featured/ })).toBeTruthy();
+    // Immich (featured) appears in the Featured shelf AND its category section
+    expect(screen.getAllByText("Immich").length).toBeGreaterThanOrEqual(2);
+    // a non-featured template is not in the shelf (appears once, in its category)
+    expect(screen.getAllByText("Ghost")).toHaveLength(1);
+  });
+
+  it("shows the tagline (not the long description) and capability badges on a card", () => {
+    wrap(<TemplateGrid templates={rich} onPick={vi.fn()} />);
+    expect(screen.getAllByText("Google Photos alternative").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Long description of Immich.")).toBeNull(); // long description replaced by tagline
+    expect(screen.getAllByText("Database").length).toBeGreaterThanOrEqual(1); // badge_db
+  });
+
+  it("opens details (not pick) on card click when onDetails is wired; picks directly otherwise", () => {
+    const onPick = vi.fn();
+    const onDetails = vi.fn();
+    wrap(<TemplateGrid templates={[rich[1]]} onPick={onPick} onDetails={onDetails} />); // ghost only (no shelf dup)
+    fireEvent.click(screen.getByText("Ghost"));
+    expect(onDetails).toHaveBeenCalledWith(expect.objectContaining({ slug: "ghost" }));
+    expect(onPick).not.toHaveBeenCalled();
+
+    cleanup();
+    const onPick2 = vi.fn();
+    wrap(<TemplateGrid templates={[rich[1]]} onPick={onPick2} />); // no onDetails → direct pick
+    fireEvent.click(screen.getByText("Ghost"));
+    expect(onPick2).toHaveBeenCalledWith(expect.objectContaining({ slug: "ghost" }));
+  });
 });
