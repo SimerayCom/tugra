@@ -56,7 +56,7 @@ export default function HomePage() {
       ) : (
         <div style={grid}>
           {tiles.map((tile) => (
-            <Tile key={tile.id} tile={tile} openLabel={t("home.open")} manageLabel={t("home.manage")} onManage={() => setActionsFor(tile)} />
+            <Tile key={tile.id} tile={tile} t={t} onManage={() => setActionsFor(tile)} onExpose={() => setExposeFor(tile.id)} />
           ))}
         </div>
       )}
@@ -84,7 +84,8 @@ export default function HomePage() {
   );
 }
 
-function Tile({ tile, openLabel, manageLabel, onManage }: { tile: LauncherTile; openLabel: string; manageLabel: string; onManage: () => void }) {
+function Tile({ tile, t, onManage, onExpose }: { tile: LauncherTile; t: ReturnType<typeof useT>; onManage: () => void; onExpose: () => void }) {
+  const manageLabel = t("home.manage");
   const menuBtn = (
     <button
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); onManage(); }}
@@ -108,11 +109,25 @@ function Tile({ tile, openLabel, manageLabel, onManage }: { tile: LauncherTile; 
         </div>
       </div>
       <div style={{ fontWeight: 600, fontSize: 15, marginTop: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tile.name}</div>
-      {tile.url && (
-        <div style={{ fontSize: 12, color: "var(--c-lapis)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-          <ExternalLink size={12} /> {openLabel}
+      <div style={{ fontSize: 11, color: appColor(tile.status), marginTop: 3 }}>{t(`home.status_${tile.phase}`)}</div>
+      {tile.linkKind === "ip" ? (
+        // A bare http://ip:port link works but isn't HTTPS — flag it and offer a one-tap secure link via the tunnel.
+        <div style={{ fontSize: 11, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ color: "var(--c-tx3)" }}>{t("home.notSecure")}</span>
+          {tile.canWrite && (
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onExpose(); }}
+              style={{ fontWeight: 600, color: "var(--c-a)", background: "transparent", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 11 }}
+            >
+              {t("home.addSecureLink")}
+            </button>
+          )}
         </div>
-      )}
+      ) : tile.url ? (
+        <div style={{ fontSize: 12, color: "var(--c-lapis)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+          <ExternalLink size={12} /> {t("home.open")}
+        </div>
+      ) : null}
     </>
   );
 

@@ -70,7 +70,7 @@ export function TileActionsSheet({
   return (
     <Modal onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,0.06)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ width: 34, height: 34, borderRadius: 9, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
           <AppLogo templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={20} />
         </span>
         <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tile.name}</div>
