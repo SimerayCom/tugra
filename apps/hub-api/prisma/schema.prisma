@@ -294,6 +294,10 @@ model Server {
   // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
   // to all-except-terminal (least privilege — the interactive shell is opt-in).
   capabilities         String[]     @default([])
+  // True for the box the hub itself runs on, auto-provisioned at first-owner registration on a turnkey
+  // single-box install (CASA-INSTALL-2) so the user never pastes an agent command. Drives home-mode
+  // reachability heuristics (CASA-INSTALL-6). Manually-enrolled servers are false.
+  isLocal              Boolean      @default(false)
   // Cloud-provisioned servers only (null for manually-enrolled): the provider that created the VM,
   // its provider-side server id (needed to destroy it), and the credential used (SetNull so deleting
   // the credential leaves the server intact but drops its destroy-VM ability).
