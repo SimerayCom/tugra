@@ -6,18 +6,20 @@ import { DnsCredentialsService } from "./dns-credentials.service";
 import { DnsCredentialsController } from "./dns-credentials.controller";
 import { DnsAutomationService } from "./dns-automation.service";
 import { DnsLookupService } from "./dns-lookup.service";
+import { MailDnsService } from "./mail-dns.service";
+import { MailDnsController } from "./mail-dns.controller";
 
 /**
- * DNS automation (custom-domain one-click auto-setup). v1 = Cloudflare. CloudflareApiClient is a stateless
- * client provided here directly (TunnelModule does not export it); PrismaService, TeamAccessService and
- * AuditService come from @Global modules; CryptoModule supplies token encryption; ClustersModule supplies
- * SwarmProxyService for resolving a cluster app's ingress IPs. DnsAutomationService + DnsCredentialsService
- * are exported for the REST/MCP slices that drive them.
+ * DNS automation (custom-domain one-click auto-setup + mail-deliverability DNS). v1 = Cloudflare.
+ * CloudflareApiClient is a stateless client provided here directly (TunnelModule does not export it);
+ * PrismaService, TeamAccessService and AuditService come from @Global modules; CryptoModule supplies token
+ * encryption; ClustersModule supplies SwarmProxyService for resolving a cluster app's ingress IPs.
+ * DnsAutomationService, MailDnsService + DnsCredentialsService are exported for the REST/MCP slices that drive them.
  */
 @Module({
   imports: [CryptoModule, ClustersModule],
-  controllers: [DnsCredentialsController],
-  providers: [DnsCredentialsService, DnsAutomationService, DnsLookupService, CloudflareApiClient],
-  exports: [DnsCredentialsService, DnsAutomationService, CloudflareApiClient],
+  controllers: [DnsCredentialsController, MailDnsController],
+  providers: [DnsCredentialsService, DnsAutomationService, DnsLookupService, MailDnsService, CloudflareApiClient],
+  exports: [DnsCredentialsService, DnsAutomationService, MailDnsService, CloudflareApiClient],
 })
 export class DnsModule {}

@@ -18589,6 +18589,270 @@
         ]
       }
     },
+    "/api/v1/dns/mail/preview": {
+      "post": {
+        "operationId": "MailDnsController_preview",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "credentialId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "domain": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "mailHost": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "dkim": {
+                    "type": "object",
+                    "properties": {
+                      "selector": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "publicKey": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "selector",
+                      "publicKey"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "dmarcPolicy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "quarantine",
+                      "reject"
+                    ]
+                  },
+                  "dmarcReportTo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "overwrite": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "credentialId",
+                  "domain",
+                  "mailHost"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-mail"
+        ]
+      }
+    },
+    "/api/v1/dns/mail/apply": {
+      "post": {
+        "operationId": "MailDnsController_apply",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "credentialId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "domain": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "mailHost": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "dkim": {
+                    "type": "object",
+                    "properties": {
+                      "selector": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "publicKey": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "selector",
+                      "publicKey"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "dmarcPolicy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "quarantine",
+                      "reject"
+                    ]
+                  },
+                  "dmarcReportTo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "overwrite": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "credentialId",
+                  "domain",
+                  "mailHost"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "dns-mail"
+        ]
+      }
+    },
     "/api/v1/databases": {
       "get": {
         "operationId": "DatabasesController_list",
