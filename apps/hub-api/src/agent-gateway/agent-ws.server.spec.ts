@@ -244,7 +244,7 @@ describe("AgentWsServer live container-log streams", () => {
   });
 });
 
-describe("AgentWsServer file ops (CASA-FILES)", () => {
+describe("AgentWsServer file ops", () => {
   // A server whose granted set includes "files" (default-off capability).
   function fsHarness(caps: string[] = [...ALL_CAPS, "files"]) {
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;

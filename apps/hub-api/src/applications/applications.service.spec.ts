@@ -2423,7 +2423,7 @@ describe("ApplicationsService.hydrateCertSpec cluster-aware", () => {
   });
 });
 
-describe("ApplicationsService.setPlacement (FLEET-D)", () => {
+describe("ApplicationsService.setPlacement", () => {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
   const withSwarm = (statusMock: jest.Mock) => [undefined, undefined, undefined, undefined, undefined, { status: statusMock }] as const;
 
@@ -2474,7 +2474,7 @@ describe("ApplicationsService.setPlacement (FLEET-D)", () => {
   });
 });
 
-describe("ApplicationsService FLEET-E — stateful auto-pin", () => {
+describe("ApplicationsService stateful auto-pin", () => {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
   const stateful = (over = {}) => ({ ...app, source: "IMAGE", volumes: [{ name: "data", path: "/data" }], ...over });
   const clusterRow = { teamId: "t1", swarmStatus: "ACTIVE", swarmManagerId: "mgr1" };
@@ -2574,7 +2574,7 @@ describe("ApplicationsService FLEET-E — stateful auto-pin", () => {
   });
 });
 
-describe("ApplicationsService.scaleNow (Phase 2e live scale)", () => {
+describe("ApplicationsService.scaleNow (live scale)", () => {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
   const clustered = (over = {}) => ({ ...app, source: "IMAGE", clusterId: "c1", volumes: [], replicas: 1, ...over });
   function deps(appRow: object) {
@@ -2703,7 +2703,7 @@ describe("ApplicationsService.listDomains", () => {
   });
 });
 
-describe("ApplicationsService listFiles (CASA-FILES)", () => {
+describe("ApplicationsService listFiles", () => {
   const app = { id: "app1", teamId: "t1", serverId: "s1", volumes: [{ name: "data", path: "/data" }] };
 
   it("resolves the app's declared volume to its docker volume and sends a signed fs_req", async () => {

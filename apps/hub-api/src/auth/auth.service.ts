@@ -113,7 +113,7 @@ export class AuthService {
   }
 
   /**
-   * Turnkey single-box install (CASA-INSTALL-2): when LOCAL_AGENT_ENROLL_TOKEN is configured, provision the
+   * Turnkey single-box install: when LOCAL_AGENT_ENROLL_TOKEN is configured, provision the
    * local box as the first server ("This machine") in the SAME transaction as the first-owner claim,
    * pre-seeded with the agent's enroll token so the bundled local agent enrolls within seconds — the operator
    * never pastes an install command. A no-op when the token is unset (every manual/remote install today), so
@@ -191,7 +191,7 @@ export class AuthService {
       const firstUser =
         (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
       const created = await tx.user.create({
-        // DEFAULT_UI_MODE lets a turnkey single-box install start the owner in Home mode (CASA-INSTALL-3);
+        // DEFAULT_UI_MODE lets a turnkey single-box install start the owner in Home mode;
         // unset falls back to the schema default ("fleet").
         data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser, uiMode: this.config.get<string>("DEFAULT_UI_MODE") === "home" ? "home" : "fleet" },
       });

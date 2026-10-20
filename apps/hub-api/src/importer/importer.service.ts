@@ -17,8 +17,7 @@ const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, s
 /**
  * Importer orchestration — the DRY-RUN side: connect to a remote source (encrypted session) and preview an
  * import plan. Authorization is team-scoped (`apps:config`); the local-docker source additionally reuses the
- * migrator's per-server check. The remote API token is encrypted at rest and never returned. Execution of a
- * Coolify plan (fetchSecrets + copy-mode) lands in the next slice.
+ * migrator's per-server check. The remote API token is encrypted at rest and never returned.
  */
 @Injectable()
 export class ImporterService {

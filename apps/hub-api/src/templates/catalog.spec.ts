@@ -190,7 +190,7 @@ describe("template catalog", () => {
     expect(buildTemplateEnv(TEMPLATES.adminer)).toEqual({});
   });
 
-  // ── CASA-UX-3: presentation overlay (tagline/tags/featured/badges) ──
+  // ── presentation overlay (tagline/tags/featured/badges) ──
 
   it("every overlay slug is a real catalog slug (a typo fails here, not silently)", () => {
     for (const slug of Object.keys(TEMPLATE_META_OVERLAY)) {

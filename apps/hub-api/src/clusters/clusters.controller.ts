@@ -86,7 +86,7 @@ export class ClustersController {
     return this.clusters.setServers(user.userId, id, body);
   }
 
-  // ── Docker Swarm formation (Phase 2) ──
+  // ── Docker Swarm formation ──
 
   // Forming a swarm dispatches signed `docker swarm` commands to N agents — same shape as /bulk,
   // scheduled-tasks, tunnel setup — so it requires the elevated "deploy" scope (above the plain-write
@@ -150,7 +150,7 @@ export class ClustersController {
     return this.swarm.setNodeLabels(user.userId, id, nodeId, body);
   }
 
-  // Add one more MANAGER (FLEET-G, multi-manager Raft HA): promote an existing worker or have a fresh member
+  // Add one more MANAGER (multi-manager Raft HA): promote an existing worker or have a fresh member
   // join directly as a manager. Same elevated scope as Form Swarm — it dispatches signed `docker node promote`/
   // `docker swarm join` to agents; the service enforces servers:manage.
   @Post(":id/swarm/managers")
@@ -164,7 +164,7 @@ export class ClustersController {
     return this.swarm.addManager(user.userId, id, body);
   }
 
-  // Demote a MANAGER back to a worker (FLEET-G). No @RequireScopes → inherits the platform DELETE⇒admin
+  // Demote a MANAGER back to a worker. No @RequireScopes → inherits the platform DELETE⇒admin
   // default, same rationale as dissolveSwarm: annotating would only ever LOWER that scope for a destructive op.
   @Delete(":id/swarm/managers/:serverId")
   removeManager(
@@ -176,7 +176,7 @@ export class ClustersController {
     return this.swarm.removeManager(user.userId, id, { serverId, acknowledgeEvenQuorum: acknowledgeEvenQuorum === "true" });
   }
 
-  // Ingress HA (FLEET-H). GET is read-only (any team member). PATCH bumps the ingress replica count — same
+  // Ingress HA. GET is read-only (any team member). PATCH bumps the ingress replica count — same
   // elevated 'deploy' scope + servers:manage as the other swarm-mutating routes (it dispatches a signed
   // `docker service create` on reconcile).
   @Get(":id/ingress")

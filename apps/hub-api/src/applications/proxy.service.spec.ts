@@ -24,7 +24,7 @@ function make(serverRow: Record<string, unknown>) {
 
 // The proxy is recreated on EVERY domained deploy via ensureProxy, so it must honor the server's bind mode —
 // otherwise a deploy would silently re-publish :80/:443 or fail where another web server holds them.
-describe("ProxyService.ensureProxy — proxy bind (CASA-INSTALL-5)", () => {
+describe("ProxyService.ensureProxy — proxy bind", () => {
   it("publishes :80/:443 on all interfaces by default (public) — unchanged behavior", async () => {
     const { svc, sent } = make({ certMode: "http", proxyBind: "public" });
     await svc.ensureProxy("s1");

@@ -101,7 +101,7 @@ export default function ClusterDetailPage() {
     onError: (e) => toast(e instanceof Error ? e.message : t("clusters.deleteFailed"), "error"),
   });
 
-  // Ingress HA (FLEET-H) — only meaningful once a swarm is ACTIVE/DEGRADED (the only states the ingress API
+  // Ingress HA — only meaningful once a swarm is ACTIVE/DEGRADED (the only states the ingress API
   // accepts; FORMING/JOINING/DISSOLVING would 400 the getIngress query).
   const swarmFormedForIngress = !!swarm && (swarm.swarmStatus === "ACTIVE" || swarm.swarmStatus === "DEGRADED");
   const { data: ingress } = useQuery({
@@ -523,7 +523,7 @@ function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swa
   );
 }
 
-/** Add a MANAGER (FLEET-G): promote an eligible online worker, or have a fresh member join directly as a
+/** Add a MANAGER: promote an eligible online worker, or have a fresh member join directly as a
  *  manager. If the hub refuses because the resulting manager count would be even, surface an inline
  *  "Proceed anyway" checkbox that re-submits with acknowledgeEvenQuorum. */
 function AddManagerModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swarm: SwarmView; onClose: () => void }) {

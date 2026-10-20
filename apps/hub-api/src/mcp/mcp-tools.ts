@@ -30,7 +30,7 @@ export interface McpDeps {
 export interface McpTool {
   name: string;
   description: string;
-  /** The API-token scope required to see + call this tool (Phase 1: all "read"). */
+  /** The API-token scope required to see + call this tool (all "read" at present). */
   scope: Scope;
   /** JSON schema advertised to the client. NOTE: only a hint — a client can call `tools/call` with
    *  arbitrary arguments, so every execute() re-validates/clamps its inputs. */
@@ -146,11 +146,11 @@ async function lifecycle(deps: McpDeps, userId: string, id: string, action: "sto
 
 /**
  * MCP tool catalog. The read tools (below) return metadata only — no decrypted secret VALUES ever (env is
- * key-names only, no credential-bearing URLs). The mutate tools (Phase 2a..2e, further down) each carry the
+ * key-names only, no credential-bearing URLs). The mutate tools (further down) each carry the
  * scope of the REST route they mirror (`deploy` for lifecycle/swarm ops, `write` for env config, `admin` for
  * irreversible ops) and are thin wrappers over the same team-permission-checked, audited service methods —
  * McpService filters/enforces `scope` on tools/list + tools/call, so a read-only token sees none of them.
- * Still planned: OAuth for third-party clients (Phase 3).
+ * Still planned: OAuth for third-party clients.
  */
 export const MCP_TOOLS: McpTool[] = [
   // ── applications ──
@@ -291,7 +291,7 @@ export const MCP_TOOLS: McpTool[] = [
     execute: (d, userId, a) => d.monitors.get(userId, reqStr(a, "id")),
   },
 
-  // ── mutate: application lifecycle (Phase 2a) ──────────────────────────────────────────────────────
+  // ── mutate: application lifecycle ──────────────────────────────────────────────────────
   // Each is a thin pass-through to the SAME ApplicationsService method the REST route calls — which itself
   // enforces the caller's 'apps:deploy' team permission (requireWrite) and audits 'app.<verb>'. The 'deploy'
   // PAT scope (mirroring the routes' @RequireScopes("deploy")) is filtered + enforced by McpService, so a
@@ -393,7 +393,7 @@ export const MCP_TOOLS: McpTool[] = [
     execute: async (d, userId, a) => d.apps.verifyDomain(userId, reqStr(a, "id"), optStr(a, "hostname")),
   },
 
-  // ── mutate: cluster / swarm operation (Phase 2b) ──────────────────────────────────────────────────
+  // ── mutate: cluster / swarm operation ──────────────────────────────────────────────────
   // Thin pass-throughs to the SwarmService methods the REST routes call — each self-enforces the
   // 'servers:manage' team permission. Scope mirrors the route: formation/growth/config = 'deploy'
   // (@RequireScopes("deploy")); the destructive dissolve = 'admin' (DELETE default) + an echo-name confirm.
@@ -438,7 +438,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── mutate: application env config (Phase 2c) ─────────────────────────────────────────────────────
+  // ── mutate: application env config ─────────────────────────────────────────────────────
   // Safe single-key MERGE: read the current env (apps.getEnv, apps:config-gated), change ONE key, write back
   // via apps.setEnv — so the agent can't blow away the whole env map the way a raw full-replace would, and the
   // decrypted values it reads to merge are NEVER returned (only the key name is echoed back). Scope "write"
@@ -477,7 +477,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── mutate: swarm node removal (Phase 2c) ─────────────────────────────────────────────────────────
+  // ── mutate: swarm node removal ─────────────────────────────────────────────────────────
   // Reversible (a demoted manager / removed worker can be re-added), so admin scope (DELETE default) is the
   // gate — no echo-name confirm (that tier is reserved for irreversible dissolve/remove). Pure pass-throughs.
   {
@@ -495,7 +495,7 @@ export const MCP_TOOLS: McpTool[] = [
     execute: async (d, userId, a) => ({ ok: true, action: "leave_swarm_node", swarm: await d.swarm.leaveNode(userId, reqStr(a, "clusterId"), reqStr(a, "serverId")) }),
   },
 
-  // ── mutate: fleet (Phase 2d) ──────────────────────────────────────────────────────────────────────
+  // ── mutate: fleet ──────────────────────────────────────────────────────────────────────
   // The agent-native FLEET wedge: fan ONE allowlisted, reversible lifecycle action across every app deployed
   // to a cluster — reusing the per-app ApplicationsService methods (each self-enforces apps:deploy + audits),
   // never the raw /bulk shell-RCE path. Preview-then-confirm: called WITHOUT confirmCount it only PREVIEWS the
@@ -556,7 +556,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── mutate: application removal (Phase 2b, destructive) ────────────────────────────────────────────
+  // ── mutate: application removal (destructive) ────────────────────────────────────────────
   {
     name: "remove_application",
     description: "DESTRUCTIVE + IRREVERSIBLE: delete an application (tears down its containers/service and volumes, removes its monitor). Requires confirmName to equal the application's exact name.",
@@ -571,7 +571,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── mutate: fleet import (Phase 2, Coolify + local-docker) ──────────────────────────────────────────
+  // ── mutate: fleet import (Coolify + local-docker) ──────────────────────────────────────────
   {
     name: "import_connect",
     description:
@@ -785,7 +785,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── read: files (ties the sandboxed file browser into the agent surface, CASA-FILES) ──────────────
+  // ── read: files (ties the sandboxed file browser into the agent surface) ──────────────
   {
     name: "list_files",
     description:

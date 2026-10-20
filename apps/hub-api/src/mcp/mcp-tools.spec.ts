@@ -42,7 +42,7 @@ describe("MCP_TOOLS catalog", () => {
     for (const name of ADMIN_TOOLS) expect(tool(name).scope).toBe("admin");
   });
 
-  describe("mutate: fleet import (Phase 2)", () => {
+  describe("mutate: fleet import", () => {
     const mk = () => {
       const importer = { connect: jest.fn().mockResolvedValue({ sessionId: "s1", expiresAt: new Date(0) }), plan: jest.fn().mockResolvedValue({ planHash: "h" }) };
       const executor = { apply: jest.fn().mockResolvedValue({ opId: "op1" }), status: jest.fn().mockResolvedValue({ id: "op1" }), rollback: jest.fn().mockResolvedValue({ id: "op1" }) };
@@ -87,7 +87,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: application lifecycle (Phase 2a)", () => {
+  describe("mutate: application lifecycle", () => {
     it("deploy_application redeploys via apps.deploy(userId,id) and STRIPS both logs AND configSnapshot (composeFile can hold secrets)", async () => {
       const deploy = jest.fn().mockResolvedValue({
         id: "d1", status: "SUCCESS", image: "nginx",
@@ -154,7 +154,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: cluster / swarm operation (Phase 2b)", () => {
+  describe("mutate: cluster / swarm operation", () => {
     it("form_swarm delegates to swarm.form with the parsed manager + advertiseAddr", async () => {
       const form = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
       const deps = { swarm: { form } } as unknown as McpDeps;
@@ -210,7 +210,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: application scale (Phase 2e)", () => {
+  describe("mutate: application scale", () => {
     it("scale_application live-scales via scaleNow(userId,id,replicas), then returns the fresh app view", async () => {
       const scaleNow = jest.fn().mockResolvedValue(undefined);
       const get = jest.fn().mockResolvedValue({ id: "app1", status: "RUNNING", replicas: 3 });
@@ -270,7 +270,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: application env config (Phase 2c)", () => {
+  describe("mutate: application env config", () => {
     it("set_env_var MERGES one key (preserves others) via getEnv+setEnv and NEVER returns the value", async () => {
       const getEnv = jest.fn().mockResolvedValue({ EXISTING: "keep", API_KEY: "old" });
       const setEnv = jest.fn().mockResolvedValue(undefined);
@@ -323,7 +323,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: swarm node removal (Phase 2c)", () => {
+  describe("mutate: swarm node removal", () => {
     it("remove_swarm_manager delegates to swarm.removeManager with acknowledgeEvenQuorum as a boolean", async () => {
       const removeManager = jest.fn().mockResolvedValue({ swarmStatus: "ACTIVE" });
       const deps = { swarm: { removeManager } } as unknown as McpDeps;
@@ -339,7 +339,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: fleet (Phase 2d)", () => {
+  describe("mutate: fleet", () => {
     const clusterApps = () => [
       { id: "a1", name: "api", clusterId: "c1", status: "RUNNING" },
       { id: "a2", name: "web", clusterId: "c1", status: "RUNNING" },
@@ -430,7 +430,7 @@ describe("MCP_TOOLS catalog", () => {
     });
   });
 
-  describe("mutate: application removal (Phase 2b, destructive)", () => {
+  describe("mutate: application removal (destructive)", () => {
     it("remove_application requires confirmName == the app's exact name; never removes on mismatch", async () => {
       const remove = jest.fn().mockResolvedValue(undefined);
       const get = jest.fn().mockResolvedValue({ id: "app1", name: "api" });

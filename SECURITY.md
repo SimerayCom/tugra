@@ -16,8 +16,8 @@ credit reporters who want to be named.
 
 ## Supported versions
 
-Tugra is in early development. Until a stable release, only the latest `main` is
-supported for security fixes.
+The latest release and `main` receive security fixes; older releases should upgrade
+to the latest.
 
 ## Self-update sidecar (`tugra-updater`)
 
@@ -31,4 +31,3 @@ Docker socket — a root-equivalent surface — so it is deliberately minimal:
 - The hub verifies the release manifest's **ed25519 signature** before queueing any update, refuses any
   **downgrade** and any **channel-skip**, and auto-update applies **patch releases only** (a minor/major
   always waits for an explicit owner click). The sidecar re-checks "strictly newer" as defense-in-depth.
-

@@ -12,13 +12,13 @@ function make(opts: {
   managerName?: string;
   managerPublicIp?: string | null;
   swarmNodeId?: string | null;
-  backupManagerId?: string | null; // FLEET-G: an online backup manager for status() failover
-  ingressReplicas?: number; // FLEET-H: desired ingress replica count on the cluster
-  otherMembers?: OtherMember[]; // FLEET-H: other cluster members (for the ingress pool + coexistence guard)
+  backupManagerId?: string | null; // an online backup manager for status() failover
+  ingressReplicas?: number; // desired ingress replica count on the cluster
+  otherMembers?: OtherMember[]; // other cluster members (for the ingress pool + coexistence guard)
   classicDomainApps?: number;
-  classicAppsByServer?: Record<string, number>; // FLEET-H: classic domain-app count keyed by serverId
+  classicAppsByServer?: Record<string, number>; // classic domain-app count keyed by serverId
   classicProxyOutput?: string; // buildClassicProxyRunningScript output (any server)
-  classicProxyOnServer?: string; // FLEET-H: a classic tugra-proxy runs only on THIS serverId
+  classicProxyOnServer?: string; // a classic tugra-proxy runs only on THIS serverId
   proxyReplicas?: string; // buildSwarmProxyStatusScript output
   certMode?: string;
   dnsProvider?: string | null;
@@ -153,7 +153,7 @@ describe("SwarmProxyService.ensure", () => {
   });
 });
 
-describe("SwarmProxyService.status (FLEET-G failover)", () => {
+describe("SwarmProxyService.status (failover)", () => {
   it("dispatches the cluster-wide `docker service ls` read to the primary when it is online", async () => {
     const { svc, send } = make({ proxyReplicas: "1/1" });
     const r = await svc.status("c1");
@@ -176,7 +176,7 @@ describe("SwarmProxyService.status (FLEET-G failover)", () => {
   });
 });
 
-describe("SwarmProxyService ingress HA (FLEET-H)", () => {
+describe("SwarmProxyService ingress HA", () => {
   const leDns = { certMode: "le-dns", dnsProvider: "cloudflare", dnsCredsEnc: "enc", decrypt: JSON.stringify({ CF_DNS_API_TOKEN: "s3cr3t" }) };
   const member = (over: Partial<OtherMember> = {}): OtherMember => ({ id: "w1", name: "node-b", status: "ONLINE", swarmNodeId: "node_2", publicIp: "2.2.2.2", ...over });
 

@@ -61,7 +61,7 @@ export const envSchema = z
   // (dev/e2e/existing installs behave exactly as before). Generated + printed by scripts/install.sh.
   SETUP_CODE: z.string().min(1).optional(),
   // Turnkey single-box install only: the enroll token the bundled local agent uses. When set, the first
-  // owner registration auto-provisions the local box as the "This machine" server (CASA-INSTALL-2) so no
+  // owner registration auto-provisions the local box as the "This machine" server so no
   // agent command is pasted. Unset everywhere else (manual/remote enrollment unchanged). FAIL CLOSED on a
   // weak value: the enroll endpoint authenticates an agent by this token alone, so a guessable one would let
   // a rogue agent claim "This machine" during the enrollment window. install.sh generates a 48-char hex token.
@@ -70,7 +70,7 @@ export const envSchema = z
     .min(32, "LOCAL_AGENT_ENROLL_TOKEN must be at least 32 chars — a high-entropy enroll token, not a guessable value")
     .optional(),
   // The uiMode new accounts get by default. A turnkey single-box install sets "home" so the owner lands on
-  // the launcher (CASA-INSTALL-3); unset → "home"/"fleet" falls back to the schema default ("fleet").
+  // the launcher; unset → "home"/"fleet" falls back to the schema default ("fleet").
   DEFAULT_UI_MODE: z.enum(["fleet", "home"]).optional(),
   // Set to "true" only when the hub sits behind a trusted reverse proxy, so the
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
@@ -101,7 +101,7 @@ export const envSchema = z
   MAIL_PASS: z.string().min(1).optional(),
   MAIL_FROM: z.string().min(1).default("Tugra <no-reply@localhost>"),
   // When true, unverified users are blocked from write actions after login. Off by default
-  // (self-host convenience); wired by the email-verification slice.
+  // (self-host convenience); not wired to email verification yet.
   REQUIRE_EMAIL_VERIFICATION: z.enum(["true", "false"]).default("false"),
   // Retention: the hourly prune deletes raw metric/container-metric rows older than this many hours
   // (UI charts range up to 24h; long-range history comes from 1-minute rollups), and non-important

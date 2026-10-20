@@ -98,7 +98,7 @@ import type { CreateAppInput } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
-// Default rolling health-gate timing (Slice 4 will make these per-app configurable).
+// Default rolling health-gate timing (not yet configurable per app).
 const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
 // Raw docker flags that make two overlapping containers impossible (port map, own
 // network/name/ip) → the app can't roll, so we fall back to hard cutover.
@@ -287,7 +287,7 @@ export class ApplicationsService {
       // caller passing https:false would show http:// while Traefik serves HTTPS.
       return { domain: input.domain, https: true, exposeMode: "custom", domainKind: "custom", certType: "le-http" };
     }
-    // A tunnel-only proxy (CASA-INSTALL-5 bind:"none") publishes no host port, so a magic domain built from the
+    // A tunnel-only proxy (bind:"none") publishes no host port, so a magic domain built from the
     // box IP (sslip) would resolve to an unbound address — a dead link. Skip auto-magic ONLY when such a server
     // has no wildcard: with a wildcard (a tunnel gives the server one), magicDomain yields <label>.<wildcard>,
     // which the Cloudflare tunnel routes — so those apps still get a working, tunnel-reachable domain.
@@ -860,7 +860,7 @@ export class ApplicationsService {
         where: { id: dep.id },
         data: { configSnapshot: buildConfigSnapshot(spec) as object },
       });
-      // ── Swarm service deploy (Phase 3): the app targets a cluster's swarm, not a single server. Delegate
+      // ── Swarm service deploy: the app targets a cluster's swarm, not a single server. Delegate
       // the command build + dispatch (to the manager) + async-rollout classification to SwarmDeployService,
       // then apply the SAME exit-code contract (0 converged / 3 auto-rolled-back / other failed). ──
       if (app.clusterId) {
@@ -1417,7 +1417,7 @@ export class ApplicationsService {
   }
 
   /**
-   * List files/dirs inside one of the app's DECLARED volumes (CASA-FILES, read-only metadata only — never
+   * List files/dirs inside one of the app's DECLARED volumes (read-only metadata only — never
    * content). The volume must be one the app declares (never an arbitrary docker volume). The path is
    * validated here (defense-in-depth) before it is sent; the agent re-validates and runs the listing
    * inside a sandboxed, read-only, network-less helper container (os.Root-confined). Writer-only, like logs.
@@ -1656,7 +1656,7 @@ export class ApplicationsService {
   async setVolumes(userId: string, id: string, volumes: AppVolume[]): Promise<void> {
     const app = await this.requireWrite(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = { volumes: volumes as unknown as Prisma.InputJsonValue };
-    // FLEET-E: adding persistent storage to an app ALREADY on a cluster hard-pins it to one node (a stateful
+    // Adding persistent storage to an app ALREADY on a cluster hard-pins it to one node (a stateful
     // service can't diverge across nodes) — symmetric with setClusterConfig, and closes the pre-existing gap
     // where setVolumes had zero cluster-awareness. Removing all volumes does NOT auto-unpin (v1 — see docs).
     if (app.clusterId && volumes.length > 0) {
@@ -1738,7 +1738,7 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
   }
 
-  /** Deploy this app as a Docker Swarm service across a cluster (Phase 3), or clear it back to classic
+  /** Deploy this app as a Docker Swarm service across a cluster, or clear it back to classic
    *  single-server deploy. Swarm mode requires a stateless single-service app on a formed swarm; a GIT app
    *  additionally needs a registry (its image must be pullable by every node). */
   async setClusterConfig(
@@ -1753,7 +1753,7 @@ export class ApplicationsService {
       if (cfg.clusterId) {
         if (app.source === "COMPOSE") throw new BadRequestException("compose apps can't be deployed as swarm services yet");
         // GPUs are node-local hardware — genuinely unsupportable on a multi-node cluster. (Named volumes used
-        // to be refused here too; FLEET-E now hard-pins a stateful app to one node instead — see below.)
+        // to be refused here too; a stateful app is now hard-pinned to one node instead — see below.)
         if (app.gpus) throw new BadRequestException("GPU apps can't be deployed as swarm services");
         const cluster = await this.prisma.cluster.findUnique({ where: { id: cfg.clusterId }, select: { teamId: true, swarmStatus: true, swarmManagerId: true } });
         if (!cluster || cluster.teamId !== app.teamId) throw new BadRequestException("cluster not found in this team");
@@ -1765,7 +1765,7 @@ export class ApplicationsService {
           data.pushToRegistry = true; // every node pulls the built image from the registry
         }
         managerId = cluster.swarmManagerId;
-        // FLEET-E: a stateful app's named volume is node-local — a replica rescheduled elsewhere would start
+        // A stateful app's named volume is node-local — a replica rescheduled elsewhere would start
         // with empty/diverged data. Instead of refusing, hard-pin it to one node (the manager — deterministic,
         // always resolvable, same anchor magic-domain re-home already uses) so its single replica lands on its data.
         if (this.appVolumes(app).length > 0) {
@@ -1858,7 +1858,7 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.scale", target: id, meta: { replicas: n } });
   }
 
-  /** Configure swarm placement (FLEET-D). Config-time (applied on next deploy) like volumes/limits. Requires a
+  /** Configure swarm placement. Config-time (applied on next deploy) like volumes/limits. Requires a
    *  clusterId; hostname/nodeId rules are re-validated server-side against the cluster's CURRENT live nodes at
    *  save time (a TOCTOU with a node leaving between page-load and save is acceptable — same class as our
    *  manager-reachability checks elsewhere). */
@@ -2059,7 +2059,7 @@ export class ApplicationsService {
     return Array.isArray(app.configMounts) ? (app.configMounts as unknown as AppConfigMount[]) : [];
   }
 
-  /** Structured placement of a swarm app (FLEET-D), safely coerced from the nullable Json column. */
+  /** Structured placement of a swarm app, safely coerced from the nullable Json column. */
   private appPlacement(app: Application): { constraints: PlacementConstraint[]; spreadLabelKey: string | null } {
     const p = app.placement as { constraints?: unknown; spreadLabelKey?: unknown } | null;
     return {

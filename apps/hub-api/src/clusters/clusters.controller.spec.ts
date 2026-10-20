@@ -93,7 +93,7 @@ describe("ClustersController", () => {
     expect(Reflect.getMetadata(REQUIRE_SCOPES, ClustersController.prototype.leaveSwarmNode)).toBeUndefined();
   });
 
-  it("addManager / removeManager delegate to the swarm service (FLEET-G)", async () => {
+  it("addManager / removeManager delegate to the swarm service", async () => {
     const { ctrl, swarm } = make();
     await ctrl.addManager(USER, "c1", { serverId: "s1" });
     expect(swarm.addManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1" });
@@ -106,7 +106,7 @@ describe("ClustersController", () => {
     expect(swarm.removeManager).toHaveBeenCalledWith("u1", "c1", { serverId: "s1", acknowledgeEvenQuorum: false });
   });
 
-  it("ingress: GET delegates to getIngress, PATCH delegates to setIngressReplicas (FLEET-H)", async () => {
+  it("ingress: GET delegates to getIngress, PATCH delegates to setIngressReplicas", async () => {
     const { ctrl, swarm } = make();
     await ctrl.getIngress(USER, "c1");
     expect(swarm.getIngress).toHaveBeenCalledWith("u1", "c1");

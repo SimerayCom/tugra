@@ -18,7 +18,7 @@ function guards(ctrl: unknown): unknown[] {
   return (Reflect.getMetadata(GUARDS, ctrl as object) ?? []) as unknown[];
 }
 
-describe("API-1 — PAT surface parity", () => {
+describe("PAT surface parity", () => {
   const CONVERTED: Array<[string, unknown]> = [
     ["TeamsController", TeamsController],
     ["NotificationsController", NotificationsController],

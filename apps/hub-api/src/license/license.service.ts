@@ -47,7 +47,7 @@ export class LicenseService implements OnModuleInit {
    * The base64 ed25519 SPKI license public key. In production this is ONLY the compiled-in trust anchor
    * (TUGRA_LICENSE_PUBLIC_KEY) — the env is deliberately ignored so an operator can't substitute their own
    * key and self-sign. A dev/test env override (TUGRA_LICENSE_PUBLISHER_KEY) exists purely for local
-   * testing (jest sets NODE_ENV=test). Empty → the community edition.
+   * testing (jest sets NODE_ENV=test). No key configured → community edition.
    */
   private keyB64(): string | undefined {
     const lenient = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";

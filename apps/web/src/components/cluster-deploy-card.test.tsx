@@ -101,7 +101,7 @@ describe("ClusterDeployCard", () => {
     expect(input.value).toBe("2");
   });
 
-  // ── FLEET-E stateful pin ──
+  // ── stateful pin ──
   it("shows the pinned banner (resolving the node name) for a stateful app", async () => {
     vi.spyOn(api, "getAppClusterStatus").mockResolvedValue({ desired: 1, running: 1, reachable: true, tasks: [] });
     wrap(<ClusterDeployCard id="app1" teamId="t1" clusterId="c1" replicas={1} placement={{ constraints: [], spreadLabelKey: null }} volumes={[{ name: "data", path: "/data" }]} constraintServerId="s1" />);

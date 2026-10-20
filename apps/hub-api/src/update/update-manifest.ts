@@ -9,7 +9,7 @@ export const MAX_SIG_BYTES = 512;
 
 /**
  * One published release for a channel. `version` + `changelogUrl` are all the version CHECK reads today;
- * the image refs / agent digests / minUpgradeFrom / publishedAt are carried for the LATER updater slice
+ * the image refs / agent digests / minUpgradeFrom / publishedAt are carried for a later updater
  * (Dilim 11 pull→migrate→recreate) and are validated-but-unused here (forward-compat, reserved).
  */
 export const channelEntrySchema = z.object({

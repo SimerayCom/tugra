@@ -76,7 +76,7 @@
   "addResource": "Add resource",
   "ipAddress": "IP address",
   "status": "Status",
-  "sealLabel": "Seal (Tuğra)",
+  "sealLabel": "Seal",
   "sealed": "✓ sealed",
   "noMetrics": "No metrics yet — live stream starts when the agent connects.",
   "rangeLive": "Live",

@@ -8,7 +8,7 @@ import type { ConfigMount, ExposePort } from "./template-manifest";
  * exposure as `- "<host>:<container>"` and reuses the same host number in self-referential env values
  * (`localhost:<host>`), so both are rewritten to keep the app's own URLs consistent. Pure string
  * surgery — the host port number never substring-collides (importer guarantees one exposure + one
- * ports line per template). The `localhost` HOST is intentionally left as-is; a later slice swaps it
+ * ports line per template). The `localhost` HOST is intentionally left as-is; it is not swapped yet
  * for the real server IP / magic domain. Returns the rewritten compose + the portMappings to persist.
  * When `mounts` are given, the same `localhost:<oldHost>` → `localhost:<newHost>` rewrite is applied to
  * each config-file body (a mount may reference the app's own baked port); returned rewritten.

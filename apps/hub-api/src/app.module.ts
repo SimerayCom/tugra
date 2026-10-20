@@ -83,7 +83,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     DestinationsModule,
     ServerOpsModule,
     MigratorModule,
-    ImporterModule, // competitor/local-docker fleet importer (dry-run plan in S4b)
+    ImporterModule, // fleet importer (Coolify / local Docker)
     CloudModule,
     TunnelModule,
     DnsModule,
@@ -103,7 +103,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     CryptoModule, // for InstanceSettingsController to encrypt the OIDC client secret
     LicenseModule, // verifies the signed license at boot + backs the /instance/license endpoints
     ClustersModule, // team-scoped server groups (fleet organization + health rollup)
-    McpModule, // read-only MCP server (Phase 1) — AI-agent management over the same team-scoped services
+    McpModule, // read-only MCP server — AI-agent management over the same team-scoped services
   ],
   controllers: [HealthController, VersionController, InstanceController, InstanceSettingsController, InstallController],
   providers: [

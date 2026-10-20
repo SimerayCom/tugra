@@ -1,4 +1,4 @@
-// Package fsd is the Tugra agent's sandboxed file helper (CASA-FILES). It runs as the subcommand
+// Package fsd is the Tugra agent's sandboxed file helper. It runs as the subcommand
 // `tugra-agent fsd <op> <path>` INSIDE an ephemeral, network-less, read-only, capability-stripped container
 // (see BuildHelperArgs) with ONLY the target app volume mounted read-only at /data. It never runs a shell and
 // never follows a symlink out of the volume: os.Root (openat2) confines every path to /data, and the path is

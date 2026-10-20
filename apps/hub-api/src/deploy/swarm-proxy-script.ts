@@ -1,12 +1,12 @@
 /**
- * Pure builders for the swarm-mode Traefik that fronts swarm services (Phase 3-B), run on a swarm MANAGER.
+ * Pure builders for the swarm-mode Traefik that fronts swarm services, run on a swarm MANAGER.
  * Unlike the classic per-server Traefik (buildProxySetupScript, one `docker run` per host on a bridge net),
  * this is ONE `docker service` for the whole cluster, pinned to the manager node, on the overlay network,
  * discovering `docker service` labels via Traefik's swarm provider.
  *
  * Design decisions locked in by review:
  *  - `--publish mode=ingress` (routing mesh: :80/:443 answered on EVERY swarm node, load-balanced by IPVS to
- *    the N task replicas) so ingress survives losing any one node — FLEET-H. With `--replicas 1` this behaves
+ *    the N task replicas) so ingress survives losing any one node. With `--replicas 1` this behaves
  *    like the old single-node ingress; with 2-3 replicas it is real HA. Each replica keeps its OWN node-local
  *    ACME store (a bind mount) — NOT a shared volume. That is intentional and safe ONLY under DNS-01: the
  *    challenge is an outbound TXT-record API call, so every replica can independently complete its own order

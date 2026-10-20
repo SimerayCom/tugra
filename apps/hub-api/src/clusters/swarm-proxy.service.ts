@@ -35,7 +35,7 @@ interface IngressPoolNode {
 }
 
 /**
- * Ensures the swarm-mode Traefik that fronts a cluster's swarm services (Phase 3-B). One service per cluster,
+ * Ensures the swarm-mode Traefik that fronts a cluster's swarm services. One service per cluster,
  * pinned to the manager, on the overlay network. Mirrors ProxyService.ensureProxy but for a `docker service`.
  * Called lazily before a domain-routed swarm deploy (not in formation — routing readiness is a separate
  * concern from swarm membership).
@@ -108,7 +108,7 @@ export class SwarmProxyService {
   }
 
   /** Pick the manager to DISPATCH a cluster-wide read (`docker service …`) to: the primary if it's online, else
-   *  any other online manager with the 'swarm' capability (FLEET-G failover). The ~8-line backup query is
+   *  any other online manager with the 'swarm' capability (failover). The ~8-line backup query is
    *  duplicated from SwarmDeployService by design — SwarmService already depends on SwarmProxyService, so
    *  importing it back here would create a circular DI edge; each service re-queries prisma independently. */
   private async dispatchManager(clusterId: string, primaryId: string, primaryStatus: string): Promise<string> {
@@ -215,7 +215,7 @@ export class SwarmProxyService {
 
   async status(clusterId: string): Promise<{ exitCode: number; output: string }> {
     // `docker service ls` is a cluster-wide read any manager can answer — so status() fails over to a backup
-    // online manager when the primary is down (FLEET-G), instead of blacking out like the old manager() did.
+    // online manager when the primary is down, instead of blacking out like the old manager() did.
     const mgr = await this.primary(clusterId);
     const dispatchTo = await this.dispatchManager(clusterId, mgr.id, mgr.status);
     return this.agentWs.sendCommand(dispatchTo, buildSwarmProxyStatusScript(), "swarm");

@@ -187,7 +187,7 @@ type ServerMsg struct {
 	TargetVersion string `json:"targetVersion"`
 	Image         string `json:"image"`
 	Sha256        string `json:"sha256"`
-	// File ops (type "fs_req", CASA-FILES): Op (list/stat/read), Volume (docker volume), Path (volume-relative).
+	// File ops (type "fs_req"): Op (list/stat/read), Volume (docker volume), Path (volume-relative).
 	Op     string `json:"op,omitempty"`
 	Volume string `json:"volume,omitempty"`
 	Path   string `json:"path,omitempty"`

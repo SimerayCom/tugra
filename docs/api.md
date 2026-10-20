@@ -132,10 +132,7 @@ Collection list endpoints (`GET /apps`, `/servers`, `/databases`, `/projects`, `
 The body shape never changes — it's always a bare array — so this is backward-compatible. An invalid
 `?limit` (not a positive integer) is ignored and the full list is returned; the absence of `X-Limit` tells
 you pagination was not applied. The cursor is a **positional offset** and is treated as opaque (its format
-may change): it is a best-effort snapshot, not a stable keyset. If items are added or removed between pages —
-or when several rows share the same sort timestamp — a page boundary can skip or repeat an item, so do not
-assume exact continuity. (A future release may add keyset cursors for exact continuity.) Pagination bounds the **response size**, not the server's work —
-the full set is still read and authorized in memory — so it is not a substitute for rate limiting.
+may change). Cursors are offset-based; for a consistent listing, avoid concurrent writes.
 
 ## Routing notes
 

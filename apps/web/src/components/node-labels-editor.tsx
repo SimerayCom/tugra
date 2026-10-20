@@ -15,7 +15,7 @@ const field: React.CSSProperties = {
   fontSize: 12,
 };
 
-/** Per-node docker label editor (FLEET-D). Feeds the placement picker's label rules. Chips remove a label;
+/** Per-node docker label editor. Feeds the placement picker's label rules. Chips remove a label;
  *  the key+value form adds one. Both invalidate the shared ["swarm", clusterId] query. */
 export function NodeLabelsEditor({ clusterId, nodeId, labels }: { clusterId: string; nodeId: string; labels: Record<string, string> }) {
   const t = useT();

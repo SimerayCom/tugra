@@ -1,7 +1,7 @@
 /**
- * Pure builders for the shell scripts the agent runs to form/tear-down a Docker Swarm
- * (Cluster Phase 2). These only produce `docker swarm|node` command strings — the agent is a
- * generic `sh -c` executor, so nothing on the agent changes. Deploy is unaffected by this slice.
+ * Pure builders for the shell scripts the agent runs to form/tear-down a Docker Swarm.
+ * These only produce `docker swarm|node` command strings — the agent is a
+ * generic `sh -c` executor, so nothing on the agent changes.
  *
  * Security notes:
  *  - Every interpolated value is `shq()`-quoted (defence-in-depth even for DB/validated values).
@@ -43,7 +43,7 @@ export function buildSwarmInitScript(advertiseAddr: string): string {
 }
 
 /** Print (quiet) the current join token for the given role. The "manager" token is higher-privilege — used by
- *  addManager() to grow a multi-manager Raft quorum (FLEET-G). */
+ *  addManager() to grow a multi-manager Raft quorum. */
 export function buildSwarmJoinTokenScript(role: "worker" | "manager"): string {
   return `docker swarm join-token -q ${role}`;
 }

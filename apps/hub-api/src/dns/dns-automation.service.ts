@@ -95,9 +95,9 @@ const HOSTNAME_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][
  * user's existing zone: a pre-existing record that points elsewhere, or a type-incompatible record at the same
  * name, is a "conflict" that apply refuses to touch unless `overwrite` is explicitly set — so the one click
  * never silently takes down an unrelated site. previewRecords plans without writing; applyRecords writes +
- * records what it owns on a Domain row (merging prior ownership) so a later slice can clean records up; verify
+ * records what it owns on a Domain row (merging prior ownership) so records can be cleaned up later; verify
  * does a real public-DNS lookup. Wiring the app's domain/https fields + the www↔apex redirect is the REST
- * slice's job, not this service's.
+ * layer's job, not this service's.
  */
 @Injectable()
 export class DnsAutomationService {

@@ -643,7 +643,7 @@ describe("deploy-script", () => {
     expect(Buffer.from(m![1], "base64").toString()).toBe("CF_DNS_API_TOKEN=s3cr3t-token");
   });
 
-  it("publishes :80/:443 on all interfaces by default, and byte-identically for bind:'public' (CASA-INSTALL-5 regression)", () => {
+  it("publishes :80/:443 on all interfaces by default, and byte-identically for bind:'public' (regression)", () => {
     const base = buildProxySetupScript({ acmeEmail: "me@x.com" });
     expect(base).toContain("-p 80:80 -p 443:443");
     // bind:'public' must be byte-identical to the default (no behavior change for existing servers)
@@ -896,7 +896,7 @@ describe("infra image digest pinning", () => {
   });
 });
 
-describe("placement expression builders (FLEET-D)", () => {
+describe("placement expression builders", () => {
   it("constraintExpr renders each type + both operators", () => {
     expect(constraintExpr({ type: "hostname", op: "eq", value: "web-1" })).toBe("node.hostname==web-1");
     expect(constraintExpr({ type: "hostname", op: "ne", value: "web-1" })).toBe("node.hostname!=web-1");

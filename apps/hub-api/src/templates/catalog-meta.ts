@@ -1,5 +1,5 @@
 /**
- * Curated presentation overlay for the app-store gallery (CASA-UX-3). This is the ONLY place that adds a
+ * Curated presentation overlay for the app-store gallery. This is the ONLY place that adds a
  * friendly tagline, search tags, a "featured" flag and capability badges on top of the bulk-imported catalog —
  * the generated JSON (catalog.generated.json) is machine-written and must never be hand-edited. The overlay is
  * keyed by template slug and merged in `templateMetaList`; a `catalog.spec` guard asserts every slug here exists
@@ -7,7 +7,7 @@
  */
 export interface TemplateMetaOverlay {
   tagline?: string; // a short, human one-liner shown under the name (not the long description)
-  tags?: string[]; // extra search terms (CASA-UX store search matches these)
+  tags?: string[]; // extra search terms (store search matches these)
   featured?: boolean; // show in the Featured shelf (home-cloud flagships)
   badges?: string[]; // curated capability badges, merged with derived ones (see deriveBadges)
 }

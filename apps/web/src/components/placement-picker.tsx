@@ -19,7 +19,7 @@ const field: React.CSSProperties = {
 const MAX_RULES = 10;
 
 /**
- * Live-node-sourced Swarm placement rule builder (FLEET-D). Every value in every dropdown comes from the
+ * Live-node-sourced Swarm placement rule builder. Every value in every dropdown comes from the
  * cluster's live `docker node` data (hostnames, roles, label keys/values) — never a free-text box — so an
  * operator can't pin to a node or label that doesn't exist. Renders inside the Cluster deploy card.
  */

@@ -6,7 +6,7 @@ import type { DumpFormat } from "./import-source";
  * The importer's DB data-plane dump recipe. It does NOT reinvent per-engine dump commands — it reuses Tugra's
  * own {@link dumpDbToStdout} (the exact builder behind Tugra's backups), so a dump taken from a source DB
  * container always matches what Tugra's restore (import-from-url) consumes, across every supported engine.
- * The SSH layer (next slice) runs `command` inside the source container on the host and streams stdout to Tugra.
+ * The SSH layer runs `command` inside the source container on the host and streams stdout to Tugra.
  */
 
 const DUMP_FORMAT: Record<DbEngine, DumpFormat | null> = {

@@ -38,7 +38,7 @@ export function parseProbe(output: string): Set<number> {
  * already used by any app (hostPort + portMappings) or database on the server, and — when the agent
  * is online — ports actually listening on the host (catches non-Tugra services). Allocation runs
  * under a per-server Postgres advisory lock so concurrent allocations serialize; when composed into a
- * caller's create transaction (a later slice) the lock is held until commit, making allocate+persist
+ * caller's create transaction the lock is held until commit, making allocate+persist
  * atomic and truly race-safe. Nothing consumes it yet.
  */
 @Injectable()

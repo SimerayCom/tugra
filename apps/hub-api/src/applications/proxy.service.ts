@@ -28,7 +28,7 @@ export class ProxyService {
       );
     }
     const email = this.config.get<string>("ACME_EMAIL");
-    // CASA-INSTALL-5: this runs on EVERY domained deploy and recreates the proxy (docker rm -f + run), so it
+    // this runs on EVERY domained deploy and recreates the proxy (docker rm -f + run), so it
     // MUST honor the server's bind mode — otherwise a deploy would silently re-publish :80/:443 (reverting a
     // loopback/none server) or fail where another web server holds those ports. Default servers stay public.
     const { bind, ...dns } = await this.proxyConfig(serverId);

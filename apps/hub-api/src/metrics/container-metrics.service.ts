@@ -69,7 +69,7 @@ export class ContainerMetricsService {
   constructor(private readonly prisma: PrismaService) {}
 
   // Agent-initiated telemetry push: one batch = every container on a server at msg.ts. No redis
-  // fan-out (unlike host metrics) — container stats are a 15s poll, the charts slice reads from the
+  // fan-out (unlike host metrics) — container stats are a 15s poll, the charts read from the
   // DB rather than a live stream. containerName is the stable key; containerId tags the incarnation.
   async ingest(serverId: string, msg: ContainerMetricsMsg): Promise<void> {
     if (!msg.samples?.length) return;

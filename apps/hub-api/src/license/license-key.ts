@@ -7,10 +7,8 @@
  * even one baked into the image, is overridable at `docker run -e`/compose runtime). Compiling it in means
  * changing the anchor requires forking + rebuilding the AGPL core, which is outside the threat model.
  *
- * Empty by default: the community build runs as the community edition (
- * Official releases compile in the base64 ed25519 SPKI
- * DER public key at build time; the matching private key is held outside this repository
- * infrastructure.
+ * Trust anchor for signed-license verification. Compiled in at build time (not an env var) so an operator
+ * cannot substitute their own key.
  *
  * To rotate/set: paste the base64 of `publicKey.export({ type: "spki", format: "der" })`.
  */

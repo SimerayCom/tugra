@@ -4,7 +4,7 @@ import { BadRequestException } from "@nestjs/common";
 const MAX_FS_PATH_LEN = 4096;
 
 /**
- * Validate a volume-relative file path (CASA-FILES) and return it unchanged. This is hub-side
+ * Validate a volume-relative file path and return it unchanged. This is hub-side
  * defense-in-depth: the agent's fsd helper re-validates and os.Root-confines everything, but rejecting
  * obviously-unsafe input here gives a clean 400 and keeps bad values off the wire. Mirrors the agent's
  * validatePath: no NUL, no backslash, no absolute path, no ".." segment, bounded length. "" means the root.

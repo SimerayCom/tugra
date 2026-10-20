@@ -57,10 +57,10 @@ repository; the community core only *verifies* license tokens, it never issues t
 Everything in the Community column is what ships in this repository today. The Pro
 and Cloud columns describe the proprietary layer; **none of that code lives here.**
 
-## The gating primitive
+## Edition gating
 
-`requireEdition` is the enforcement scaffold. A future Pro/Cloud-only route opts in
-with the decorator + guard:
+Routes for Pro/Cloud features declare their required edition with the `RequireEdition`
+decorator; Community routes are un-gated. A gated route uses the decorator + guard:
 
 ```ts
 import { RequireEdition, RequireEditionGuard } from "../common/edition";
@@ -75,8 +75,7 @@ export class SsoController {
 ```
 
 In the Community edition every route is un-gated (no decorator), so the guard is a
-no-op for everything shipped today — it exists only so proprietary features can
-attach later. The tier comparison (`editionAtLeast`) and normalization live in
+no-op for every route in this repository. The tier comparison (`editionAtLeast`) and normalization live in
 [`@tugra/shared` `editions.ts`](../packages/shared/src/editions.ts); the hub guard
 is in [`apps/hub-api/src/common/edition.ts`](../apps/hub-api/src/common/edition.ts).
 

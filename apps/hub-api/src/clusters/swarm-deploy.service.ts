@@ -43,7 +43,7 @@ export function effectivePollSec(replicas: number, healthCmd?: string | null): n
 }
 
 /**
- * Deploys an app as a Docker Swarm SERVICE (Phase 3). Owns the swarm-specific command building + dispatch to
+ * Deploys an app as a Docker Swarm SERVICE. Owns the swarm-specific command building + dispatch to
  * the cluster's MANAGER; the Deployment-row lifecycle (status/notify/logs) stays in ApplicationsService,
  * which calls `deploy()` and interprets the returned exit code with the SAME 0/3/other contract it uses for
  * the classic rolling/recreate paths. Manager is re-resolved fresh on every call — never snapshotted.
@@ -70,7 +70,7 @@ export class SwarmDeployService {
     if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
     const mgr = await this.prisma.server.findUnique({ where: { id: cluster.swarmManagerId }, select: { status: true } });
     if (mgr && mgr.status === "ONLINE") return cluster.swarmManagerId; // fast path: primary online (unchanged)
-    // FLEET-G failover: the primary is offline, but `docker service …` is cluster-wide from ANY manager — so
+    // failover: the primary is offline, but `docker service …` is cluster-wide from ANY manager — so
     // fall back to any other ONLINE manager with the 'swarm' capability for this cluster before giving up.
     const backup = await this.prisma.server.findFirst({
       where: { clusterId, swarmRole: "MANAGER", status: "ONLINE", capabilities: { has: "swarm" }, NOT: { id: cluster.swarmManagerId } },
@@ -167,10 +167,10 @@ export class SwarmDeployService {
     const routed = !!spec.domain;
     const labels = routed ? traefikLabels(spec) : [];
     const publish = !routed && app.hostPort ? [`${app.hostPort}:${spec.containerPort ?? 80}`] : [];
-    // Structured placement → rendered docker expressions (FLEET-D). Shared by deploy() and rollbackTo().
+    // Structured placement → rendered docker expressions. Shared by deploy() and rollbackTo().
     const constraints = (spec.placementConstraints ?? []).map(constraintExpr);
     const placementPrefs = spec.placementSpreadLabelKey ? [spreadPrefExpr(spec.placementSpreadLabelKey)] : [];
-    // FLEET-E: named-volume mounts for a stateful app, and a hard node-pin. The pin resolves the pinned
+    // named-volume mounts for a stateful app, and a hard node-pin. The pin resolves the pinned
     // Server's LIVE swarm node id and adds a node.id== constraint alongside any user placement, so the app's
     // single replica always lands on the node holding its data.
     const mounts = (spec.volumes ?? []).map((v) => ({ source: appVolumeName(app, v.name), target: v.path }));
@@ -183,7 +183,7 @@ export class SwarmDeployService {
         if (!constraints.includes(pin)) constraints.push(pin);
       }
     }
-    // FLEET-F: move env into an encrypted Docker secret instead of plaintext in the Raft store — but ONLY if
+    // move env into an encrypted Docker secret instead of plaintext in the Raft store — but ONLY if
     // the image has a shell to run the loader wrapper. Pull+inspect the image on the manager to learn its real
     // Entrypoint/Cmd (the wrapper must re-supply them) and whether it has a shell; a shell-less image
     // (distroless/scratch) falls back to the classic plaintext env path so it is never silently broken.

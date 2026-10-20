@@ -72,7 +72,7 @@ export const SetBuildConfigSchema = z
   .strict();
 export type SetBuildConfigInput = z.infer<typeof SetBuildConfigSchema>;
 
-/** Deploy as a Docker Swarm service across a cluster (Phase 3), or clear it (clusterId: null) back to
+/** Deploy as a Docker Swarm service across a cluster, or clear it (clusterId: null) back to
  *  classic single-server deploy. replicas is clamped to >= 1 server-side. */
 export const SetClusterConfigSchema = z
   .object({
@@ -119,7 +119,7 @@ export const SetLimitsSchema = z
   });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
 
-// FLEET-D placement: structured rules, never a raw docker expression from the client. The picker never emits
+// placement: structured rules, never a raw docker expression from the client. The picker never emits
 // type "nodeId" (it offers hostname/role/label — hostname is the human-legible, live-list-sourced id); nodeId
 // is accepted for advanced API/PAT callers only.
 export const PlacementConstraintSchema = z.discriminatedUnion("type", [

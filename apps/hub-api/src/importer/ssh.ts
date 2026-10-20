@@ -5,8 +5,7 @@ import { isBlockedIp } from "./sources/ssrf-guard";
  * SSH target safety + the runner contract for the importer's data-plane (dump a source DB / tar a volume on
  * the Coolify host and stream it to Tugra). The host is USER-SUPPLIED, so the same SSRF rule as the HTTP
  * client applies: a loopback/link-local/metadata target is refused (private ranges stay allowed — a
- * self-hosted Coolify is usually internal). The concrete SshRunner (ssh2 vs system `ssh`) lands in a later
- * slice and must be validated against a real host; only the pure validation here is unit-tested.
+ * self-hosted Coolify is usually internal). The concrete SshRunner is provided separately; this module holds the target validation and the runner contract.
  */
 
 export interface SshConnectionConfig {

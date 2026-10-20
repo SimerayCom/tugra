@@ -10,7 +10,7 @@ import { useT } from "../i18n/provider";
 import { Spinner, EmptyState, Badge } from "./ui";
 
 /**
- * Read-only file browser for one app's declared volumes (CASA-FILES-3). Shared by the fleet app-detail
+ * Read-only file browser for one app's declared volumes. Shared by the fleet app-detail
  * "Files" tab and the Home launcher's inline files view. Lists metadata only (name/type/size/mtime); it
  * never fetches file contents. Directories are navigable; symlinks are shown but never followed.
  */

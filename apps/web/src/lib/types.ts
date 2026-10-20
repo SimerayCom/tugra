@@ -117,7 +117,7 @@ export interface ClusterDetail extends Cluster {
   health: ClusterHealth;
 }
 
-// ── Docker Swarm formation (Phase 2) ──
+// ── Docker Swarm formation ──
 export type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING" | "JOINING";
 
 /** One swarm task (replica) in the live cluster-deploy panel. */
@@ -154,7 +154,7 @@ export interface SwarmLiveNode {
   labels: Record<string, string>;
 }
 
-/** A structured Swarm placement rule (FLEET-D). */
+/** A structured Swarm placement rule. */
 export type PlacementConstraint =
   | { type: "hostname"; op: "eq" | "ne"; value: string }
   | { type: "nodeId"; op: "eq" | "ne"; value: string }
@@ -164,7 +164,7 @@ export interface Placement {
   constraints: PlacementConstraint[];
   spreadLabelKey: string | null;
 }
-/** Raft manager-quorum health (FLEET-G), derived live from the manager nodes' roles/status. */
+/** Raft manager-quorum health, derived live from the manager nodes' roles/status. */
 export interface SwarmQuorum {
   managers: number;
   managersOnline: number;
@@ -181,7 +181,7 @@ export interface SwarmView {
   quorum: SwarmQuorum | null;
 }
 
-/** One node in the resolved swarm-ingress pool (FLEET-H) — point a DNS A record at each `ip` for failover. */
+/** One node in the resolved swarm-ingress pool — point a DNS A record at each `ip` for failover. */
 export interface IngressNode {
   id: string;
   name: string;
@@ -254,7 +254,7 @@ export interface InstanceUpdateStatus {
   updateAvailable: boolean;
   /** Link to the release notes, or null. */
   changelogUrl: string | null;
-  /** Whether patch releases are applied automatically (the updater is a later slice). */
+  /** Whether patch releases are applied automatically (the updater is not yet available). */
   autoUpdate: boolean;
 }
 
@@ -649,7 +649,7 @@ export interface AppVolume {
   path: string;
 }
 
-/** One entry in an app-volume file listing (CASA-FILES, metadata only — never content). */
+/** One entry in an app-volume file listing (metadata only — never content). */
 export interface FileEntry {
   name: string;
   type: "file" | "dir" | "symlink" | "other";

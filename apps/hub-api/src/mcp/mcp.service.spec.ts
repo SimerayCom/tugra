@@ -111,7 +111,7 @@ describe("McpService.handle", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.tools_call", target: "get_thing", actor: "u1" }));
   });
 
-  it("real catalog: scope tiers gate the mutate tools (read < deploy < admin) — Phase 2a/2b", async () => {
+  it("real catalog: scope tiers gate the mutate tools (read < deploy < admin)", async () => {
     const { svc } = make(); // svc.tools defaults to the real MCP_TOOLS
     const names = async (scopes: string[]) =>
       ((await svc.handle(ctx(scopes), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);

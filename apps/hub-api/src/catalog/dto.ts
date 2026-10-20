@@ -14,7 +14,7 @@ export const CatalogEntrySchema = z.object({
   icon: z.string().optional(),
   logo: z.string().optional(),
   documentation: z.string().optional(),
-  // CASA-UX-3 presentation fields (optional, additive — older consumers ignore them).
+  // presentation fields (optional, additive — older consumers ignore them).
   tagline: z.string().optional(),
   tags: z.array(z.string()).optional(),
   featured: z.boolean().optional(),

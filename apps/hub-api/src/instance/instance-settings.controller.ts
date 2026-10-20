@@ -50,7 +50,7 @@ export class InstanceSettingsController {
    * Self-update status: the running version, the latest published version for the tracked channel (from
    * the last signed check — cached, no remote fetch on this path), and whether an update is available.
    * `updateAvailable` is computed against the running build, so an older/stale manifest never suggests a
-   * downgrade. Owner-only (inherits the class guards); nothing is applied here (the updater is a later slice).
+   * downgrade. Owner-only (inherits the class guards); nothing is applied here.
    */
   @Get("update")
   @ApiZodResponse(UpdateStatusViewSchema)
@@ -62,7 +62,7 @@ export class InstanceSettingsController {
    * Set the self-update preferences (channel + auto-update). Fast — it does NOT fetch the remote manifest
    * (that could hang the request), so after changing the channel the caller should trigger a check
    * (POST update/check) to refresh the cached "latest" for the new channel. autoUpdate is recorded but the
-   * apply step lives in a later slice.
+   * apply step is not available yet.
    */
   @Patch("update")
   @ApiZodBody(UpdateInstanceUpdateSchema)
