@@ -41,6 +41,25 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
 note() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 
+# Step progress (best-level installer UX).
+TOTAL_STEPS=4; STEP=0
+step() { STEP=$((STEP + 1)); printf '\n\033[36m==> [%d/%d]\033[0m \033[1m%s\033[0m\n' "$STEP" "$TOTAL_STEPS" "$*"; }
+
+# Install a package via the host package manager when a command is missing (best-effort, turnkey).
+PKG_UPDATED=0
+ensure_pkg() {
+  _cmd="$1"; _pkg="${2:-$1}"
+  command -v "$_cmd" >/dev/null 2>&1 && return 0
+  if   command -v apt-get >/dev/null 2>&1; then [ "$PKG_UPDATED" = 1 ] || { apt-get update -y >/dev/null 2>&1 || true; PKG_UPDATED=1; }; apt-get install -y "$_pkg" >/dev/null 2>&1 || true
+  elif command -v dnf     >/dev/null 2>&1; then dnf install -y "$_pkg" >/dev/null 2>&1 || true
+  elif command -v yum     >/dev/null 2>&1; then yum install -y "$_pkg" >/dev/null 2>&1 || true
+  elif command -v apk     >/dev/null 2>&1; then apk add --no-cache "$_pkg" >/dev/null 2>&1 || true
+  elif command -v pacman  >/dev/null 2>&1; then pacman -Sy --noconfirm "$_pkg" >/dev/null 2>&1 || true
+  elif command -v zypper  >/dev/null 2>&1; then zypper -n install "$_pkg" >/dev/null 2>&1 || true
+  fi
+  command -v "$_cmd" >/dev/null 2>&1
+}
+
 banner() {
   printf '\033[36m'
   cat <<'EOF'
@@ -94,8 +113,9 @@ set_env() {
 
 # --- preflight (skipped for --dry-run so tests stay quiet + need no Docker) --------------------------
 preflight() {
-  log "Checking requirements…"
+  step "Checking requirements & installing prerequisites…"
   fail=0
+  ensure_pkg curl curl >/dev/null 2>&1 || true   # needed for the Docker install + the health check below
   if command -v docker >/dev/null 2>&1; then
     if docker info >/dev/null 2>&1; then
       ok "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo present) (daemon running)"
@@ -113,7 +133,7 @@ preflight() {
     fi
   fi
   if docker compose version >/dev/null 2>&1; then ok "Docker Compose v2 plugin"; else bad "Docker Compose v2 plugin is required (docker compose)"; fail=1; fi
-  command -v git  >/dev/null 2>&1 && ok "git" || note "git not found (only needed for Git-source deploys)"
+  ensure_pkg git git && ok "git" || note "git not found and could not be installed (needed only for Git-source deploys)"
   command -v curl >/dev/null 2>&1 && ok "curl" || note "curl not found (used for the post-install health check)"
   arch="$(uname -m 2>/dev/null || echo '?')"
   case "$arch" in x86_64|amd64|aarch64|arm64) ok "Architecture: $arch" ;; *) note "Unusual architecture: $arch (published images target amd64/arm64)" ;; esac
@@ -171,6 +191,7 @@ elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
 fi
 
 # --- write the .env (create with 0600, preserve secrets on re-run) ----------------------------------
+[ "$DRY_RUN" -eq 1 ] || step "Writing configuration (.env with fresh secrets)…"
 [ -f "$ENV_FILE" ] || (umask 077; : > "$ENV_FILE")
 
 ensure_env JWT_ACCESS_SECRET     "$(rand_b64 24)"
@@ -218,6 +239,7 @@ fi
 # Include the `updater` profile so the self-update sidecar is always running (it drains the update queue
 # for both "Update now" and auto-update; it's a fixed-command docker.sock sidecar — see SECURITY.md).
 compose() { docker compose --profile updater --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
+step "Fetching images & starting the stack (first run can take a few minutes)…"
 if [ "$FORCE_BUILD" -eq 1 ]; then
   log "Building images from source…"; compose up -d --build
 elif [ "$FORCE_PULL" -eq 1 ]; then
@@ -235,14 +257,19 @@ fi
 
 # --- wait for health + print next steps -------------------------------------------------------------
 if command -v curl >/dev/null 2>&1; then
-  log "Waiting for the hub to become healthy…"
+  step "Waiting for the hub to become healthy…"
   i=0
   until curl -fsS "http://localhost:${HUB_PORT}/health" >/dev/null 2>&1; do
-    i=$((i + 1)); [ "$i" -ge 60 ] && { warn "hub not healthy yet — check: docker compose -f deploy/docker-compose.yml logs hub-api"; break; }
-    sleep 5
+    i=$((i + 1))
+    [ "$i" -ge 120 ] && { printf '\r\033[K'; warn "hub not healthy yet — check: docker compose -f deploy/docker-compose.yml logs hub-api"; break; }
+    case $((i % 4)) in 0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\' ;; esac
+    printf '\r  \033[36m%s\033[0m still starting… (%ss)' "$c" "$((i * 2))"
+    sleep 2
   done
+  printf '\r\033[K'
 fi
 
+printf '\n'
 log "Tugra is up."
 printf '  Web UI:  %s\n' "$WEB_URL"
 printf '  Hub API: %s\n' "$HUB_URL"
