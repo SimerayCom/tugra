@@ -11,6 +11,7 @@
   "deleteConfirm": "Delete this database and its volume? All data is lost. This cannot be undone.",
   "tabOverview": "Overview",
   "tabLogs": "Logs",
+  "tabMetrics": "Metrics",
   "tabBackups": "Backups",
   "tabSettings": "Configuration",
   "openShell": "Open shell",

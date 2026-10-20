@@ -144,6 +144,16 @@ export class DatabasesController {
     });
   }
 
+  /** Per-container metrics history for the database's Metrics tab (read-level). */
+  @Get(":id/metrics/containers")
+  containerMetrics(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("range") range?: string,
+  ) {
+    return this.databases.containerMetrics(user.userId, id, range);
+  }
+
   @Put(":id/environment")
   @HttpCode(200)
   @ApiZodBody(SetEnvironmentSchema)

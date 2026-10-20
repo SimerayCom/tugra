@@ -47,6 +47,7 @@ function make(
     resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
   },
   logStream: { stream: jest.Mock } = { stream: jest.fn() },
+  containerMetricsSvc: { forApp: jest.Mock } = { forApp: jest.fn() },
 ) {
   return new DatabasesService(
     prisma as PrismaService,
@@ -54,6 +55,7 @@ function make(
     audit,
     agentWs as AgentWsServer,
     logStream as unknown as import("../agent-gateway/log-stream.service").LogStreamService,
+    containerMetricsSvc as unknown as import("../metrics/container-metrics.service").ContainerMetricsService,
     crypto,
     teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
   );
@@ -342,6 +344,21 @@ describe("DatabasesService", () => {
     expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("tugra_db_db1"), "database", expect.any(Number));
     expect(out).toBe("log-text");
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.logs.download", target: "db1" }));
+  });
+
+  it("containerMetrics queries this db's container by its deterministic name prefix (read-level)", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    // read-level: require() needs team membership + per-resource access, not the write permission
+    const access = {
+      teamRole: jest.fn().mockResolvedValue("OWNER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+    } as unknown as TeamAccessService;
+    const metrics = { forApp: jest.fn().mockResolvedValue({ containers: [] }) };
+
+    const out = await make(prisma, access, {}, undefined, undefined, metrics).containerMetrics("u1", "db1", "1h");
+
+    expect(metrics.forApp).toHaveBeenCalledWith("s1", "tugra_db_db1", "1h");
+    expect(out).toEqual({ containers: [] });
   });
 
   it("normalizes and stores tags on setTags", async () => {
