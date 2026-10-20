@@ -3,6 +3,23 @@
 import { useState } from "react";
 
 /**
+ * Database engine → brand icon slug in /public/icons. Shared by the resource-create wizard and the
+ * database list/detail views so an engine shows the same recognisable logo everywhere. A missing
+ * slug degrades to TemplateLogo's initials monogram, so an unmapped engine is still safe.
+ */
+export const ENGINE_LOGO: Record<string, string> = {
+  POSTGRES: "postgresql",
+  MYSQL: "mysql",
+  MARIADB: "mariadb",
+  REDIS: "redis",
+  KEYDB: "keydb",
+  DRAGONFLY: "dragonfly",
+  MONGO: "mongodb",
+  CLICKHOUSE: "clickhouse",
+  LIBSQL: "sqlite",
+};
+
+/**
  * Brand icon for a one-click template, rendered from a vendored SVG in
  * /public/icons (sourced from dashboard-icons). When the file is missing it
  * falls back to a coloured initials monogram (stable colour per slug) rather

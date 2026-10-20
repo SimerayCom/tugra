@@ -10,6 +10,7 @@ import { ErrorState } from "../../../../components/error-state";
 import type { AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
 import { appColor } from "../../../../lib/apps";
 import { dbColor } from "../../../../lib/databases";
+import { TemplateLogo, ENGINE_LOGO } from "../../../../lib/template-icons";
 import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
@@ -222,7 +223,11 @@ function ResourceGroup({ title, items, icon: Icon }: { title: string; items: Pro
               style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--c-tx)", textDecoration: "none", padding: "10px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)" }}
             >
               <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Icon size={18} color="var(--c-a)" />
+                {r.kind === "database" && r.engine && ENGINE_LOGO[r.engine] ? (
+                  <TemplateLogo logo={ENGINE_LOGO[r.engine]} slug={r.engine} name={r.engine} size={22} />
+                ) : (
+                  <Icon size={18} color="var(--c-a)" />
+                )}
               </span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
