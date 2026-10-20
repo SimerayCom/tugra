@@ -24,7 +24,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(44);
+    expect(MCP_TOOLS).toHaveLength(45);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -570,6 +570,28 @@ describe("read: fleet aggregators", () => {
       expect(r.total).toBe(205);
       expect(r.count).toBe(200);
       expect(r.truncated).toBe(true);
+    });
+  });
+
+  describe("list_files", () => {
+    it("passes (userId, id, volume, path) straight through to listFiles", async () => {
+      const listFiles = jest.fn().mockResolvedValue({ entries: [{ name: "f", type: "file", size: 1, mode: "rw-r--r--", mtime: 2 }], truncated: false });
+      const deps = { apps: { listFiles } } as unknown as McpDeps;
+      const r = (await tool("list_files").execute(deps, "u1", { id: "a1", volume: "data", path: "sub" })) as { entries: unknown[] };
+      expect(listFiles).toHaveBeenCalledWith("u1", "a1", "data", "sub");
+      expect(r.entries).toHaveLength(1);
+    });
+
+    it("defaults path to the volume root and requires id + volume", async () => {
+      const listFiles = jest.fn().mockResolvedValue({ entries: [], truncated: false });
+      const deps = { apps: { listFiles } } as unknown as McpDeps;
+      await tool("list_files").execute(deps, "u1", { id: "a1", volume: "data" });
+      expect(listFiles).toHaveBeenCalledWith("u1", "a1", "data", "");
+      await expect(Promise.resolve().then(() => tool("list_files").execute(deps, "u1", { id: "a1" }))).rejects.toThrow(/volume/);
+    });
+
+    it("is scoped read:secrets (a file listing can expose sensitive structure)", () => {
+      expect(tool("list_files").scope).toBe("read:secrets");
     });
   });
 
