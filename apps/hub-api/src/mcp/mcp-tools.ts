@@ -782,4 +782,20 @@ export const MCP_TOOLS: McpTool[] = [
       };
     },
   },
+
+  // ── read: files (ties the sandboxed file browser into the agent surface, CASA-FILES) ──────────────
+  {
+    name: "list_files",
+    description:
+      "List files/directories inside one of an application's DECLARED volumes — metadata only (name, type file|dir|symlink, size, mode, mtime), NEVER file contents, and symlinks are reported not followed. Args: id (application), volume (a declared volume name), path (optional, volume-relative; omitted = volume root). The agent runs the listing in a sandboxed read-only helper on the server. Read-only.",
+    // read:secrets like get_app_logs: a file listing can expose sensitive application structure, and the
+    // hub's listFiles additionally enforces WRITE permission on the app, so this is double-gated.
+    scope: "read:secrets",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" }, volume: { type: "string" }, path: { type: "string" } },
+      required: ["id", "volume"],
+    },
+    execute: (d, userId, a) => d.apps.listFiles(userId, reqStr(a, "id"), reqStr(a, "volume"), optStr(a, "path") ?? ""),
+  },
 ];

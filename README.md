@@ -43,7 +43,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, scopes and IP allowlist as the REST API underneath — no separate credential to manage, and no decrypted secret values are ever returned to the model. The catalog is **44 tools**: 23 read-only (including one-call fleet status / health / app-listing rollups), plus 21 PAT-scoped mutate/ops tools (deploy · restart · live-scale · roll back · set env · form/grow a swarm · fleet-wide actions across a cluster · one-click domain DNS setup). Every mutate tool reuses the REST API's exact team-permission checks and audit trail, and the irreversible ones (dissolve a swarm, remove an app) require an explicit name-confirmation. OAuth for third-party clients is still on the roadmap.
+It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, scopes and IP allowlist as the REST API underneath — no separate credential to manage, and no decrypted secret values are ever returned to the model. The catalog is **45 tools**: 24 read-only (including one-call fleet status / health / app-listing rollups and a sandboxed volume file browser), plus 21 PAT-scoped mutate/ops tools (deploy · restart · live-scale · roll back · set env · form/grow a swarm · fleet-wide actions across a cluster · one-click domain DNS setup). Every mutate tool reuses the REST API's exact team-permission checks and audit trail, and the irreversible ones (dissolve a swarm, remove an app) require an explicit name-confirmation. OAuth for third-party clients is still on the roadmap.
 
 ## What is Tugra?
 
@@ -52,7 +52,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 ## Why Tugra
 
 - **Fleet-first, not single-box** — group servers into clusters, form a real Docker Swarm across them, and run one command across your whole fleet in a single bulk-ops call instead of SSH-ing into each box.
-- **Agent-native too** — a built-in MCP server exposes 44 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
+- **Agent-native too** — a built-in MCP server exposes 45 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
 - **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned, backed up and restored the same way.
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
@@ -65,7 +65,7 @@ A short, honest comparison (competitor columns last verified 2026-09-27) — cel
 | | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
 |---|---|---|---|---|---|
 | Multi-node clustering | ✅ Swarm-based | Individual servers¹ | ✅ Swarm-based | ✅ Swarm-based | ✅ k3s-based (not Swarm)⁶ |
-| MCP / agent control | ✅ built-in (read+write, 44 tools)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
+| MCP / agent control | ✅ built-in (read+write, 45 tools)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
 | Database engines | **9** (named above) | 8 | 6 | — | — |
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
@@ -143,7 +143,7 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Live metrics, build logs & web terminal (WebSocket streams)
 - [x] Databases (9 engines) with backups & restore (local + S3/R2 off-site)
 - [x] Multi-server clusters + Docker Swarm formation, bulk ops across the fleet
-- [x] Native MCP server — 44 tools (read + PAT-scoped mutate/fleet ops)
+- [x] Native MCP server — 45 tools (read + PAT-scoped mutate/fleet ops)
 - [x] Preview deployments (per pull request)
 - [x] Uptime monitoring (HTTP/TCP/metric) + notification channels
 - [x] Scheduled tasks (cron) · rollbacks · resource limits & health checks
