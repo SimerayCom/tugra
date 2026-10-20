@@ -21,8 +21,9 @@ The publisher side of this — how releases and the signed manifest are produced
 1. As the owner, open **Settings → Updates**. The card shows the current and latest version and the
    release channel (stable/beta).
 2. Configure the manifest source so the hub can check for updates — set `UPDATE_MANIFEST_URL` and
-   `UPDATE_PUBLISHER_KEY` (see [`.env.example`](../.env.example)). The publisher key comes from the
-   release notes of the build you run.
+   `UPDATE_PUBLISHER_KEY` (see [`.env.example`](../.env.example)). For official builds use the values
+   under [Configuring update checks](#configuring-update-checks) below; a self-signed build uses its
+   own published key instead.
 3. Click **Update now** (or enable patch-only auto-update).
 
 Applying an update recreates the hub and web containers, so the hub can't do it itself — a small
@@ -47,7 +48,7 @@ you prefer git-driven upgrades or haven't configured the signed-manifest source.
 | Key | Purpose |
 |---|---|
 | `UPDATE_MANIFEST_URL` | URL of the signed `versions.json` (the `.sig` is fetched alongside it). Official builds: `https://simeraycom.github.io/tugra/versions.json`. |
-| `UPDATE_PUBLISHER_KEY` | The publisher's ed25519 public key (base64), used to verify the manifest. |
+| `UPDATE_PUBLISHER_KEY` | The publisher's ed25519 public key (base64), used to verify the manifest. Official builds: `MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE=`. |
 | `UPDATE_CHECK_INTERVAL_MIN` | Minutes between background version checks (default 1440 = daily). |
 | `UPDATE_CHANGELOG_URL` | Optional changelog URL surfaced next to an available update. |
 
