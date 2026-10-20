@@ -55,7 +55,7 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
-/** The result of one file op (CASA-FILES): metadata-only listing, or an error. */
+/** The result of one file op: metadata-only listing, or an error. */
 export interface FsListing {
   entries: FsEntry[];
   truncated: boolean;
@@ -80,7 +80,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly state = new WeakMap<WebSocket, ConnState>();
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
-  private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver (CASA-FILES)
+  private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
   private readonly logStreamsByServer = new Map<string, Set<string>>(); // serverId → streamIds (disconnect teardown)
@@ -324,7 +324,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /**
-   * Send a signed file operation to a connected agent and await its result (CASA-FILES). Fail-closed on
+   * Send a signed file operation to a connected agent and await its result. Fail-closed on
    * the "files" capability: never sign an fs_req for a server that hasn't been granted it. The agent runs
    * the op inside a sandboxed, read-only helper container; this only ever returns metadata, never content.
    */

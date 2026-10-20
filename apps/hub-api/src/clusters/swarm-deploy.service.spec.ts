@@ -37,7 +37,7 @@ function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; mana
     cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
     server: {
       findUnique: jest.fn().mockResolvedValue({ status: opts.managerStatus ?? "ONLINE" }),
-      // FLEET-G failover: the primary being offline triggers a search for any other online MANAGER.
+      // the primary being offline triggers a search for any other online MANAGER.
       findFirst: jest.fn().mockResolvedValue(opts.backupManagerId ? { id: opts.backupManagerId } : null),
     },
   } as unknown as PrismaService;
@@ -62,7 +62,7 @@ describe("SwarmDeployService.resolveManager", () => {
   it("errors when the manager is offline and there is no other online manager to fail over to", async () => {
     await expect(make({ managerStatus: "OFFLINE" }).svc.resolveManager("c1")).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
-  it("FLEET-G: fails over to another ONLINE manager when the primary is offline", async () => {
+  it("fails over to another ONLINE manager when the primary is offline", async () => {
     const { svc, prisma } = make({ managerStatus: "OFFLINE", backupManagerId: "mgr2" });
     expect(await svc.resolveManager("c1")).toBe("mgr2");
     // the fallback query excludes the primary and requires an online swarm-capable manager
@@ -138,7 +138,7 @@ describe("SwarmDeployService.deploy", () => {
     expect(script).toContain("--placement-pref 'spread=node.labels.zone'");
   });
 
-  it("mounts named volumes for a stateful app (FLEET-E), sourced from spec.volumes", async () => {
+  it("mounts named volumes for a stateful app, sourced from spec.volumes", async () => {
     const { svc, send } = make();
     await svc.deploy(app(), spec({ volumes: [{ name: "data", path: "/var/lib/data" }] }), "dep1", { timeoutMs: 1000 });
     const script = send.mock.calls[0][1] as string;
@@ -234,7 +234,7 @@ describe("SwarmDeployService lifecycle", () => {
     expect(typeof send.mock.calls[0][3]).toBe("number");
     await svc.remove(app());
     expect(send.mock.calls[1][1]).toContain("docker service rm 'tugra_abc' 2>/dev/null || true");
-    expect(send.mock.calls[1][1]).toContain("tugra-appenv-tugra_abc"); // FLEET-F: also prunes env secrets
+    expect(send.mock.calls[1][1]).toContain("tugra-appenv-tugra_abc"); // also prunes env secrets
     await svc.status(app());
     expect(send.mock.calls[2][1]).toContain("docker service ps 'tugra_abc'");
     await svc.logs(app(), 50);
@@ -242,7 +242,7 @@ describe("SwarmDeployService lifecycle", () => {
   });
 });
 
-describe("SwarmDeployService FLEET-F — env secrets", () => {
+describe("SwarmDeployService env secrets", () => {
   it("appEnvConfigHash is order-independent and content-sensitive", () => {
     expect(appEnvConfigHash({ FOO: "a", BAR: "b" })).toBe(appEnvConfigHash({ BAR: "b", FOO: "a" }));
     expect(appEnvConfigHash({ FOO: "a" })).not.toBe(appEnvConfigHash({ FOO: "b" }));

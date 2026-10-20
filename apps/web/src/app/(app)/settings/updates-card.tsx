@@ -19,8 +19,8 @@ function phaseLabel(phase: UpdatePhase): string {
 /**
  * Owner-only self-update panel: shows the running vs latest version, lets the owner pick a release
  * channel + toggle auto-update, and re-check on demand. Rendered for every settings visitor but returns
- * null unless the user owns the instance (the hub enforces the same guard). The one-click "Update now"
- * arrives with the updater slice; for now an available update is applied by re-running the installer.
+ * null unless the user owns the instance (the hub enforces the same guard). When an update is available, "Update now"
+ * applies it in one click.
  */
 export function UpdatesCard() {
   const t = useT();

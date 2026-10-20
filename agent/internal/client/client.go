@@ -32,7 +32,7 @@ const (
 	containerStatsInterval = 15 * time.Second // per-container `docker stats` — slower than host metrics
 	commandTimeout         = 20 * time.Second
 	hostInfoInterval       = 12 * time.Hour  // refresh hardware/OS inventory periodically
-	fsOpTimeout            = 30 * time.Second // hard wall-clock bound on one sandboxed file op (CASA-FILES)
+	fsOpTimeout            = 30 * time.Second // hard wall-clock bound on one sandboxed file op
 )
 
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics

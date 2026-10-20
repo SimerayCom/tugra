@@ -95,7 +95,7 @@ describe("TemplateGrid", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  // ── CASA-UX-4: featured shelf, richer cards, detail handoff ──
+  // ── featured shelf, richer cards, detail handoff ──
 
   const rich: Template[] = [
     { slug: "immich", name: "Immich", description: "Long description of Immich.", category: "productivity", featured: true, tagline: "Google Photos alternative", badges: ["db"] },

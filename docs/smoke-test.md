@@ -1,19 +1,16 @@
 # Real-VM smoke test
 
-`scripts/smoke-vm.sh` proves Tugra's core promise against a **real** server: a real agent, real Docker
-containers, a real `pg_dump`/`pg_restore`, a real deploy. It's the one thing the CI suite can't do.
+`scripts/smoke-vm.sh` is an end-to-end check that drives a **real** enrolled server — a real agent, real
+Docker containers, a real `pg_dump`/`pg_restore`, a real deploy — straight through the public REST API,
+and verifies backup/restore round-trips, a live deploy and the MCP endpoint against a real enrolled server.
 
-## Why this exists, and what CI doesn't cover
+## Why this exists
 
-`apps/hub-api/test/*.e2e-spec.ts` talks to a in-process test agent (see
-`backups.e2e-spec.ts`, `server-ops.e2e-spec.ts`, …) that the test spins up itself. That's the right tool
-for testing the hub's own logic fast and deterministically. A real-VM smoke test additionally covers a real
-`docker run`, a real backup/restore, or a real deploy against a real machine. The smoke test covers this end to end; the pipeline
-proves the product actually works end to end on a VM.
-
-This script does: it drives the real REST API against an enrolled server and fails loudly the moment
-anything doesn't come back the way it should — most importantly, if a restore doesn't actually bring the
-data back.
+Tugra's CI runs the full unit and integration suite against real PostgreSQL and Redis, exercising the
+agent protocol through an in-process test double so the hub's own logic is covered fast and
+deterministically. This script is the complementary layer: it verifies the parts that only a real
+machine can exercise — Docker, backup/restore round-trips and live deploys — against a server you enroll
+yourself.
 
 ## What it covers
 
@@ -28,7 +25,7 @@ data back.
 
 A green run means: a customer's database really can be backed up and restored without data loss, a
 customer's app really can be deployed and reached over the internet, and the MCP endpoint really is
-callable by a real client — on a real box, not a mock.
+callable by a real client — all on a real server.
 
 ## Prerequisites
 
@@ -53,11 +50,11 @@ callable by a real client — on a real box, not a mock.
 | `TUGRA_URL` | yes | Hub base URL, e.g. `https://hub.example.com`. |
 | `TUGRA_TOKEN` | yes | A `tugra_pat_…` token with `write`, `deploy`, `read:secrets`. |
 | `TUGRA_SERVER` | yes | The id **or** name of an already-enrolled, **ONLINE** server. |
-| `TUGRA_DB_ENGINE` | no | Default `POSTGRES` (the only engine this script speaks). |
+| `TUGRA_DB_ENGINE` | no | Default `POSTGRES`. |
 | `TUGRA_DB_VERSION` | no | Default `16`. |
 | `TUGRA_DB_HOST_PORT` | no | Default: a random port in 20000-39999. |
 | `TUGRA_APP_IMAGE` | no | Default `traefik/whoami:latest`. |
-| `TUGRA_APP_DOMAIN` | no | A real domain you already point at the server. When set, the app deploys with a real Let's Encrypt HTTPS domain instead of a free `sslip.io` "magic" one (see the script's TODO comment near `APP_URL` for why the default can come back as `http://`, not `https://`). |
+| `TUGRA_APP_DOMAIN` | no | A real domain you already point at the server. When set, the app deploys with a real Let's Encrypt HTTPS domain; when unset, a free `sslip.io` "magic" domain is used for testing. |
 | `TUGRA_CLEANUP` | no | `1` deletes the smoke-test database + app at the end of a **successful** run (needs the `admin` scope too). Default: left running so you can inspect them. |
 
 ## Run it
@@ -80,6 +77,4 @@ attached — nothing fails silently.
 - A deploy actually produces a running, internet-reachable app, not just a `RUNNING` status flag.
 - The [MCP server](api.md#mcp-server) is reachable and returns real tool results to a real caller.
 
-It's still just one path through one engine (Postgres) and one deploy shape (`IMAGE` source) — it's a
-smoke test, not full coverage. Extending it to MySQL/Redis/Mongo or a `GIT`-source build is a natural next
-slice.
+Scope: PostgreSQL backup/restore, an image-source deploy and an MCP round-trip.

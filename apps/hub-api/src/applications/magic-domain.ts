@@ -24,7 +24,7 @@ export function dashedIp(ip: string): string {
 
 /**
  * Build a sslip.io-style magic domain that DNS-resolves to the server's own IP,
- * giving a domainless app an instantly reachable hostname (Coolify/Dokploy parity).
+ * giving a domainless app an instantly reachable hostname.
  *
  * - `wildcardDomain` set (per-server) → `{slug}-{hash}.{wildcardDomain}`.
  * - else a PUBLIC IP (v4 preferred, else v6) → `{slug}-{hash}.{ipDashed}.{suffix}`.

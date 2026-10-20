@@ -28,9 +28,9 @@ function agentMock(opts: {
   infoState?: Record<string, string>; // serverId → LocalNodeState ("inactive"|"active")
   joinExit?: Record<string, number>; // worker serverId → join exit code
   tokenExit?: number;
-  managerTokenExit?: number; // `swarm join-token -q manager` exit (FLEET-G)
-  promoteExit?: number; // `docker node promote` exit (FLEET-G)
-  demoteExit?: number; // `docker node demote` exit (FLEET-G)
+  managerTokenExit?: number; // `swarm join-token -q manager` exit
+  promoteExit?: number; // `docker node promote` exit
+  demoteExit?: number; // `docker node demote` exit
   drainExit?: number; // node-drain script exit (0 clean, 2 timeout)
   nodeRmExit?: number; // `docker node rm` exit
   nodeInspectOut?: string; // `docker node inspect` output (for status() live parsing)
@@ -73,7 +73,7 @@ function make(opts: {
   appCount?: number;
   apps?: object[]; // rows for replicaRiskWarning (name/replicas) and stripPlacementNamingNode (id/placement)
   otherOnline?: number; // server.count → other online swarm members
-  ingressReplicas?: number; // FLEET-H: cluster.ingressReplicas (for setIngressReplicas revert tests)
+  ingressReplicas?: number; // cluster.ingressReplicas (for setIngressReplicas revert tests)
   agent?: AgentWsServer;
 } = {}) {
   const cluster = {
@@ -531,7 +531,7 @@ describe("SwarmService.leaveNode", () => {
   });
 });
 
-describe("SwarmService status() live-parse + setNodeLabels (FLEET-D)", () => {
+describe("SwarmService status() live-parse + setNodeLabels", () => {
   const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
   const inspectLine = JSON.stringify({ ID: "node_mgr", Description: { Hostname: "mgr-host" }, Spec: { Role: "manager", Availability: "active", Labels: { zone: "east" } }, Status: { State: "ready" } });
 
@@ -565,7 +565,7 @@ describe("SwarmService status() live-parse + setNodeLabels (FLEET-D)", () => {
   });
 });
 
-describe("SwarmService.addManager (FLEET-G)", () => {
+describe("SwarmService.addManager", () => {
   const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
   // 2 existing managers so adding a 3rd is an ODD (quorum-safe) count that skips the even-guard.
   const twoManagers = () => [
@@ -730,7 +730,7 @@ describe("SwarmService.addManager (FLEET-G)", () => {
   });
 });
 
-describe("SwarmService.removeManager (FLEET-G)", () => {
+describe("SwarmService.removeManager", () => {
   const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
 
   it("demotes a non-primary MANAGER via docker node demote dispatched to a DIFFERENT online manager, sets WORKER", async () => {
@@ -830,7 +830,7 @@ describe("SwarmService.removeManager (FLEET-G)", () => {
   });
 });
 
-describe("SwarmService quorum + status failover (FLEET-G)", () => {
+describe("SwarmService quorum + status failover", () => {
   const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
   const nodeLine = (id: string, role: string, state: string) =>
     JSON.stringify({ ID: id, Description: { Hostname: id }, Spec: { Role: role, Availability: "active", Labels: {} }, Status: { State: state } });
@@ -887,9 +887,9 @@ describe("SwarmService quorum + status failover (FLEET-G)", () => {
   it("does NOT count a ghost dead-manager row from a prior incarnation: live-only managers drive quorum (F1)", async () => {
     // DB still carries m_ghost as swarmRole=MANAGER (dissolve()'s abandon path keeps it), but the freshly
     // re-formed swarm's live inspect only knows the real manager m1 → quorum must be healthy 1/1, not 1/2. This
-    // is the FLEET-G fix: the scary "Quorum lost" signal must NOT fire because of a stale prior-incarnation row.
+    // is the fix: the scary "Quorum lost" signal must NOT fire because of a stale prior-incarnation row.
     // (The pre-existing readyCount<joinedCount self-heal may still flag the un-cleared ghost as a generic
-    // DEGRADED anomaly worth the operator's attention — that behavior predates this slice and is out of scope.)
+    // DEGRADED anomaly worth the operator's attention — that behavior predates this change and is out of scope.)
     const inspect = readyLine("node_m1", "manager");
     const agent = agentMock({ nodeInspectOut: inspect });
     const { svc } = make({
@@ -940,7 +940,7 @@ describe("SwarmService quorum + status failover (FLEET-G)", () => {
   });
 });
 
-describe("SwarmService ingress HA (FLEET-H)", () => {
+describe("SwarmService ingress HA", () => {
   it("getIngress: read-gated (non-member rejected), then delegates to swarmProxy.ingressInfo", async () => {
     const r = make({ swarmStatus: "ACTIVE", swarmManagerId: "mgr", members: [member({ id: "mgr", swarmRole: "MANAGER" })] });
     const out = await r.svc.getIngress("u1", "c1");
@@ -992,7 +992,7 @@ describe("SwarmService ingress HA (FLEET-H)", () => {
   });
 });
 
-describe("SwarmService.dissolve multi-manager (FLEET-G)", () => {
+describe("SwarmService.dissolve multi-manager", () => {
   const sc = (agent: AgentWsServer) => (agent as unknown as { sendCommand: jest.Mock }).sendCommand;
 
   it("two online managers: teardown dispatched once, then BOTH leave --force", async () => {

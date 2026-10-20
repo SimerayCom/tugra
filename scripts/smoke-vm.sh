@@ -12,17 +12,17 @@
 #   7. deploy a tiny real app (IMAGE source) and curl its live URL for a 200
 #   8. do one MCP round-trip: tools/list, then tools/call get_database
 #
-# Why this exists: the CI e2e suite (apps/hub-api/test/*.e2e-spec.ts) exercises the hub against an in-process
-# WebSocket "agent" — it exercises the hub's own logic; the real-VM smoke test additionally covers a real `docker run`, a real
-# `pg_dump`/`pg_restore`, or a real deploy against a real machine. This script is that proof, run by
-# hand (or from a cron/CI job with a real server available) against a real, already-enrolled VM.
+# Why this exists: the CI e2e suite exercises the hub against an in-process agent for fast,
+# deterministic coverage. This script complements it by running the full flow (provision, backup,
+# restore, deploy, MCP) against a real, already-enrolled host — by hand or from a job that has a real
+# server available.
 #
 # It talks to the REST API directly with curl (apps/hub-api/openapi.json is the source of truth for
 # every path/body used below) rather than through `tugra login` + a persisted CLI profile, so it is a
 # single, stateless, CI-friendly invocation driven purely by env vars. Where the `tugra` CLI
 # (packages/cli) already wraps an endpoint used here, that's noted inline — this script still calls
-# the API directly so every step, including the ones the CLI doesn't cover yet (provision, restore,
-# create, mcp), goes through the same request/poll/verify machinery.
+# the API directly so every step, including provision, restore,
+# create and mcp, goes through the same request/poll/verify machinery.
 #
 # Usage:
 #   TUGRA_URL=https://hub.example.com \
@@ -53,7 +53,7 @@
 #                        cert). When unset (the default), the app gets a free auto-generated
 #                        "magic"/sslip.io subdomain instead — zero config, but plain HTTP unless the
 #                        server already has a wildcard domain + DNS-01 cert mode configured (see the
-#                        TODO near APP_URL below).
+#                        note near APP_URL below).
 #   TUGRA_CLEANUP        Set to 1 to delete the smoke-test database and app on a SUCCESSFUL run
 #                        (needs the `admin` scope too — DELETE is admin-only). Default: off, so you
 #                        can inspect what was created.
@@ -298,10 +298,8 @@ pass "app ${APP_ID} created"
 # can be checked here rather than only rendered as a table.
 api POST "/apps/${APP_ID}/deploy" '{}'
 [[ "$LAST_STATUS" == "200" ]] || fail "POST /apps/${APP_ID}/deploy: HTTP $LAST_STATUS: $LAST_BODY"
-# TODO(openapi): POST /apps/{id}/deploy's 200 response has no schema in openapi.json (it's undocumented
-# there), but apps/hub-api/src/applications/applications.service.ts's runDeploy() confirms it blocks
-# until the deploy finishes and returns the Deployment row (status: SUCCESS|FAILED). Read .status
-# defensively and fall back to GET /apps/{id} (a documented, stable contract) as the source of truth.
+# NOTE: the POST /apps/{id}/deploy response schema is not in openapi.json, so read .status
+# defensively and fall back to GET /apps/{id}.
 DEPLOY_STATUS=$(echo "$LAST_BODY" | jq -r '.status // empty')
 if [[ -n "$DEPLOY_STATUS" && "$DEPLOY_STATUS" != "SUCCESS" ]]; then
   fail "deploy ended in status ${DEPLOY_STATUS}: $(echo "$LAST_BODY" | jq -r '.logs // "no logs"' | tail -c 2000)"
@@ -315,12 +313,8 @@ APP_URL=$(echo "$LAST_BODY" | jq -r '.url')
 [[ -n "$APP_URL" && "$APP_URL" != "null" ]] || fail "app ${APP_ID} has no url — check the server's public IP / magic-domain config"
 pass "app ${APP_ID} deployed and RUNNING at ${APP_URL}"
 
-# TODO: with TUGRA_APP_DOMAIN unset (the default), APP_URL is a free sslip.io "magic" domain that the
-# hub serves over plain HTTP unless the server already has a wildcard domain + DNS-01 cert mode
-# configured (apps/hub-api/src/applications/applications.service.ts resolveExpose()) — so this may be
-# an http:// URL, not https://, on a fresh/default server. We curl whatever the API actually returned
-# (that's still a real end-to-end proof of deploy + expose + routing); set TUGRA_APP_DOMAIN to a
-# domain you own and already point at the server for a guaranteed real HTTPS check.
+# NOTE: with TUGRA_APP_DOMAIN unset, the app gets a magic domain served over HTTP. Set
+# TUGRA_APP_DOMAIN for a guaranteed HTTPS check.
 step "9/10 (h): curl ${APP_URL} for 200"
 CODE="000"
 for _ in $(seq 1 20); do

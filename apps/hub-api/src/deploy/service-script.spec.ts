@@ -157,7 +157,7 @@ describe("service-script builders", () => {
     expect(restart).toContain("docker service update --detach --force 'tugra_abc'");
     expect(restart).toContain("TUGRA_ROLLOUT"); // restart is async → same poll machinery
     expect(buildServiceRemoveScript("tugra_abc")).toContain("docker service rm 'tugra_abc' 2>/dev/null || true");
-    expect(buildServiceRemoveScript("tugra_abc")).toContain("docker secret ls --filter name='tugra-appenv-tugra_abc'"); // FLEET-F: prune env secrets too
+    expect(buildServiceRemoveScript("tugra_abc")).toContain("docker secret ls --filter name='tugra-appenv-tugra_abc'"); // prune env secrets too
     expect(buildServicePsScript("tugra_abc")).toBe("docker service ps 'tugra_abc' --format '{{json .}}'");
     expect(buildServiceLogsScript("tugra_abc", 50)).toBe("docker service logs --timestamps --tail 50 'tugra_abc'");
     expect(buildServiceLogsScript("tugra_abc", 50, "1h")).toBe("docker service logs --timestamps --tail 50 --since '1h' 'tugra_abc'");
@@ -187,7 +187,7 @@ describe("service-script builders", () => {
     expect(parseSwarmTasks("")).toEqual([]);
   });
 
-  // ── FLEET-D placement ──
+  // ── placement ──
   it("create embeds --constraint and --placement-pref for the given expressions", () => {
     const s = buildServiceDeployScript(opts({ constraints: ["node.hostname==web-1", "node.labels.zone==east"], placementPrefs: ["spread=node.labels.zone"] }));
     expect(s).toContain("docker service create --detach");
@@ -239,7 +239,7 @@ describe("service-script builders", () => {
     expect(s).toContain(`--constraint-add 'node.labels.x==a'\\''b'`);
   });
 
-  // ── FLEET-E named-volume mounts ──
+  // ── named-volume mounts ──
   it("emits --mount on create and --mount-add on update for each named volume", () => {
     const s = buildServiceDeployScript(opts({ mounts: [{ source: "tugra_appv_app1_data", target: "/var/lib/data" }] }));
     expect(s).toContain("--mount 'type=volume,source=tugra_appv_app1_data,destination=/var/lib/data'");
@@ -251,7 +251,7 @@ describe("service-script builders", () => {
     expect(s).not.toContain("--mount");
   });
 
-  // ── FLEET-F env → docker secret ──
+  // ── env → docker secret ──
   const es = { name: "tugra-appenv-tugra_abc-abc123def456", confighash: "abc123def456", credsB64: "Rk9PPWJhcg==" }; // envFileB64({FOO:"bar"})
 
   it("appEnvSecretPrefix builds the per-app secret prefix", () => {

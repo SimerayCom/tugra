@@ -107,7 +107,7 @@ export function canonicalAgentUpdate(
 ): string {
   return `aupd\n${reqId}\n${targetVersion}\n${image}\n${sha256}\n${capability}`;
 }
-/** Signed payload for a file operation (CASA-FILES). `op` is the action (list/stat/read), `volume` the
+/** Signed payload for a file operation. `op` is the action (list/stat/read), `volume` the
  *  app volume key, `path` the volume-relative path. `capability` last binds the grant into the signature
  *  (anti-relabel), mirroring the others. The agent verifies this before launching the sandboxed fsd helper. */
 export function canonicalFs(
@@ -169,7 +169,7 @@ export const AGENT_CAPABILITIES = [
   "patch",
   "logs",
   "swarm",
-  "files", // read/list an app volume's files via the sandboxed fsd helper (CASA-FILES); default-off
+  "files", // read/list an app volume's files via the sandboxed fsd helper; default-off
 ] as const;
 
 /** What a command is for — the agent can locally allowlist these. */

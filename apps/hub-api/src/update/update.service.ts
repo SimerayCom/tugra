@@ -22,7 +22,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 /**
  * The self-update version CHECK. Periodically (via the scheduler) it fetches the signed release manifest,
  * verifies it BEFORE parsing, and caches the latest published version for the instance's channel. It only
- * ever REPORTS — nothing is applied here (the updater is a later slice). `checkRemote` NEVER throws: on any
+ * ever REPORTS — nothing is applied here. `checkRemote` NEVER throws: on any
  * failure it leaves the cached version untouched (offline fallback never blanks the status).
  *
  * Downgrade guard: `updateAvailable` is always `isNewer(latest, appVersion())` against the RUNNING build,

@@ -31,7 +31,7 @@ export class CoolifySource implements ImportSource {
   constructor(private readonly client: CoolifyClient) {}
 
   capabilities(): ImportSourceCapabilities {
-    // discover is API-only; moving DB data / volume bytes needs SSH or a dump API (a later slice).
+    // discover is API-only; moving DB data / volume bytes needs SSH or a dump API.
     return { apiRead: true, sshRead: false, dbDataDump: false, volumeRead: false };
   }
 

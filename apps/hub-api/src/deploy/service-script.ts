@@ -1,5 +1,5 @@
 /**
- * Pure builders for deploying an app as a Docker Swarm SERVICE (Phase 3), run on a swarm MANAGER node.
+ * Pure builders for deploying an app as a Docker Swarm SERVICE, run on a swarm MANAGER node.
  * The agent is a generic `sh -c` executor, so nothing on the agent changes — these are just new hub-side
  * command strings, alongside the classic single-container builders in deploy-script.ts.
  *
@@ -39,13 +39,13 @@ export const SWARM_OVERLAY = "tugra-swarm";
  *  swallows — so a cluster whose overlay was created before this change keeps running UNENCRYPTED until an
  *  operator manually removes+recreates it (requires no services attached, i.e. stop every swarm app on that
  *  cluster → `docker network rm tugra-swarm` on the manager → redeploy). Doc-only migration for now (see
- *  CHANGELOG); a future slice could warn when `docker network inspect tugra-swarm --format
+ *  CHANGELOG); a future change could warn when `docker network inspect tugra-swarm --format
  *  '{{.Options.encrypted}}'` comes back empty. */
 export function buildOverlayEnsureScript(name = SWARM_OVERLAY): string {
   return `docker network create -d overlay --opt encrypted --attachable ${shq(name)} 2>/dev/null || true`;
 }
 
-// ── FLEET-F: swarm app env via Docker secret (encrypted-at-rest in Raft) instead of plaintext in the spec ──
+// ── Swarm app env via Docker secret (encrypted-at-rest in Raft) instead of plaintext in the spec ──
 // Swarm has no k8s-style envFrom — a secret is always a FILE under /run/secrets. To turn it into process env
 // we override the entrypoint with a tiny loader that reads the file, exports each KEY=VALUE, then execs the
 // image's OWN command. This only works on images that HAVE a shell; the caller (dispatchService) detects that
@@ -96,15 +96,15 @@ export interface ServiceDeployOpts {
   healthCmd?: string | null;
   labels?: string[]; // service-level labels (Traefik swarm-provider reads these) — Phase B; [] in Phase A
   publish?: string[]; // routing-mesh published ports, e.g. "8080:80" (reachable on any node) — domain-less apps
-  constraints?: string[]; // already-rendered `--constraint` expressions (e.g. "node.hostname==web-1") — FLEET-D
-  placementPrefs?: string[]; // already-rendered `--placement-pref` expressions (e.g. "spread=node.labels.zone") — FLEET-D
-  mounts?: { source: string; target: string }[]; // named-volume mounts for a node-pinned stateful app — FLEET-E
-  // FLEET-F: when set, env rides this Docker secret (not plaintext --env) and the entrypoint is wrapped to load
+  constraints?: string[]; // already-rendered `--constraint` expressions (e.g. "node.hostname==web-1")
+  placementPrefs?: string[]; // already-rendered `--placement-pref` expressions (e.g. "spread=node.labels.zone")
+  mounts?: { source: string; target: string }[]; // named-volume mounts for a node-pinned stateful app
+  // When set, env rides this Docker secret (not plaintext --env) and the entrypoint is wrapped to load
   // it. Only set by the caller when the image HAS a shell; null → the classic plaintext `env` path below is used.
   envSecret?: AppEnvSecret | null;
   imageEntrypoint?: string[]; // the image's OWN .Config.Entrypoint (re-supplied to the wrapper) — only with envSecret
   imageCmd?: string[]; // the image's OWN .Config.Cmd (re-supplied to the wrapper) — only with envSecret
-  // FLEET-F: set when the app HAS env but the image is shell-less (plaintext fallback). If such a service was
+  // Set when the app HAS env but the image is shell-less (plaintext fallback). If such a service was
   // previously env-secret-WRAPPED, `docker service update` can't reset its entrypoint — so recreate instead.
   // Only meaningful when envSecret is null; keeps no-env/classic apps' scripts byte-identical to before.
   envFallbackNoShell?: boolean;
@@ -205,7 +205,7 @@ function commonServiceFlags(o: ServiceDeployOpts): string[] {
   return flags;
 }
 
-/** Full remove-then-add of a service's placement constraints/preferences on UPDATE (FLEET-D). Docker has no
+/** Full remove-then-add of a service's placement constraints/preferences on UPDATE. Docker has no
  *  "replace the whole list" flag — only --constraint-add/-rm — and a STALE constraint is a correctness bug
  *  (pinning to A then adding B leaves A AND B active, ANDing to permanently-unschedulable). So we inspect the
  *  LIVE service, remove EVERY current constraint/pref, then add the complete desired set — unconditionally,
@@ -406,13 +406,13 @@ export function buildServiceRestartScript(name: string, replicas: number, pollSe
 }
 
 /** Remove the service cluster-wide (Swarm tears down every task immediately) AND prune every version of its
- *  env secret (FLEET-F) — mirrors the swarm-proxy teardown's unconditional secret prune. */
+ *  env secret — mirrors the swarm-proxy teardown's unconditional secret prune. */
 export function buildServiceRemoveScript(name: string): string {
   const prefix = appEnvSecretPrefix(name);
   return `docker service rm ${shq(name)} 2>/dev/null || true; for s in $(docker secret ls --filter name=${shq(prefix)} --format '{{.Name}}' 2>/dev/null); do docker secret rm "$s" >/dev/null 2>&1 || true; done`;
 }
 
-/** Pull an image on the manager and read its OWN Entrypoint/Cmd + whether it has a shell (FLEET-F). Needed
+/** Pull an image on the manager and read its OWN Entrypoint/Cmd + whether it has a shell. Needed
  *  because overriding --entrypoint for the env-secret wrapper DISCARDS the image's baked-in CMD, so the wrapper
  *  must re-supply the real command; and a shell-less image can't run the wrapper at all (caller falls back). */
 export function buildInspectEntrypointScript(ref: string, auth?: RegistryAuth | null): string {

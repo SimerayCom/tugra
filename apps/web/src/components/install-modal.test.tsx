@@ -124,7 +124,7 @@ describe("InstallModal", () => {
     expect(screen.getByText("Environment overrides")).toBeTruthy();
   });
 
-  // ── CASA-UX-5: live install progress ──
+  // ── live install progress ──
 
   it("after install, shows the live progress and a ready state with an Open link when the app is RUNNING", async () => {
     vi.spyOn(api, "createFromTemplate").mockResolvedValue({ id: "app1", status: "RUNNING", url: "https://ghost.example.com" } as never);

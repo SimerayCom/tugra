@@ -21,7 +21,7 @@ export const SetServersSchema = z.object({
 });
 export type SetServersInput = z.infer<typeof SetServersSchema>;
 
-/** Form a Docker Swarm from the cluster's members (Phase 2): `managerServerId` becomes the swarm manager;
+/** Form a Docker Swarm from the cluster's members: `managerServerId` becomes the swarm manager;
  *  every other online member joins as a worker. `advertiseAddr` optionally overrides the manager's
  *  auto-picked IP (private LAN preferred) that workers dial on :2377 — validated as an IP literal. */
 export const FormSwarmSchema = z.object({
@@ -30,7 +30,7 @@ export const FormSwarmSchema = z.object({
 });
 export type FormSwarmInput = z.infer<typeof FormSwarmSchema>;
 
-/** Add ONE more already-a-member server to an already-ACTIVE swarm as a worker (Phase 2b). `advertiseAddr`
+/** Add ONE more already-a-member server to an already-ACTIVE swarm as a worker. `advertiseAddr`
  *  optionally overrides the manager's auto-picked dial IP (validated as an IP literal). */
 export const JoinNodeSchema = z.object({
   serverId: z.string().min(1),
@@ -38,7 +38,7 @@ export const JoinNodeSchema = z.object({
 });
 export type JoinNodeInput = z.infer<typeof JoinNodeSchema>;
 
-/** Add ONE more MANAGER to an already-formed swarm (FLEET-G): promote an existing worker or have a fresh
+/** Add ONE more MANAGER to an already-formed swarm: promote an existing worker or have a fresh
  *  member join directly as a manager. `acknowledgeEvenQuorum` bypasses the guardrail that refuses a promote
  *  which would leave an even total manager count (buys no extra Raft fault-tolerance, raises split-vote risk). */
 export const AddManagerSchema = z.object({
@@ -47,7 +47,7 @@ export const AddManagerSchema = z.object({
 });
 export type AddManagerInput = z.infer<typeof AddManagerSchema>;
 
-/** Set the swarm-ingress (Traefik) replica count for HA (FLEET-H). Capped at 3 to stay under Let's Encrypt's
+/** Set the swarm-ingress (Traefik) replica count for HA. Capped at 3 to stay under Let's Encrypt's
  *  duplicate-certificate rate limit (each replica keeps its own DNS-01 ACME store). 1 = today's single node. */
 export const SetIngressReplicasSchema = z.object({
   replicas: z.number().int().min(1).max(3),
@@ -73,7 +73,7 @@ export type IngressView = z.infer<typeof IngressViewSchema>;
 export const LABEL_KEY_RE = /^[a-z0-9]([a-z0-9_.-]{0,62})?$/i;
 export const LABEL_VALUE_RE = /^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$/;
 
-/** Add/remove docker node labels (FLEET-D). superRefine (not the 2-arg z.record form) keeps this robust across
+/** Add/remove docker node labels. superRefine (not the 2-arg z.record form) keeps this robust across
  *  zod versions; requires at least one of add/remove. */
 export const SetNodeLabelsSchema = z
   .object({

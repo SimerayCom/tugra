@@ -49,11 +49,11 @@ export interface AppSpec {
   reserveCpus?: number | null;
   /** docker `--gpus` value (e.g. "all", "1", "device=0,1"); requires the NVIDIA container runtime on the host. */
   gpus?: string | null;
-  /** Swarm service replica count (Phase 3, only meaningful when deployed to a cluster). null = classic single container. */
+  /** Swarm service replica count (only meaningful when deployed to a cluster). null = classic single container. */
   replicas?: number | null;
-  /** Swarm-only (FLEET-D): structured placement constraints (rendered to `--constraint` expressions). */
+  /** Swarm-only: structured placement constraints (rendered to `--constraint` expressions). */
   placementConstraints?: PlacementConstraint[] | null;
-  /** Swarm-only (FLEET-D): spread replicas across values of this node-label key (`--placement-pref spread=…`). */
+  /** Swarm-only: spread replicas across values of this node-label key (`--placement-pref spread=…`). */
   placementSpreadLabelKey?: string | null;
   volumes?: AppVolume[] | null;
   gitToken?: string | null;
@@ -94,7 +94,7 @@ export interface AppSpec {
   configMounts?: AppConfigMount[] | null;
 }
 
-/** A structured Swarm placement rule (FLEET-D). Never a raw docker expression from the client — the hub
+/** A structured Swarm placement rule. Never a raw docker expression from the client — the hub
  *  renders it to a `docker service --constraint` string via constraintExpr(). Values are charset-validated in
  *  the DTO layer; shq() at the shell boundary is the real injection defence. */
 export type PlacementConstraint =
@@ -361,7 +361,7 @@ export function traefikLabels(app: AppSpec): string[] {
   // health path — otherwise Traefik would round-robin live traffic onto a booting
   // container (502s) during the overlap. Set only by buildRollingDeployScript; a
   // hard-cutover deploy never carries it (no behaviour change for existing apps).
-  // Assumes the health path returns success; Slice 4 makes the path configurable.
+  // Assumes the health path returns success; the health path is currently fixed.
   if (app.rollingHealthPath) {
     labels.push(
       `traefik.http.services.${r}.loadbalancer.healthcheck.path=${app.rollingHealthPath}`,
@@ -872,7 +872,7 @@ export function buildProxySetupScript(
       ? { provider: opts.dnsProvider, creds: opts.dnsCreds }
       : null;
 
-  // How the proxy binds the host's :80/:443 (CASA-INSTALL-5), so Tugra can share a box that already runs
+  // How the proxy binds the host's :80/:443, so Tugra can share a box that already runs
   // something on those ports (e.g. CloudPanel's nginx):
   //  - "public" (default): publish on all interfaces — unchanged behavior.
   //  - "loopback": publish on 127.0.0.1 only — reachable through a front proxy on the box, not from outside.

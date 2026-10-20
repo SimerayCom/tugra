@@ -64,7 +64,7 @@ func main() {
 		StatePath:    filepath.Join(home, ".tugra", "agent.json"),
 		Capabilities: bootstrapCaps,
 		CapsBypass:   capsBypass,
-		// The agent's own image, re-invoked as the sandboxed fsd helper (CASA-FILES). Learned locally
+		// The agent's own image, re-invoked as the sandboxed fsd helper. Learned locally
 		// (install/compose sets it), never from the hub. Empty ⇒ file ops stay unavailable (fail-closed).
 		AgentImage: envOr("TUGRA_AGENT_IMAGE", ""),
 	}

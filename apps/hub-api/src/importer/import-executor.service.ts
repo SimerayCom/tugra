@@ -22,7 +22,7 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
  * progress survives the request and can be polled, cancelled, or rolled back. Two modes:
  *  - local-docker: in-place ADOPTION via {@link MigratorService.adopt} (re-inspects + renames under Tugra).
  *  - coolify: COPY-mode — each app is created fresh on a target server from its resolved spec + secrets.
- * Database/volume items are recorded SKIPPED (their data plane is a later slice). No secret VALUES are ever
+ * Database and volume items are recorded as skipped; only applications are imported. No secret VALUES are ever
  * stored on a task or returned.
  */
 @Injectable()
@@ -105,7 +105,7 @@ export class ImportExecutorService {
         const reason = dup
           ? "already imported onto this server in a previous run"
           : item.kind !== "app"
-            ? "databases and volumes are not copied yet — their data-plane move is a later slice"
+            ? "databases and volumes are not copied yet"
             : "blocked by a plan risk";
         const task = await this.prisma.bulkTask.create({
           data: {

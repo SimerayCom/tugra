@@ -36,7 +36,7 @@ describe("filterTemplates", () => {
     expect(filterTemplates(list, "grafana", "cms")).toHaveLength(0);
   });
 
-  it("matches the curated tagline and tags (CASA-UX-3)", () => {
+  it("matches the curated tagline and tags", () => {
     const tagged: Template[] = [
       { slug: "immich", name: "Immich", category: "media", description: "", tagline: "Google Photos alternative", tags: ["photos", "backup", "gallery"] },
       { slug: "ghost", name: "Ghost", category: "cms", description: "Publishing platform" },

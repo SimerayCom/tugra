@@ -143,8 +143,8 @@ function safeMessage(e: unknown): string {
 }
 
 /**
- * Docker Swarm formation (Cluster Phase 2). Turns a Phase 1 server group into a swarm: init one manager, join
- * the rest as workers. Deploy is untouched by this slice. Security-critical bits:
+ * Docker Swarm formation. Turns a server group into a swarm: init one manager, join
+ * the rest as workers. Security-critical bits:
  *  - the worker join-token is fetched live from the manager, used immediately, rotated after joins, and
  *    NEVER logged / persisted / passed to audit — only sanitized `swarmError`/`swarmLastError` are stored.
  *  - `managerServerId` is validated to be a member of THIS cluster (sendCommand does no tenancy check).
@@ -274,7 +274,7 @@ export class SwarmService {
     const managers = members.filter((m) => m.swarmRole === "MANAGER");
     // Dispatch the live `docker node inspect` (a cluster-wide Raft read any manager can answer) to the primary
     // if it's online, else to ANY other online manager — so a dead primary no longer blacks out live status
-    // (FLEET-G). Single-manager clusters resolve to exactly the same node as before, so behavior is unchanged.
+    // Single-manager clusters resolve to exactly the same node as before, so behavior is unchanged.
     const primary = members.find((m) => m.id === base.managerServerId);
     const dispatcher = primary && primary.status === "ONLINE" ? primary : managers.find((m) => m.status === "ONLINE");
     if (!dispatcher) {
@@ -316,13 +316,13 @@ export class SwarmService {
     return this.statusInternal(id);
   }
 
-  /** Read the resolved swarm-ingress pool (FLEET-H) — how many replicas + which nodes/IPs to point DNS at. */
+  /** Read the resolved swarm-ingress pool — how many replicas + which nodes/IPs to point DNS at. */
   async getIngress(userId: string, id: string) {
     await this.requireRead(userId, id);
     return this.swarmProxy.ingressInfo(id);
   }
 
-  /** Set the desired swarm-ingress replica count (FLEET-H). Clamped 1-3 here too (defence-in-depth beyond the
+  /** Set the desired swarm-ingress replica count. Clamped 1-3 here too (defence-in-depth beyond the
    *  DTO) so the invariant holds for any caller. On a live swarm the change is applied ATOMICALLY: persist the
    *  new value, reconcile via ensure(), and if ensure() fails (e.g. the DNS-01-required refusal, or a node that
    *  won't converge) REVERT the persisted value and rethrow — so the API never reports a "success" pool the
@@ -347,7 +347,7 @@ export class SwarmService {
     return this.swarmProxy.ingressInfo(id);
   }
 
-  /** Add ONE more node to an ALREADY-ACTIVE swarm (Phase 2b) — joins a single, already-a-cluster-member,
+  /** Add ONE more node to an ALREADY-ACTIVE swarm — joins a single, already-a-cluster-member,
    *  not-yet-joined server without dissolving/reforming the rest. Idempotent (an already-joined target is a
    *  no-op) and CAS-safe: ACTIVE→JOINING sits outside both form()'s and dissolve()'s accepted source sets, so
    *  a concurrent form/dissolve/join-node 409s instead of racing a manager command against this. */
@@ -412,11 +412,11 @@ export class SwarmService {
   }
 
   /** Remove ONE node from a live swarm (drain → leave → rm) WITHOUT dissolving the rest of the cluster. Only a
-   *  WORKER can be removed here — a MANAGER must be demoted to a worker first (FLEET-G's Demote / removeManager),
+   *  WORKER can be removed here — a MANAGER must be demoted to a worker first (the Demote / removeManager),
    *  which keeps the Raft quorum honest and protects the ingress-pinned primary, then removed. The node's cluster
    *  membership is cleared too (this IS "Remove from cluster", not just "leave the swarm").
    *  swarmStatus is reused as a transitional busy-marker (CAS to "FORMING", restored to the prior ACTIVE/
-   *  DEGRADED value on both success and failure) to avoid a migration for this slice; swarmLastError carries
+   *  DEGRADED value on both success and failure) to avoid a schema migration; swarmLastError carries
    *  the advisory replica-risk warning (already doubles as a "last note", as dissolve()'s abandon note does). */
   async leaveNode(userId: string, id: string, serverId: string): Promise<SwarmView> {
     const cluster = await this.requireWrite(userId, id);
@@ -428,7 +428,7 @@ export class SwarmService {
     if (!node) throw new NotFoundException("server not found in this cluster");
     if (!node.swarmRole) throw new BadRequestException("this server has not joined the cluster's swarm");
     if (node.swarmRole === "MANAGER") {
-      // A manager can't be drained+removed directly — demote it to a worker first (FLEET-G's Demote action), then
+      // A manager can't be drained+removed directly — demote it to a worker first (the Demote action), then
       // remove it here; or dissolve the swarm. Demoting keeps the Raft quorum honest and can't strand the ingress
       // pin (removeManager refuses the primary), which a blind drain+rm here would risk.
       throw new ConflictException(
@@ -446,7 +446,7 @@ export class SwarmService {
     try {
       const warning = await this.replicaRiskWarning(id, node);
       // The node's live docker hostname (captured before removal) so we can also strip apps pinned to it BY
-      // hostname — not just by swarm node id — and never leave one permanently unschedulable (FLEET-D).
+      // hostname — not just by swarm node id — and never leave one permanently unschedulable.
       const departingHostname = (await this.statusInternal(id).catch(() => null))?.live?.find((n) => n.id === node.swarmNodeId)?.hostname ?? null;
       const drain = await this.run(manager.id, buildNodeDrainScript(node.swarmNodeId), NODE_DRAIN_TIMEOUT_SEC * 1000 + 10_000);
       const drainNote = drain.exitCode === 2 ? "some tasks did not vacate within the drain window — they may be left Pending" : null;
@@ -492,7 +492,7 @@ export class SwarmService {
     }
   }
 
-  /** Add ONE more MANAGER to an already-formed swarm (FLEET-G, multi-manager Raft HA) — either by PROMOTING an
+  /** Add ONE more MANAGER to an already-formed swarm (multi-manager Raft HA) — either by PROMOTING an
    *  existing worker member (`docker node promote`) or by having a fresh, not-yet-joined member JOIN directly as
    *  a manager (manager join-token + `swarm join`). Grows the Raft quorum without dissolving/reforming; form()
    *  stays the only path that creates the FIRST manager. Idempotent (an already-MANAGER target is a no-op).
@@ -573,7 +573,7 @@ export class SwarmService {
     return this.view(id);
   }
 
-  /** Remove a MANAGER from the swarm (FLEET-G) — DEMOTE it back to a worker (`docker node demote`), shrinking
+  /** Remove a MANAGER from the swarm — DEMOTE it back to a worker (`docker node demote`), shrinking
    *  the Raft quorum. Refuses to demote the PRIMARY manager (cluster.swarmManagerId — it hosts the swarm-mode
    *  ingress, pinned by node label; moving that pin is out of scope, see swarm-proxy-script.ts) or the only
    *  remaining manager. Idempotent (a non-MANAGER target is a no-op). Same no-cluster-wide-CAS rationale as
@@ -640,7 +640,7 @@ export class SwarmService {
     }
   }
 
-  /** Remove any app placement constraint (FLEET-D) that pinned to a node just removed from the cluster — by
+  /** Remove any app placement constraint that pinned to a node just removed from the cluster — by
    *  swarm node id (nodeId rules) or its live docker hostname (hostname rules) — so a decommissioned node can
    *  never leave an app permanently unschedulable. Best-effort per app; never throws. */
   private async stripPlacementNamingNode(clusterId: string, swarmNodeId: string, hostname: string | null): Promise<void> {
@@ -681,7 +681,7 @@ export class SwarmService {
 
     // Dissolving destroys the swarm's Raft store → every `docker service` on it vanishes cluster-wide, but
     // the Application rows would still point here (and still read RUNNING). Refuse until those apps are
-    // removed or moved back to a single server (Phase 3 apps set Application.clusterId to this cluster).
+    // removed or moved back to a single server (swarm apps set Application.clusterId to this cluster).
     const appCount = await this.prisma.application.count({ where: { clusterId: id } });
     if (appCount > 0) {
       throw new ConflictException(`remove or reassign the ${appCount} app(s) deployed to this cluster's swarm before dissolving`);

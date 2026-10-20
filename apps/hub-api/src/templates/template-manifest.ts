@@ -3,9 +3,9 @@ import { BadRequestException } from "@nestjs/common";
 import type { SecretKind, SecretSpec, TemplateDef, TemplateMeta } from "./catalog";
 
 // A rich, install-time template model. Today's `TemplateDef` bakes host ports and localhost URLs at
-// import time and offers no install configuration; the manifest is the shape that later App Store
-// slices resolve at INSTALL time (typed user form, dynamic ports, real URLs, config mounts, signed
-// remote catalog). This slice only adds the type model + a backward-compatible mapper — behaviour is
+// import time and offers no install configuration; the manifest is the shape that the App Store
+// resolves at INSTALL time (typed user form, dynamic ports, real URLs, config mounts, signed
+// remote catalog). It only adds the type model + a backward-compatible mapper — behaviour is
 // unchanged, `createFromTemplate` still uses the old baked-compose path.
 
 /** The kind of input a template field accepts (drives the web form widget + validation). */
@@ -24,7 +24,7 @@ export type FieldType =
 
 /** A user-facing, typed install field. A field with `generate` set is auto-filled server-side when
  *  the user leaves it blank, so it is never `required`. `secret: true` means the resolved value is
- *  never pre-filled back to the client (enforced by the manifest endpoint in a later slice). */
+ *  never pre-filled back to the client. */
 export interface FormField {
   key: string; // .env / variable key
   type: FieldType;
@@ -36,14 +36,14 @@ export interface FormField {
   max?: number;
   regex?: string;
   options?: { value: string; label: string }[];
-  /** Resolver token grammar (parsed by the install-time resolver in a later slice), e.g.
+  /** Resolver token grammar (parsed by the install-time resolver), e.g.
    *  "password:32" | "base64:32" | "hex:64" | "passwordSymbols:24" | "uuid" | "jwt". */
   generate?: string;
   secret?: boolean;
 }
 
 /** A container port a service wants reachable — either via a domain (proxy) or a published host port.
- *  Populated from the compose file by the importer in a later slice; here only `web` maps to it. */
+ *  Populated from the compose file by the importer; here only `web` maps to it. */
 export interface ExposePort {
   serviceName: string;
   containerPort: number;
@@ -51,7 +51,7 @@ export interface ExposePort {
   public?: boolean;
 }
 
-/** A config file bind-mounted into a service (my.cnf, redis.conf, seed…). Wired by later slices. */
+/** A config file bind-mounted into a service (my.cnf, redis.conf, seed…). */
 export interface ConfigMount {
   serviceName: string;
   target: string; // absolute container path
@@ -79,7 +79,7 @@ function humanizeKey(key: string): string {
 }
 
 /** The resolver token that regenerates a secret of the given kind/length. Shared grammar with the
- *  install-time resolver (later slice) — emitted here, parsed there. */
+ *  install-time resolver - emitted here, parsed there. */
 function generateToken(kind: SecretKind, len: number): string {
   switch (kind) {
     case "hex":

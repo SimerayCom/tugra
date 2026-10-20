@@ -20,7 +20,7 @@ export interface ResolveCtx {
   publicIpv6?: string | null;
   wildcardDomain?: string | null;
   magicSuffix?: string | null; // resolved by the caller (server.magicSuffix ?? env ?? "sslip.io")
-  allocatedPorts?: Record<string, number>; // "service:containerPort" → host port (later slice fills this)
+  allocatedPorts?: Record<string, number>; // "service:containerPort" → host port (not populated yet)
   userFields?: Record<string, string>; // user-supplied overrides for fields
 }
 
@@ -74,7 +74,7 @@ function generateValue(
           publicIpv6: ctx.publicIpv6,
           wildcardDomain: ctx.wildcardDomain,
           suffix: ctx.magicSuffix,
-        }) ?? "" // no public IP → no domain (SSRF-safe); a later slice supplies real ctx
+        }) ?? "" // no public IP → no domain (SSRF-safe); real context is not supplied yet
       );
     case "jwt":
       return signJwt({}, randomBytes(32).toString("hex")); // fresh, discarded secret → opaque token

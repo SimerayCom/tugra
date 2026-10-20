@@ -240,7 +240,7 @@ function InstanceBasicsStep({ t, onNext, onSkip }: { t: Tr; onNext: () => void; 
 }
 
 function AddServerStep({ t, serverId, onServer, onNext, onSkip }: { t: Tr; serverId: string | null; onServer: (id: string) => void; onNext: (srv?: string) => void; onSkip: () => void }) {
-  // Turnkey single-box: the local box is already auto-provisioned as "This machine" (CASA-INSTALL-2), so
+  // Turnkey single-box: the local box is already auto-provisioned as "This machine", so
   // skip the manual add form entirely and show it connecting.
   const { data: servers = [], isPending } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   // Wait for the list before deciding — otherwise the manual add form flashes (and could be submitted) on a

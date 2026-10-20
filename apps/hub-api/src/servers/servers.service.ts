@@ -43,7 +43,7 @@ const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk",
 // "swarm" (Docker Swarm formation) is opt-in like "terminal": granted explicitly per server, NEVER in
 // DEFAULT_CAPABILITIES and never backfilled — joining a swarm changes a box's trust topology (it accepts
 // raft/gossip that can affect other nodes), a bigger step than deploying one app on it.
-// "files" (read/list an app volume via the sandboxed fsd helper, CASA-FILES) is likewise opt-in and
+// "files" (read/list an app volume via the sandboxed fsd helper) is likewise opt-in and
 // default-OFF: it exposes application data, so an operator must grant it explicitly per server.
 // The full grantable set is the shared AGENT_CAPABILITIES source of truth (same list the grant-API schema
 // validates against — they can't drift). DEFAULT_CAPABILITIES above is the least-privilege subset.
@@ -400,7 +400,7 @@ export class ServersService {
           ? this.crypto.encrypt(JSON.stringify(cfg.dnsCreds))
           : null;
     }
-    // Proxy bind mode (CASA-INSTALL-5) — persisted here; applied when the proxy is (re)started.
+    // Proxy bind mode — persisted here; applied when the proxy is (re)started.
     if (cfg.proxyBind !== undefined) data.proxyBind = cfg.proxyBind;
 
     await this.prisma.server.update({ where: { id }, data });

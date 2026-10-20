@@ -14,7 +14,7 @@ import { MailDnsController } from "./mail-dns.controller";
  * CloudflareApiClient is a stateless client provided here directly (TunnelModule does not export it);
  * PrismaService, TeamAccessService and AuditService come from @Global modules; CryptoModule supplies token
  * encryption; ClustersModule supplies SwarmProxyService for resolving a cluster app's ingress IPs.
- * DnsAutomationService, MailDnsService + DnsCredentialsService are exported for the REST/MCP slices that drive them.
+ * DnsAutomationService, MailDnsService + DnsCredentialsService are exported for the REST/MCP layers that drive them.
  */
 @Module({
   imports: [CryptoModule, ClustersModule],

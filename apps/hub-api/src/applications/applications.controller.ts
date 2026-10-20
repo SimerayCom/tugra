@@ -179,7 +179,7 @@ export class ApplicationsController {
     return this.apps.appLogs(user.userId, id, tail ? Number(tail) : undefined);
   }
 
-  /** List files in one of the app's declared volumes (CASA-FILES, read-only metadata). */
+  /** List files in one of the app's declared volumes (read-only metadata). */
   @Get(":id/files")
   @RequireScopes("read:secrets") // file listings may expose sensitive application data
   listFiles(

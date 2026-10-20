@@ -86,7 +86,7 @@ describe("swarm-proxy-script builders", () => {
     expect(s).toContain("--certificatesresolvers.le-dns.acme.dnschallenge.provider='y'\\''; bad'");
   });
 
-  it("ensure: multi-node pool labels EVERY node, sets --replicas N, keeps the label constraint (FLEET-H)", () => {
+  it("ensure: multi-node pool labels EVERY node, sets --replicas N, keeps the label constraint", () => {
     const s = ensure({ nodeIds: ["node_a", "node_b", "node_c"], replicas: 3 });
     expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_a'");
     expect(s).toContain("docker node update --label-add tugra.proxy=true 'node_b'");
@@ -104,7 +104,7 @@ describe("swarm-proxy-script builders", () => {
     expect(s).not.toContain("--label-add");
   });
 
-  it("ensure: strips the tugra.proxy label from nodes that left the pool (scale-down cleanup, FLEET-H)", () => {
+  it("ensure: strips the tugra.proxy label from nodes that left the pool (scale-down cleanup)", () => {
     const s = ensure({ nodeIds: ["node_a"], replicas: 1, unlabelNodeIds: ["node_b", "node_c"] });
     expect(s).toContain("docker node update --label-rm tugra.proxy 'node_b' >/dev/null 2>&1 || true");
     expect(s).toContain("docker node update --label-rm tugra.proxy 'node_c' >/dev/null 2>&1 || true");

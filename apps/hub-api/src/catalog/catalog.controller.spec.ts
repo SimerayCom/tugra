@@ -22,7 +22,7 @@ function realCatalog(): TemplateCatalogService {
 const GUARDS = "__guards__";
 const guards = (c: unknown) => (Reflect.getMetadata(GUARDS, c as object) ?? []) as unknown[];
 
-describe("API-9 — CatalogController (public app-store API)", () => {
+describe("CatalogController (public app-store API)", () => {
   it("is reachable by a PAT (ApiAuthGuard + ScopesGuard), not session-only", () => {
     const g = guards(CatalogController);
     expect(g).toContain(ApiAuthGuard);
@@ -36,7 +36,7 @@ describe("API-9 — CatalogController (public app-store API)", () => {
 
   // The deploy 201 is an AppView, which carries a decrypted `webhookSecret` for deploy-permitted callers.
   // Without this interceptor a `deploy`-scoped PAT lacking `read:secrets` would read it (the sibling
-  // apps controller redacts it at the class level — this must match). Regression guard for API-9 review.
+  // apps controller redacts it at the class level — this must match). Regression guard.
   it("redacts `webhookSecret` for scope-limited PATs (matches ApplicationsController)", () => {
     const interceptors = (Reflect.getMetadata("__interceptors__", CatalogController) ?? []) as unknown[];
     const redactor = interceptors.find((i) => i instanceof RedactSecretsInterceptor);

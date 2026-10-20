@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-      - run: go install github.com/oasdiff/oasdiff@latest # TODO pin to a tagged release once reachable
+      - run: go install github.com/oasdiff/oasdiff@latest
       - run: echo "$HOME/go/bin" >> "$GITHUB_PATH"
       # base_ref goes through env (not interpolated into the script) to avoid run-step expression injection.
       - run: git fetch origin "$BASE" --depth=1

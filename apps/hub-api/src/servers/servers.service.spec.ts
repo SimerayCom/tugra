@@ -549,7 +549,7 @@ describe("ServersService.setNetwork", () => {
     expect(regenerateMagicForServer).toHaveBeenCalledWith("s1");
   });
 
-  it("persists the proxy bind mode (CASA-INSTALL-5)", async () => {
+  it("persists the proxy bind mode", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },

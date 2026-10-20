@@ -20,7 +20,7 @@ enum ServerStatus {
   OFFLINE
 }
 
-// Docker Swarm formation state of a Cluster (Phase 2). NONE = plain group (Phase 1). FORMING = a form/dissolve
+// Docker Swarm formation state of a Cluster. NONE = plain group. FORMING = a form/dissolve
 // op is in flight (concurrency guard via CAS). ACTIVE = manager + every intended worker joined. DEGRADED =
 // a real, working swarm short of its desired membership (re-run Form to reconcile). DISSOLVING = teardown.
 enum SwarmStatus {
@@ -59,8 +59,8 @@ model User {
   updatedAt     DateTime                @updatedAt
 }
 
-// Purpose of an emailed single-use token. EMAIL_VERIFY is reserved for the email-verification
-// slice — this table is shared so that slice needs no new migration.
+// Purpose of an emailed single-use token. EMAIL_VERIFY is reserved for email verification;
+// this table is shared so no new migration is needed.
 enum VerificationPurpose {
   PASSWORD_RESET
   EMAIL_VERIFY
@@ -245,7 +245,7 @@ model Membership {
 model Server {
   id                   String       @id @default(cuid())
   name                 String
-  // "Sunucu Tuğrası" — the server's unique signed identity (set at enrollment).
+  // The server seal ("Tugra"): the server's unique signed identity, set at enrollment.
   seal                 String?      @unique
   status               ServerStatus @default(PENDING)
   enrollToken          String       @unique
@@ -282,9 +282,9 @@ model Server {
   // cluster frees its servers rather than removing them. A server belongs to at most one cluster.
   cluster              Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId            String?
-  // Docker Swarm formation (Phase 2). Role in the cluster's swarm (null = not joined); the docker node id
+  // Docker Swarm formation. Role in the cluster's swarm (null = not joined); the docker node id
   // (for promote/demote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
-  // FLEET-G: multiple MANAGER rows per cluster are now expected (multi-manager Raft HA) — the manager SET is
+  // multiple MANAGER rows per cluster are now expected (multi-manager Raft HA) — the manager SET is
   // derived live from every swarmRole=MANAGER row, NOT just Cluster.swarmManagerId (which is only the PRIMARY).
   swarmRole            SwarmRole?
   swarmNodeId          String?
@@ -295,10 +295,10 @@ model Server {
   // to all-except-terminal (least privilege — the interactive shell is opt-in).
   capabilities         String[]     @default([])
   // True for the box the hub itself runs on, auto-provisioned at first-owner registration on a turnkey
-  // single-box install (CASA-INSTALL-2) so the user never pastes an agent command. Drives home-mode
-  // reachability heuristics (CASA-INSTALL-6). Manually-enrolled servers are false.
+  // single-box install so the user never pastes an agent command. Drives home-mode
+  // reachability heuristics. Manually-enrolled servers are false.
   isLocal              Boolean      @default(false)
-  // How the server's reverse proxy publishes :80/:443 (CASA-INSTALL-5): "public" (default, all interfaces)
+  // How the server's reverse proxy publishes :80/:443: "public" (default, all interfaces)
   // | "loopback" (127.0.0.1 only, behind a front proxy) | "none" (no host port — tunnel-only, coexists with
   // another web server on the box). Applied when the proxy is (re)started.
   proxyBind            String       @default("public")
@@ -330,17 +330,16 @@ model Cluster {
   name        String
   description String?
   servers     Server[]
-  applications Application[] // apps deployed as swarm services onto this cluster (Phase 3)
-  // Docker Swarm formation (Phase 2). swarmManagerId is a loose FK to the PRIMARY manager Server.id — the node
-  // the swarm-mode ingress is pinned to (by node label) and the default/fast-path dispatch target. FLEET-G:
-  // the FULL manager set is every Server with swarmRole=MANAGER for this cluster, not necessarily just this one
+  applications Application[] // apps deployed as swarm services onto this cluster
+  // Docker Swarm formation. swarmManagerId is a loose FK to the PRIMARY manager Server.id — the node
+  // the swarm-mode ingress is pinned to (by node label) and the default/fast-path dispatch target. // the FULL manager set is every Server with swarmRole=MANAGER for this cluster, not necessarily just this one
   // row (multi-manager Raft HA); this FK is NOT renamed, for API back-compat (SwarmView.managerServerId keeps
   // its meaning). Resolved in service code (matching Application.serverId convention — no @relation to avoid a
   // second Server↔Cluster relation). swarmLastError is a sanitized last error — NEVER raw command output/tokens.
   swarmStatus    SwarmStatus @default(NONE)
   swarmManagerId String?
   swarmLastError String?
-  // FLEET-H: desired swarm-ingress (Traefik) replica count for HA. 1 = today's single-node routing (default,
+  // desired swarm-ingress (Traefik) replica count for HA. 1 = today's single-node routing (default,
   // zero behavior change). 2-3 = routing-mesh multi-replica ingress; requires DNS-01 (le-dns) on the manager
   // and is capped at 3 to stay under Let's Encrypt's duplicate-certificate rate limit. The actual pool is
   // re-derived live on every ensure() (manager first, then online joined members), never snapshotted.
@@ -408,7 +407,7 @@ model Metric {
 
 // Per-container resource usage from the agent's `docker stats`. containerName is the STABLE key
 // (containerId changes on restart); net/block are rates (B/s) the agent derives from cumulative
-// deltas. Unbounded until the retention slice adds a prune scheduler (@@index([ts]) is for that).
+// deltas. Unbounded until a retention prune scheduler is added (@@index([ts]) is for that).
 model ContainerMetric {
   id            String   @id @default(cuid())
   server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
@@ -814,15 +813,15 @@ model Application {
   environmentId  String
   serverId       String
   buildServerId  String?      // optional separate build server (build+push there, pull+run on serverId)
-  // Swarm service deploy (Phase 3): when clusterId is set the app deploys as a `docker service --replicas N`
+  // Swarm service deploy: when clusterId is set the app deploys as a `docker service --replicas N`
   // onto this cluster's swarm (commands target cluster.swarmManagerId, re-resolved fresh — never snapshotted).
   // serverId stays required as the ingress/monitoring anchor. SetNull: deleting the cluster falls the app
   // back to classic single-server deploy rather than deleting it.
   cluster        Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId      String?
   replicas       Int?         // swarm service replica count (null = classic single-server deploy)
-  placement      Json?        // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client (FLEET-D)
-  constraintServerId String?   // FLEET-E: system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
+  placement      Json?        // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client
+  constraintServerId String?   // system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
   source         AppSource    @default(IMAGE)
@@ -901,7 +900,7 @@ model Application {
 
 /**
  * A custom domain that Tugra set up DNS for on an app (one-click Cloudflare auto-setup). Tracks which provider
- * credential + zone were used and which records were written, so the UI can show status and a later slice can
+ * credential + zone were used and which records were written, so the UI can show status and a later change can
  * clean the records up when the domain changes or the app is deleted. `recordIds` is a JSON array of
  * { type, name, recordId }. `mode` is "auto" (Tugra created the records) or "manual" (operator copied them).
  */
@@ -1073,7 +1072,7 @@ model CatalogSnapshot {
 }
 
 // Instance-level settings (single row, fixed PK) — the source of truth for onboarding state,
-// registration gating, edition, self-update and API gating. Consumed by later slices; created on
+// registration gating, edition, self-update and API gating. Consumed by later features; created on
 // first access via InstanceSettingsService (get-or-create).
 model InstanceSettings {
   id                  String    @id @default("singleton")

@@ -14,16 +14,13 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/SimerayCom/tugra/ci.yml?branch=main&label=CI)](https://github.com/SimerayCom/tugra/actions/workflows/ci.yml)
 [![Image: ghcr.io](https://img.shields.io/badge/image-ghcr.io%2Fsimeraycom%2Ftugra--hub-blue?logo=docker&logoColor=white)](#quick-start)
 
-<!-- TODO: docs/assets/deploy.gif — record a real deploy (connect a server → deploy an app) and embed it here -->
-<!-- TODO: docs/assets/screenshot-dashboard.png — add a real dashboard screenshot, linked here -->
-
 [Website](https://tugra.io) · [Docs](docs/README.md) · [Releasing](docs/RELEASING.md) · [Roadmap](#roadmap)
 
 </div>
 
 ---
 
-> **Status:** Beta. Under active development and dogfooded on real servers — expect rough edges and the occasional breaking change. Stars, issues and feedback are very welcome.
+> **Status:** Beta. Under active development; APIs may change between minor releases. Stars, issues and feedback are very welcome.
 
 ## Agent-native by default
 
@@ -60,7 +57,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 
 ## How Tugra compares
 
-A concise comparison with other self-hostable PaaS tools (competitor data checked 2026-09; a `—` means we couldn't confirm it, not that the feature is absent). Spotted an error? [Open an issue](https://github.com/SimerayCom/tugra/issues).
+A concise comparison with other self-hostable PaaS tools (competitor data checked 2026-09; a `—` means no documented built-in equivalent as of 2026-09). Spotted an error? [Open an issue](https://github.com/SimerayCom/tugra/issues).
 
 | | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
 |---|---|---|---|---|---|
@@ -70,7 +67,7 @@ A concise comparison with other self-hostable PaaS tools (competitor data checke
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
 
-<sub>¹ Coolify v4 manages servers individually; its Docker Swarm mode is deprecated for new teams. ² A third-party, early-stage project, not an official Dokku release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
+<sub>¹ Coolify v4 manages servers individually. ² A third-party, early-stage project, not an official Dokku release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
 
 ## Quick start
 
@@ -120,7 +117,7 @@ curl -s http://<web-url>/api/v1/mcp \
 
 Everything in [Why Tugra](#why-tugra) above is **free and open-source forever**, under AGPL-3.0, self-hosted on your own servers — no artificial cap, no feature flag waiting to be flipped on for money. The Community edition in this repository is the real product, not a crippled demo.
 
-A Pro/Cloud tier (SSO, audit-log export, whitelabel, a managed control plane) is designed into the codebase as a cryptographically-signed license gate — but it is available under a separate commercial license. Need something Community can't do, or can't comply with AGPL-3.0 for a proprietary/SaaS build on top of Tugra? A commercial license is available — contact **license@tugra.io**.
+Pro and Cloud editions (SSO, audit-log export, whitelabel, managed control plane) are offered under a separate commercial license. For a non-AGPL license or something Community can't do, contact **license@tugra.io**.
 
 ## Architecture
 

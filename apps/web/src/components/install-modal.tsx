@@ -110,7 +110,7 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
     onSuccess: async (app) => {
       await qc.invalidateQueries({ queryKey: ["apps"], exact: true });
       // Keep the modal open and switch to a live progress view instead of a toast + redirect, so the user
-      // watches the app come up and gets a one-tap Open when it's ready (CASA-UX-5).
+      // watches the app come up and gets a one-tap Open when it's ready.
       setCreated(app);
     },
   });
@@ -225,7 +225,7 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
 }
 
 /**
- * Live install-progress view (CASA-UX-5): polls the just-created app until it is running or failed, turning a
+ * Live install-progress view: polls the just-created app until it is running or failed, turning a
  * one-click install into a "installing → ready, Open" moment. On failure it shows a short log tail and a Retry.
  */
 // An <a> styled like a primary Btn — a real link (keyboard/middle-click/new-tab all work) without nesting a
