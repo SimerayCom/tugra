@@ -3,14 +3,19 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
+  type MessageEvent,
   Param,
   Post,
   Put,
   Query,
+  Sse,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { Observable } from "rxjs";
+import { map } from "rxjs/operators";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -24,6 +29,7 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { DatabasesService, DatabaseViewSchema } from "./databases.service";
+import { DatabaseLogStreamGuard } from "./log-stream.guard";
 import {
   CreateDatabaseInput,
   CreateDatabaseSchema,
@@ -95,6 +101,47 @@ export class DatabasesController {
   async stop(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.databases.stop(user.userId, id);
     return { ok: true };
+  }
+
+  /**
+   * Live database-log follow (SSE). Writer-only; logs may contain credentials. The guard authorizes
+   * BEFORE @Sse commits a 200 stream so a rejection surfaces as a real HTTP status (403/503).
+   */
+  @Sse(":id/logs/stream")
+  @RequireScopes("read:secrets") // live database logs may contain secrets
+  @UseGuards(DatabaseLogStreamGuard)
+  async streamLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("tail") tail?: string,
+    @Query("follow") follow?: string,
+    @Query("since") since?: string,
+    @Query("search") search?: string,
+  ): Promise<Observable<MessageEvent>> {
+    const stream = await this.databases.streamLogs(user.userId, id, {
+      tail: tail ? Number(tail) : undefined,
+      follow: follow !== "0",
+      since,
+      search,
+    });
+    return stream.pipe(map((event) => ({ data: JSON.stringify(event) }) as MessageEvent));
+  }
+
+  /** One-shot log export (writer-only) — returns the collected logs as a downloadable text file. */
+  @Get(":id/logs/download")
+  @RequireScopes("read:secrets") // exported logs may contain secrets
+  @Header("Content-Type", "text/plain; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="database.log"')
+  downloadLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("tail") tail?: string,
+    @Query("since") since?: string,
+  ): Promise<string> {
+    return this.databases.downloadLogs(user.userId, id, {
+      tail: tail ? Number(tail) : undefined,
+      since,
+    });
   }
 
   @Put(":id/environment")

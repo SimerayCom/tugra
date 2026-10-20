@@ -46,12 +46,14 @@ function make(
   teamDefaults: { resolveDefaultEnvironmentId: jest.Mock } = {
     resolveDefaultEnvironmentId: jest.fn().mockResolvedValue("env-default"),
   },
+  logStream: { stream: jest.Mock } = { stream: jest.fn() },
 ) {
   return new DatabasesService(
     prisma as PrismaService,
     accessWith(access),
     audit,
     agentWs as AgentWsServer,
+    logStream as unknown as import("../agent-gateway/log-stream.service").LogStreamService,
     crypto,
     teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
   );
@@ -286,6 +288,60 @@ describe("DatabasesService", () => {
     expect(view.status).toBe("RUNNING");
     // owner (write) sees the connection details
     expect(view.connectionUri).toContain("postgresql://tugra:pw@tugra_db_db1:5432/main");
+  });
+
+  it("streamLogs follows this db's own container (writer-only) and audits", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(true) } as unknown as AgentWsServer;
+    const observable = { pipe: jest.fn() } as never;
+    const logStream = { stream: jest.fn().mockReturnValue(observable) };
+    (audit.log as jest.Mock).mockClear();
+
+    const result = await make(prisma, access, agentWs, undefined, logStream).streamLogs("u1", "db1", { tail: 50 });
+
+    // Target is server-derived (tugra_db_<id>) — never from the client, so nothing to inject.
+    expect(logStream.stream).toHaveBeenCalledWith("s1", "tugra_db_db1", expect.objectContaining({ follow: true }));
+    expect(result).toBe(observable);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.logs.stream", target: "db1" }));
+  });
+
+  it("streamLogs rejects when the agent is offline (no stream started)", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(false) } as unknown as AgentWsServer;
+    const logStream = { stream: jest.fn() };
+
+    await expect(make(prisma, access, agentWs, undefined, logStream).streamLogs("u1", "db1", {})).rejects.toThrow();
+    expect(logStream.stream).not.toHaveBeenCalled();
+  });
+
+  it("streamLogs rejects a non-writer (databases permission required)", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(true) } as unknown as AgentWsServer;
+    const logStream = { stream: jest.fn() };
+
+    await expect(
+      make(prisma, access, agentWs, undefined, logStream).streamLogs("u1", "db1", {}),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(logStream.stream).not.toHaveBeenCalled();
+  });
+
+  it("downloadLogs runs docker logs against this db's container and audits", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "log-text" }),
+    } as unknown as AgentWsServer;
+    (audit.log as jest.Mock).mockClear();
+
+    const out = await make(prisma, access, agentWs).downloadLogs("u1", "db1", { tail: 100 });
+
+    expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("tugra_db_db1"), "database", expect.any(Number));
+    expect(out).toBe("log-text");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.logs.download", target: "db1" }));
   });
 
   it("normalizes and stores tags on setTags", async () => {

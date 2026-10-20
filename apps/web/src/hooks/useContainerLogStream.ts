@@ -25,13 +25,15 @@ export interface ContainerLogState {
 const EMPTY: ContainerLogState = { lines: [], connected: false, ended: false };
 
 /**
- * Subscribe to an app's live container-log SSE stream (`docker logs --follow` relayed by the agent).
+ * Subscribe to a live container-log SSE stream (`docker logs --follow` relayed by the agent).
+ * `basePath` is the resource whose `/logs/stream` endpoint to read — `/apps/:id`, `/databases/:id`
+ * or `/servers/:id/containers` — so the same viewer serves apps, databases and server containers.
  * Only connects while `active`. In follow mode the stream is treated as infinite: a drop (proxy
  * recycle, token refresh, max-duration cap, container restart) reconnects with backoff. A one-shot
  * (follow=false) request stops once the log process exits. Aborts on unmount / dependency change.
  */
 export function useContainerLogStream(
-  appId: string,
+  basePath: string,
   opts: { container?: string; follow: boolean; active: boolean; since?: string; search?: string; tail?: number },
 ): ContainerLogState {
   const { container, follow, active, since, search, tail } = opts;
@@ -56,7 +58,7 @@ export function useContainerLogStream(
       if (since) params.set("since", since);
       if (search) params.set("search", search);
       if (tail) params.set("tail", String(tail));
-      const url = `${API_BASE}/apps/${appId}/logs/stream?${params.toString()}`;
+      const url = `${API_BASE}${basePath}/logs/stream?${params.toString()}`;
 
       while (!controller.signal.aborted) {
         let sawExit = false;
@@ -104,7 +106,7 @@ export function useContainerLogStream(
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, container, follow, active, since, search, tail]);
+  }, [basePath, container, follow, active, since, search, tail]);
 
   return state;
 }
