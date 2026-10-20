@@ -10,6 +10,7 @@ import { BackupsService } from "../backups/backups.service";
 import { MonitorsService } from "../monitors/monitors.service";
 import { ImporterService } from "../importer/importer.service";
 import { ImportExecutorService } from "../importer/import-executor.service";
+import { LicenseService } from "../license/license.service";
 import { MCP_TOOLS, type McpDeps, type McpTool } from "./mcp-tools";
 import { MCP_PROMPTS, type McpPrompt } from "./mcp-prompts";
 import { sanitizeToolResult } from "./tool-result-sanitizer";
@@ -54,9 +55,10 @@ export class McpService {
     monitors: MonitorsService,
     importer: ImporterService,
     executor: ImportExecutorService,
+    license: LicenseService,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, servers, clusters, swarm, databases, backups, monitors, importer, executor };
+    this.deps = { apps, servers, clusters, swarm, databases, backups, monitors, importer, executor, license };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */

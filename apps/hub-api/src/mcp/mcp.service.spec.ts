@@ -5,7 +5,7 @@ import type { McpTool } from "./mcp-tools";
 function make() {
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
   const empty = {} as never;
-  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, empty, empty, audit);
+  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, audit);
   return { svc, audit };
 }
 
