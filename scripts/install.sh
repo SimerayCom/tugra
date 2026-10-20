@@ -102,8 +102,15 @@ preflight() {
     else
       bad "Docker is installed but its daemon isn't reachable (is it running? are you root or in the docker group?)"; fail=1
     fi
+  elif [ "${TUGRA_SKIP_DOCKER_INSTALL:-0}" = "1" ]; then
+    bad "Docker not found — install it: https://get.docker.com (auto-install skipped via TUGRA_SKIP_DOCKER_INSTALL)"; fail=1
   else
-    bad "Docker not found — install it: https://get.docker.com"; fail=1
+    note "Docker not found — installing it now via get.docker.com (set TUGRA_SKIP_DOCKER_INSTALL=1 to skip)…"
+    if command -v curl >/dev/null 2>&1 && curl -fsSL https://get.docker.com | sh >/tmp/tugra-docker-install.log 2>&1 && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+      ok "Docker installed ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo present))"
+    else
+      bad "Automatic Docker install failed — install it manually: https://get.docker.com (log: /tmp/tugra-docker-install.log)"; fail=1
+    fi
   fi
   if docker compose version >/dev/null 2>&1; then ok "Docker Compose v2 plugin"; else bad "Docker Compose v2 plugin is required (docker compose)"; fail=1; fi
   command -v git  >/dev/null 2>&1 && ok "git" || note "git not found (only needed for Git-source deploys)"
