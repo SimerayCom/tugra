@@ -33,7 +33,7 @@ func TestValidateSha256(t *testing.T) {
 
 func TestShouldApply(t *testing.T) {
 	cases := []struct {
-		self, target       string
+		self, target        string
 		wantApply, wantNoop bool
 	}{
 		{"0.1.0", "0.2.0", true, false},      // older → apply

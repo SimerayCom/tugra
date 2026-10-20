@@ -15,10 +15,10 @@ func TestValidatePathRejectsEscapes(t *testing.T) {
 	bad := []string{
 		"../etc/passwd",
 		"a/../../x",
-		"/etc/passwd",      // absolute
-		"a\\b",             // backslash
-		"a/..",             // trailing ..
-		"..",               // bare ..
+		"/etc/passwd",               // absolute
+		"a\\b",                      // backslash
+		"a/..",                      // trailing ..
+		"..",                        // bare ..
 		string([]byte{'a', 0, 'b'}), // NUL
 	}
 	for _, p := range bad {

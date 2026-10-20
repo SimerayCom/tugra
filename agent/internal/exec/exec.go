@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -61,6 +62,12 @@ func RunStreaming(ctx context.Context, command string, timeout time.Duration, on
 	defer cancel()
 
 	cmd := exec.CommandContext(c, "sh", "-c", command)
+	// Run in its own process group and kill the whole group on timeout/cancel; otherwise only `sh`
+	// dies and its docker/git children linger holding the output pipes. WaitDelay force-closes the
+	// pipes if a straggler still holds them after the kill.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	cw := &chunkWriter{onChunk: onChunk}
 	cmd.Stdout = cw
 	cmd.Stderr = cw

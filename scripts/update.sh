@@ -51,9 +51,59 @@ set_env() {
 set_status() { redis SET "$STATUS_KEY" "{\"phase\":\"$1\",\"targetVersion\":\"$2\",\"error\":${3:-null}}" EX "$STATUS_TTL"; }
 release_lock() { redis DEL "$LOCK_KEY"; }
 
-# Strictly-newer guard (defense-in-depth; the hub already gated never-downgrade). Uses version sort.
+# Strictly-newer guard (defense-in-depth; the hub already gated never-downgrade). Semver-aware:
+# `sort -V` ranks 0.1.0 BELOW 0.1.0-beta.1 (the opposite of semver), which would strand beta instances.
+# Rules: strip a leading "v" and any +build; compare the numeric major.minor.patch core first; on an equal
+# core a release outranks any prerelease of it; two prereleases of the same core fall back to version sort
+# on the prerelease part (beta.2 < beta.10). Usage: is_newer <candidate> <baseline> -> 0 if candidate > baseline.
 is_newer() {
-  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | tail -1)" = "$1" ]
+  local a="${1#v}" b="${2#v}"
+  a="${a%%+*}"; b="${b%%+*}"
+  [ "$a" != "$b" ] || return 1
+  local acore="${a%%-*}" bcore="${b%%-*}" apre="" bpre=""
+  case "$a" in *-*) apre="${a#*-}" ;; esac
+  case "$b" in *-*) bpre="${b#*-}" ;; esac
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<EOF_A
+$acore
+EOF_A
+  IFS=. read -r b1 b2 b3 <<EOF_B
+$bcore
+EOF_B
+  # Missing/non-numeric components count as 0.
+  a1="${a1:-0}"; a2="${a2:-0}"; a3="${a3:-0}"; b1="${b1:-0}"; b2="${b2:-0}"; b3="${b3:-0}"
+  local x y
+  for pair in "$a1 $b1" "$a2 $b2" "$a3 $b3"; do
+    x="${pair% *}"; y="${pair#* }"
+    case "$x$y" in *[!0-9]*) x=0; y=0 ;; esac
+    if [ "$x" -gt "$y" ]; then return 0; fi
+    if [ "$x" -lt "$y" ]; then return 1; fi
+  done
+  # Equal core: release > prerelease; no prerelease on either side means identical (already excluded).
+  if [ -z "$apre" ] && [ -n "$bpre" ]; then return 0; fi
+  if [ -n "$apre" ] && [ -z "$bpre" ]; then return 1; fi
+  [ "$(printf '%s\n%s\n' "$bpre" "$apre" | sort -V | tail -1)" = "$apre" ]
+}
+
+# Poll the hub-api container until healthy (or give up). Returns 0 healthy, 1 unhealthy/exited/timeout.
+# Uses the compose healthcheck status; a service without one counts as healthy once it is "running".
+# In --dry-run nothing is polled (no Docker), so the happy path is assumed.
+HEALTH_TIMEOUT="${UPDATE_HEALTH_TIMEOUT:-120}"
+wait_healthy() {
+  if [ "$DRY" -eq 1 ]; then printf 'RUN: wait up to %ss for hub-api healthy\n' "$HEALTH_TIMEOUT"; return 0; fi
+  local waited=0 cid state
+  while [ "$waited" -lt "$HEALTH_TIMEOUT" ]; do
+    cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q hub-api 2>/dev/null | head -n1 || true)"
+    if [ -n "$cid" ]; then
+      state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)"
+      case "$state" in
+        healthy|running) return 0 ;;
+        exited|dead) return 1 ;;   # crashed outright (e.g. failed migration with no restart) — no point waiting
+      esac
+    fi
+    sleep 3; waited=$((waited + 3))
+  done
+  return 1
 }
 
 do_update() {
@@ -83,6 +133,19 @@ do_update() {
     log "recreate failed — rolling back .env"
     set_env TUGRA_VERSION "$current"
     set_status failed "$target" "\"recreate failed\""
+    release_lock
+    return 0
+  fi
+
+  # `up` returning 0 only means the containers were created — a failing migration or a crash-looping hub
+  # still passes it. Only report success once hub-api is actually healthy; otherwise restore the old tag.
+  # (Phase stays "recreating": the hub/web only know idle|queued|pulling|recreating|done|failed.)
+  if ! wait_healthy; then
+    log "hub-api did not become healthy within ${HEALTH_TIMEOUT}s — rolling back to $current"
+    set_env TUGRA_VERSION "$current"
+    # Best-effort: bring the previous version back so the operator is not locked out.
+    compose up -d --no-deps hub-api web || log "rollback recreate failed — manual intervention needed"
+    set_status failed "$target" "\"update to $target failed health check; rolled back to $current\""
     release_lock
     return 0
   fi
