@@ -13,6 +13,7 @@ import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
+import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
@@ -134,6 +135,7 @@ export default function DatabaseDetailPage() {
 
   const tabDefs = [
     { key: "overview", label: t("databases.tabOverview") },
+    ...(db?.canWrite && db?.status !== "NEW" ? [{ key: "logs", label: t("databases.tabLogs") }] : []),
     { key: "backups", label: t("databases.tabBackups") },
     ...(db?.canWrite ? [{ key: "settings", label: t("databases.tabSettings") }] : []),
   ];
@@ -250,6 +252,10 @@ export default function DatabaseDetailPage() {
         ) : (
           <Card style={{ padding: 16 }}><EmptyState>{t("databases.connectionPending")}</EmptyState></Card>
         )
+      )}
+
+      {tab === "logs" && db.canWrite && (
+        <LiveLogsCard basePath={`/databases/${id}`} title={t("databases.tabLogs")} />
       )}
 
       {tab === "settings" && db.canWrite && (

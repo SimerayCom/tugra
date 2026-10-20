@@ -3,8 +3,10 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
+import { Observable } from "rxjs";
 import { z } from "zod";
 import { Database, DbStatus, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,6 +15,7 @@ import { TeamAccessService, canAccessResource, resolvePermissions } from "../com
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { filterByQuery } from "../common/query-filter";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import {
@@ -20,6 +23,7 @@ import {
   buildDbRemoveScript,
   buildDbStopScript,
   connectionInfo,
+  dbContainerName,
   enginePort,
   ENGINES,
   resolveImage,
@@ -28,6 +32,7 @@ import {
   type DbEngine,
   type DbSpec,
 } from "./database-script";
+import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
 import { normalizeTags } from "../common/tags";
 import type { CreateDatabaseInput, SetDatabaseLimitsInput } from "./dto";
 
@@ -97,6 +102,7 @@ export class DatabasesService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
+    private readonly logStream: LogStreamService,
     private readonly crypto: CryptoService,
     private readonly teamDefaults: TeamDefaultsService,
   ) {}
@@ -298,6 +304,59 @@ export class DatabasesService {
     await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript(db), "database").catch(() => undefined);
     await this.prisma.database.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "database.remove", target: id });
+  }
+
+  /**
+   * Live `docker logs --follow` stream for this database's container, over the signed "logs"
+   * capability. Writer-only (logs can carry credentials, like appLogs). The target is derived
+   * server-side (`tugra_db_<id>`) and never taken from the client, so there is nothing to validate
+   * or inject. tail/since/search are normalized — they become SIGNED canonicalLogStart fields and
+   * reach the shell-less docker/grep argv on the agent, so a malformed value must fold to a safe one.
+   */
+  async streamLogs(
+    userId: string,
+    id: string,
+    opts: { tail?: number; follow?: boolean; since?: string; search?: string },
+  ): Promise<Observable<LogStreamEvent>> {
+    const db = await this.requireWrite(userId, id);
+    if (!this.agentWs.isOnline(db.serverId)) throw new ServiceUnavailableException("agent offline");
+    await this.audit.log({ actor: userId, action: "database.logs.stream", target: id });
+    return this.logStream.stream(db.serverId, dbContainerName(db), {
+      tail: clampTail(opts.tail),
+      follow: opts.follow ?? true,
+      since: normalizeSince(opts.since),
+      search: normalizeSearch(opts.search),
+    });
+  }
+
+  /**
+   * Pre-flight access check for the log SSE endpoint, run from a guard so the HTTP status is real.
+   * `@Sse` commits a 200 + text/event-stream as soon as the handler runs, so a throw from inside can
+   * no longer set 403/503 — the guard runs first (canActivate) and its exception becomes the status.
+   */
+  async assertLogStreamAccess(userId: string, id: string): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    if (!this.agentWs.isOnline(db.serverId)) throw new ServiceUnavailableException("agent offline");
+  }
+
+  /**
+   * One-shot log export for download (writer-only). Not a stream — collects `docker logs` in a single
+   * request so the browser can save it. The target is server-derived (no injection surface); `since`
+   * is normalized and `tail` is clamped before reaching the fixed docker argv.
+   */
+  async downloadLogs(
+    userId: string,
+    id: string,
+    opts: { tail?: number; since?: string },
+  ): Promise<string> {
+    const db = await this.requireWrite(userId, id);
+    if (!this.agentWs.isOnline(db.serverId)) throw new ServiceUnavailableException("agent offline");
+    const tail = clampTail(opts.tail, 10000);
+    const since = normalizeSince(opts.since);
+    const cmd = `docker logs --timestamps --tail ${tail}${since ? ` --since ${since}` : ""} ${dbContainerName(db)} 2>&1`;
+    const r = await this.agentWs.sendCommand(db.serverId, cmd, "database", 60_000);
+    await this.audit.log({ actor: userId, action: "database.logs.download", target: id });
+    return r.output.slice(0, 5_000_000); // hard cap the response size
   }
 
   async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {

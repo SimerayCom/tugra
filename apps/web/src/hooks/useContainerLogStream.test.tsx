@@ -39,7 +39,7 @@ describe("useContainerLogStream", () => {
       }) as Response),
     );
 
-    const { result, unmount } = renderHook(() => useContainerLogStream("app1", { follow: false, active: true }));
+    const { result, unmount } = renderHook(() => useContainerLogStream("/apps/app1", { follow: false, active: true }));
 
     await waitFor(() => expect(result.current.ended).toBe(true));
     expect(result.current.lines).toEqual(["line-a", "line-b"]);
@@ -57,7 +57,7 @@ describe("useContainerLogStream", () => {
       }),
     );
     const { unmount } = renderHook(() =>
-      useContainerLogStream("app1", { container: "tugra_app1-web-1", follow: true, active: true }),
+      useContainerLogStream("/apps/app1", { container: "tugra_app1-web-1", follow: true, active: true }),
     );
     await waitFor(() => expect(url).toContain("/apps/app1/logs/stream"));
     expect(url).toContain("container=tugra_app1-web-1");
@@ -75,7 +75,7 @@ describe("useContainerLogStream", () => {
       }),
     );
     const { unmount } = renderHook(() =>
-      useContainerLogStream("app1", { follow: true, active: true, since: "1h", search: "error", tail: 500 }),
+      useContainerLogStream("/apps/app1", { follow: true, active: true, since: "1h", search: "error", tail: 500 }),
     );
     await waitFor(() => expect(url).toContain("/apps/app1/logs/stream"));
     expect(url).toContain("since=1h");
@@ -87,14 +87,14 @@ describe("useContainerLogStream", () => {
   it("does not fetch when inactive", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    renderHook(() => useContainerLogStream("app1", { follow: true, active: false }));
+    renderHook(() => useContainerLogStream("/apps/app1", { follow: true, active: false }));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("treats a non-2xx (403) as a failed connect — no lines, no hot-loop", async () => {
     const fetchMock = vi.fn(async () => ({ ok: false, status: 403, body: streamFrom([frame({ chunk: "leak" })]) }) as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
-    const { result, unmount } = renderHook(() => useContainerLogStream("app1", { follow: false, active: true }));
+    const { result, unmount } = renderHook(() => useContainerLogStream("/apps/app1", { follow: false, active: true }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(result.current.lines).toEqual([]); // the 403 body is never consumed
     unmount();
@@ -109,7 +109,7 @@ describe("useContainerLogStream", () => {
         return { ok: true, body: streamFrom([]) } as Response;
       }),
     );
-    const { unmount } = renderHook(() => useContainerLogStream("app1", { follow: true, active: true }));
+    const { unmount } = renderHook(() => useContainerLogStream("/apps/app1", { follow: true, active: true }));
     await waitFor(() => expect(captured).toBeDefined());
     unmount();
     expect(captured!.aborted).toBe(true);
