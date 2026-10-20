@@ -63,6 +63,13 @@ export const SetDockerOptionsSchema = z.object({
 });
 export type SetDockerOptionsInput = z.infer<typeof SetDockerOptionsSchema>;
 
+// Edit a COMPOSE app's docker-compose.yml after creation. Validated server-side (valid YAML + no
+// privileged / host-escaping / host-bind compose) before it can reach a deploy.
+export const SetComposeFileSchema = z.object({
+  composeFile: z.string().min(1).max(256 * 1024),
+});
+export type SetComposeFileInput = z.infer<typeof SetComposeFileSchema>;
+
 export const SetBuildConfigSchema = z
   .object({
     registryId: z.string().min(1).nullable().optional(),

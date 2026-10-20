@@ -241,10 +241,7 @@ export default function AppDetailPage() {
 
       {tab === "overview" && (
         appData.source === "COMPOSE" && appData.composeFile ? (
-          <Card style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.compose")}</div>
-            <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto" }}>{appData.composeFile}</pre>
-          </Card>
+          <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />
         ) : (
           <Card style={{ padding: 16, marginBottom: 16 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
@@ -487,6 +484,55 @@ function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: ()
         </div>
       )}
     </Modal>
+  );
+}
+
+/** Edit a COMPOSE app's docker-compose.yml in place (writer only). Validation (safe compose) runs on
+ *  save; changes apply on the next deploy, so Save persists and "Save & deploy" chains the deploy. */
+function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id: string; composeFile: string; canWrite: boolean; onDeploy: () => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [text, setText] = useState(composeFile);
+  // Re-seed if the saved file changes under us (another tab, a deploy that rewrote it).
+  useEffect(() => { setText(composeFile); }, [composeFile]);
+  const dirty = text !== composeFile;
+  const save = useMutation({
+    mutationFn: () => api.setAppComposeFile(id, text),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.composeSaved"), "success"); },
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+
+  if (!canWrite) {
+    return (
+      <Card style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.compose")}</div>
+        <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto" }}>{composeFile}</pre>
+      </Card>
+    );
+  }
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.compose")}</div>
+        {dirty && <span style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.composeUnsaved")}</span>}
+      </div>
+      <textarea
+        className="mono"
+        value={text}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        style={{ width: "100%", minHeight: 300, maxHeight: 520, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+      />
+      <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("apps.composeHint")}</div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+        <Btn variant="ghost" onClick={() => setText(composeFile)} disabled={!dirty || save.isPending}>{t("apps.composeReset")}</Btn>
+        <Btn variant="ghost" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{save.isPending ? "…" : t("apps.composeSave")}</Btn>
+        <Btn onClick={() => { save.mutateAsync().then(() => onDeploy()).catch(() => {}); }} disabled={save.isPending}>{t("apps.composeSaveDeploy")}</Btn>
+      </div>
+      {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 6 }}>{(save.error as Error).message}</div>}
+    </Card>
   );
 }
 

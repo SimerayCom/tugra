@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { Observable } from "rxjs";
+import { createHash } from "node:crypto";
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Application, AppStatus, Prisma, Role } from "@prisma/client";
@@ -1596,6 +1597,28 @@ export class ApplicationsService {
     assertSafeDockerOptions(dockerOptions);
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
+  }
+
+  /**
+   * Replace a COMPOSE app's docker-compose.yml. Validated up front (clear 400 now, not a failed
+   * deploy later): valid YAML plus no privileged / host-escaping / host-bind compose — the same
+   * safety policy a Coolify-imported stack already passes (assertSafeCompose). The routed web service
+   * and container port are re-inferred from the stored file at deploy/view time, so persisting the
+   * file is enough for routing to follow a renamed/removed web service. Applies on the next deploy;
+   * only the size + sha256 are audited, never the content.
+   */
+  async setComposeFile(userId: string, id: string, composeFile: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
+    assertSafeCompose(composeFile);
+    await this.ensureNoActiveDeploy(id);
+    await this.prisma.application.update({ where: { id }, data: { composeFile } });
+    await this.audit.log({
+      actor: userId,
+      action: "app.compose_file.update",
+      target: id,
+      meta: { bytes: composeFile.length, sha256: createHash("sha256").update(composeFile).digest("hex") },
+    });
   }
 
   /** Per-app deploy/rollback timeout in ms (default 5 min). */

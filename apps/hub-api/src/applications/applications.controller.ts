@@ -42,6 +42,8 @@ import {
   RenameSchema,
   SetBuildArgsInput,
   SetBuildArgsSchema,
+  SetComposeFileInput,
+  SetComposeFileSchema,
   SetDockerOptionsInput,
   SetDockerOptionsSchema,
   SetCredentialsInput,
@@ -317,6 +319,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDockerOptionsSchema)) body: SetDockerOptionsInput,
   ) {
     await this.apps.setDockerOptions(user.userId, id, body.dockerOptions);
+    return { ok: true };
+  }
+
+  @Put(":id/compose-file")
+  @HttpCode(200)
+  @ApiZodBody(SetComposeFileSchema)
+  async setComposeFile(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetComposeFileSchema)) body: SetComposeFileInput,
+  ) {
+    await this.apps.setComposeFile(user.userId, id, body.composeFile);
     return { ok: true };
   }
 
