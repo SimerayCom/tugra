@@ -13,6 +13,13 @@ export const CleanupConfigBulkSchema = CleanupConfigSchema.extend({
 });
 export type CleanupConfigBulkInput = z.infer<typeof CleanupConfigBulkSchema>;
 
+// Check or apply OS package updates across many servers at once (fleet bulk op). Capped to keep a
+// single request's fan-out bounded; each server is still role-gated per team (non-writable skipped).
+export const FleetPatchSchema = z.object({
+  serverIds: z.array(z.string().min(1)).min(1).max(100),
+});
+export type FleetPatchInput = z.infer<typeof FleetPatchSchema>;
+
 // The drain target format the agent ships to. "http" = Tugra's generic batch JSON; "loki" = Grafana Loki
 // push API; "datadog" = Datadog logs intake (token is sent as DD-API-KEY, not a Bearer). syslog (a non-HTTP
 // transport) is planned. For loki/datadog the `endpoint` is that provider's push/intake URL.

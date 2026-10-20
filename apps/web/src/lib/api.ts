@@ -47,6 +47,8 @@ import type {
   MyInvitation,
   InvitationPreview,
   PatchInfo,
+  FleetPatchCheckResult,
+  FleetPatchApplyResult,
   ProxyStatus,
   PublicUser,
   Project,
@@ -595,6 +597,18 @@ export const api = {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/cleanup-config`, {
       method: "POST",
       body: JSON.stringify({ serverIds, ...cfg }),
+    });
+  },
+  bulkCheckUpdates(serverIds: string[]) {
+    return apiFetch<FleetPatchCheckResult>(`/fleet/updates/check`, {
+      method: "POST",
+      body: JSON.stringify({ serverIds }),
+    });
+  },
+  bulkUpgradeAll(serverIds: string[]) {
+    return apiFetch<FleetPatchApplyResult>(`/fleet/updates/apply`, {
+      method: "POST",
+      body: JSON.stringify({ serverIds }),
     });
   },
 
