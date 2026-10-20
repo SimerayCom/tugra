@@ -16,7 +16,7 @@
   "adminHeading": "Create the owner account",
   "adminBody": "The first account on this instance becomes the owner.",
   "setupCode": "Setup code",
-  "setupCodeHint": "Shown by the installer in your terminal. It proves you're the one who set up this box.",
+  "setupCodeHint": "Shown by the installer in your terminal. Closed it? On your server run: grep SETUP_CODE .env — it proves you set up this box.",
   "email": "Email",
   "password": "Password",
   "name": "Name",

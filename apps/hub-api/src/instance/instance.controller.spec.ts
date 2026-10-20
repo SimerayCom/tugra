@@ -18,14 +18,14 @@ describe("InstanceController", () => {
   it("reports initialized=false and the env edition before the first user is claimed", async () => {
     delete process.env.TUGRA_EDITION; // → community
     const res = await controllerWith({ initializedAt: null, allowRegistration: false }).status();
-    expect(res).toEqual({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: false });
+    expect(res).toEqual({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: false, hubPublicUrl: "", authProviders: { github: false, oidc: false } });
   });
 
   it("reports initialized=true and the env edition (ignoring the inert DB column)", async () => {
     process.env.TUGRA_EDITION = "pro";
     // Even if the DB row said community, the env is authoritative:
     const res = await controllerWith({ initializedAt: new Date(), allowRegistration: true, edition: "community" }).status();
-    expect(res).toEqual({ initialized: true, allowRegistration: true, edition: "pro", ssoEnabled: false, setupCodeRequired: false });
+    expect(res).toEqual({ initialized: true, allowRegistration: true, edition: "pro", ssoEnabled: false, setupCodeRequired: false, hubPublicUrl: "", authProviders: { github: false, oidc: false } });
   });
 
   it("does not leak any other settings fields (only the public set)", async () => {
@@ -37,7 +37,7 @@ describe("InstanceController", () => {
       publicUrl: "https://internal",
       oidcClientSecretEnc: "ENC(shh)",
     }).status();
-    expect(Object.keys(res).sort()).toEqual(["allowRegistration", "edition", "initialized", "setupCodeRequired", "ssoEnabled"]);
+    expect(Object.keys(res).sort()).toEqual(["allowRegistration", "authProviders", "edition", "hubPublicUrl", "initialized", "setupCodeRequired", "ssoEnabled"]);
   });
 
   it("setupCodeRequired is true only when a SETUP_CODE is configured AND the instance is not yet initialized", async () => {

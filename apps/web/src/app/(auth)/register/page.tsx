@@ -23,7 +23,7 @@ const field: React.CSSProperties = {
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { reload, initialized } = useAuth();
+  const { reload, initialized, user } = useAuth();
   const t = useT();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -32,6 +32,12 @@ export default function RegisterPage() {
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState("");
   const [inviteTeam, setInviteTeam] = useState("");
+  const [githubEnabled, setGithubEnabled] = useState(false);
+
+  // Only offer GitHub sign-up when the instance has it configured. Fail-soft: hide on error.
+  useEffect(() => {
+    api.getInstanceStatus().then((s) => setGithubEnabled(!!s.authProviders?.github)).catch(() => undefined);
+  }, []);
 
   // Register-from-invite: pre-fill (and lock) the email to the invited address so the auto-accept
   // below matches on the server. The token comes from /invite/[token]'s "Create account" link.
@@ -49,6 +55,12 @@ export default function RegisterPage() {
       })
       .catch(() => undefined);
   }, []);
+
+  // A fresh install has no owner yet — owner-claim must go through the /welcome wizard (it has the setup-code
+  // field). Loop-safe: /welcome only bounces back once initialized === true.
+  useEffect(() => {
+    if (initialized === false && !user) router.replace("/welcome");
+  }, [initialized, user, router]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,6 +112,8 @@ export default function RegisterPage() {
           {busy ? "…" : t("auth.createAccount")}
         </Btn>
       </form>
+      {githubEnabled && (
+        <>
       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 12px", color: "var(--c-tx3)", fontSize: 12 }}>
         <div style={{ flex: 1, height: 1, background: "var(--c-bd)" }} />
         {t("auth.orContinueWith")}
@@ -110,6 +124,8 @@ export default function RegisterPage() {
       <a href="/api/auth/oauth/github" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 14, fontWeight: 600, textDecoration: "none", boxSizing: "border-box" }}>
         <SiGithub size={16} /> {t("auth.signInGithub")}
       </a>
+        </>
+      )}
       <div style={{ marginTop: 14, fontSize: 13, color: "var(--c-tx3)", textAlign: "center" }}>
         {t("auth.haveAccount")} <Link href="/login" style={{ color: "var(--c-a)" }}>{t("auth.login")}</Link>
       </div>

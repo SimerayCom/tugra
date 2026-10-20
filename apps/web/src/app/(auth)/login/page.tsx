@@ -34,6 +34,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState("");
   const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [githubEnabled, setGithubEnabled] = useState(false);
 
   // Surface an OAuth/SSO failure passed back from the callback (?error=…) and capture an invite token
   // (from /invite/[token]'s "Sign in" link) to auto-accept after login.
@@ -46,10 +47,15 @@ export default function LoginPage() {
     setInvite(params.get("invite") ?? "");
   }, [t]);
 
-  // Only offer the SSO button when the instance has it enabled + configured (Pro). Fail-soft: a status
+  // Only offer the SSO / GitHub buttons when the instance has it enabled + configured (Pro). Fail-soft: a status
   // error just hides the button (password login still works).
   useEffect(() => {
-    api.getInstanceStatus().then((s) => setSsoEnabled(s.ssoEnabled)).catch(() => undefined);
+    api.getInstanceStatus().then((s) => {
+        // authProviders.oidc = configured; ssoEnabled = enabled + configured + licensed. Require both.
+        setSsoEnabled(s.ssoEnabled && (s.authProviders ? s.authProviders.oidc : true));
+        setGithubEnabled(!!s.authProviders?.github);
+      })
+      .catch(() => undefined);
   }, []);
 
   // A fresh install has no account to sign into — forward to the welcome/onboarding flow. Loop-safe:
@@ -105,16 +111,24 @@ export default function LoginPage() {
           {busy ? "…" : step === "creds" ? t("auth.login") : t("auth.verify")}
         </Btn>
       </form>
+      {(githubEnabled || ssoEnabled) && (
+        <>
       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 12px", color: "var(--c-tx3)", fontSize: 12 }}>
         <div style={{ flex: 1, height: 1, background: "var(--c-bd)" }} />
         {t("auth.orContinueWith")}
         <div style={{ flex: 1, height: 1, background: "var(--c-bd)" }} />
       </div>
+        </>
+      )}
+      {githubEnabled && (
+        <>
       {/* OAuth start is exempt from the hub's /api/v1 prefix (its callback is registered externally); a
           dedicated next.config rewrite proxies this bare path to the hub, so DON'T route it via API_BASE. */}
       <a href="/api/auth/oauth/github" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 14, fontWeight: 600, textDecoration: "none", boxSizing: "border-box" }}>
         <SiGithub size={16} /> {t("auth.signInGithub")}
       </a>
+        </>
+      )}
       {/* SSO start is exempt from the /api/v1 prefix (its callback is registered with the IdP); a dedicated
           next.config rewrite proxies this bare path to the hub. Shown only when the instance enables SSO. */}
       {ssoEnabled && (

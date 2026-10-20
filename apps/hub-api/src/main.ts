@@ -7,6 +7,12 @@ import { setupOpenApi } from "./openapi/openapi";
 async function bootstrap() {
   // rawBody is needed to verify HMAC webhook signatures over the exact payload bytes.
   const app = await NestFactory.create(AppModule, { rawBody: true });
+  // Behind the Next proxy / a reverse proxy the TCP peer is the proxy, so per-IP throttling would bucket every
+  // browser user together. Only when the operator declares a proxy (HUB_TRUSTED_PROXY=true) trust exactly ONE
+  // hop (req.ip = rightmost X-Forwarded-For entry, same rule as the PAT guard / agent gateway); never blanket-trust.
+  if (process.env.HUB_TRUSTED_PROXY === "true") {
+    (app.getHttpAdapter().getInstance() as { set(k: string, v: unknown): void }).set("trust proxy", 1);
+  }
   configureApp(app); // /api/v1 prefix (+ webhook/oauth/health/version exemptions)
   // Mount Swagger UI (/api/docs) + the JSON contract (/api/v1/openapi.json) after the prefix is applied.
   setupOpenApi(app);
