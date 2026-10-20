@@ -29,6 +29,10 @@ describe("McpController", () => {
     expect(body.error.code).toBe(-32000);
   });
 
+  it("POST handler defaults to HTTP 200 (not Nest's 201)", () => {
+    expect(Reflect.getMetadata("__httpCode__", McpController.prototype.handle)).toBe(200);
+  });
+
   it("POST delegates to McpService.handle with the token-resolved ctx (never client-supplied)", async () => {
     const { ctrl, handle } = make();
     const out = await ctrl.handle(user, { jsonrpc: "2.0", id: 1, method: "ping" }, res());

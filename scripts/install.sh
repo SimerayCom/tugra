@@ -37,6 +37,28 @@ WEB_PORT="${WEB_PORT:-3001}"
 log()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
+note() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+
+banner() {
+  printf '\033[36m'
+  cat <<'EOF'
+
+$$$$$$$$\                                         $$\
+\__$$  __|                                        \__|
+   $$ |$$\   $$\  $$$$$$\   $$$$$$\  $$$$$$\      $$\  $$$$$$\
+   $$ |$$ |  $$ |$$  __$$\ $$  __$$\ \____$$\     $$ |$$  __$$\
+   $$ |$$ |  $$ |$$ /  $$ |$$ |  \__|$$$$$$$ |    $$ |$$ /  $$ |
+   $$ |$$ |  $$ |$$ |  $$ |$$ |     $$  __$$ |    $$ |$$ |  $$ |
+   $$ |\$$$$$$  |\$$$$$$$ |$$ |     \$$$$$$$ |$$\ $$ |\$$$$$$  |
+   \__| \______/  \____$$ |\__|      \_______|\__|\__| \______/
+                 $$\   $$ |
+                 \$$$$$$  |
+                  \______/
+EOF
+  printf '\033[0m  \033[2mOpen-core PaaS for fleets and AI agents · tugra.io\033[0m\n\n'
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -70,10 +92,45 @@ set_env() {
   printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
 }
 
-# --- preflight (skipped for --dry-run so tests need no Docker) ---------------------------------------
+# --- preflight (skipped for --dry-run so tests stay quiet + need no Docker) --------------------------
+preflight() {
+  log "Checking requirements…"
+  fail=0
+  if command -v docker >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
+      ok "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo present) (daemon running)"
+    else
+      bad "Docker is installed but its daemon isn't reachable (is it running? are you root or in the docker group?)"; fail=1
+    fi
+  else
+    bad "Docker not found — install it: https://get.docker.com"; fail=1
+  fi
+  if docker compose version >/dev/null 2>&1; then ok "Docker Compose v2 plugin"; else bad "Docker Compose v2 plugin is required (docker compose)"; fail=1; fi
+  command -v git  >/dev/null 2>&1 && ok "git" || note "git not found (only needed for Git-source deploys)"
+  command -v curl >/dev/null 2>&1 && ok "curl" || note "curl not found (used for the post-install health check)"
+  arch="$(uname -m 2>/dev/null || echo '?')"
+  case "$arch" in x86_64|amd64|aarch64|arm64) ok "Architecture: $arch" ;; *) note "Unusual architecture: $arch (published images target amd64/arm64)" ;; esac
+  if [ -r /proc/meminfo ]; then
+    memkb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || true)"
+    if [ -n "${memkb:-}" ]; then
+      if [ "$memkb" -lt 1800000 ]; then note "RAM: ~$((memkb/1024/1024))GB — 4GB+ recommended (hub + web + db + redis + agent)"; else ok "RAM: ~$((memkb/1024/1024))GB"; fi
+    fi
+  fi
+  freeg="$( { df -Pm . 2>/dev/null || true; } | awk 'NR==2{print int($4/1024)}')"
+  if [ -n "${freeg:-}" ]; then
+    if [ "$freeg" -lt 5 ]; then note "Free disk: ~${freeg}GB — 10GB+ recommended (images + volumes)"; else ok "Free disk: ~${freeg}GB"; fi
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    for p in "${HUB_PORT:-3000}" "${WEB_PORT:-3001}"; do
+      ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && note "Port ${p} looks busy — the stack may fail to bind it (set HUB_PORT/WEB_PORT or free it)"
+    done
+  fi
+  [ "$fail" -eq 0 ] || { err "Preflight failed — fix the ✗ item(s) above and re-run."; exit 1; }
+  printf '\n'
+}
 if [ "$DRY_RUN" -eq 0 ]; then
-  command -v docker >/dev/null 2>&1 || { err "Docker is required. Install it: https://get.docker.com"; exit 1; }
-  docker compose version >/dev/null 2>&1 || { err "The Docker Compose v2 plugin is required (docker compose)."; exit 1; }
+  banner
+  preflight
 fi
 
 # --- resolve the public URLs + cookie/proxy mode ----------------------------------------------------
@@ -115,6 +172,16 @@ ensure_env POSTGRES_PASSWORD     "$(rand_hex 24)"   # url-safe (no @ : / ? in a 
 # install must not print a misleading "enter this to claim owner" line (the gate is a no-op once claimed).
 FRESH_SETUP_CODE=0; env_has SETUP_CODE || FRESH_SETUP_CODE=1
 ensure_env SETUP_CODE            "$(rand_hex 4)"    # first-run owner-claim code (8 hex chars); printed below if fresh
+
+# Single-box quick start: the hub auto-creates a "This machine" server when LOCAL_AGENT_ENROLL_TOKEN is set,
+# and the bundled `agent` compose service connects with the same token. Generate-once so re-runs are stable.
+ensure_env LOCAL_AGENT_ENROLL_TOKEN "$(rand_hex 24)"   # 48 hex chars
+# Agent image ref (the agent re-invokes itself as the sandboxed file helper; hub uses AGENT_IMAGE for installs).
+ensure_env TUGRA_AGENT_IMAGE "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
+ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
+# Official self-update channel; only-if-unset so an operator override survives re-runs.
+ensure_env UPDATE_MANIFEST_URL  "https://simeraycom.github.io/tugra/versions.json"
+ensure_env UPDATE_PUBLISHER_KEY "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE="
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"

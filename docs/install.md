@@ -27,8 +27,11 @@ The installer:
    migrations on boot).
 3. Waits for the hub to become healthy and prints the **Web UI** and **Hub API** URLs.
 
-Open the printed Web UI URL and create the first account — it becomes the instance **owner** — then
-follow the onboarding wizard to connect your first server.
+In the two-port quick start the web UI is at `http://<host-ip>:3001` and the hub/API base is
+`http://<host-ip>:3000`. Open the web UI and create the first account — it becomes the instance
+**owner**. On a fresh install the installer prints a one-time **setup code**; enter it when creating the
+owner account (to recover it later: `grep SETUP_CODE .env`). Then follow the onboarding wizard to connect
+your first server.
 
 Published images (`ghcr.io/simeraycom/tugra-*`) are used when available; until the first tagged release
 the installer automatically builds from your checkout — the same command, no changes needed.

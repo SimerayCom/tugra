@@ -89,8 +89,9 @@ func TestBuildRecreateInvocation(t *testing.T) {
 	// single-use token, health-gate the new container, and fall back to the OLD image so the host is never
 	// left agentless.
 	for _, must := range []string{
-		`-e TUGRA_HUB="$HUB" "$NEW_IMAGE"`,
-		`-e TUGRA_HUB="$HUB" "$OLD_IMAGE"`,
+		`-e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$NEW_IMAGE" "$NEW_IMAGE"`,
+		`-e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$OLD_IMAGE" "$OLD_IMAGE"`,
+		`-v /etc/tugra:/etc/tugra`,
 		`{{.State.Running}}`, // health gate: exit-0 of `docker run -d` is not "healthy"
 		`{{.RestartCount}}`,
 	} {
