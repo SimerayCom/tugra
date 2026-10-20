@@ -10,6 +10,7 @@ import type { BackupsService } from "../backups/backups.service";
 import type { MonitorsService } from "../monitors/monitors.service";
 import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
+import type { LicenseService } from "../license/license.service";
 
 /** The domain services an MCP tool may call. Every read tool passes the caller's `userId` straight
  *  through — team scoping is resolved DB-side inside each service (never trusted from the client). */
@@ -23,6 +24,7 @@ export interface McpDeps {
   monitors: MonitorsService;
   importer: ImporterService;
   executor: ImportExecutorService;
+  license: LicenseService;
 }
 
 export interface McpTool {
@@ -797,5 +799,15 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["id", "volume"],
     },
     execute: (d, userId, a) => d.apps.listFiles(userId, reqStr(a, "id"), reqStr(a, "volume"), optStr(a, "path") ?? ""),
+  },
+
+  // ── read: instance edition / license status (agent-visible monetization state) ────────────────────
+  {
+    name: "get_license_status",
+    description:
+      "The instance's edition + license status: plan (community | pro | …), whether a paid license is currently valid, its ISO expiry (or null), and the source. Instance-wide, read-only, contains no secret (never the license token or signing key).",
+    scope: "read",
+    inputSchema: noArgs,
+    execute: async (d) => d.license.status(),
   },
 ];

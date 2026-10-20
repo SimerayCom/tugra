@@ -24,7 +24,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(45);
+    expect(MCP_TOOLS).toHaveLength(46);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -570,6 +570,19 @@ describe("read: fleet aggregators", () => {
       expect(r.total).toBe(205);
       expect(r.count).toBe(200);
       expect(r.truncated).toBe(true);
+    });
+  });
+
+  describe("get_license_status", () => {
+    it("returns the instance edition/license status (no userId, no secrets)", async () => {
+      const status = jest.fn().mockReturnValue({ plan: "community", valid: false, expiresAt: null, source: "env" });
+      const deps = { license: { status } } as unknown as McpDeps;
+      const r = (await tool("get_license_status").execute(deps, "u1", {})) as { plan: string; valid: boolean };
+      expect(status).toHaveBeenCalled();
+      expect(r).toEqual({ plan: "community", valid: false, expiresAt: null, source: "env" });
+    });
+    it("is read-scoped (instance edition is not sensitive)", () => {
+      expect(tool("get_license_status").scope).toBe("read");
     });
   });
 
