@@ -173,3 +173,33 @@ jobs:
           git add versions.json versions.json.sig
           git commit -m "release: versions.json for v$VERSION ($CHANNEL)"
           git push origin gh-pages
+
+  # Publish a GitHub Release for the tag so the manifest's changelogUrl (and the panel's "changelog"
+  # link) resolve to real notes. The body is the matching CHANGELOG.md section; a version with no
+  # section falls back to a generic line. Idempotent: creates the release, or updates it on re-run.
+  # Runs after the manifest so a release-notes hiccup can never block the image/manifest publish.
+  github-release:
+    needs: [build-push, publish-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create/edit releases
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build-push.outputs.version }}
+          CHANNEL: ${{ needs.build-push.outputs.channel }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          notes="$(mktemp)"
+          if ! bash scripts/changelog-section.sh "$VERSION" > "$notes" || [ ! -s "$notes" ]; then
+            printf 'Release %s\n' "$tag" > "$notes"
+          fi
+          if [ "$CHANNEL" = "stable" ]; then rel=(--latest); else rel=(--prerelease --latest=false); fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag" --notes-file "$notes" "${rel[@]}"
+          else
+            gh release create "$tag" --title "$tag" --notes-file "$notes" "${rel[@]}"
+          fi

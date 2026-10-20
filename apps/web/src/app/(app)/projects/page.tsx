@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderTree, Plus, Settings } from "lucide-react";
 import { api } from "../../../lib/api";
+import { clickedInteractive } from "../../../lib/row-nav";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
@@ -37,6 +39,7 @@ const rowChip: React.CSSProperties = {
 
 export default function ProjectsPage() {
   const t = useT();
+  const router = useRouter();
   const qc = useQueryClient();
   const { teamId: scope } = useTeamScope();
   const { data: projects = [], isLoading, isError, refetch } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
@@ -90,7 +93,12 @@ export default function ProjectsPage() {
             const apps = p.environments.reduce((n, e) => n + e.appCount, 0);
             const dbs = p.environments.reduce((n, e) => n + e.dbCount, 0);
             return (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx)" }}>
+              <div
+                key={p.id}
+                className="row-link"
+                onClick={(e) => { if (!clickedInteractive(e)) router.push(`/projects/${p.id}`); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx)" }}
+              >
                 <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <FolderTree size={18} color="var(--c-a)" />
                 </span>
