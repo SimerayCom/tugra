@@ -13,6 +13,12 @@ RUN pnpm install --frozen-lockfile
 
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# next.config evaluates rewrites() during `next build` (not at runtime), so the hub's in-cluster
+# address for the same-origin /api/v1 proxy must be present NOW. In the compose stack the hub is
+# reachable as hub-api:3000; default to it so the published image's API proxy works out of the box
+# (incl. the no-reverse-proxy quick-start). Override at build for a differently-named hub service.
+ARG HUB_INTERNAL_URL=http://hub-api:3000
+ENV HUB_INTERNAL_URL=$HUB_INTERNAL_URL
 RUN pnpm --filter @tugra/shared build \
  && pnpm --filter @tugra/web build
 
