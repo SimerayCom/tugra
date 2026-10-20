@@ -6,7 +6,7 @@ agreement lets the project owner offer your contribution under both, while you
 keep ownership of your work.
 
 By submitting a contribution (code, documentation, or other material) to this
-project, you agree to the terms below. "The Owner" means Ömer Aydınoğlu (and any
+project, you agree to the terms below. "The Owner" means Simeray Ltd (and any
 legal entity to which the project's rights are later assigned). "You" means the
 copyright holder of the contribution.
 
