@@ -81,7 +81,10 @@ func main() {
 	log.Printf("tugra-agent %s connecting to %s", Version, cfg.HubURL)
 	backoff := time.Second
 	for ctx.Err() == nil {
-		if err := client.Run(ctx, cfg, kp, store); err != nil && ctx.Err() == nil {
+		// Reset the backoff as soon as a handshake succeeds, so a blip after a long healthy session
+		// reconnects quickly instead of inheriting a maxed-out delay.
+		onReady := func() { backoff = time.Second }
+		if err := client.Run(ctx, cfg, kp, store, onReady); err != nil && ctx.Err() == nil {
 			log.Printf("connection error: %v; retrying in %s", err, backoff)
 			select {
 			case <-ctx.Done():

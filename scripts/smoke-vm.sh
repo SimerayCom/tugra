@@ -85,6 +85,31 @@ MARKER="tugra-smoke-${RUN_ID}"
 STEP_LOG=()
 step() { printf '\n\033[36m== %s ==\033[0m\n' "$*"; }
 pass() { printf '\033[32mPASS:\033[0m %s\n' "$*"; STEP_LOG+=("PASS: $*"); }
+warn() { printf '\033[33mWARN:\033[0m %s\n' "$*" >&2; STEP_LOG+=("WARN: $*"); }
+# True when the host (IPv4 literal, or an sslip/nip-style dashed-IP magic domain) is loopback,
+# private, link-local or CGNAT. Advisory only; never affects pass/fail.
+is_nonpublic_host() {
+  local h="$1" ip
+  h="${h#*://}"; h="${h%%[/:]*}"
+  if [[ "$h" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then ip="$h"
+  elif [[ "$h" =~ ^(([0-9]{1,3}-){3}[0-9]{1,3})\. ]]; then ip="${BASH_REMATCH[1]//-/.}"
+  else return 1; fi
+  local a b; IFS=. read -r a b _ <<<"$ip"
+  case "$a" in
+    10|127) return 0 ;;
+    0) return 0 ;;
+    192) [[ "$b" == "168" ]] ;;
+    169) [[ "$b" == "254" ]] ;;
+    172) (( b >= 16 && b <= 31 )) ;;
+    100) (( b >= 64 && b <= 127 )) ;;
+    *) return 1 ;;
+  esac
+}
+warn_nonpublic() {
+  if is_nonpublic_host "$1"; then
+    warn "$2 '$1' is a private/CGNAT/loopback address (10.x, 172.16-31.x, 192.168.x, 100.64.x). On a single-VM install the hub often records the agent's observed docker-bridge/private source IP, so the deployed app URL may be unreachable from outside and step 9 may fail. Set the server's real public IP in Settings -> Servers (or via the server network-override endpoint) and redeploy."
+  fi
+}
 fail() { printf '\033[31mFAIL:\033[0m %s\n' "$*" >&2; STEP_LOG+=("FAIL: $*"); exit 1; }
 
 on_exit() {
@@ -170,6 +195,7 @@ SERVER_IP=$(echo "$SERVER_JSON" | jq -r '.publicIp')
 [[ "$SERVER_STATUS" == "ONLINE" ]] || fail "server ${SERVER_ID} is ${SERVER_STATUS}, not ONLINE — enroll/start the agent first"
 [[ -n "$SERVER_IP" && "$SERVER_IP" != "null" ]] || fail "server ${SERVER_ID} has no publicIp — cannot reach it from here"
 pass "server ${SERVER_ID} (${SERVER_IP}) is ONLINE"
+warn_nonpublic "$SERVER_IP" "server publicIp"
 
 # ── a. create a real Postgres database (POST /databases) ───────────────────────────────────────────
 step "1/10 (a): create database"
@@ -312,6 +338,7 @@ APP_URL=$(echo "$LAST_BODY" | jq -r '.url')
 [[ "$APP_STATUS" == "RUNNING" ]] || fail "app ${APP_ID} status is ${APP_STATUS}, expected RUNNING"
 [[ -n "$APP_URL" && "$APP_URL" != "null" ]] || fail "app ${APP_ID} has no url — check the server's public IP / magic-domain config"
 pass "app ${APP_ID} deployed and RUNNING at ${APP_URL}"
+warn_nonpublic "$APP_URL" "app URL host"
 
 # NOTE: with TUGRA_APP_DOMAIN unset, the app gets a magic domain served over HTTP. Set
 # TUGRA_APP_DOMAIN for a guaranteed HTTPS check.

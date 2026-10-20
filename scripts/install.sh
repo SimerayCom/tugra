@@ -113,10 +113,13 @@ preflight() {
   if [ -r /proc/meminfo ]; then
     memkb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || true)"
     if [ -n "${memkb:-}" ]; then
-      if [ "$memkb" -lt 1800000 ]; then note "RAM: ~$((memkb/1024/1024))GB — 4GB+ recommended (hub + web + db + redis + agent)"; else ok "RAM: ~$((memkb/1024/1024))GB"; fi
+      # Round to the NEAREST GiB (not truncate): a "4GB" box reports ~3.8 GiB in MemTotal because
+      # the kernel/firmware reserve some, and truncating would print a misleading "~3GB".
+      memgb=$(( (memkb + 524288) / 1048576 ))
+      if [ "$memkb" -lt 1800000 ]; then note "RAM: ~${memgb}GB — 4GB+ recommended (hub + web + db + redis + agent)"; else ok "RAM: ~${memgb}GB"; fi
     fi
   fi
-  freeg="$( { df -Pm . 2>/dev/null || true; } | awk 'NR==2{print int($4/1024)}')"
+  freeg="$( { df -Pm . 2>/dev/null || true; } | awk 'NR==2{print int(($4+512)/1024)}')   # MiB -> nearest GiB"
   if [ -n "${freeg:-}" ]; then
     if [ "$freeg" -lt 5 ]; then note "Free disk: ~${freeg}GB — 10GB+ recommended (images + volumes)"; else ok "Free disk: ~${freeg}GB"; fi
   fi

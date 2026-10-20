@@ -5,14 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/SimerayCom/tugra/agent/internal/config"
 	"github.com/SimerayCom/tugra/agent/internal/dockerstats"
 	"github.com/SimerayCom/tugra/agent/internal/drains"
@@ -25,23 +24,46 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
 	"github.com/SimerayCom/tugra/agent/internal/selfupdate"
 	"github.com/SimerayCom/tugra/agent/internal/terminal"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
 const (
 	metricsInterval        = 5 * time.Second
 	containerStatsInterval = 15 * time.Second // per-container `docker stats` — slower than host metrics
 	commandTimeout         = 20 * time.Second
-	hostInfoInterval       = 12 * time.Hour  // refresh hardware/OS inventory periodically
+	hostInfoInterval       = 12 * time.Hour   // refresh hardware/OS inventory periodically
 	fsOpTimeout            = 30 * time.Second // hard wall-clock bound on one sandboxed file op
+
+	// maxMessageBytes bounds one inbound hub frame. coder/websocket defaults to 32768, which a large
+	// signed command (big compose file / env blob / base64 script) exceeds, dropping the connection.
+	maxMessageBytes = 16 << 20
 )
 
+// errStaleIdentity signals that the hub rejected our stored identity (hub DB reset, server row
+// deleted, volume reused with a new hub). Run clears the identity and retries via enroll.
+var errStaleIdentity = errors.New("stored identity rejected by hub")
+
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics
-// + heartbeats and executes commands until the context is cancelled.
-func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store) error {
+// + heartbeats and executes commands until the context is cancelled. onReady (may be nil) is
+// invoked once the handshake succeeds (enrolled/auth_ok) so the caller can reset its backoff.
+//
+// If the hub rejects a stored identity and an enrollment token is configured, the stale identity
+// is wiped and the session is retried once immediately via the enroll path.
+func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store, onReady func()) error {
+	err := runOnce(ctx, cfg, kp, store, onReady)
+	if errors.Is(err, errStaleIdentity) {
+		return runOnce(ctx, cfg, kp, store, onReady)
+	}
+	return err
+}
+
+func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store, onReady func()) error {
 	conn, _, err := websocket.Dial(ctx, cfg.HubURL, nil)
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(maxMessageBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "bye")
 
 	// Writes from the metrics loop and command handlers must be serialized.
@@ -60,7 +82,8 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 		return fmt.Errorf("expected challenge, got %q", challenge.Type)
 	}
 
-	if store.ServerID != "" {
+	usedAuth := store.ServerID != ""
+	if usedAuth {
 		if err := send(protocol.Auth{
 			Type:         "auth",
 			Protocol:     protocol.Version,
@@ -101,7 +124,18 @@ func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config
 	case "auth_ok":
 		// already known
 	default:
+		// A rejected key-auth with a token available means our identity is stale: forget it so the
+		// retry enrolls fresh instead of looping on "auth failed" forever.
+		if usedAuth && cfg.Token != "" {
+			store.ServerID = ""
+			store.Seal = ""
+			_ = store.Save()
+			return errStaleIdentity
+		}
 		return fmt.Errorf("authentication rejected: %s", resp.Message)
+	}
+	if onReady != nil {
+		onReady()
 	}
 
 	// Pin the hub's signing key (TOFU, per connection). Commands/term_start must
