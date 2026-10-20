@@ -91,6 +91,17 @@ body {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
 }
 
+/* List rows whose whole area navigates. The primary link inside each row stays the real,
+   focusable target (keyboard / middle-click / open-in-new-tab); the row's onClick handler
+   (lib/row-nav) defers to any nested link, button or input so those still work. */
+.row-link {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.row-link:hover {
+  background: var(--c-el);
+}
+
 /* Skeleton loading shimmer: a moving sheen layered over a var(--c-el) base.
    Used by components/skeleton.tsx (the `.skeleton-shimmer` class on the base
    Skeleton block). Respects prefers-reduced-motion by freezing to a flat,

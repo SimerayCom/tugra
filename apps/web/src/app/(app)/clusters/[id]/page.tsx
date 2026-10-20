@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import { clickedInteractive } from "../../../../lib/row-nav";
 import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 import { ErrorState } from "../../../../components/error-state";
@@ -173,7 +174,12 @@ export default function ClusterDetailPage() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {cluster.servers.map((s) => (
-              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+              <div
+                key={s.id}
+                className="row-link"
+                onClick={(e) => { if (!clickedInteractive(e)) router.push(`/servers/${s.id}`); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}
+              >
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: s.status === "ONLINE" ? "var(--c-g)" : s.status === "OFFLINE" ? "var(--c-r)" : "var(--c-am)" }} />
                 <Link href={`/servers/${s.id}`} style={{ fontWeight: 600, fontSize: 13, color: "inherit", textDecoration: "none" }}>{s.name}</Link>
                 {s.publicIp && <span className="mono" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{s.publicIp}</span>}

@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Server } from "lucide-react";
 import type { ServerView, ServerStatus } from "../lib/types";
 import { relativeTime, statusCounts, writableIds, teamLabel, filterByStatus } from "../lib/fleet";
+import { clickedInteractive } from "../lib/row-nav";
 import { useT } from "../i18n/provider";
 import { Badge, Btn, EmptyState, StatusDot } from "./ui";
 import { TagChips } from "./tags";
@@ -30,6 +32,7 @@ export function ServerTable({
   onStatusChange?: (s: ServerStatus | null) => void;
 }) {
   const t = useT();
+  const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulk, setShowBulk] = useState(false);
   const [showCleanup, setShowCleanup] = useState(false);
@@ -85,7 +88,12 @@ export function ServerTable({
           </thead>
           <tbody>
             {rows.map((s) => (
-              <tr key={s.id} style={{ borderTop: "1px solid var(--c-bd)", opacity: s.canWrite ? 1 : 0.6 }}>
+              <tr
+                key={s.id}
+                className="row-link"
+                onClick={(e) => { if (!clickedInteractive(e)) router.push(`/servers/${s.id}`); }}
+                style={{ borderTop: "1px solid var(--c-bd)", opacity: s.canWrite ? 1 : 0.6 }}
+              >
                 <td style={cell}>
                   <input type="checkbox" disabled={!s.canWrite} checked={selected.has(s.id)} onChange={() => toggle(s.id)} title={s.canWrite ? "" : t("servers.readonly")} />
                 </td>
@@ -94,7 +102,7 @@ export function ServerTable({
                     <StatusDot status={s.status} />
                     <div>
                       <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-                        {s.name}
+                        <Link href={`/servers/${s.id}`} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{s.name}</Link>
                         <TagChips tags={s.tags} />
                       </div>
                       <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{s.hostname ?? "—"}</div>
