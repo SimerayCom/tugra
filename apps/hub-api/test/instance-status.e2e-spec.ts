@@ -27,9 +27,10 @@ describe("GET /instance/status (e2e)", () => {
       allowRegistration: expect.any(Boolean),
       edition: expect.any(String),
       ssoEnabled: expect.any(Boolean), // public: the login page needs to know whether to show the SSO button
+      setupCodeRequired: expect.any(Boolean), // public: first-run owner-claim gate (install page needs it)
     });
     // never exposes any other (secret) settings field
-    expect(Object.keys(res.body).sort()).toEqual(["allowRegistration", "edition", "initialized", "ssoEnabled"]);
+    expect(Object.keys(res.body).sort()).toEqual(["allowRegistration", "edition", "initialized", "setupCodeRequired", "ssoEnabled"]);
   });
 
   it("is a normal API route — not exempt from the prefix", async () => {
