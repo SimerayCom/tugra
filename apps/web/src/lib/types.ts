@@ -384,6 +384,28 @@ export interface PatchInfo {
   count: number;
 }
 
+// Fleet-wide OS patching across many servers at once (non-writable servers are skipped, not errored).
+export interface FleetPatchCheckRow {
+  serverId: string;
+  online: boolean; // false → the agent wasn't connected, so no check ran
+  updates?: PatchInfo;
+  error?: string;
+}
+export interface FleetPatchApplyRow {
+  serverId: string;
+  online: boolean;
+  exitCode?: number; // 0 → applied cleanly
+  error?: string;
+}
+export interface FleetPatchCheckResult {
+  results: FleetPatchCheckRow[];
+  skipped: string[]; // server ids the caller can't write (cross-team / insufficient role / unknown)
+}
+export interface FleetPatchApplyResult {
+  results: FleetPatchApplyRow[];
+  skipped: string[];
+}
+
 // Migrator discover/adopt: a foreign (non-Tugra) container found on a server.
 export interface DiscoveredPort {
   host: number | null; // published host port, or null when only exposed

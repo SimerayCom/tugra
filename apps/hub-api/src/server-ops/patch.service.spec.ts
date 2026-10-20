@@ -71,4 +71,42 @@ describe("PatchService", () => {
     await make(prisma, access, {}, logs).streamLogs("u1", "s1");
     expect(logs.subscribe).toHaveBeenCalledWith("s1");
   });
+
+  it("checkUpdatesBulk checks writable servers, skips non-writable, marks offline ones", async () => {
+    const prisma = {
+      server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", teamId: "t1" }, { id: "s2", teamId: "t2" }, { id: "s3", teamId: "t1" }]) },
+    } as unknown as PrismaService;
+    // Only team t1 grants servers:ops → s2 (team t2) is skipped, not an error.
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:ops"])]])) } as unknown as TeamAccessService;
+    const agentWs = {
+      isOnline: jest.fn().mockImplementation((id: string) => id === "s1"), // s3 is writable but its agent is offline
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "TUGRA_MGR=apt\nTUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\n" }),
+    } as unknown as AgentWsServer;
+
+    const { results, skipped } = await make(prisma, access, agentWs).checkUpdatesBulk("u1", ["s1", "s2", "s3"]);
+
+    expect(skipped).toEqual(["s2"]);
+    expect(results.find((r) => r.serverId === "s1")).toMatchObject({ online: true });
+    expect(results.find((r) => r.serverId === "s1")!.updates?.count).toBe(1);
+    expect(results.find((r) => r.serverId === "s3")).toMatchObject({ online: false });
+    expect(agentWs.sendCommand).toHaveBeenCalledTimes(1); // only the one writable + online server
+  });
+
+  it("upgradeAllBulk applies to writable online servers and skips cross-team ones", async () => {
+    const prisma = {
+      server: { findMany: jest.fn().mockResolvedValue([{ id: "s1", teamId: "t1" }, { id: "s2", teamId: "t2" }]) },
+    } as unknown as PrismaService;
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:ops"])]])) } as unknown as TeamAccessService;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "done" }),
+    } as unknown as AgentWsServer;
+
+    const { results, skipped } = await make(prisma, access, agentWs).upgradeAllBulk("u1", ["s1", "s2"]);
+
+    expect(skipped).toEqual(["s2"]);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ serverId: "s1", online: true, exitCode: 0 });
+    expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("apt-get upgrade -y"), "patch", expect.any(Number));
+  });
 });
