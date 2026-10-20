@@ -239,8 +239,13 @@ printf '  Hub API: %s\n' "$HUB_URL"
 if [ -z "$DOMAIN" ]; then
   printf '  For TLS + a public domain, front the stack with a reverse proxy and re-run with --domain <host>.\n'
 fi
-printf '  Create the first (owner) account in the web UI, then add your first server.\n'
+printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'
 if [ "$FRESH_SETUP_CODE" -eq 1 ]; then
-  printf '  Setup code (enter it when creating the owner account): %s\n' "$(env_get SETUP_CODE)"
-  printf '  It stops anyone else who reaches this box from claiming the owner account first. Recover it later with: grep SETUP_CODE %s\n' "$ENV_FILE"
+  _code="$(env_get SETUP_CODE)"
+  printf '\n  \033[1;33m══════════════════════════════════════════════════\033[0m\n'
+  printf '  \033[1;33m⚠  SAVE THIS — owner account setup code:\033[0m\n'
+  printf '         \033[1;36m%s\033[0m\n' "$_code"
+  printf '  \033[1;33m══════════════════════════════════════════════════\033[0m\n'
+  printf '  You must enter it to create the owner account (step 1 in the Web UI).\n'
+  printf '  Closed the terminal? Recover it anytime with:  grep SETUP_CODE %s\n\n' "$ENV_FILE"
 fi

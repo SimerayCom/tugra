@@ -1,4 +1,4 @@
-import { hubPublicUrl } from "./api";
+import { ensureHubPublicUrl, hubPublicUrl } from "./api";
 
 /** Terminal target: an app container (optionally a specific compose service), a database container, or a server host. */
 export type TerminalTarget = { app: string; container?: string } | { database: string } | { server: string };
@@ -88,8 +88,9 @@ export function connectTerminal(
   let ws: WebSocket | undefined;
   let closed = false;
 
-  fetchTicket()
-    .then((ticket) => {
+  // Resolve the hub's public URL first (cached; no-op when baked) so the WS targets the hub, not the web port.
+  Promise.all([fetchTicket(), ensureHubPublicUrl().catch(() => null)])
+    .then(([ticket]) => {
       if (closed) return;
       ws = new WS(terminalUrl(target), ["tugra.bearer", ticket]);
       ws.onopen = () => handlers.onOpen?.();

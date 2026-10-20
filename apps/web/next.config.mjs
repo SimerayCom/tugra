@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Next's default gzip buffers text/event-stream responses proxied through the /api rewrite, which breaks
+  // live logs/metrics/update-progress in the quick start. A reverse proxy does compression anyway.
+  compress: false,
   transpilePackages: ["@tugra/shared"],
   // Same-origin proxy: the SPA calls "/api/v1/*" (relative), rewritten to the hub's versioned API so the
   // httpOnly session cookies stay same-origin (SameSite=Lax, no CORS). HUB_INTERNAL_URL is a server-side

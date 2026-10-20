@@ -203,6 +203,10 @@ export interface InstanceStatus {
   /** The instance was installed with a first-run setup code and no owner has claimed it yet → the welcome
    *  form must ask for the code. Only the boolean is exposed, never the code. */
   setupCodeRequired?: boolean;
+  /** The hub's public origin (HUB_PUBLIC_URL); empty when unset. Used for the terminal WS + webhook URLs. */
+  hubPublicUrl?: string;
+  /** Which SSO providers are CONFIGURED (booleans only, never secrets) — hide unconfigured buttons. */
+  authProviders?: { github: boolean; oidc: boolean };
 }
 
 /** Owner license status (GET/PATCH /instance/license). The token is write-only (never returned) —

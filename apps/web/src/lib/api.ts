@@ -77,13 +77,52 @@ export const API_BASE = "/api/v1";
 // The hub's PUBLIC absolute origin — ONLY for URLs that hit the hub DIRECTLY (not through the SPA's
 // same-origin "/api" proxy): the terminal WebSocket upgrade and webhook URLs shown to paste externally.
 // Resolution: (1) a baked NEXT_PUBLIC_API_URL wins (explicit override; build-from-source installs set it);
-// (2) otherwise the current browser origin at runtime — so the PUBLISHED image (which bakes no URL) works
-// out of the box for a single-origin reverse-proxy (--domain) deployment where /terminal and /webhooks are
-// routed to the hub on the same origin; (3) a dev/SSR fallback.
+// (2) otherwise the hub's own HUB_PUBLIC_URL, read from the public GET /instance/status (hubPublicUrl) and
+// cached — in the two-port quick start window.location.origin is the WEB port, not the hub, so it can't be
+// trusted; (3) window.location.origin only when the hub reports no public URL (single-origin reverse-proxy
+// deployments); (4) a dev/SSR fallback.
+let cachedHubUrl: string | null = null;
+let hubUrlPromise: Promise<string | null> | null = null;
+
+function trimUrl(u: string): string {
+  return u.replace(/\/+$/, "");
+}
+
+/** Fetch (once, memoized) the hub's public URL from /instance/status. Resolves null when unknown. */
+export function ensureHubPublicUrl(): Promise<string | null> {
+  if (process.env.NEXT_PUBLIC_API_URL) return Promise.resolve(process.env.NEXT_PUBLIC_API_URL);
+  if (cachedHubUrl) return Promise.resolve(cachedHubUrl);
+  if (!hubUrlPromise) {
+    hubUrlPromise = fetch(`${API_BASE}/instance/status`, { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return rememberHubUrl(((await res.json()) as { hubPublicUrl?: string })?.hubPublicUrl);
+      })
+      .catch(() => null)
+      .then((v) => {
+        if (!v) hubUrlPromise = null; // allow a later retry after a failure/empty answer
+        return v;
+      });
+  }
+  return hubUrlPromise;
+}
+
+function rememberHubUrl(u: unknown): string | null {
+  if (typeof u === "string" && u.trim()) {
+    cachedHubUrl = trimUrl(u.trim());
+    return cachedHubUrl;
+  }
+  return null;
+}
+
 export function hubPublicUrl(): string {
   const baked = process.env.NEXT_PUBLIC_API_URL;
   if (baked) return baked;
-  if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
+  if (cachedHubUrl) return cachedHubUrl;
+  if (typeof window !== "undefined") {
+    void ensureHubPublicUrl(); // warm the cache for subsequent calls
+    if (window.location?.origin) return window.location.origin;
+  }
   return "http://localhost:3000";
 }
 
@@ -202,7 +241,10 @@ export const api = {
   // Public: onboarding status (no auth). retry=false so a logged-out/uninitialized visitor never triggers
   // the 401→cookie-refresh cycle. Drives the welcome gate for a fresh install.
   getInstanceStatus() {
-    return apiFetch<InstanceStatus>("/instance/status", {}, false);
+    return apiFetch<InstanceStatus>("/instance/status", {}, false).then((st) => {
+      rememberHubUrl(st?.hubPublicUrl);
+      return st;
+    });
   },
   // Owner-only instance settings (session-guarded on the hub).
   getInstanceSettings() {
