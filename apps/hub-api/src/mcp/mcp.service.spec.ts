@@ -18,11 +18,11 @@ function toolStub(name: string, scope: McpTool["scope"], execute: McpTool["execu
 }
 
 describe("McpService.handle", () => {
-  it("initialize returns protocolVersion + tools capability + serverInfo", async () => {
+  it("initialize returns protocolVersion + tools/prompts capabilities + serverInfo", async () => {
     const { svc } = make();
     const res = (await svc.handle(ctx(["read"]), rpc("initialize", {}))) as { result: Record<string, unknown> };
     expect(res.result.protocolVersion).toBe("2025-06-18");
-    expect(res.result.capabilities).toEqual({ tools: {} });
+    expect(res.result.capabilities).toEqual({ tools: {}, prompts: {} });
     expect(res.result.serverInfo).toMatchObject({ name: "tugra-hub" });
   });
 
@@ -49,6 +49,37 @@ describe("McpService.handle", () => {
     const res = (await svc.handle(ctx(["read"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } };
     const names = res.result.tools.map((t) => t.name);
     expect(names).toEqual(["read_tool"]); // deploy_tool hidden from a read-only token
+  });
+
+  it("prompts/list returns the prompt catalog (name/description/arguments)", async () => {
+    const { svc } = make();
+    const res = (await svc.handle(ctx(["read"]), rpc("prompts/list"))) as { result: { prompts: { name: string; arguments: unknown[] }[] } };
+    const names = res.result.prompts.map((p) => p.name);
+    expect(names).toContain("diagnose_deploy");
+    expect(names).toContain("fleet_rollout");
+    const diag = res.result.prompts.find((p) => p.name === "diagnose_deploy")!;
+    expect(diag.arguments).toEqual([{ name: "appId", description: expect.any(String), required: true }]);
+  });
+
+  it("prompts/get builds a message with the required arg interpolated", async () => {
+    const { svc } = make();
+    const res = (await svc.handle(ctx(["read"]), rpc("prompts/get", { name: "diagnose_deploy", arguments: { appId: "app-xyz" } }))) as {
+      result: { messages: { role: string; content: { type: string; text: string } }[] };
+    };
+    expect(res.result.messages[0].role).toBe("user");
+    expect(res.result.messages[0].content.text).toContain("app-xyz");
+  });
+
+  it("prompts/get: unknown prompt → -32602, missing required arg → -32602", async () => {
+    const { svc } = make();
+    expect((await svc.handle(ctx(["read"]), rpc("prompts/get", { name: "nope" }))) as { error: { code: number } }).toMatchObject({ error: { code: -32602 } });
+    expect((await svc.handle(ctx(["read"]), rpc("prompts/get", { name: "diagnose_deploy", arguments: {} }))) as { error: { code: number; message: string } }).toMatchObject({
+      error: { code: -32602 },
+    });
+    // an empty-string required arg is treated as missing (a blank id would be meaningless)
+    expect((await svc.handle(ctx(["read"]), rpc("prompts/get", { name: "diagnose_deploy", arguments: { appId: "" } }))) as { error: { code: number } }).toMatchObject({
+      error: { code: -32602 },
+    });
   });
 
   it("tools/call: unknown tool → -32602", async () => {
