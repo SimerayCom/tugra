@@ -43,6 +43,7 @@ export default function AppDetailPage() {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
+  const toast = useToast();
 
   const { data: appData, isLoading, isError, refetch } = useQuery({
     queryKey: ["app", id],
@@ -59,14 +60,24 @@ export default function AppDetailPage() {
     qc.invalidateQueries({ queryKey: ["app", id] });
     qc.invalidateQueries({ queryKey: ["deployments", id] });
   };
-  const deploy = useMutation({ mutationFn: (opts?: { noCache?: boolean }) => api.deployApp(id, opts), onSuccess: invalidate });
-  const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: invalidate });
-  const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: invalidate });
-  const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: invalidate });
+  const errMsg = (e: unknown) => (e instanceof Error && e.message ? e.message : t("apps.actionFailed"));
+  // Optimistic deploy: true from the click until the deploy has been seen running and then finished
+  // (or it failed to start / a safety timeout elapses), so the log stream attaches immediately.
+  const [optimisticDeploy, setOptimisticDeploy] = useState(false);
+  const deploy = useMutation({
+    mutationFn: (opts?: { noCache?: boolean }) => api.deployApp(id, opts),
+    onSuccess: invalidate,
+    onError: (e) => { setOptimisticDeploy(false); toast(errMsg(e), "error"); },
+  });
+  const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
+  const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
+  const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
   const del = useMutation({
     mutationFn: () => api.deleteApp(id),
     onSuccess: () => router.replace("/apps"),
+    onError: (e) => toast(errMsg(e), "error"),
   });
+  const [moreOpen, setMoreOpen] = useState(false);
   const regen = useMutation({
     mutationFn: () => api.regenerateWebhook(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
@@ -89,7 +100,16 @@ export default function AppDetailPage() {
 
   // Deployments come newest-first; a leading RUNNING one means a live deploy.
   const deployActive = deployments[0]?.status === "RUNNING";
-  const live = useDeployLogStream(id, deployActive);
+  const seenActive = useRef(false);
+  useEffect(() => {
+    if (!optimisticDeploy) { seenActive.current = false; return; }
+    if (deployActive) { seenActive.current = true; return; }
+    if (seenActive.current && !deploy.isPending) { setOptimisticDeploy(false); return; }
+    const timer = setTimeout(() => setOptimisticDeploy(false), 20000); // never hold the stream open forever
+    return () => clearTimeout(timer);
+  }, [optimisticDeploy, deployActive, deploy.isPending]);
+  const streamActive = deployActive || deploy.isPending || optimisticDeploy;
+  const live = useDeployLogStream(id, streamActive);
   const [shell, setShell] = useState<TerminalTarget | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [exposeOpen, setExposeOpen] = useState(false);
@@ -112,7 +132,11 @@ export default function AppDetailPage() {
   if (isError && !appData) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
-  const onDeploy = (opts?: { noCache?: boolean }) => { deploy.mutate(opts); setTab("logs"); };
+  const onDeploy = (opts?: { noCache?: boolean }) => { setOptimisticDeploy(true); deploy.mutate(opts); setTab("logs"); };
+  const deployingNow = deploy.isPending || optimisticDeploy;
+  const isRunning = appData.status === "RUNNING";
+  const headerStatus = deployingNow && appData.status !== "RUNNING" ? { label: "DEPLOYING", color: "var(--c-am)" } : { label: appData.status, color: appColor(appData.status) };
+  const primary: "deploy" | "restart" | "start" = appData.status === "RUNNING" ? "restart" : appData.status === "STOPPED" ? "start" : "deploy";
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -120,23 +144,42 @@ export default function AppDetailPage() {
         breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
         icon={<AppLogo templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
-        status={{ label: appData.status, color: appColor(appData.status) }}
+        status={headerStatus}
         badge={appData.isPreview ? <Badge tone="lapis">{t("apps.previewBadge", { n: appData.prNumber ?? "?" })}</Badge> : undefined}
         actions={
           appData.canWrite ? (
             <>
-              <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>
+              {primary === "restart" && (
+                <Btn onClick={() => restart.mutate()} disabled={restart.isPending}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
+              )}
+              {primary === "start" && (
+                <Btn onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
+              )}
+              <Btn variant={primary === "deploy" ? "primary" : "ghost"} onClick={() => onDeploy()} disabled={deploy.isPending}>
                 {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
               </Btn>
               <Btn variant="ghost" onClick={() => onDeploy({ noCache: true })} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>{t("apps.forceDeploy")}</Btn>
-              <Btn variant="ghost" onClick={() => restart.mutate()} disabled={restart.isPending}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
-              {appData.status === "STOPPED" && (
-                <Btn variant="ghost" onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
-              )}
-              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("apps.stop")}</Btn>
-              <Btn variant="ghost" onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}>{t("apps.openShell")}</Btn>
-              <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("apps.rename")}</Btn>
-              <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("apps.delete"), body: t("apps.deleteConfirm"), danger: true })) del.mutate(); }}>{t("apps.delete")}</Btn>
+              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
+              <Btn
+                variant="ghost"
+                onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}
+                disabled={!isRunning}
+                title={!isRunning ? t("apps.shellDisabledHint") : undefined}
+              >
+                {t("apps.openShell")}
+              </Btn>
+              <div style={{ position: "relative" }}>
+                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("apps.more")}>⋯</Btn>
+                {moreOpen && (
+                  <div
+                    role="menu"
+                    style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
+                  >
+                    <Btn variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
+                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: t("apps.deleteConfirm"), danger: true })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                  </div>
+                )}
+              </div>
             </>
           ) : undefined
         }
@@ -399,7 +442,7 @@ export default function AppDetailPage() {
       {tab === "logs" && (
         <>
           {appData.canWrite && <LiveContainerLogsCard id={id} isCompose={appData.source === "COMPOSE"} />}
-          {deployActive && live.lines ? (
+          {streamActive ? (
             <LiveLogCard lines={live.lines} />
           ) : deployments[0]?.logs ? (
             <Card style={{ padding: 16 }}>
@@ -588,7 +631,7 @@ function LiveLogCard({ lines }: { lines: string }) {
         className="mono"
         style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}
       >
-        {lines}
+        {lines || <span style={{ color: "var(--c-tx3)" }}>{t("apps.waitingForBuild")}</span>}
       </pre>
     </Card>
   );

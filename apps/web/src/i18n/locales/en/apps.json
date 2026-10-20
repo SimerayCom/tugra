@@ -328,5 +328,9 @@
   "redirectWww": "Redirect root → www",
   "securityHeaders": "Security headers (HSTS, nosniff, frame-deny)",
   "forwardAuth": "Forward authentication",
-  "forwardAuthDesc": "Protect this app behind an external auth service (Authelia, oauth2-proxy, Authentik). Every request is verified there first. Leave empty to disable."
+  "forwardAuthDesc": "Protect this app behind an external auth service (Authelia, oauth2-proxy, Authentik). Every request is verified there first. Leave empty to disable.",
+  "more": "More",
+  "shellDisabledHint": "Deploy the app first",
+  "waitingForBuild": "Waiting for build output…",
+  "actionFailed": "Action failed"
 }

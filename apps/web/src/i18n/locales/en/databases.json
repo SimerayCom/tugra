@@ -85,5 +85,14 @@
   "publicPortExposed": "Currently exposed on host port {port}.",
   "publicPortInternal": "Currently internal-only (reachable by apps on the same network).",
   "publicPortField": "Host port",
-  "publicPortRedeploy": "Re-provision the database to apply."
+  "publicPortRedeploy": "Re-provision the database to apply.",
+  "retryProvision": "Retry provision",
+  "start": "Start",
+  "starting": "Starting…",
+  "restart": "Restart",
+  "more": "More",
+  "shellDisabledHint": "Provision the database first",
+  "provisioningCardTitle": "Provisioning…",
+  "provisioningCardBody": "Pulling the image and starting the container. Connection details will appear here in a moment.",
+  "actionFailed": "Action failed"
 }

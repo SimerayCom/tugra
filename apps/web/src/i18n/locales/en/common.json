@@ -11,6 +11,8 @@
   "confirmTitle": "Are you sure?",
   "copy": "Copy",
   "copied": "Copied ✓",
+  "reveal": "Show value",
+  "hide": "Hide value",
   "delete": "Delete",
   "remove": "Remove",
   "deleteConfirm": "This can't be undone."

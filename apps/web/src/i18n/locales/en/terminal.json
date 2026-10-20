@@ -1,5 +1,6 @@
 {
   "close": "Close",
+  "closed": "Connection closed.",
   "containerTitle": "Container shell · {name}",
   "hostTitle": "Host shell · {name}"
 }

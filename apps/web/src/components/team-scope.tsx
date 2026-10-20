@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Select } from "./form";
+import { Badge } from "./ui";
 
 const KEY = "tugra.teamScope";
 
@@ -17,13 +18,17 @@ const Ctx = createContext<{ teamId: string | null; setTeamId: (t: string | null)
 export function TeamScopeProvider({ children }: { children: ReactNode }) {
   const [teamId, setState] = useState<string | null>(null);
   useEffect(() => {
-    const saved = localStorage.getItem(KEY);
-    if (saved) setState(saved);
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved) setState(saved);
+    } catch { /* storage unavailable */ }
   }, []);
   const setTeamId = (t: string | null) => {
     setState(t);
-    if (t) localStorage.setItem(KEY, t);
-    else localStorage.removeItem(KEY);
+    try {
+      if (t) localStorage.setItem(KEY, t);
+      else localStorage.removeItem(KEY);
+    } catch { /* storage unavailable */ }
   };
   return <Ctx.Provider value={{ teamId, setTeamId }}>{children}</Ctx.Provider>;
 }
@@ -53,4 +58,12 @@ export function TeamScopeSelect() {
       style={{ width: "auto", minWidth: 130, fontSize: 12, padding: "5px 8px" }}
     />
   );
+}
+
+/** Small badge naming the team an item belongs to (resolved from the ['teams'] query). */
+export function TeamBadge({ teamId, teams }: { teamId: string; teams?: { id: string; name: string }[] }) {
+  const { data = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams(), enabled: !teams });
+  const name = (teams ?? data).find((tm) => tm.id === teamId)?.name;
+  if (!name) return null;
+  return <Badge tone="lapis">{name}</Badge>;
 }
