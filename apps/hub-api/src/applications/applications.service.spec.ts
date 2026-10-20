@@ -2574,7 +2574,7 @@ describe("ApplicationsService FLEET-E — stateful auto-pin", () => {
   });
 });
 
-describe("ApplicationsService.scaleNow (Phase2e live scale)", () => {
+describe("ApplicationsService.scaleNow (Phase 2e live scale)", () => {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
   const clustered = (over = {}) => ({ ...app, source: "IMAGE", clusterId: "c1", volumes: [], replicas: 1, ...over });
   function deps(appRow: object) {

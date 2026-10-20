@@ -72,7 +72,7 @@ export const SetBuildConfigSchema = z
   .strict();
 export type SetBuildConfigInput = z.infer<typeof SetBuildConfigSchema>;
 
-/** Deploy as a Docker Swarm service across a cluster (Phase3), or clear it (clusterId: null) back to
+/** Deploy as a Docker Swarm service across a cluster (Phase 3), or clear it (clusterId: null) back to
  *  classic single-server deploy. replicas is clamped to >= 1 server-side. */
 export const SetClusterConfigSchema = z
   .object({

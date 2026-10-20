@@ -178,6 +178,8 @@ its generated-secret specs.
 
 `POST /apps/templates/:slug` remains as the app-centric equivalent of the deploy call.
 
+## MCP server
+
 Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server at
 **`POST /api/v1/mcp`**, so AI assistants and agents can query an instance directly. It's JSON-RPC 2.0 over
 plain HTTP (Streamable-HTTP transport, protocol version `2025-06-18`) — no SSE or stdio; `GET /api/v1/mcp`
@@ -191,15 +193,16 @@ returns `405` with `Allow: POST`.
   `apiEnabled` kill-switch and IP allowlist apply here too. The caller's identity always comes from the
   resolved token, never anything the client asserts, so a client can't widen its own team scope.
 - **Methods:** `initialize`, `ping`, `notifications/initialized`, `notifications/cancelled`, `tools/list`,
-  `tools/call`. Requests may be batched (a JSON array, capped at 20 messages; each message is charged against
+  `tools/call`, `prompts/list`, `prompts/get`. Requests may be batched (a JSON array, capped at 20 messages; each message is charged against
   the burst limit); notifications (no `id`) return no body (`202`).
-- **Read tools (17):** across applications, servers, clusters/swarm, databases and monitors — e.g.
+- **Read tools (25):** across applications, servers, clusters/swarm, databases, monitors, fleet rollups and files — e.g.
   `list_applications`, `get_application`, `list_deployments`, `get_app_logs`, `list_containers`,
   `get_app_env_keys`, `list_servers`, `get_server`, `get_server_capabilities`, `list_clusters`,
   `get_cluster`, `get_cluster_status`, `list_databases`, `get_database`, `list_backups`, `list_monitors`,
-  `get_monitor`, plus `verify_app_domain` (live public-DNS check for an app's custom domain). Most need only
-  `read`; `get_app_logs` needs `read:secrets` (logs can contain secrets).
-- **Mutate/ops tools (18):** each is a thin wrapper over the same service method + team-permission check +
+  `get_monitor`, `fleet_status`, `fleet_list_apps`, `fleet_health_rollup`, `list_files`, `get_license_status`,
+  plus `verify_app_domain` (live public-DNS check for an app's custom domain). Most need only `read`;
+  `get_app_logs` and `list_files` need `read:secrets` (listings/logs can expose sensitive data).
+- **Mutate/ops tools (21):** each is a thin wrapper over the same service method + team-permission check +
   domain audit the REST API uses, so no new authorization path is introduced. **`deploy` scope:** app
   lifecycle (`deploy_application`, `restart_application`, `stop_application`, `start_application`,
   `rollback_application`, `scale_application` — live scaling), swarm ops (`form_swarm`, `join_swarm_node`,

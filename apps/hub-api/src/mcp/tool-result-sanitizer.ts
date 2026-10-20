@@ -1,9 +1,9 @@
 /**
  * Sanitize an MCP tool result before it is handed to a third-party AI client (Claude Desktop, ChatGPT,
- * an IDE …) as conversation context. Ported from an earlier project's tool-result-sanitizer with a Tugra-specific
- * secret field-name set. This is defense-in-depth: the Phase1 tool catalog is curated to never return
- * decrypted secret values in the first place (env is key-names only, no presigned-URL tools), but the
- * MCP layer bypasses the per-controller RedactSecretsInterceptor, so we redact here too.
+ * an IDE …) as conversation context, with a Tugra-specific secret field-name set. This is defense-in-depth:
+ * the tool catalog is curated to never return decrypted secret values in the first place (env is key-names
+ * only, no presigned-URL tools), but the MCP layer bypasses the per-controller RedactSecretsInterceptor, so
+ * we redact here too.
  *
  * - Named secret fields are nulled (never leak a secret value / credential-bearing URL into LLM context).
  * - Strings have code fences neutralized (a tool result must not be able to open an instruction block —

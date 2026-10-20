@@ -1,5 +1,5 @@
 /**
- * Pure builders for deploying an app as a Docker Swarm SERVICE (Phase3), run on a swarm MANAGER node.
+ * Pure builders for deploying an app as a Docker Swarm SERVICE (Phase 3), run on a swarm MANAGER node.
  * The agent is a generic `sh -c` executor, so nothing on the agent changes — these are just new hub-side
  * command strings, alongside the classic single-container builders in deploy-script.ts.
  *
@@ -26,7 +26,7 @@ export function serviceName(app: { id: string }): string {
   return containerName(app);
 }
 
-/** The attachable overlay network every swarm service (and the swarm-mode Traefik, PhaseB) joins so tasks
+/** The attachable overlay network every swarm service (and the swarm-mode Traefik, Phase B) joins so tasks
  *  can reach each other across nodes. Created on a manager, idempotent. */
 export const SWARM_OVERLAY = "tugra-swarm";
 
@@ -94,7 +94,7 @@ export interface ServiceDeployOpts {
   reserveMemoryMb?: number | null;
   reserveCpus?: number | null;
   healthCmd?: string | null;
-  labels?: string[]; // service-level labels (Traefik swarm-provider reads these) — PhaseB; [] in PhaseA
+  labels?: string[]; // service-level labels (Traefik swarm-provider reads these) — Phase B; [] in Phase A
   publish?: string[]; // routing-mesh published ports, e.g. "8080:80" (reachable on any node) — domain-less apps
   constraints?: string[]; // already-rendered `--constraint` expressions (e.g. "node.hostname==web-1") — FLEET-D
   placementPrefs?: string[]; // already-rendered `--placement-pref` expressions (e.g. "spread=node.labels.zone") — FLEET-D

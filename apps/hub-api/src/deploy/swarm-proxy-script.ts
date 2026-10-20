@@ -1,5 +1,5 @@
 /**
- * Pure builders for the swarm-mode Traefik that fronts swarm services (Phase3-B), run on a swarm MANAGER.
+ * Pure builders for the swarm-mode Traefik that fronts swarm services (Phase 3-B), run on a swarm MANAGER.
  * Unlike the classic per-server Traefik (buildProxySetupScript, one `docker run` per host on a bridge net),
  * this is ONE `docker service` for the whole cluster, pinned to the manager node, on the overlay network,
  * discovering `docker service` labels via Traefik's swarm provider.

@@ -21,7 +21,7 @@ export const SetServersSchema = z.object({
 });
 export type SetServersInput = z.infer<typeof SetServersSchema>;
 
-/** Form a Docker Swarm from the cluster's members (Phase2): `managerServerId` becomes the swarm manager;
+/** Form a Docker Swarm from the cluster's members (Phase 2): `managerServerId` becomes the swarm manager;
  *  every other online member joins as a worker. `advertiseAddr` optionally overrides the manager's
  *  auto-picked IP (private LAN preferred) that workers dial on :2377 — validated as an IP literal. */
 export const FormSwarmSchema = z.object({
@@ -30,7 +30,7 @@ export const FormSwarmSchema = z.object({
 });
 export type FormSwarmInput = z.infer<typeof FormSwarmSchema>;
 
-/** Add ONE more already-a-member server to an already-ACTIVE swarm as a worker (Phase2b). `advertiseAddr`
+/** Add ONE more already-a-member server to an already-ACTIVE swarm as a worker (Phase 2b). `advertiseAddr`
  *  optionally overrides the manager's auto-picked dial IP (validated as an IP literal). */
 export const JoinNodeSchema = z.object({
   serverId: z.string().min(1),

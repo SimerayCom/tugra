@@ -117,7 +117,7 @@ export interface ClusterDetail extends Cluster {
   health: ClusterHealth;
 }
 
-// ── Docker Swarm formation (Phase2) ──
+// ── Docker Swarm formation (Phase 2) ──
 export type SwarmStatus = "NONE" | "FORMING" | "ACTIVE" | "DEGRADED" | "DISSOLVING" | "JOINING";
 
 /** One swarm task (replica) in the live cluster-deploy panel. */

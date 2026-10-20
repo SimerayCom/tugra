@@ -35,7 +35,7 @@ interface IngressPoolNode {
 }
 
 /**
- * Ensures the swarm-mode Traefik that fronts a cluster's swarm services (Phase3-B). One service per cluster,
+ * Ensures the swarm-mode Traefik that fronts a cluster's swarm services (Phase 3-B). One service per cluster,
  * pinned to the manager, on the overlay network. Mirrors ProxyService.ensureProxy but for a `docker service`.
  * Called lazily before a domain-routed swarm deploy (not in formation — routing readiness is a separate
  * concern from swarm membership).
