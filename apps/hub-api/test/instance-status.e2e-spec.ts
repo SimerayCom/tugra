@@ -28,9 +28,19 @@ describe("GET /instance/status (e2e)", () => {
       edition: expect.any(String),
       ssoEnabled: expect.any(Boolean), // public: the login page needs to know whether to show the SSO button
       setupCodeRequired: expect.any(Boolean), // public: first-run owner-claim gate (install page needs it)
+      hubPublicUrl: expect.any(String), // public: the SPA resolves the hub origin (terminal WS / webhook URLs) at runtime
+      authProviders: { github: expect.any(Boolean), oidc: expect.any(Boolean) }, // public: hide unconfigured SSO buttons
     });
     // never exposes any other (secret) settings field
-    expect(Object.keys(res.body).sort()).toEqual(["allowRegistration", "edition", "initialized", "setupCodeRequired", "ssoEnabled"]);
+    expect(Object.keys(res.body).sort()).toEqual([
+      "allowRegistration",
+      "authProviders",
+      "edition",
+      "hubPublicUrl",
+      "initialized",
+      "setupCodeRequired",
+      "ssoEnabled",
+    ]);
   });
 
   it("is a normal API route — not exempt from the prefix", async () => {
