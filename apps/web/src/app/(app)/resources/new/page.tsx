@@ -9,7 +9,7 @@ import { SiDocker, SiGit } from "@icons-pack/react-simple-icons";
 import { api } from "../../../../lib/api";
 import type { DbEngine, ServerStatus } from "../../../../lib/types";
 import { engineLabel, engineVersions } from "../../../../lib/databases";
-import { TemplateLogo } from "../../../../lib/template-icons";
+import { TemplateLogo, ENGINE_LOGO } from "../../../../lib/template-icons";
 import { TemplateGrid } from "../../../../components/template-grid";
 import { wizardStep } from "../../../../lib/wizard-step";
 import { parseKind, visibleGroups, backTarget, defaultEnvId, resolveProjectId, type ResourceKind } from "../../../../lib/resource-new";
@@ -24,18 +24,6 @@ const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
 
 const ENGINES: DbEngine[] = ["POSTGRES", "MYSQL", "MARIADB", "REDIS", "KEYDB", "DRAGONFLY", "MONGO", "CLICKHOUSE", "LIBSQL"];
-
-// vendored brand icon per engine (KeyDB/Dragonfly have none → generic glyph)
-const ENGINE_LOGO: Partial<Record<DbEngine, string>> = {
-  POSTGRES: "postgresql",
-  MYSQL: "mysql",
-  MARIADB: "mariadb",
-  REDIS: "redis",
-  KEYDB: "keydb",
-  DRAGONFLY: "dragonfly",
-  MONGO: "mongodb",
-  CLICKHOUSE: "clickhouse",
-};
 
 type Sel =
   | { group: "app"; source: "IMAGE" }

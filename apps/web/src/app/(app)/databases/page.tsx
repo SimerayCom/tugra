@@ -10,6 +10,7 @@ import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
+import { TemplateLogo, ENGINE_LOGO } from "../../../lib/template-icons";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 import { writableIds } from "../../../lib/fleet";
@@ -75,6 +76,7 @@ export default function DatabasesPage() {
                 />
                 <Link href={`/databases/${d.id}`} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, textDecoration: "none", color: "var(--c-tx)" }}>
                   <span style={{ width: 9, height: 9, borderRadius: "50%", background: dbColor(d.status), flexShrink: 0 }} />
+                  <TemplateLogo logo={ENGINE_LOGO[d.engine]} slug={d.engine} name={engineLabel(d.engine)} size={22} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
                       {d.name}
