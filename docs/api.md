@@ -183,9 +183,10 @@ Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protoco
 plain HTTP (Streamable-HTTP transport, protocol version `2025-06-18`) — no SSE or stdio; `GET /api/v1/mcp`
 returns `405` with `Allow: POST`.
 
-- **Status:** read **and** write. 45 tools total — 24 read + 21 PAT-scoped mutate/ops tools. OAuth for
-  third-party clients (dynamic client registration, `/authorize`, `/token`, PKCE) is still planned; today a
-  PAT is the only credential.
+- **Status:** read **and** write. 45 tools total — 24 read + 21 PAT-scoped mutate/ops tools. The server also
+  exposes **guided prompts** (`prompts/list` + `prompts/get`: diagnose a failing deploy, fleet rollout, fleet
+  health review) — inert recipes that steer the agent through the scoped tools. OAuth for third-party clients
+  (dynamic client registration, `/authorize`, `/token`, PKCE) is still planned; today a PAT is the only credential.
 - **Auth:** the same PAT/session + scope model as the REST API above — a PAT works out of the box, and the
   `apiEnabled` kill-switch and IP allowlist apply here too. The caller's identity always comes from the
   resolved token, never anything the client asserts, so a client can't widen its own team scope.

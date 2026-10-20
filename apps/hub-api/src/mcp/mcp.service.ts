@@ -11,6 +11,7 @@ import { MonitorsService } from "../monitors/monitors.service";
 import { ImporterService } from "../importer/importer.service";
 import { ImportExecutorService } from "../importer/import-executor.service";
 import { MCP_TOOLS, type McpDeps, type McpTool } from "./mcp-tools";
+import { MCP_PROMPTS, type McpPrompt } from "./mcp-prompts";
 import { sanitizeToolResult } from "./tool-result-sanitizer";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -41,6 +42,7 @@ export class McpService {
   private readonly deps: McpDeps;
   /** Overridable in tests; production always uses the real catalog. */
   tools: McpTool[] = MCP_TOOLS;
+  prompts: McpPrompt[] = MCP_PROMPTS;
 
   constructor(
     apps: ApplicationsService,
@@ -69,7 +71,7 @@ export class McpService {
       case "initialize":
         return this.result(id, {
           protocolVersion: typeof params?.protocolVersion === "string" ? params.protocolVersion : PROTOCOL_VERSION,
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, prompts: {} },
           serverInfo: { name: "tugra-hub", version: "1.0.0" },
         });
 
@@ -112,6 +114,29 @@ export class McpService {
           // MCP convention: tool failures are content with isError, NOT a JSON-RPC error.
           return this.result(id, { content: [{ type: "text", text: msg }], isError: true });
         }
+      }
+
+      case "prompts/list":
+        // Prompts are inert guided recipes (no data, no action), so they're visible to any authed caller;
+        // anything a prompt suggests is still gated when the agent actually calls the underlying tool.
+        return this.result(id, {
+          prompts: this.prompts.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })),
+        });
+
+      case "prompts/get": {
+        const name = params?.name;
+        const prompt = this.prompts.find((p) => p.name === name);
+        if (!prompt) return this.error(id, -32602, `Unknown prompt: ${name}`);
+        const args = params?.arguments && typeof params.arguments === "object" ? (params.arguments as Record<string, unknown>) : {};
+        // A required arg must be a NON-EMPTY string (an empty string would interpolate a blank id into the recipe).
+        const missing = prompt.arguments
+          .filter((ar) => ar.required && !(typeof args[ar.name] === "string" && (args[ar.name] as string).length > 0))
+          .map((ar) => ar.name);
+        if (missing.length) return this.error(id, -32602, `Missing required argument(s): ${missing.join(", ")}`);
+        return this.result(id, {
+          description: prompt.description,
+          messages: [{ role: "user", content: { type: "text", text: prompt.build(args) } }],
+        });
       }
 
       default:
