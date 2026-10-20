@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { I18nProvider } from "../i18n/provider";
 import { ToastProvider } from "./toast";
 import { CopyBtn, CopyRow } from "./copy-row";
@@ -37,5 +37,36 @@ describe("CopyRow", () => {
     expect(screen.queryByText("hunter2")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledWith("hunter2");
+  });
+
+  it("reveals a secret via the eye toggle and re-masks after 30s", () => {
+    vi.useFakeTimers();
+    try {
+      wrap(<CopyRow label="Password" value="hunter2" secret />);
+      const eye = screen.getByRole("button", { name: "Show value" });
+      expect(eye.getAttribute("aria-pressed")).toBe("false");
+      fireEvent.click(eye);
+      expect(screen.getByText("hunter2")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Hide value" }).getAttribute("aria-pressed")).toBe("true");
+      act(() => { vi.advanceTimersByTime(30_001); });
+      expect(screen.queryByText("hunter2")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-masks when the tab becomes hidden", () => {
+    wrap(<CopyRow label="Password" value="hunter2" secret />);
+    fireEvent.click(screen.getByRole("button", { name: "Show value" }));
+    expect(screen.getByText("hunter2")).toBeTruthy();
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(screen.queryByText("hunter2")).toBeNull();
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  it("has no reveal toggle for non-secret rows", () => {
+    wrap(<CopyRow label="URL" value="x" />);
+    expect(screen.queryByRole("button", { name: "Show value" })).toBeNull();
   });
 });

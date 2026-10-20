@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useT } from "../i18n/provider";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -17,16 +18,22 @@ import {
 export default function TerminalView({
   target,
   onClose,
+  unavailableReason,
 }: {
   target: TerminalTarget;
   onClose?: () => void;
+  /** When set, show this message instead of connecting (resource/server not running). */
+  unavailableReason?: string;
 }) {
+  const t = useT();
+  const closedText = useRef(t("terminal.closed"));
+  closedText.current = t("terminal.closed");
   const ref = useRef<HTMLDivElement>(null);
   const tkey = "app" in target ? `app:${target.app}` : "database" in target ? `database:${target.database}` : `server:${target.server}`;
 
   useEffect(() => {
     const host = ref.current;
-    if (!host) return;
+    if (!host || unavailableReason) return;
     const term = new Terminal({
       fontSize: 13,
       fontFamily: "var(--font-geist-mono, ui-monospace, monospace)",
@@ -50,7 +57,7 @@ export default function TerminalView({
             onClose?.();
           }
         },
-        onClose: () => term.write("\r\n[disconnected]\r\n"),
+        onClose: () => term.write(`\r\n${closedText.current}\r\n`),
       },
       { fetchTicket: () => api.terminalTicket().then((r) => r.ticket) },
     );
@@ -75,7 +82,14 @@ export default function TerminalView({
     };
     // Reconnect only when the target changes, not on unrelated parent re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tkey]);
+  }, [tkey, unavailableReason]);
 
+  if (unavailableReason) {
+    return (
+      <div role="status" style={{ padding: 16, fontSize: 13, color: "var(--c-tx2)" }}>
+        {unavailableReason}
+      </div>
+    );
+  }
   return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }

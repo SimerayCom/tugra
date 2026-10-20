@@ -14,6 +14,8 @@ import { TemplateGrid } from "../../../../components/template-grid";
 import { wizardStep } from "../../../../lib/wizard-step";
 import { parseKind, visibleGroups, backTarget, defaultEnvId, resolveProjectId, type ResourceKind } from "../../../../lib/resource-new";
 import { scopeByTeam } from "../../../../lib/team-scope";
+import { soleOnlineServerId, createdHref, readDeployPref, writeDeployPref } from "../../../../lib/resource-create";
+import { useToast } from "../../../../components/toast";
 import { useT } from "../../../../i18n/provider";
 import { BackLink, Btn, Card, Spinner, StatusPill } from "../../../../components/ui";
 import { Field, Select, TextInput } from "../../../../components/form";
@@ -47,6 +49,7 @@ function Wizard() {
   const t = useT();
   const router = useRouter();
   const sp = useSearchParams();
+  const toast = useToast();
 
   const { data: projects = [], isLoading } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
   const { data: servers = [], isSuccess: serversLoaded } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
@@ -80,6 +83,19 @@ function Wizard() {
     if (project && !project.environments.some((e) => e.id === envId)) setEnvId(defaultEnvId(project));
   }, [project, envId]);
   const serverPool = scopeByTeam(servers, project?.teamId ?? null);
+
+  // Exactly one ONLINE server → pick it and skip the Server step. "change" turns
+  // auto-pick off so the explicit picker shows (and stays) for that session.
+  const [autoServer, setAutoServer] = useState(true);
+  const soleOnline = soleOnlineServerId(serverPool);
+  useEffect(() => {
+    if (autoServer && serversLoaded && !serverId && soleOnline) setServerId(soleOnline);
+  }, [autoServer, serversLoaded, serverId, soleOnline]);
+
+  // "Deploy immediately" preference (remembered; default on). Read after mount
+  // to keep SSR/hydration markup stable.
+  const [deployNow, setDeployNow] = useState(true);
+  useEffect(() => { setDeployNow(readDeployPref()); }, []);
 
   const [sel, setSel] = useState<Sel>(null);
   const [kindFilter, setKindFilter] = useState<ResourceKind | null>(parseKind(sp.get("kind")));
@@ -140,20 +156,31 @@ function Wizard() {
   }, [templates, sp]);
 
   const create = useMutation({
-    mutationFn: async (): Promise<string> => {
+    mutationFn: async (): Promise<{ href: string; deploying: boolean; name: string }> => {
       const environmentId = envId || undefined;
+      const deploy = deployNow;
+      const done = (kind: "app" | "db", id: string, deploying: boolean) => ({ href: createdHref(kind, id, deploying), deploying, name });
       if (sel?.group === "template") {
-        // Templates are one-click like Home: create + best-effort auto-deploy.
-        const a = await api.createFromTemplate(sel.slug, { name, serverId, environmentId, deploy: true });
-        return `/apps/${a.id}`;
+        const a = await api.createFromTemplate(sel.slug, { name, serverId, environmentId, deploy });
+        return done("app", a.id, deploy);
       }
       if (sel?.group === "db") {
         const d = await api.createDatabase({ name, serverId, engine: sel.engine, version: version || undefined, hostPort: hostPort ? Number(hostPort) : undefined, environmentId });
-        return `/databases/${d.id}`;
+        let provisioning = false;
+        if (deploy) {
+          try {
+            await api.provisionDatabase(d.id);
+            provisioning = true;
+          } catch (e) {
+            // The database exists already; land on it so the user can retry provisioning there.
+            toast((e as Error).message, "error");
+          }
+        }
+        return done("db", d.id, provisioning);
       }
       if (sel?.group === "service") {
-        const a = await api.createApp({ name, serverId, source: "COMPOSE", composeFile, environmentId });
-        return `/apps/${a.id}`;
+        const a = await api.createApp({ name, serverId, source: "COMPOSE", composeFile, environmentId, deploy });
+        return done("app", a.id, deploy);
       }
       // app
       const a = await api.createApp({
@@ -169,10 +196,14 @@ function Wizard() {
         hostPort: hostPort ? Number(hostPort) : undefined,
         domain: domain || undefined,
         environmentId,
+        deploy,
       });
-      return `/apps/${a.id}`;
+      return done("app", a.id, deploy);
     },
-    onSuccess: (href) => router.push(href),
+    onSuccess: ({ href, deploying, name: created }) => {
+      toast(t(deploying ? "resources.deployingToast" : "resources.createdToast", { name: created }), "success");
+      router.push(href);
+    },
   });
 
   if (isLoading) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -251,7 +282,7 @@ function Wizard() {
           {projectId && (() => {
             const cur = wizardStep(sel !== null, !!serverId);
             const steps = [t("resources.stepType"), t("resources.stepServer"), t("resources.stepConfigure")];
-            const goto = (n: number) => { if (n === 1) setSel(null); else if (n === 2) setServerId(""); };
+            const goto = (n: number) => { if (n === 1) setSel(null); else if (n === 2) { setAutoServer(false); setServerId(""); } };
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
                 {steps.map((label, i) => {
@@ -348,7 +379,9 @@ function Wizard() {
                       key={s.id}
                       type="button"
                       onClick={() => setServerId(s.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
+                      disabled={s.status !== "ONLINE"}
+                      title={s.status !== "ONLINE" ? t("resources.serverNotOnline") : undefined}
+                      style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: 12, borderRadius: "var(--r1)", cursor: s.status === "ONLINE" ? "pointer" : "not-allowed", opacity: s.status === "ONLINE" ? 1 : 0.5, fontFamily: "inherit", background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx)", width: "100%" }}
                     >
                       <span style={logoBox}><Server size={22} color="var(--c-a)" /></span>
                       <span style={{ minWidth: 0, flex: 1 }}>
@@ -365,9 +398,9 @@ function Wizard() {
             <Card style={{ padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
                 <button type="button" onClick={() => setSel(null)} style={backLinkBtn}>← {t("resources.changeType")}</button>
-                <button type="button" onClick={() => setServerId("")} style={backLinkBtn}>← {t("resources.changeServer")}</button>
                 <span style={{ fontSize: 12, color: "var(--c-tx3)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  <Server size={13} /> {servers.find((s) => s.id === serverId)?.name}
+                  <Server size={13} /> {t("resources.serverLabel")}: <strong style={{ color: "var(--c-tx)" }}>{servers.find((s) => s.id === serverId)?.name}</strong>
+                  <button type="button" onClick={() => { setAutoServer(false); setServerId(""); }} style={{ ...backLinkBtn, fontSize: 12 }} aria-label={t("resources.changeServer")}>({t("resources.changeServerShort")})</button>
                 </span>
               </div>
               <form onSubmit={(e) => { e.preventDefault(); if (name && serverId && projectId) create.mutate(); }}>
@@ -477,6 +510,14 @@ function Wizard() {
                     </>
                   )}
                 </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 13, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={deployNow}
+                    onChange={(e) => { setDeployNow(e.target.checked); writeDeployPref(e.target.checked); }}
+                  />
+                  {t("resources.deployNow")}
+                </label>
                 <div style={{ marginTop: 14 }}>
                   {noServer ? (
                     <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>
@@ -484,7 +525,12 @@ function Wizard() {
                     </div>
                   ) : (
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <Btn type="submit" disabled={create.isPending || !name || !serverId || !projectId}>{create.isPending ? "…" : t("resources.create")}</Btn>
+                      <Btn type="submit" disabled={create.isPending || !name || !serverId || !projectId}>{create.isPending ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <Spinner /> {deployNow ? t("resources.deployingLabel") : t("resources.creatingLabel")}
+                          </span>
+                        ) : t("resources.create")}
+                      </Btn>
                       {!projectId && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("resources.pickProjectFirst")}</span>}
                     </div>
                   )}

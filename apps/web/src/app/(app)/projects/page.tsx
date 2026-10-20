@@ -8,7 +8,7 @@ import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
-import { useTeamScope } from "../../../components/team-scope";
+import { TeamBadge, useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 
 const field: React.CSSProperties = {
@@ -100,6 +100,7 @@ export default function ProjectsPage() {
                     <Badge>{p.environments.length} env</Badge>
                     <Badge>{apps} apps</Badge>
                     <Badge>{dbs} dbs</Badge>
+                    {scope === null && teams.length > 1 && <TeamBadge teamId={p.teamId} teams={teams} />}
                   </div>
                 </div>
                 <Link href={`/resources/new?project=${p.id}&env=${p.environments[0]?.id ?? ""}`} style={rowChip}><Plus size={13} /> {t("dashboard.addResource")}</Link>

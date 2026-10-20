@@ -15,10 +15,13 @@ export function TerminalModal({
   target,
   title,
   onClose,
+  unavailableReason,
 }: {
   target: TerminalTarget;
   title: string;
   onClose: () => void;
+  /** Caller passes this when the resource/server isn't RUNNING; shown instead of connecting. */
+  unavailableReason?: string;
 }) {
   const t = useT();
   return (
@@ -41,7 +44,7 @@ export function TerminalModal({
         </button>
       </div>
       <div style={{ flex: 1, padding: 8, minHeight: 0 }}>
-        <TerminalView target={target} onClose={onClose} />
+        <TerminalView target={target} onClose={onClose} unavailableReason={unavailableReason} />
       </div>
     </Modal>
   );

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { useT } from "../i18n/provider";
 import { useToast } from "./toast";
 import { Btn } from "./ui";
@@ -25,6 +27,16 @@ export function CopyBtn({ text, label }: { text: string; label?: string }) {
 
 /** Labeled, copyable value row (was forked between apps and databases detail). */
 export function CopyRow({ label, value, copy, secret }: { label: string; value: string; copy?: string; secret?: boolean }) {
+  const t = useT();
+  const [shown, setShown] = useState(false);
+  // Auto-re-mask after 30s and whenever the tab is hidden.
+  useEffect(() => {
+    if (!shown) return;
+    const timer = setTimeout(() => setShown(false), 30_000);
+    const onVis = () => { if (document.visibilityState === "hidden") setShown(false); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
+  }, [shown]);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontSize: 11, color: "var(--c-tx3)", width: 110, flexShrink: 0 }}>{label}</span>
@@ -42,8 +54,18 @@ export function CopyRow({ label, value, copy, secret }: { label: string; value: 
           whiteSpace: "nowrap",
         }}
       >
-        {secret ? "•".repeat(Math.min(value.length, 40)) : value}
+        {secret && !shown ? "•".repeat(Math.min(value.length, 40)) : value}
       </code>
+      {secret && (
+        <Btn
+          variant="ghost"
+          aria-label={shown ? t("common.hide") : t("common.reveal")}
+          aria-pressed={shown}
+          onClick={() => setShown((s) => !s)}
+        >
+          {shown ? <EyeOff size={14} /> : <Eye size={14} />}
+        </Btn>
+      )}
       <CopyBtn text={value} label={copy} />
     </div>
   );

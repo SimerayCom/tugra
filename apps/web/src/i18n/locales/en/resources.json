@@ -67,5 +67,13 @@
   "cat_finance": "Finance",
   "create": "Create",
   "needServer": "Add a server first to deploy resources.",
-  "addServer": "Add a server →"
+  "addServer": "Add a server →",
+  "deployNow": "Deploy immediately after creating",
+  "creatingLabel": "Creating…",
+  "deployingLabel": "Deploying…",
+  "createdToast": "{name} created",
+  "deployingToast": "{name} created — deploying now",
+  "serverLabel": "Server",
+  "changeServerShort": "change",
+  "serverNotOnline": "Only online servers can be selected."
 }

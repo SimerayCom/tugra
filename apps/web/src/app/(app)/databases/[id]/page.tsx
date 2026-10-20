@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
-import { dbColor, engineLabel } from "../../../../lib/databases";
+import { dbColor, engineLabel, isDbTransitional } from "../../../../lib/databases";
 import { backupColor, formatSize, restoreColor } from "../../../../lib/backups";
 import { ErrorState } from "../../../../components/error-state";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
@@ -35,7 +35,8 @@ export default function DatabaseDetailPage() {
   const { data: db, isLoading, isError, refetch } = useQuery({
     queryKey: ["database", id],
     queryFn: () => api.getDatabase(id),
-    refetchInterval: 5000,
+    // Poll fast while the database is on its way to RUNNING so the UI feels live.
+    refetchInterval: (q) => (q.state.data && isDbTransitional(q.state.data.status) ? 1500 : 5000),
   });
 
   const { data: backups = [] } = useQuery({
@@ -56,19 +57,23 @@ export default function DatabaseDetailPage() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["database", id] });
   const invalidateBackups = () => qc.invalidateQueries({ queryKey: ["backups", id] });
   const invalidateRestores = () => qc.invalidateQueries({ queryKey: ["restores", id] });
-  const provision = useMutation({ mutationFn: () => api.provisionDatabase(id), onSuccess: invalidate });
-  const stop = useMutation({ mutationFn: () => api.stopDatabase(id), onSuccess: invalidate });
+  const errMsg = (e: unknown) => (e instanceof Error && e.message ? e.message : t("databases.actionFailed"));
+  const provision = useMutation({ mutationFn: () => api.provisionDatabase(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
+  const stop = useMutation({ mutationFn: () => api.stopDatabase(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
   const [renameOpen, setRenameOpen] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameDatabase(id, name),
     onSuccess: () => { setRenameOpen(false); invalidate(); },
+    onError: (e) => toast(errMsg(e), "error"),
   });
   const del = useMutation({
     mutationFn: () => api.deleteDatabase(id),
     onSuccess: () => router.replace("/databases"),
+    onError: (e) => toast(errMsg(e), "error"),
   });
-  const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups });
+  const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups, onError: (e) => toast(errMsg(e), "error") });
+  const [moreOpen, setMoreOpen] = useState(false);
   const restore = useMutation({
     mutationFn: (bid: string) => api.restoreBackup(id, bid),
     onSuccess: () => toast(t("databases.restoreSucceeded"), "success"),
@@ -142,17 +147,39 @@ export default function DatabaseDetailPage() {
       <PageHeader
         breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
         title={db.name}
-        status={{ label: db.status, color: dbColor(db.status) }}
+        status={{ label: provision.isPending && db.status === "NEW" ? "PROVISIONING" : db.status, color: dbColor(provision.isPending ? "PROVISIONING" : db.status) }}
         actions={
           db.canWrite ? (
             <>
               <Btn onClick={() => provision.mutate()} disabled={provision.isPending}>
-                {provision.isPending ? t("databases.provisioning") : t("databases.provision")}
+                {provision.isPending
+                  ? t("databases.provisioning")
+                  : db.status === "RUNNING" ? t("databases.restart")
+                  : db.status === "STOPPED" ? t("databases.start")
+                  : db.status === "FAILED" ? t("databases.retryProvision")
+                  : t("databases.provision")}
               </Btn>
-              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>{t("databases.stop")}</Btn>
-              <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("databases.openShell")}</Btn>
-              <Btn variant="ghost" onClick={() => setRenameOpen(true)}>{t("databases.rename")}</Btn>
-              <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true })) del.mutate(); }}>{t("databases.delete")}</Btn>
+              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
+              <Btn
+                variant="ghost"
+                onClick={() => setShellOpen(true)}
+                disabled={db.status !== "RUNNING"}
+                title={db.status !== "RUNNING" ? t("databases.shellDisabledHint") : undefined}
+              >
+                {t("databases.openShell")}
+              </Btn>
+              <div style={{ position: "relative" }}>
+                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("databases.more")}>⋯</Btn>
+                {moreOpen && (
+                  <div
+                    role="menu"
+                    style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
+                  >
+                    <Btn variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
+                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true })) del.mutate(); }}>{t("databases.delete")}</Btn>
+                  </div>
+                )}
+              </div>
             </>
           ) : undefined
         }
@@ -200,7 +227,15 @@ export default function DatabaseDetailPage() {
       <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
 
       {tab === "overview" && (
-        db.canWrite && db.connectionUri ? (
+        provision.isPending || (isDbTransitional(db.status) && !db.connectionUri && db.status !== "NEW") ? (
+          <Card style={{ padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <Spinner />
+              <div style={{ fontWeight: 600 }}>{t("databases.provisioningCardTitle")}</div>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: 0 }}>{t("databases.provisioningCardBody")}</p>
+          </Card>
+        ) : db.canWrite && db.connectionUri ? (
           <Card style={{ padding: 16 }}>
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.connection")}</div>
             <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.connectionDesc")}</p>

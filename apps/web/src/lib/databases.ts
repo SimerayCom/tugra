@@ -1,9 +1,15 @@
 import type { DbEngine, DbStatus } from "./types";
 
-export function dbColor(s: DbStatus): string {
+/** Transitional states: the resource is on its way to RUNNING (or has never been provisioned). */
+export function isDbTransitional(s: DbStatus | string): boolean {
+  return s === "NEW" || s === "PROVISIONING" || s === "STARTING";
+}
+
+export function dbColor(s: DbStatus | string): string {
   if (s === "RUNNING") return "var(--c-g)";
   if (s === "FAILED") return "var(--c-r)";
   if (s === "STOPPED") return "var(--c-am)";
+  if (isDbTransitional(s)) return "var(--c-am)"; // amber; callers add a pulse while transitional
   return "var(--c-tx3)";
 }
 
