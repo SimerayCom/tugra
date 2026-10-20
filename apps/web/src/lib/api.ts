@@ -490,6 +490,9 @@ export const api = {
   getAppContainerMetrics(id: string, range: MetricsRange) {
     return apiFetch<AppContainerMetrics>(`/apps/${id}/metrics/containers?range=${range}`);
   },
+  getDatabaseContainerMetrics(id: string, range: MetricsRange) {
+    return apiFetch<AppContainerMetrics>(`/databases/${id}/metrics/containers?range=${range}`);
+  },
   getServerContainers(id: string) {
     return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);
   },

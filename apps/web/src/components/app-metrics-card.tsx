@@ -11,14 +11,15 @@ import { MetricChart } from "./charts";
 
 const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d"];
 
-/** App "Metrics" tab: per-container CPU/RAM/Net/Disk charts, range-switchable, auto-refreshing.
- *  Read-level (metrics carry no secrets) — visible to every team member. */
-export function AppMetricsCard({ id }: { id: string }) {
+/** "Metrics" tab: per-container CPU/RAM/Net/Disk charts, range-switchable, auto-refreshing.
+ *  Serves both applications and databases (`kind`) — the agent samples every container, so the chart
+ *  data differs only by which resource endpoint it reads. Read-level (metrics carry no secrets). */
+export function AppMetricsCard({ id, kind = "app" }: { id: string; kind?: "app" | "database" }) {
   const t = useT();
   const [range, setRange] = useState<MetricsRange>("1h");
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["appContainerMetrics", id, range],
-    queryFn: () => api.getAppContainerMetrics(id, range),
+    queryKey: [kind === "database" ? "databaseContainerMetrics" : "appContainerMetrics", id, range],
+    queryFn: () => (kind === "database" ? api.getDatabaseContainerMetrics(id, range) : api.getAppContainerMetrics(id, range)),
     refetchInterval: 5000,
   });
   const containers = data?.containers ?? [];

@@ -137,6 +137,8 @@
   "liveLogs": "Live logs",
   "liveLogsDesc": "Live stdout/stderr streamed straight from the running container.",
   "follow": "Follow",
+  "logWrap": "Wrap",
+  "logTimestamps": "Timestamps",
   "pickContainerToStream": "Pick a container to stream its logs.",
   "streamingLogs": "Streaming live…",
   "logStreamConnecting": "Connecting…",

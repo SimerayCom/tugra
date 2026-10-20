@@ -16,6 +16,7 @@ import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../
 import { filterByQuery } from "../common/query-filter";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
+import { ContainerMetricsService, type AppContainerMetrics } from "../metrics/container-metrics.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import {
@@ -103,6 +104,7 @@ export class DatabasesService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly logStream: LogStreamService,
+    private readonly containerMetricsSvc: ContainerMetricsService,
     private readonly crypto: CryptoService,
     private readonly teamDefaults: TeamDefaultsService,
   ) {}
@@ -357,6 +359,16 @@ export class DatabasesService {
     const r = await this.agentWs.sendCommand(db.serverId, cmd, "database", 60_000);
     await this.audit.log({ actor: userId, action: "database.logs.download", target: id });
     return r.output.slice(0, 5_000_000); // hard cap the response size
+  }
+
+  /**
+   * Per-container CPU/RAM/network/disk history for this database's Metrics tab. Read-level (metrics
+   * carry no secrets, like the app metrics tab). The agent already samples every container on the
+   * host, so the `tugra_db_<id>` rows exist; we just query them by the deterministic name prefix.
+   */
+  async containerMetrics(userId: string, id: string, range?: string): Promise<AppContainerMetrics> {
+    const db = await this.require(userId, id);
+    return this.containerMetricsSvc.forApp(db.serverId, dbContainerName(db), range);
   }
 
   async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {

@@ -41,6 +41,14 @@ describe("AppMetricsCard", () => {
     expect(spy).toHaveBeenCalledWith("app1", "1h");
   });
 
+  it("queries the database endpoint when kind=database", async () => {
+    const dbSpy = vi.spyOn(api, "getDatabaseContainerMetrics").mockResolvedValue({ containers: [] });
+    const appSpy = vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({ containers: [] });
+    wrap(<AppMetricsCard id="db1" kind="database" />);
+    await waitFor(() => expect(dbSpy).toHaveBeenCalledWith("db1", "1h"));
+    expect(appSpy).not.toHaveBeenCalled();
+  });
+
   it("switches range → refetches with the new range", async () => {
     const spy = vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({ containers: [] });
     wrap(<AppMetricsCard id="app1" />);

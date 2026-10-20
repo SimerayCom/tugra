@@ -9,6 +9,10 @@ import { useT } from "../i18n/provider";
 import { Btn, Card, Spinner } from "./ui";
 import { TextInput, Select } from "./form";
 
+// Strip the leading `docker logs --timestamps` ISO prefix for the "hide timestamps" view (display only;
+// the raw line — timestamp included — is still what server-side search/grep matched).
+const TS_RE = /^\d{4}-\d{2}-\d{2}T\S+\s/;
+
 /**
  * Live `docker logs --follow` viewer, shared by apps, databases and server containers. `basePath`
  * is the resource's API prefix (`/apps/:id`, `/databases/:id`, `/servers/:id/containers`); the hook
@@ -38,6 +42,8 @@ export function LiveLogsCard({
   const t = useT();
   const [following, setFollowing] = useState(true);
   const [paused, setPaused] = useState(false);
+  const [wrap, setWrap] = useState(false); // soft-wrap long lines vs horizontal scroll
+  const [showTs, setShowTs] = useState(true); // show/hide the docker --timestamps prefix
   const [since, setSince] = useState("all"); // "all" | "5m" | "1h" — the hub maps "all" → no --since
   const [tail, setTail] = useState(200);
   const [searchInput, setSearchInput] = useState("");
@@ -101,6 +107,14 @@ export function LiveLogsCard({
         <Btn variant="ghost" onClick={() => setPaused((p) => !p)}>{paused ? t("apps.resume") : t("apps.pause")}</Btn>
         <Btn variant="ghost" onClick={() => void download()}>{t("apps.download")}</Btn>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
+          {t("apps.logWrap")}
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={showTs} onChange={(e) => setShowTs(e.target.checked)} />
+          {t("apps.logTimestamps")}
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
           <input type="checkbox" checked={following} onChange={(e) => setFollowing(e.target.checked)} />
           {t("apps.follow")}
         </label>
@@ -116,12 +130,12 @@ export function LiveLogsCard({
           <div
             ref={ref}
             className="mono"
-            style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre", maxHeight: 360, overflowY: "auto", overflowX: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}
+            style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: wrap ? "pre-wrap" : "pre", wordBreak: wrap ? "break-word" : undefined, maxHeight: 360, overflowY: "auto", overflowX: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}
           >
             {lines.length
               ? lines.map((line, i) => (
                   <div key={i}>
-                    {parseAnsi(line).map((seg, j) => (
+                    {parseAnsi(showTs ? line : line.replace(TS_RE, "")).map((seg, j) => (
                       <span key={j} style={seg.color || seg.bold ? { color: seg.color, fontWeight: seg.bold ? 600 : undefined } : undefined}>
                         {seg.text}
                       </span>
