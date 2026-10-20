@@ -5,7 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - unreleased
+## [0.1.1] - 2026-10-20
+
+- Turnkey quick start: a one-command installer (`scripts/bootstrap.sh`) that installs
+  prerequisites, sets up Docker automatically, and shows a startup banner, a requirements
+  check and step-by-step progress.
+- The bundled single-box agent connects automatically after owner setup; the web UI,
+  terminal and webhooks resolve the hub's public address at runtime.
+- Agent resilience (re-enrollment, a larger message limit, process-group command timeouts)
+  and a safer self-update (post-update health check with automatic rollback).
+
+## [0.1.0] - 2026-10-20
 
 Initial public release. Tugra is a self-hostable control plane for deploying, monitoring, backing up
 and orchestrating servers — from a single Raspberry Pi to a fleet.
