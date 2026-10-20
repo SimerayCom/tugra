@@ -32375,7 +32375,7 @@
         "operationId": "McpController_handle",
         "parameters": [],
         "responses": {
-          "201": {
+          "200": {
             "description": ""
           }
         },

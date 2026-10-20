@@ -15,9 +15,17 @@ ARG TUGRA_VERSION
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -ldflags "-X main.Version=${TUGRA_VERSION:-0.0.0-dev}" -o /tugra-agent .
 
+FROM docker:27-cli AS dockercli
+
 FROM debian:bookworm-slim
+# Debian's docker.io package ships no `docker compose` v2 plugin and no buildx, which breaks every
+# COMPOSE-source app and template deploy. Take the (statically linked) CLI + plugins from the official
+# docker CLI image instead; apt only provides git + ca-certificates + curl.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends docker.io git ca-certificates curl \
+ && apt-get install -y --no-install-recommends git ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 COPY --from=build /tugra-agent /usr/local/bin/tugra-agent
 ENTRYPOINT ["tugra-agent"]

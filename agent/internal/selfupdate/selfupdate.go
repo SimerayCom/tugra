@@ -121,8 +121,8 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 	// host is never left without a running agent. `docker run -d` exiting 0 only means "started", so we
 	// health-gate: the new container must still be Running with 0 restarts a few seconds later. Each run is
 	// preceded by `docker rm -f "$SELF"` so a leftover container never blocks the next run on a name conflict.
-	runNew := `docker run -d --name "$SELF" --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -e TUGRA_HUB="$HUB" "$NEW_IMAGE"`
-	runOld := `docker run -d --name "$SELF" --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -e TUGRA_HUB="$HUB" "$OLD_IMAGE"`
+	runNew := `docker run -d --name "$SELF" --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$NEW_IMAGE" "$NEW_IMAGE"`
+	runOld := `docker run -d --name "$SELF" --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$OLD_IMAGE" "$OLD_IMAGE"`
 	innerScript = strings.Join([]string{
 		"set -e",
 		"sleep 3",

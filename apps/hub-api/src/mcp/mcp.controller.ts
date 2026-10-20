@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Post, Res, UseGuards } from "@nestjs/common";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
@@ -36,6 +36,7 @@ export class McpController {
   ) {}
 
   @Post()
+  @HttpCode(200)
   async handle(@CurrentUser() user: AuthUser, @Body() body: unknown, @Res({ passthrough: true }) res: McpHttpResponse) {
     const ctx = { userId: user.userId, scopes: user.scopes, tokenId: user.tokenId };
 

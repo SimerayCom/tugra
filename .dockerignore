@@ -7,3 +7,8 @@
 local
 agent/tugra-agent
 **/*.log
+# Never bake secrets (JWT/signing/encryption keys, DB password) into image layers via COPY . .
+# Only the repo-root files are excluded; the template stays available.
+.env
+.env.*
+!.env.example
