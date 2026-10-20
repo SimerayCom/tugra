@@ -855,6 +855,40 @@ describe("ApplicationsService", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("setComposeFile rejects a non-compose app before any write", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setComposeFile("u1", "app1", "services:\n  web:\n    image: nginx\n"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setComposeFile rejects an unsafe (privileged) compose before any write", async () => {
+    const update = jest.fn();
+    const composeApp = { ...app, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx\n", templateSlug: null };
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(composeApp), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setComposeFile("u1", "app1", "services:\n  x:\n    image: nginx\n    privileged: true\n"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setComposeFile persists a safe compose (recomputing the web service)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const composeApp = { ...app, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx\n", templateSlug: null };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null) }, // no active deploy
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const yaml = 'services:\n  web:\n    image: nginx\n    ports:\n      - "80"\n';
+    await make(prisma, access, {} as AgentWsServer).setComposeFile("u1", "app1", yaml);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ composeFile: yaml }) }));
+  });
+
   it("stores build args encrypted on setBuildArgs", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

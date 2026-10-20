@@ -1012,6 +1012,12 @@ export const api = {
       body: JSON.stringify({ dockerOptions }),
     });
   },
+  setAppComposeFile(id: string, composeFile: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/compose-file`, {
+      method: "PUT",
+      body: JSON.stringify({ composeFile }),
+    });
+  },
   setAppPlacement(id: string, body: { constraints: PlacementConstraint[]; spreadLabelKey: string | null }) {
     return apiFetch<{ ok: boolean }>(`/apps/${id}/placement`, { method: "PUT", body: JSON.stringify(body) });
   },
