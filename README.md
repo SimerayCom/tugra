@@ -196,4 +196,4 @@ Tugra uses an **open-core** model:
 
 ---
 
-<div align="center"><sub>AGPL-3.0 © Tugra contributors — see <a href="LICENSE">LICENSE</a>.</sub></div>
+<div align="center"><sub>AGPL-3.0 © Simeray Ltd — see <a href="LICENSE">LICENSE</a>.</sub></div>
