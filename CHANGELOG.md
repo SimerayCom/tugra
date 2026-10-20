@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-20
+
+- Database live logs: stream and download a database container's logs from a new Logs
+  tab, the same viewer applications already use.
+- Fleet-wide OS updates: check and apply OS package updates across many servers at once
+  from the servers bulk bar; reboots are never automatic.
+- Smoother navigation: clicking anywhere on a server, project or cluster-member row opens
+  it, and database and project lists now show the engine's brand icon.
+- Clearer wording: database actions now read Deploy / Redeploy (was Provision).
+- Releases now publish GitHub release notes from this changelog.
+
 ## [0.1.2] - 2026-10-20
 
 - Smoother create to deploy flow: new apps and databases start right away (opt-out
