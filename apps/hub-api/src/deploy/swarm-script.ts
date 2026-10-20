@@ -1,6 +1,6 @@
 /**
  * Pure builders for the shell scripts the agent runs to form/tear-down a Docker Swarm
- * (Cluster Phase2). These only produce `docker swarm|node` command strings — the agent is a
+ * (Cluster Phase 2). These only produce `docker swarm|node` command strings — the agent is a
  * generic `sh -c` executor, so nothing on the agent changes. Deploy is unaffected by this slice.
  *
  * Security notes:

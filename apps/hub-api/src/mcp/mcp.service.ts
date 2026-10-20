@@ -32,10 +32,9 @@ interface JsonRpcRequest {
 }
 
 /**
- * Minimal, spec-compliant MCP server over JSON-RPC 2.0 (Streamable-HTTP wire format), ported from the
- * an earlier project pattern. Phase1 exposes read-only tools; the caller's userId is always the one resolved from
- * the API token — the client can never widen its own team scope. Every tool result is sanitized before
- * it leaves for the (third-party) AI client.
+ * Minimal, spec-compliant MCP server over JSON-RPC 2.0 (Streamable-HTTP wire format). It exposes read +
+ * mutate tools; the caller's userId is always the one resolved from the API token — the client can never
+ * widen its own team scope. Every tool result is sanitized before it leaves for the (third-party) AI client.
  */
 @Injectable()
 export class McpService {

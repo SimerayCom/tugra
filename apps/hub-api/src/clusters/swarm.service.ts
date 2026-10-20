@@ -143,7 +143,7 @@ function safeMessage(e: unknown): string {
 }
 
 /**
- * Docker Swarm formation (Cluster Phase2). Turns a Phase1 server group into a swarm: init one manager, join
+ * Docker Swarm formation (Cluster Phase 2). Turns a Phase 1 server group into a swarm: init one manager, join
  * the rest as workers. Deploy is untouched by this slice. Security-critical bits:
  *  - the worker join-token is fetched live from the manager, used immediately, rotated after joins, and
  *    NEVER logged / persisted / passed to audit — only sanitized `swarmError`/`swarmLastError` are stored.
@@ -347,7 +347,7 @@ export class SwarmService {
     return this.swarmProxy.ingressInfo(id);
   }
 
-  /** Add ONE more node to an ALREADY-ACTIVE swarm (Phase2b) — joins a single, already-a-cluster-member,
+  /** Add ONE more node to an ALREADY-ACTIVE swarm (Phase 2b) — joins a single, already-a-cluster-member,
    *  not-yet-joined server without dissolving/reforming the rest. Idempotent (an already-joined target is a
    *  no-op) and CAS-safe: ACTIVE→JOINING sits outside both form()'s and dissolve()'s accepted source sets, so
    *  a concurrent form/dissolve/join-node 409s instead of racing a manager command against this. */
@@ -681,7 +681,7 @@ export class SwarmService {
 
     // Dissolving destroys the swarm's Raft store → every `docker service` on it vanishes cluster-wide, but
     // the Application rows would still point here (and still read RUNNING). Refuse until those apps are
-    // removed or moved back to a single server (Phase3 apps set Application.clusterId to this cluster).
+    // removed or moved back to a single server (Phase 3 apps set Application.clusterId to this cluster).
     const appCount = await this.prisma.application.count({ where: { clusterId: id } });
     if (appCount > 0) {
       throw new ConflictException(`remove or reassign the ${appCount} app(s) deployed to this cluster's swarm before dissolving`);

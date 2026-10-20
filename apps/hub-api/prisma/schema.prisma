@@ -20,7 +20,7 @@ enum ServerStatus {
   OFFLINE
 }
 
-// Docker Swarm formation state of a Cluster (Phase2). NONE = plain group (Phase1). FORMING = a form/dissolve
+// Docker Swarm formation state of a Cluster (Phase 2). NONE = plain group (Phase 1). FORMING = a form/dissolve
 // op is in flight (concurrency guard via CAS). ACTIVE = manager + every intended worker joined. DEGRADED =
 // a real, working swarm short of its desired membership (re-run Form to reconcile). DISSOLVING = teardown.
 enum SwarmStatus {
@@ -282,7 +282,7 @@ model Server {
   // cluster frees its servers rather than removing them. A server belongs to at most one cluster.
   cluster              Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId            String?
-  // Docker Swarm formation (Phase2). Role in the cluster's swarm (null = not joined); the docker node id
+  // Docker Swarm formation (Phase 2). Role in the cluster's swarm (null = not joined); the docker node id
   // (for promote/demote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
   // FLEET-G: multiple MANAGER rows per cluster are now expected (multi-manager Raft HA) — the manager SET is
   // derived live from every swarmRole=MANAGER row, NOT just Cluster.swarmManagerId (which is only the PRIMARY).
@@ -330,8 +330,8 @@ model Cluster {
   name        String
   description String?
   servers     Server[]
-  applications Application[] // apps deployed as swarm services onto this cluster (Phase3)
-  // Docker Swarm formation (Phase2). swarmManagerId is a loose FK to the PRIMARY manager Server.id — the node
+  applications Application[] // apps deployed as swarm services onto this cluster (Phase 3)
+  // Docker Swarm formation (Phase 2). swarmManagerId is a loose FK to the PRIMARY manager Server.id — the node
   // the swarm-mode ingress is pinned to (by node label) and the default/fast-path dispatch target. FLEET-G:
   // the FULL manager set is every Server with swarmRole=MANAGER for this cluster, not necessarily just this one
   // row (multi-manager Raft HA); this FK is NOT renamed, for API back-compat (SwarmView.managerServerId keeps
@@ -814,7 +814,7 @@ model Application {
   environmentId  String
   serverId       String
   buildServerId  String?      // optional separate build server (build+push there, pull+run on serverId)
-  // Swarm service deploy (Phase3): when clusterId is set the app deploys as a `docker service --replicas N`
+  // Swarm service deploy (Phase 3): when clusterId is set the app deploys as a `docker service --replicas N`
   // onto this cluster's swarm (commands target cluster.swarmManagerId, re-resolved fresh — never snapshotted).
   // serverId stays required as the ingress/monitoring anchor. SetNull: deleting the cluster falls the app
   // back to classic single-server deploy rather than deleting it.

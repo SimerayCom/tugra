@@ -834,7 +834,7 @@ export class ApplicationsService {
       const isCompose = app.source === "COMPOSE";
       // A compose app also needs the proxy when its web service is routable (magic).
       const composeRoutable = isCompose && !!this.composeWeb(app);
-      // Swarm apps route through the cluster's swarm-mode Traefik (PhaseB), not the per-server classic proxy.
+      // Swarm apps route through the cluster's swarm-mode Traefik (Phase B), not the per-server classic proxy.
       if (app.domain && !app.clusterId && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
@@ -860,7 +860,7 @@ export class ApplicationsService {
         where: { id: dep.id },
         data: { configSnapshot: buildConfigSnapshot(spec) as object },
       });
-      // ── Swarm service deploy (Phase3): the app targets a cluster's swarm, not a single server. Delegate
+      // ── Swarm service deploy (Phase 3): the app targets a cluster's swarm, not a single server. Delegate
       // the command build + dispatch (to the manager) + async-rollout classification to SwarmDeployService,
       // then apply the SAME exit-code contract (0 converged / 3 auto-rolled-back / other failed). ──
       if (app.clusterId) {
@@ -1738,7 +1738,7 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
   }
 
-  /** Deploy this app as a Docker Swarm service across a cluster (Phase3), or clear it back to classic
+  /** Deploy this app as a Docker Swarm service across a cluster (Phase 3), or clear it back to classic
    *  single-server deploy. Swarm mode requires a stateless single-service app on a formed swarm; a GIT app
    *  additionally needs a registry (its image must be pullable by every node). */
   async setClusterConfig(

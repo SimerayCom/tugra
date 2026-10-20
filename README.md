@@ -27,7 +27,7 @@
 
 ## Agent-native by default
 
-Tugra ships a native [MCP](https://modelcontextprotocol.io) server — point any AI agent (Claude, Cursor, or your own) at your infrastructure and let it read live state before you ask it to act, without a separate integration package or a scraped API key.
+Tugra ships a native [MCP](https://modelcontextprotocol.io) server — point Claude, Cursor or your own agent at your infrastructure to inspect, deploy, scale and operate it, using the same personal-access tokens, scopes and audit trail as the REST API. No separate integration package, no secret values ever returned to the model.
 
 ```bash
 # List every tool the server exposes
@@ -60,7 +60,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 
 ## How Tugra compares
 
-A short, honest comparison (competitor columns last verified 2026-09-27) — cells we couldn't verify with confidence are marked `—` rather than guessed:
+A concise comparison with other self-hostable PaaS tools (competitor data checked 2026-09; a `—` means we couldn't confirm it, not that the feature is absent). Spotted an error? [Open an issue](https://github.com/SimerayCom/tugra/issues).
 
 | | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
 |---|---|---|---|---|---|
@@ -70,7 +70,7 @@ A short, honest comparison (competitor columns last verified 2026-09-27) — cel
 | Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
 
-<sub>¹ Coolify's stable v4 manages servers individually, not as a cluster; its legacy Docker Swarm mode is deprecated and blocked for new teams, and a v5 multi-node redesign was built then abandoned in-repo (a new architecture is TBD). ² Third-party project, not an official Dokku release, and marked early-stage by its own author. ³ Dokploy's core is Apache-2.0; a separate Source Available license covers its `proprietary/` enterprise directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an added appendix restricting modification/redistribution of paid features. ⁵ All three ship an MCP server today; Tugra's is read-only in this release (mutating tools are planned), while Coolify and Dokploy already expose write/mutate tools — so this is parity, not a Tugra-only feature. ⁶ Dokku has no Docker Swarm support, but ships a genuine multi-node story via a bundled k3s/Kubernetes distribution (`scheduler-k3s`) — WireGuard-encrypted overlay, Longhorn distributed storage and KEDA autoscaling; a different architecture, and more mature than ours on some of those axes. Competitor facts change — please verify before repeating them.</sub>
+<sub>¹ Coolify v4 manages servers individually; its Docker Swarm mode is deprecated for new teams. ² A third-party, early-stage project, not an official Dokku release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
 
 ## Quick start
 
@@ -143,7 +143,9 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Live metrics, build logs & web terminal (WebSocket streams)
 - [x] Databases (9 engines) with backups & restore (local + S3/R2 off-site)
 - [x] Multi-server clusters + Docker Swarm formation, bulk ops across the fleet
-- [x] Native MCP server — 46 tools (read + PAT-scoped mutate/fleet ops)
+- [x] Native MCP server — 46 tools (read + PAT-scoped mutate/fleet ops) + guided prompts
+- [x] App store — one-click template catalog + Home-mode launcher
+- [x] Read-only file browser for app volumes (web UI + MCP `list_files`)
 - [x] Preview deployments (per pull request)
 - [x] Uptime monitoring (HTTP/TCP/metric) + notification channels
 - [x] Scheduled tasks (cron) · rollbacks · resource limits & health checks
@@ -151,14 +153,14 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Public API (OpenAPI) + CLI (`tugra`)
 - [x] Server patching (OS package updates)
 - [x] Self-update (signed releases) + guided onboarding
-- [x] Migrator — discover & adopt existing/foreign containers into Tugra
+- [x] Migrator — adopt local Docker containers + import from Coolify (connect · plan · apply · rollback)
 
 **Next**
 
 - [ ] MCP OAuth for third-party clients (dynamic client registration, PKCE)
-- [ ] App store (Home mode)
+- [ ] File manager — write support (upload / rename / delete)
+- [ ] More migration sources (Dokploy, CapRover)
 - [ ] Mobile app
-- [ ] Config-aware import from Coolify / Dokploy (on top of the existing adopt flow)
 
 ## Community & docs
 

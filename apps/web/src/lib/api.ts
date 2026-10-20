@@ -404,7 +404,7 @@ export const api = {
   setClusterServers(id: string, serverIds: string[]) {
     return apiFetch<ClusterDetail>(`/clusters/${id}/servers`, { method: "PUT", body: JSON.stringify({ serverIds }) });
   },
-  // Docker Swarm formation (Phase2): form the swarm, read live status, dissolve it.
+  // Docker Swarm formation (Phase 2): form the swarm, read live status, dissolve it.
   formSwarm(id: string, body: { managerServerId: string; advertiseAddr?: string }) {
     return apiFetch<SwarmView>(`/clusters/${id}/swarm`, { method: "POST", body: JSON.stringify(body) });
   },

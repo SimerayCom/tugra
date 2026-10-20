@@ -95,7 +95,7 @@ tugra api POST /databases/<id>/backups/import-from-url \
 
 **Redis / KeyDB (fiddly — verify):** `BGSAVE` on the source, copy its `dump.rdb`, import with `"gzip":false`,
 then **immediately check `DBSIZE`**. If it reads 0, the import didn't stick (a container restart can overwrite
-the file); re-import with the Tugra DB stopped, or wait for the Phase1 volume-copy tool. Treat Redis import as
+the file); re-import with the Tugra DB stopped, or wait for a future volume-copy tool. Treat Redis import as
 experimental for now.
 
 ### 5. Verify before you trust it

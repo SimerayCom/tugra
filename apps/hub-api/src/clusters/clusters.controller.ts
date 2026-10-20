@@ -86,7 +86,7 @@ export class ClustersController {
     return this.clusters.setServers(user.userId, id, body);
   }
 
-  // ── Docker Swarm formation (Phase2) ──
+  // ── Docker Swarm formation (Phase 2) ──
 
   // Forming a swarm dispatches signed `docker swarm` commands to N agents — same shape as /bulk,
   // scheduled-tasks, tunnel setup — so it requires the elevated "deploy" scope (above the plain-write

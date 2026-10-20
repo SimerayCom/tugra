@@ -47,8 +47,9 @@ and orchestrating servers — from a single Raspberry Pi to a fleet.
   reservations (`--reserve-memory`/`--reserve-cpu`) are supported for swarm scheduling; and stop/start now
   waits for the service to actually converge.
 - **MCP server** — a built-in [Model Context Protocol](docs/api.md#mcp-server) server
-  (`POST /api/v1/mcp`) with 36 tools for AI assistants and agents: 18 read tools over applications,
-  servers, clusters, databases and monitors, plus 18 PAT-scoped mutate/ops tools (app lifecycle +
+  (`POST /api/v1/mcp`) with 46 tools for AI assistants and agents: 25 read tools (applications,
+  servers, clusters, databases, monitors, fleet rollups, a read-only volume file browser) + guided
+  prompts, plus 21 PAT-scoped mutate/ops tools (app lifecycle +
   live scale, env config, swarm operations, one-click domain DNS setup/verify, and a preview-then-confirm
   fleet action). Irreversible tools (dissolve a swarm, remove an app) require echoing the resource name;
   OAuth for third-party clients is still planned.

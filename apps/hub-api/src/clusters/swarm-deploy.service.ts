@@ -43,7 +43,7 @@ export function effectivePollSec(replicas: number, healthCmd?: string | null): n
 }
 
 /**
- * Deploys an app as a Docker Swarm SERVICE (Phase3). Owns the swarm-specific command building + dispatch to
+ * Deploys an app as a Docker Swarm SERVICE (Phase 3). Owns the swarm-specific command building + dispatch to
  * the cluster's MANAGER; the Deployment-row lifecycle (status/notify/logs) stays in ApplicationsService,
  * which calls `deploy()` and interprets the returned exit code with the SAME 0/3/other contract it uses for
  * the classic rolling/recreate paths. Manager is re-resolved fresh on every call — never snapshotted.
