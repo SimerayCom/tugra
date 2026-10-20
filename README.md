@@ -71,15 +71,20 @@ A concise comparison with other self-hostable PaaS tools (competitor data checke
 
 ## Quick start
 
-You need a Linux host with **Docker** (with the Compose v2 plugin) and `git`. From the host:
+On a fresh Linux host, **one command** installs the prerequisites (git, Docker), clones the repo and brings the stack up:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
+```
+
+Prefer to read before you run (sensible for any script you're handing root-ish Docker access)? Clone and run the installer yourself — it only writes a local `.env` and calls `docker compose`, installs Docker if it's missing, and is idempotent (safe to re-run):
 
 ```bash
 git clone https://github.com/SimerayCom/tugra.git
 cd tugra
+less scripts/install.sh   # review it first
 ./scripts/install.sh
 ```
-
-[Review `scripts/install.sh`](scripts/install.sh) before you run it, as with any script you're handing root-ish Docker access — it only writes a local `.env` and calls `docker compose`, and it's idempotent (safe to re-run).
 
 The installer generates strong secrets into a local `.env` (re-running preserves them), then brings up the hub, web UI, PostgreSQL and Redis with `docker compose`. When it finishes, open the printed **Web UI** URL (`http://<host-ip>:3001`; the hub/API base is `http://<host-ip>:3000`) and create the first account — it becomes the instance **owner**. On a fresh install the installer also prints a one-time **setup code** to enter when creating that account (recover it with `grep SETUP_CODE .env`). Then follow the onboarding wizard to connect your first server.
 
