@@ -146,7 +146,8 @@ preflight() {
       if [ "$memkb" -lt 1800000 ]; then note "RAM: ~${memgb}GB — 4GB+ recommended (hub + web + db + redis + agent)"; else ok "RAM: ~${memgb}GB"; fi
     fi
   fi
-  freeg="$( { df -Pm . 2>/dev/null || true; } | awk 'NR==2{print int(($4+512)/1024)}')   # MiB -> nearest GiB"
+  # MiB -> nearest GiB (df -Pm reports MiB; round, do not truncate)
+  freeg="$( { df -Pm . 2>/dev/null || true; } | awk 'NR==2{print int(($4+512)/1024)}' )"
   if [ -n "${freeg:-}" ]; then
     if [ "$freeg" -lt 5 ]; then note "Free disk: ~${freeg}GB — 10GB+ recommended (images + volumes)"; else ok "Free disk: ~${freeg}GB"; fi
   fi
