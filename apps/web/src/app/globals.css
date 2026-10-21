@@ -146,3 +146,92 @@ body {
     display: none;
   }
 }
+
+/* Configuration tab: Coolify-style left sub-nav + grouped panels.
+   Desktop = sticky vertical menu beside the cards; mobile = horizontal pill strip above them. */
+.cfg-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.cfg-nav {
+  position: sticky;
+  top: 16px;
+}
+.cfg-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cfg-nav-item {
+  width: 100%;
+  min-height: 40px;
+  text-align: left;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--c-tx3);
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: var(--r1);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.cfg-nav-item:hover {
+  background: var(--c-el);
+  color: var(--c-tx);
+}
+.cfg-nav-item[aria-current="page"] {
+  background: var(--c-el);
+  color: var(--c-tx);
+  font-weight: 600;
+  border-left-color: var(--c-a);
+}
+.cfg-panel-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--c-tx);
+}
+@media (max-width: 767px) {
+  .cfg-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .cfg-nav {
+    position: static;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  .cfg-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .cfg-nav ul {
+    flex-direction: row;
+    gap: 6px;
+    width: max-content;
+    padding-bottom: 2px;
+  }
+  .cfg-nav-item {
+    width: auto;
+    min-height: 44px;
+    white-space: nowrap;
+    padding: 0 16px;
+    border: 1px solid var(--c-bd);
+    border-radius: 999px;
+    scroll-snap-align: start;
+  }
+  .cfg-nav-item[aria-current="page"] {
+    border-color: var(--c-a);
+  }
+  .cfg-panel-title {
+    display: none;
+  }
+}
