@@ -271,3 +271,23 @@ body {
 .fleet-row:hover {
   background: var(--c-el);
 }
+
+/* Dense table on desktop, cards on phones. Both render; CSS shows exactly one. */
+.fleet-cards {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+@media (max-width: 767px) {
+  .fleet-table-card {
+    display: none;
+  }
+  .fleet-cards {
+    display: grid;
+    gap: 10px;
+  }
+}
+.fleet-card:hover {
+  border-color: var(--c-tx3);
+}

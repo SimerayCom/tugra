@@ -41,35 +41,51 @@ export function FleetTable({
   }
 
   const sortProps = { sortKey, sortDir, onSort };
+  const clusterFor = (r: FleetRow): Cluster => {
+    const cid = r.server.clusterId;
+    return cid ? { id: cid, name: clusterName?.(cid) ?? t("fleet.clustered") } : null;
+  };
+  const staleLabel = t("fleet.stale");
+  // Desktop: dense table. Mobile (<768px): the same rows as cards. Both render; CSS shows one.
   return (
-    <Card style={{ padding: 0 }}>
-      <div role="region" aria-label={t("fleet.title")} tabIndex={0} style={{ overflowX: "auto" }}>
-        <table className="fleet-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-          <caption className="sr-only">{t("fleet.title")}</caption>
-          <thead>
-            <tr style={{ textAlign: "left", color: "var(--c-tx3)", borderBottom: "1px solid var(--c-bd)" }}>
-              <SortTh k="name" label={t("fleet.colServer")} {...sortProps} />
-              <SortTh k="cpu" label={t("fleet.colCpu")} num {...sortProps} />
-              <SortTh k="mem" label={t("fleet.colMem")} num {...sortProps} />
-              <SortTh k="disk" label={t("fleet.colDisk")} num {...sortProps} />
-              <SortTh k="net" label={t("fleet.colNet")} num {...sortProps} />
-              <SortTh k="uptime" label={t("fleet.colUptime")} num {...sortProps} />
-              <Th>{t("fleet.colAgent")}</Th>
-              <Th>{t("fleet.colCluster")}</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const cid = r.server.clusterId;
-              const cluster: Cluster = cid ? { id: cid, name: clusterName?.(cid) ?? t("fleet.clustered") } : null;
-              return <FleetRowView key={r.server.id} row={r} cluster={cluster} staleLabel={t("fleet.stale")} />;
-            })}
-          </tbody>
-        </table>
+    <>
+      <div className="fleet-table-card">
+        <Card style={{ padding: 0 }}>
+          <div role="region" aria-label={t("fleet.title")} tabIndex={0} style={{ overflowX: "auto" }}>
+            <table className="fleet-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <caption className="sr-only">{t("fleet.title")}</caption>
+              <thead>
+                <tr style={{ textAlign: "left", color: "var(--c-tx3)", borderBottom: "1px solid var(--c-bd)" }}>
+                  <SortTh k="name" label={t("fleet.colServer")} {...sortProps} />
+                  <SortTh k="cpu" label={t("fleet.colCpu")} num {...sortProps} />
+                  <SortTh k="mem" label={t("fleet.colMem")} num {...sortProps} />
+                  <SortTh k="disk" label={t("fleet.colDisk")} num {...sortProps} />
+                  <SortTh k="net" label={t("fleet.colNet")} num {...sortProps} />
+                  <SortTh k="uptime" label={t("fleet.colUptime")} num {...sortProps} />
+                  <Th>{t("fleet.colAgent")}</Th>
+                  <Th>{t("fleet.colCluster")}</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <FleetRowView key={r.server.id} row={r} cluster={clusterFor(r)} staleLabel={staleLabel} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
-    </Card>
+      <ul className="fleet-cards" aria-label={t("fleet.title")}>
+        {rows.map((r) => (
+          <FleetCardView key={r.server.id} row={r} cluster={clusterFor(r)} staleLabel={staleLabel} />
+        ))}
+      </ul>
+    </>
   );
 }
+
+const pctColor = (value: number | null, stale: boolean) =>
+  value === null || stale ? "var(--c-tx3)" : TONE_COLOR[metricTone(value)];
 
 const FleetRowView = memo(
   function FleetRowView({ row, cluster, staleLabel }: { row: FleetRow; cluster: Cluster; staleLabel: string }) {
@@ -120,6 +136,58 @@ const FleetRowView = memo(
     a.row.server === b.row.server, // ServerView is replaced wholesale on a refetch; ref-equal when unchanged
 );
 
+const FleetCardView = memo(
+  function FleetCardView({ row, cluster, staleLabel }: { row: FleetRow; cluster: Cluster; staleLabel: string }) {
+    const t = useT();
+    const s = row.server;
+    return (
+      <li className="fleet-card" style={{ listStyle: "none", position: "relative", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <StatusDot status={s.status} />
+          <Link href={`/servers/${enc(s.id)}`} className="fleet-namelink" style={{ color: "var(--c-tx)", textDecoration: "none", fontWeight: 600, fontSize: 14, minWidth: 0 }}>
+            {s.name}
+            {row.stale && <span className="sr-only"> — {staleLabel}</span>}
+          </Link>
+          {cluster && (
+            <Link href={`/clusters/${enc(cluster.id)}`} className="fleet-clusterlink" style={{ marginLeft: "auto", color: "var(--c-lapis)", textDecoration: "none", fontSize: 11 }}>
+              {cluster.name}
+            </Link>
+          )}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+          <Gauge label={t("fleet.colCpu")} value={row.cpu} stale={row.stale} />
+          <Gauge label={t("fleet.colMem")} value={row.memPct} stale={row.stale} />
+          <Gauge label={t("fleet.colDisk")} value={row.diskPct} stale={row.stale} />
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "var(--c-tx3)" }}>
+          <span>{t("fleet.colNet")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{row.net === null ? "—" : `${fmtBytes(row.net)}/s`}</b></span>
+          <span>{t("fleet.colUptime")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{formatUptime(s.uptimeSeconds)}</b></span>
+          <span>{t("fleet.colAgent")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{s.agentVersion ?? "—"}</b></span>
+        </div>
+      </li>
+    );
+  },
+  (a, b) =>
+    a.staleLabel === b.staleLabel &&
+    a.cluster?.id === b.cluster?.id &&
+    a.cluster?.name === b.cluster?.name &&
+    a.row.stale === b.row.stale &&
+    a.row.cpu === b.row.cpu &&
+    a.row.memPct === b.row.memPct &&
+    a.row.diskPct === b.row.diskPct &&
+    a.row.net === b.row.net &&
+    a.row.server === b.row.server,
+);
+
+function Gauge({ label, value, stale }: { label: string; value: number | null; stale: boolean }) {
+  return (
+    <div style={{ background: "var(--c-el)", borderRadius: "var(--r1)", padding: "8px 6px", textAlign: "center" }}>
+      <div style={{ fontSize: 9.5, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</div>
+      <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: pctColor(value, stale) }}>{value === null ? "—" : `${value.toFixed(0)}%`}</div>
+    </div>
+  );
+}
+
 function SortTh({ k, label, num, sortKey, sortDir, onSort }: {
   k: FleetSortKey; label: string; num?: boolean; sortKey: FleetSortKey; sortDir: SortDir; onSort: (key: FleetSortKey) => void;
 }) {
@@ -148,10 +216,9 @@ function SortTh({ k, label, num, sortKey, sortDir, onSort }: {
 }
 
 function PctTd({ value, stale }: { value: number | null; stale: boolean }) {
-  const color = value === null ? "var(--c-tx3)" : stale ? "var(--c-tx3)" : TONE_COLOR[metricTone(value)];
   return (
     <Td num>
-      <span className="mono" style={{ fontWeight: 600, color }}>{value === null ? "—" : `${value.toFixed(0)}%`}</span>
+      <span className="mono" style={{ fontWeight: 600, color: pctColor(value, stale) }}>{value === null ? "—" : `${value.toFixed(0)}%`}</span>
     </Td>
   );
 }
