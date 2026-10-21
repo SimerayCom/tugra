@@ -34,7 +34,8 @@ export default function DashboardPage() {
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
   const { data: allMonitors = [] } = useQuery({ queryKey: ["monitors"], queryFn: () => api.listMonitors() });
   const { data: allDomains = [] } = useQuery({ queryKey: ["domains"], queryFn: () => api.listDomains() });
-  const { data: audit } = useQuery({ queryKey: ["audit", teamId], queryFn: () => api.listAudit(teamId ?? undefined) });
+  // Own key (not ["audit"]) so this plain {entries} result never collides with the Audit page's useInfiniteQuery.
+  const { data: audit } = useQuery({ queryKey: ["audit-recent", teamId], queryFn: () => api.listAudit(teamId ?? undefined) });
   const servers = scopeByTeam(allServers, teamId);
   const projects = scopeByTeam(allProjects, teamId);
   const apps = scopeByTeam(allApps, teamId);
