@@ -57,17 +57,44 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 
 ## How Tugra compares
 
-A concise comparison with other self-hostable PaaS tools (competitor data checked 2026-09; a `—` means no documented built-in equivalent as of 2026-09). Spotted an error? [Open an issue](https://github.com/SimerayCom/tugra/issues).
+A side-by-side with the self-hostable PaaS tools people actually evaluate (competitor data checked 2026-10). `✅` built-in · `~` partial / limited · `—` no documented built-in equivalent · `🔜` on Tugra's roadmap. Spotted an error? [Open an issue](https://github.com/SimerayCom/tugra/issues).
 
-| | **Tugra** | Coolify | Dokploy | CapRover | Dokku |
-|---|---|---|---|---|---|
-| Multi-node clustering | ✅ Swarm-based | Individual servers¹ | ✅ Swarm-based | ✅ Swarm-based | ✅ k3s-based (not Swarm)⁶ |
-| MCP / agent control | ✅ built-in (read+write, 46 tools)⁵ | ✅ built-in (read+write) | ✅ official (read+write) | — | community project (early)² |
-| Database engines | **9** (named above) | 8 | 6 | — | — |
-| Bulk ops across servers | ✅ one call, any node set | — | — | — | — |
-| Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | Apache-2.0 + custom terms⁴ | MIT |
+| | **Tugra** | Coolify | Dokploy | Portainer | CapRover | Dokku |
+|---|---|---|---|---|---|---|
+| **Deploy & build** | | | | | | |
+| Web UI dashboard | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Deploy from Git | ✅ | ✅ | ✅ | ~ | ~ | ✅ |
+| Docker Compose deploy | ✅ | ✅ | ✅ | ✅ | ~ | ~ |
+| Preview deployments (PR apps) | ✅ | ✅ | ✅ | — | — | ~ |
+| Rollbacks | ✅ | ✅ | ✅ | — | ✅ | ~ |
+| App store / one-click templates | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| **Data** | | | | | | |
+| Managed database engines | **9** | 8 | 6 | — | — | — |
+| Scheduled S3 backups + restore | ✅ | ✅ | ✅ | — | — | ~ |
+| Arbitrary Docker-volume backups | ✅ | — | ✅ | — | — | — |
+| **Domains & TLS** | | | | | | |
+| Custom domains + automatic SSL | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+| DNS-01 wildcard certificates | ✅ | ~ | — | — | — | ~ |
+| **Fleet & HA** | | | | | | |
+| Multi-node clustering | ✅ Swarm | Individual¹ | ✅ Swarm | ✅ | ✅ | ~ k3s⁶ |
+| Multi-manager Raft HA + ingress HA | ✅ | — | — | — | — | — |
+| Fleet-wide bulk ops (one call) | ✅ | — | — | — | — | — |
+| OS patching (per-server + fleet) | ✅ | — | — | — | — | — |
+| **Observability** | | | | | | |
+| Built-in metrics (CPU/RAM/disk) | ✅ | ~ | ✅ | ~ | — | — |
+| Uptime monitors + notifications | ✅ | ~ | ✅ | — | — | — |
+| App / container log viewer | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **Access & agent** | | | | | | |
+| Teams / RBAC | ✅ | ~ | ✅ | ~⁷ | — | — |
+| SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
+| Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
+| MCP / agent control | ✅ 46 tools⁵ | ✅ | ✅ | — | — | ~² |
+| **Trust & license** | | | | | | |
+| No phone-home (zero telemetry) | ✅ | — | — | ~ | — | ✅ |
+| Migrate in (import from Coolify) | ✅ | — | — | — | — | — |
+| Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + terms⁴ | MIT |
 
-<sub>¹ Coolify v4 manages servers individually. ² A third-party, early-stage project, not an official Dokku release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
+<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
 
 ## Quick start
 
