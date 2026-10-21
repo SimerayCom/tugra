@@ -183,7 +183,7 @@ export default function ServerDetailPage() {
         </div>
       )}
 
-      {tab === "containers" && <ServerContainersCard id={id} />}
+      {tab === "containers" && <ServerContainersCard id={id} canWrite={server.canWrite} />}
 
       {tab === "updates" && server.canWrite && <PatchCard id={id} />}
 

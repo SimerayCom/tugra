@@ -1,6 +1,7 @@
 import { Module, type OnModuleInit } from "@nestjs/common";
 import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { MetricsModule } from "../metrics/metrics.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { ServerOpsController } from "./server-ops.controller";
@@ -11,11 +12,13 @@ import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { PatchService } from "./patch.service";
 import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
+import { ContainerOpsService } from "./container-ops.service";
+import { ContainerLogStreamGuard } from "./container-log-stream.guard";
 
 @Module({
-  imports: [AgentGatewayModule, CryptoModule, NotificationsModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule],
   controllers: [ServerOpsController, FleetController],
-  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService],
+  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard],
 })
 export class ServerOpsModule implements OnModuleInit {
   constructor(
