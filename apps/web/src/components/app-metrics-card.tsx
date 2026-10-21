@@ -51,6 +51,15 @@ export function AppMetricsCard({ id, kind = "app" }: { id: string; kind?: "app" 
   );
 }
 
+/** Strip the `tugra_<id>-` project prefix + `-<n>` replica suffix so a container reads as its
+ *  compose service ("wordpress", "db") instead of the raw `tugra_<cuid>-wordpress-1`. */
+function friendlyContainer(name: string): string {
+  const m = /^tugra_[a-z0-9]+-(.+)-\d+$/i.exec(name);
+  if (m) return m[1];
+  if (/^tugra_[a-z0-9]+$/i.test(name)) return "container";
+  return name;
+}
+
 function ContainerMetricsSection({ name, samples }: { name: string; samples: ContainerMetricSample[] }) {
   const t = useT();
   const cpu = samples.map((s) => s.cpu);
@@ -61,7 +70,7 @@ function ContainerMetricsSection({ name, samples }: { name: string; samples: Con
   const blkWrite = humanizeRateSeries(samples.map((s) => s.blkWrite));
   return (
     <div>
-      <div className="mono" style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10, wordBreak: "break-all" }}>{name}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)", marginBottom: 10, wordBreak: "break-all" }} title={name}>{friendlyContainer(name)}</div>
       <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
         <MetricChart data={cpu} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" />
         <MetricChart data={ram} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} />

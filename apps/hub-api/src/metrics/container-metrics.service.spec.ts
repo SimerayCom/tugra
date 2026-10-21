@@ -1,5 +1,28 @@
-import { ContainerMetricsService, rangeToMs, sampleEvenly } from "./container-metrics.service";
+import { ContainerMetricsService, rangeToMs, sampleEvenly, resolveContainerLabel } from "./container-metrics.service";
 import type { ContainerMetricsMsg } from "@tugra/shared";
+
+describe("resolveContainerLabel", () => {
+  const apps = new Map([["app1", "WordPress"], ["app2", "API"]]);
+  const dbs = new Map([["db1", "main-pg"]]);
+  it("labels a database by its name", () => {
+    expect(resolveContainerLabel("tugra_db_db1", apps, dbs)).toEqual({ label: "main-pg", kind: "db", resourceId: "db1" });
+  });
+  it("labels a compose service as '<app> · <service>'", () => {
+    expect(resolveContainerLabel("tugra_app1-wordpress-1", apps, dbs)).toMatchObject({ label: "WordPress · wordpress", kind: "app", resourceId: "app1", service: "wordpress" });
+  });
+  it("labels a single-container app by its name", () => {
+    expect(resolveContainerLabel("tugra_app2", apps, dbs)).toMatchObject({ label: "API", kind: "app", resourceId: "app2" });
+  });
+  it("strips the noise from Tugra's own stack containers", () => {
+    expect(resolveContainerLabel("tugra-hub-api-1", apps, dbs)).toEqual({ label: "hub-api", kind: "system" });
+  });
+  it("leaves a foreign container name as-is", () => {
+    expect(resolveContainerLabel("some-other-container", apps, dbs)).toEqual({ label: "some-other-container", kind: "other" });
+  });
+  it("falls back to the stripped id when the db is unknown", () => {
+    expect(resolveContainerLabel("tugra_db_gone", apps, dbs)).toEqual({ label: "gone", kind: "db", resourceId: "gone" });
+  });
+});
 
 describe("rangeToMs", () => {
   it("maps known ranges to a lookback window", () => {
@@ -52,6 +75,9 @@ describe("ContainerMetricsService", () => {
     const prisma = {
       containerMetric: { createMany, findMany: findMany ?? jest.fn().mockResolvedValue([]) },
       containerMetricRollup: { findMany: rollupFindMany ?? jest.fn().mockResolvedValue([]) },
+      // forServer joins apps + databases to build friendly container labels.
+      application: { findMany: jest.fn().mockResolvedValue([]) },
+      database: { findMany: jest.fn().mockResolvedValue([]) },
     } as any;
     return {
       svc: new ContainerMetricsService(prisma),

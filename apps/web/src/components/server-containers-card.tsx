@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode, type CSSProperties } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { fmtBytes } from "../lib/fleet";
@@ -69,12 +70,19 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
 
 function ContainerRow({ row, canWrite, onLogs }: { row: ContainerInventoryRow; canWrite: boolean; onLogs: () => void }) {
   const t = useT();
-  const isTugra = row.name.startsWith("tugra_");
+  const href = row.resourceId ? (row.kind === "db" ? `/databases/${row.resourceId}` : `/apps/${row.resourceId}`) : null;
   return (
     <tr style={{ borderBottom: "1px solid var(--c-bd)" }}>
       <Td>
-        <span className="mono" style={{ wordBreak: "break-all" }}>{row.name}</span>
-        {isTugra && <span style={{ marginLeft: 6 }}><Badge tone="muted">tugra</Badge></span>}
+        <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+          {href ? (
+            <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link>
+          ) : (
+            row.label
+          )}
+          {row.kind === "system" && <Badge tone="muted">system</Badge>}
+        </div>
+        <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>
       <Td><Stat value={row.cpu} unit="%" warn={row.cpu >= 80} /></Td>
       <Td>
