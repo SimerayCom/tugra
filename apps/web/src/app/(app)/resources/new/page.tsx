@@ -506,6 +506,7 @@ function Wizard() {
                   />
                   {t("resources.deployNow")}
                 </label>
+                <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 4, marginLeft: 24 }}>{t("resources.deployNowHint")}</div>
                 <div style={{ marginTop: 14 }}>
                   {noServer ? (
                     <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>
@@ -517,7 +518,7 @@ function Wizard() {
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                             <Spinner /> {deployNow ? t("resources.deployingLabel") : t("resources.creatingLabel")}
                           </span>
-                        ) : t("resources.create")}
+                        ) : deployNow ? t("resources.createDeploy") : t("resources.create")}
                       </Btn>
                       {!projectId && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("resources.pickProjectFirst")}</span>}
                     </div>
