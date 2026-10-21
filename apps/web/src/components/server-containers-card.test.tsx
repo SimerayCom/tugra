@@ -10,7 +10,7 @@ import type { ContainerInventoryRow, ServerContainers } from "../lib/types";
 afterEach(cleanup);
 
 function row(over: Partial<ContainerInventoryRow> = {}): ContainerInventoryRow {
-  return { name: "c", containerId: "id", ts: 1, cpu: 3, memUsed: 1, memTotal: 2, memPct: 50, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0, ...over };
+  return { name: "c", label: "c", kind: "other", containerId: "id", ts: 1, cpu: 3, memUsed: 1, memTotal: 2, memPct: 50, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0, ...over };
 }
 
 let qc: QueryClient;
