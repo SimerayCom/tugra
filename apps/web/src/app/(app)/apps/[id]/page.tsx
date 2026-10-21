@@ -319,6 +319,21 @@ export default function AppDetailPage() {
 
       <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
 
+      {appData.status === "NEW" && !deployingNow && (
+        <div style={{ margin: "14px 0", padding: "12px 14px", border: "1px solid var(--c-bd)", borderLeft: "3px solid var(--c-am)", borderRadius: "var(--r1)", background: "var(--c-sb)", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{t("apps.notDeployedTitle")}</div>
+            <div style={{ fontSize: 12.5, color: "var(--c-tx3)", marginTop: 2 }}>{t("apps.notDeployedBody")}</div>
+          </div>
+          {appData.canWrite && tab !== "configuration" && (
+            <Btn variant="ghost" onClick={() => setTab("configuration")}>{t("apps.tabConfiguration")}</Btn>
+          )}
+          {appData.canWrite && (
+            <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>{t("apps.deploy")}</Btn>
+          )}
+        </div>
+      )}
+
       {tab === "overview" && (
         appData.source === "COMPOSE" && appData.composeFile ? (
           <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />

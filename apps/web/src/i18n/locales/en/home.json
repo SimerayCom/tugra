@@ -10,6 +10,8 @@
   "appName": "Name",
   "chooseServer": "Server",
   "install": "Install",
+  "installConfigure": "Create & configure",
+  "installDeploy": "Create & deploy",
   "installing": "Installing…",
   "installed": "Installing {name} — it will appear on your Home.",
   "installProgressInstalling": "Installing {name}…",
