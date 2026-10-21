@@ -3,6 +3,14 @@
 # It has docker.sock but a FIXED command set (pull + up -d --no-deps hub-api web) — no arbitrary exec.
 FROM docker:27-cli
 
+# OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
+LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.url="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.title="Tugra Updater" \
+      org.opencontainers.image.description="Tugra self-update sidecar." \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.vendor="Simeray Ltd"
+
 RUN apk add --no-cache bash redis
 
 WORKDIR /repo

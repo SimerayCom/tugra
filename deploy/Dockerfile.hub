@@ -5,6 +5,14 @@ FROM node:20
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
 
+# OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
+LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.url="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.title="Tugra Hub API" \
+      org.opencontainers.image.description="Tugra hub API — the control plane for the self-hostable container PaaS." \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.vendor="Simeray Ltd"
+
 # Full monorepo (node_modules excluded via .dockerignore → fresh linux install).
 COPY . .
 RUN pnpm install --frozen-lockfile

@@ -18,6 +18,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 FROM docker:27-cli AS dockercli
 
 FROM debian:bookworm-slim
+# OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
+LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.url="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.title="Tugra Agent" \
+      org.opencontainers.image.description="Tugra agent — runs on managed servers and executes the hub's container operations." \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.vendor="Simeray Ltd"
 # Debian's docker.io package ships no `docker compose` v2 plugin and no buildx, which breaks every
 # COMPOSE-source app and template deploy. Take the (statically linked) CLI + plugins from the official
 # docker CLI image instead; apt only provides git + ca-certificates + curl.
