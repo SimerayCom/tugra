@@ -94,4 +94,26 @@ describe("MetricsService", () => {
     expect(out[0].memUsed).toBe(100); // avgMemUsed → memUsed (Number)
     expect(out[0].diskRead).toBe(1); // avgDiskRead → diskRead
   });
+
+  it("latestForServers: DISTINCT ON newest per server, BigInt→Number, scoped to the given ids", async () => {
+    const { svc, findMany } = make([
+      { serverId: "a", ts: new Date(3000), cpu: 10, memUsed: 1n, memTotal: 2n, diskUsed: 4n, diskTotal: 8n, netRx: 0n, netTx: 0n, diskRead: 5n, diskWrite: 6n },
+      { serverId: "b", ts: new Date(2000), cpu: 20, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n },
+    ]);
+    const out = await svc.latestForServers(["a", "b"]);
+    expect(out).toEqual([
+      { serverId: "a", sample: expect.objectContaining({ ts: 3000, cpu: 10, diskUsed: 4, diskRead: 5 }) },
+      { serverId: "b", sample: expect.objectContaining({ ts: 2000, cpu: 20 }) },
+    ]);
+    const arg = findMany.mock.calls[0][0];
+    expect(arg.where.serverId.in).toEqual(["a", "b"]); // only the caller's authorized ids
+    expect(arg.distinct).toEqual(["serverId"]);
+    expect(arg.orderBy).toEqual([{ serverId: "asc" }, { ts: "desc" }]); // DISTINCT ON newest
+  });
+
+  it("latestForServers: no ids → empty result without hitting the DB", async () => {
+    const { svc, findMany } = make();
+    expect(await svc.latestForServers([])).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
 });
