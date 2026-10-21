@@ -20,10 +20,40 @@ export interface AppContainerMetrics {
   containers: { name: string; samples: ContainerMetricSample[] }[];
 }
 
-/** Latest sample for one container in the server-level inventory (adds name + docker short id). */
+/** Latest sample for one container in the server-level inventory (adds name + docker short id).
+ *  `label` is the friendly name shown in the UI ("WordPress · db", "my-pg", "hub-api") so the raw
+ *  `tugra_<cuid>` project names never have to be read; `kind` says what it is and `resourceId` links
+ *  back to the app/database when known. */
 export interface ContainerInventoryRow extends ContainerMetricSample {
   name: string;
   containerId: string;
+  label: string;
+  kind: "app" | "db" | "system" | "other";
+  resourceId?: string;
+  service?: string;
+}
+
+/** Resolve a friendly label/kind for a raw container name, given this server's apps + databases.
+ *  Patterns: `tugra_db_<id>` (database), `tugra_<appId>[-<service>-<n>]` (managed app / compose
+ *  service), `tugra-<name>-<n>` (Tugra's own stack), anything else (other). */
+export function resolveContainerLabel(
+  name: string,
+  apps: Map<string, string>,
+  dbs: Map<string, string>,
+): { label: string; kind: ContainerInventoryRow["kind"]; resourceId?: string; service?: string } {
+  let m = /^tugra_db_([a-z0-9]+)$/i.exec(name);
+  if (m) return { label: dbs.get(m[1]) ?? name.replace(/^tugra_db_/, ""), kind: "db", resourceId: m[1] };
+  m = /^tugra_([a-z0-9]+)(?:-(.+)-(\d+))?$/i.exec(name);
+  if (m && apps.has(m[1])) {
+    const appName = apps.get(m[1])!;
+    const service = m[2] || undefined;
+    return { label: service ? `${appName} · ${service}` : appName, kind: "app", resourceId: m[1], service };
+  }
+  // Tugra's own stack containers are named with a dash project ("tugra-hub-api-1"); strip the noise.
+  if (/^tugra[-_]/i.test(name)) {
+    return { label: name.replace(/^tugra[-_]/i, "").replace(/-\d+$/, "") || name, kind: "system" };
+  }
+  return { label: name, kind: "other" };
 }
 
 export interface ServerContainers {
@@ -171,16 +201,24 @@ export class ContainerMetricsService {
    * off. Rows are ordered by name; BigInt byte fields widen to Number.
    */
   async forServer(serverId: string): Promise<ServerContainers> {
-    const rows = await this.prisma.containerMetric.findMany({
-      where: { serverId, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
-      orderBy: { ts: "asc" },
-    });
+    const [rows, apps, dbs] = await Promise.all([
+      this.prisma.containerMetric.findMany({
+        where: { serverId, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
+        orderBy: { ts: "asc" },
+      }),
+      this.prisma.application.findMany({ where: { serverId }, select: { id: true, name: true } }),
+      this.prisma.database.findMany({ where: { serverId }, select: { id: true, name: true } }),
+    ]);
+    const appsById = new Map(apps.map((a) => [a.id, a.name]));
+    const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
     // ts asc → the last row seen per name is its most recent sample.
     const latest = new Map<string, ContainerInventoryRow>();
     for (const r of rows) {
+      const friendly = resolveContainerLabel(r.containerName, appsById, dbsById);
       latest.set(r.containerName, {
         name: r.containerName,
         containerId: r.containerId,
+        ...friendly,
         ts: r.ts.getTime(),
         cpu: r.cpu,
         memUsed: Number(r.memUsed),
@@ -192,7 +230,7 @@ export class ContainerMetricsService {
         blkWrite: Number(r.blkWrite),
       });
     }
-    const containers = [...latest.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const containers = [...latest.values()].sort((a, b) => a.label.localeCompare(b.label));
     return { containers };
   }
 }

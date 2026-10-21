@@ -469,6 +469,10 @@ export interface AppContainerMetrics {
 export interface ContainerInventoryRow extends ContainerMetricSample {
   name: string;
   containerId: string;
+  label: string; // friendly name ("WordPress · db", "hub-api") — show this, not the raw tugra_ name
+  kind: "app" | "db" | "system" | "other";
+  resourceId?: string;
+  service?: string;
 }
 
 export interface ServerContainers {

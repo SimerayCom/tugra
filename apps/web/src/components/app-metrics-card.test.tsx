@@ -36,8 +36,10 @@ describe("AppMetricsCard", () => {
     };
     const spy = vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue(data);
     wrap(<AppMetricsCard id="app1" />);
-    await waitFor(() => expect(screen.getByText("tugra_app1")).toBeTruthy());
-    expect(screen.getByText("tugra_app1-web-1")).toBeTruthy();
+    // Containers show the friendly compose-service name (raw tugra_ name kept only in the title).
+    await waitFor(() => expect(screen.getByText("web")).toBeTruthy());
+    expect(screen.getByTitle("tugra_app1-web-1")).toBeTruthy();
+    expect(screen.getByText("container")).toBeTruthy();
     expect(spy).toHaveBeenCalledWith("app1", "1h");
   });
 
