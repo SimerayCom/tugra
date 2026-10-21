@@ -18,7 +18,7 @@ REPO_URL="${TUGRA_REPO_URL:-https://github.com/SimerayCom/tugra.git}"
 REPO_REF="${TUGRA_REF:-main}"
 DIR="${TUGRA_DIR:-tugra}"
 
-say() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+say() { printf '\033[38;5;179m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- prerequisite: git (needed to fetch the repo; install.sh handles Docker) ---
