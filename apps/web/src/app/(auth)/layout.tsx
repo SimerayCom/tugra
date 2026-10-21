@@ -22,7 +22,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-seal.png" alt="Tugra" width={48} height={48} style={{ borderRadius: 12 }} />
+          <img src="/tugra-logo.svg" alt="Tugra" width={48} height={48} />
           <span style={{ fontWeight: 700, fontSize: 28, letterSpacing: "-0.01em" }}>Tugra</span>
         </div>
         {children}
