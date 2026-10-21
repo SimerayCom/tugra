@@ -5,6 +5,29 @@ body:
   - type: markdown
     attributes:
       value: Thanks for taking the time to report a bug. Please fill out the sections below.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Tugra is affected?
+      options:
+        - Hub API (control plane)
+        - Web dashboard
+        - Agent (on a managed server)
+        - CLI (@tugra/cli)
+        - App templates / store
+        - Install / upgrade
+        - Docs
+        - Not sure / other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tugra version
+      description: From the dashboard footer or `GET /version` (e.g. v0.1.0). Put "unknown" if unsure.
+    validations:
+      required: true
   - type: textarea
     id: what-happened
     attributes:
@@ -26,7 +49,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Tugra version, OS / distro, architecture (x86_64 / ARM), Docker version.
+      description: OS / distro, architecture (x86_64 / ARM), Docker version, single-server or cluster.
     validations:
       required: true
   - type: textarea
