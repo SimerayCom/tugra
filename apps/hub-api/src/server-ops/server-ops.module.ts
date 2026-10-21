@@ -4,6 +4,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { MetricsModule } from "../metrics/metrics.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { ServersModule } from "../servers/servers.module";
 import { ServerOpsController } from "./server-ops.controller";
 import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
@@ -16,7 +17,7 @@ import { ContainerOpsService } from "./container-ops.service";
 import { ContainerLogStreamGuard } from "./container-log-stream.guard";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule],
   controllers: [ServerOpsController, FleetController],
   providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard],
 })

@@ -2756,6 +2756,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fleet/metrics/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["FleetController_latestMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fleet/cleanup-config": {
         parameters: {
             query?: never;
@@ -18987,6 +19003,79 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    FleetController_latestMetrics: {
+        parameters: {
+            query: {
+                teamId: string;
+                status: string;
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        serverId: string;
+                        sample: {
+                            ts: number;
+                            cpu: number;
+                            memUsed: number;
+                            memTotal: number;
+                            diskUsed: number;
+                            diskTotal: number;
+                            netRx: number;
+                            netTx: number;
+                            diskRead: number;
+                            diskWrite: number;
+                        };
+                    }[];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

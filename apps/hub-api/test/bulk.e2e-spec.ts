@@ -188,4 +188,37 @@ describe("Bulk ops (e2e)", () => {
 
     await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
   });
+
+  it("fleet metrics/latest returns the caller's servers' latest sample and never another team's", async () => {
+    const mine = await request(app.getHttpServer())
+      .post("/servers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "fm-mine", teamId })
+      .expect(201);
+    const mineId = mine.body.server.id;
+
+    const otherTeam = await prisma.team.create({ data: { name: "fm-other" } });
+    const foreign = await prisma.server.create({
+      data: { name: "fm-foreign", teamId: otherTeam.id, enrollToken: `fmtok-${Date.now()}` },
+    });
+
+    // one metrics sample per server; the foreign one must never surface in my fleet view
+    const B = (n: number) => BigInt(n);
+    const base = { memUsed: B(100), memTotal: B(200), diskUsed: B(10), diskTotal: B(50), netRx: B(0), netTx: B(0) };
+    await prisma.metric.create({ data: { serverId: mineId, cpu: 12.5, ...base } });
+    await prisma.metric.create({ data: { serverId: foreign.id, cpu: 99, ...base } });
+
+    const res = await request(app.getHttpServer())
+      .get("/fleet/metrics/latest")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const ids = res.body.map((r: { serverId: string }) => r.serverId);
+    expect(ids).toContain(mineId);
+    expect(ids).not.toContain(foreign.id); // cross-team isolation — the whole point of this endpoint
+    const row = res.body.find((r: { serverId: string }) => r.serverId === mineId);
+    expect(row.sample.cpu).toBe(12.5);
+    expect(typeof row.sample.memUsed).toBe("number"); // BigInt widened for the wire
+
+    await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
+  });
 });

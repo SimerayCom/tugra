@@ -45,7 +45,15 @@ export class MetricsService {
       orderBy: { ts: "desc" },
       take: Math.min(Math.max(limit, 1), 1000),
     });
-    return rows.reverse().map((r) => ({
+    return rows.reverse().map((r) => this.toSample(r));
+  }
+
+  /** Map a persisted Metric row to the wire MetricsSample (BigInt bytes → Number). */
+  private toSample(r: {
+    ts: Date; cpu: number; memUsed: bigint; memTotal: bigint; diskUsed: bigint; diskTotal: bigint;
+    netRx: bigint; netTx: bigint; diskRead: bigint; diskWrite: bigint;
+  }): MetricsSample {
+    return {
       ts: r.ts.getTime(),
       cpu: r.cpu,
       memUsed: Number(r.memUsed),
@@ -56,7 +64,23 @@ export class MetricsService {
       netTx: Number(r.netTx),
       diskRead: Number(r.diskRead),
       diskWrite: Number(r.diskWrite),
-    }));
+    };
+  }
+
+  /**
+   * Newest sample for each of `serverIds` — the one call behind the fleet overview's live table.
+   * A single DISTINCT ON (serverId) over the [serverId, ts] index, not N round-trips. Servers with
+   * no sample yet are simply absent (the UI shows them as "—"). The caller MUST pass only ids the
+   * requester may see (ServersService.listForUser); this method performs no authorization itself.
+   */
+  async latestForServers(serverIds: string[]): Promise<{ serverId: string; sample: MetricsSample }[]> {
+    if (serverIds.length === 0) return [];
+    const rows = await this.prisma.metric.findMany({
+      where: { serverId: { in: serverIds } },
+      orderBy: [{ serverId: "asc" }, { ts: "desc" }],
+      distinct: ["serverId"],
+    });
+    return rows.map((r) => ({ serverId: r.serverId, sample: this.toSample(r) }));
   }
 
   /**

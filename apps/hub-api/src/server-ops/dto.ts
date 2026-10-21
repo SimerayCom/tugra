@@ -20,6 +20,25 @@ export const FleetPatchSchema = z.object({
 });
 export type FleetPatchInput = z.infer<typeof FleetPatchSchema>;
 
+// Fleet overview: one call returns the newest metrics sample per server (joined client-side with the
+// server list). Mirrors the MetricsSample wire shape from @tugra/shared.
+export const MetricsSampleSchema = z.object({
+  ts: z.number(),
+  cpu: z.number(),
+  memUsed: z.number(),
+  memTotal: z.number(),
+  diskUsed: z.number(),
+  diskTotal: z.number(),
+  netRx: z.number(),
+  netTx: z.number(),
+  diskRead: z.number(),
+  diskWrite: z.number(),
+});
+export const FleetLatestRowSchema = z.object({
+  serverId: z.string(),
+  sample: MetricsSampleSchema,
+});
+
 // Lifecycle action on one container from the server's Containers tab. `remove` needs confirmName
 // (type-to-confirm) and is only allowed on foreign containers (service-side guard).
 export const ContainerActionSchema = z.object({
