@@ -8,6 +8,14 @@ FROM node:20
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
 
+# OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
+LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.url="https://github.com/SimerayCom/tugra" \
+      org.opencontainers.image.title="Tugra Web" \
+      org.opencontainers.image.description="Tugra web dashboard — the UI for the self-hostable container PaaS." \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.vendor="Simeray Ltd"
+
 COPY . .
 RUN pnpm install --frozen-lockfile
 
