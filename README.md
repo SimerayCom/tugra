@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo-seal.png" alt="Tugra" width="120" />
+<img src="docs/assets/logo-seal.png" alt="Tugra" width="200" />
 
 # Tugra
 
