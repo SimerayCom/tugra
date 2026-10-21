@@ -34,7 +34,7 @@ DRY_RUN=0
 HUB_PORT="${HUB_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3001}"
 
-log()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
+log()  { printf '\033[38;5;179m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -43,7 +43,7 @@ note() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 
 # Step progress (best-level installer UX).
 TOTAL_STEPS=4; STEP=0
-step() { STEP=$((STEP + 1)); printf '\n\033[36m==> [%d/%d]\033[0m \033[1m%s\033[0m\n' "$STEP" "$TOTAL_STEPS" "$*"; }
+step() { STEP=$((STEP + 1)); printf '\n\033[38;5;179m==> [%d/%d]\033[0m \033[1m%s\033[0m\n' "$STEP" "$TOTAL_STEPS" "$*"; }
 
 # Install a package via the host package manager when a command is missing (best-effort, turnkey).
 PKG_UPDATED=0
@@ -61,7 +61,7 @@ ensure_pkg() {
 }
 
 banner() {
-  printf '\033[36m'
+  printf '\033[38;5;179m'
   cat <<'EOF'
 
 $$$$$$$$\                                         $$\
@@ -264,7 +264,7 @@ if command -v curl >/dev/null 2>&1; then
     i=$((i + 1))
     [ "$i" -ge 120 ] && { printf '\r\033[K'; warn "hub not healthy yet — check: docker compose -f deploy/docker-compose.yml logs hub-api"; break; }
     case $((i % 4)) in 0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\' ;; esac
-    printf '\r  \033[36m%s\033[0m still starting… (%ss)' "$c" "$((i * 2))"
+    printf '\r  \033[38;5;179m%s\033[0m still starting… (%ss)' "$c" "$((i * 2))"
     sleep 2
   done
   printf '\r\033[K'
