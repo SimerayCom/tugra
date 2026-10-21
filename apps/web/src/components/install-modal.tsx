@@ -35,6 +35,7 @@ function parseEnvLines(text: string): Record<string, string> {
  */
 export function InstallModal({ template, onClose }: { template: Template; onClose: () => void }) {
   const t = useT();
+  const router = useRouter();
   const qc = useQueryClient();
 
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
@@ -90,8 +91,9 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
   const errors = useMemo(() => validateFields(values, fields, t), [values, fields, t]);
 
   const install = useMutation({
-    // One call: the server creates the app and kicks off a best-effort deploy.
-    mutationFn: async () => {
+    // One call: the server creates the app and, when `deploy`, kicks off a best-effort deploy.
+    // deploy=false creates a NEW (draft) app and lands on its Configuration tab to review first.
+    mutationFn: async (deploy: boolean) => {
       const nonEmpty: Record<string, string> = {};
       for (const [k, v] of Object.entries(values)) if (v !== "") nonEmpty[k] = v;
       const envOverride = parseEnvLines(envText);
@@ -101,17 +103,22 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
       return api.createFromTemplate(template.slug, {
         name: name.trim(),
         serverId,
-        deploy: true,
+        deploy,
         ...(Object.keys(nonEmpty).length ? { fields: nonEmpty } : {}),
         ...(composeChanged ? { composeOverride } : {}),
         ...(Object.keys(envOverride).length ? { envOverride } : {}),
       });
     },
-    onSuccess: async (app) => {
+    onSuccess: async (app, deploy) => {
       await qc.invalidateQueries({ queryKey: ["apps"], exact: true });
-      // Keep the modal open and switch to a live progress view instead of a toast + redirect, so the user
-      // watches the app come up and gets a one-tap Open when it's ready.
-      setCreated(app);
+      if (deploy) {
+        // Keep the modal open and switch to a live progress view so the user watches it come up.
+        setCreated(app);
+      } else {
+        // Draft: go straight to the app's Configuration to review env/ports/volumes before deploying.
+        onClose();
+        router.push(`/apps/${app.id}?tab=configuration`);
+      }
     },
   });
 
@@ -214,8 +221,11 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
           </span>
         )}
         <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
-        <Btn onClick={() => install.mutate()} disabled={!canInstall || online.length === 0}>
-          {install.isPending ? t("home.installing") : t("home.install")}
+        <Btn variant="ghost" onClick={() => install.mutate(true)} disabled={!canInstall || online.length === 0}>
+          {t("home.installDeploy")}
+        </Btn>
+        <Btn onClick={() => install.mutate(false)} disabled={!canInstall || online.length === 0}>
+          {install.isPending ? t("home.installing") : t("home.installConfigure")}
         </Btn>
       </div>
       </>

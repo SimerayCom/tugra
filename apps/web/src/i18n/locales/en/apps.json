@@ -101,6 +101,8 @@
   "addServer": "Add a server →",
   "deploy": "Deploy",
   "redeploy": "Redeploy",
+  "notDeployedTitle": "Not deployed yet",
+  "notDeployedBody": "Review this app's environment, ports, volumes and domain, then deploy when you're ready.",
   "rebuild": "Rebuild (no cache)",
   "pullRedeploy": "Pull & redeploy",
   "stop": "Stop",

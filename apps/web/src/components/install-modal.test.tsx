@@ -7,7 +7,8 @@ import { InstallModal } from "./install-modal";
 import { api } from "../lib/api";
 import type { Template, TemplateManifest, ServerView } from "../lib/types";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: pushMock }) }));
 
 afterEach(cleanup);
 
@@ -35,6 +36,7 @@ const wrap = (ui: React.ReactNode) =>
 describe("InstallModal", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    pushMock.mockClear();
     vi.spyOn(api, "listServers").mockResolvedValue(SERVERS);
     vi.spyOn(api, "getTemplateManifest").mockResolvedValue(MANIFEST);
   });
@@ -51,9 +53,9 @@ describe("InstallModal", () => {
     wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
     // The button renders immediately, but the required field appears only once the manifest loads.
     const pw = await screen.findByLabelText("Password *");
-    expect((screen.getByText("Install") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("Create & deploy") as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(pw, { target: { value: "hunter2" } });
-    await waitFor(() => expect((screen.getByText("Install") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByText("Create & deploy") as HTMLButtonElement).disabled).toBe(false));
   });
 
   it("submits createFromTemplate with only the non-empty fields", async () => {
@@ -61,7 +63,7 @@ describe("InstallModal", () => {
     wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByLabelText("Password *")).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Password *"), { target: { value: "hunter2" } });
-    fireEvent.click(await screen.findByText("Install"));
+    fireEvent.click(await screen.findByText("Create & deploy"));
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith("ghost", {
         name: "Ghost",
@@ -72,12 +74,23 @@ describe("InstallModal", () => {
     );
   });
 
+  it("'Create & configure' creates a draft (no deploy) and routes to its Configuration", async () => {
+    const spy = vi.spyOn(api, "createFromTemplate").mockResolvedValue({ id: "app1" } as never);
+    const onClose = vi.fn();
+    wrap(<InstallModal template={TEMPLATE} onClose={onClose} />);
+    fireEvent.change(await screen.findByLabelText("Password *"), { target: { value: "hunter2" } });
+    fireEvent.click(await screen.findByText("Create & configure"));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("ghost", expect.objectContaining({ deploy: false })));
+    expect(onClose).toHaveBeenCalled();
+    expect(pushMock).toHaveBeenCalledWith("/apps/app1?tab=configuration");
+  });
+
   it("shows the server error message when the install fails", async () => {
     vi.spyOn(api, "createFromTemplate").mockRejectedValue(new Error("Port 8080 already in use"));
     wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByLabelText("Password *")).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Password *"), { target: { value: "hunter2" } });
-    fireEvent.click(await screen.findByText("Install"));
+    fireEvent.click(await screen.findByText("Create & deploy"));
     await waitFor(() => expect(screen.getByText("Port 8080 already in use")).toBeTruthy());
   });
 
@@ -95,7 +108,7 @@ describe("InstallModal", () => {
     const tz = (await screen.findByLabelText("Timezone")) as HTMLInputElement;
     expect(tz.value).toBe("UTC");
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(await screen.findByText("Install"));
+    fireEvent.click(await screen.findByText("Create & deploy"));
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith("ghost", {
         name: "Ghost",
@@ -111,7 +124,7 @@ describe("InstallModal", () => {
     wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByText(/Couldn't load this template/)).toBeTruthy());
     // No required fields could be resolved, so install stays available (the server generates defaults).
-    expect((screen.getByText("Install") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByText("Create & deploy") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("reveals the advanced compose/env override behind a toggle", async () => {
@@ -131,7 +144,7 @@ describe("InstallModal", () => {
     vi.spyOn(api, "getApp").mockResolvedValue({ id: "app1", status: "RUNNING", url: "https://ghost.example.com" } as never);
     wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
     fireEvent.change(await screen.findByLabelText("Password *"), { target: { value: "hunter2" } });
-    fireEvent.click(await screen.findByText("Install"));
+    fireEvent.click(await screen.findByText("Create & deploy"));
     expect(await screen.findByText(/is ready/)).toBeTruthy();
     const open = screen.getByRole("link", { name: /Open/ });
     expect(open.getAttribute("href")).toBe("https://ghost.example.com");
@@ -143,7 +156,7 @@ describe("InstallModal", () => {
     const logs = vi.spyOn(api, "getAppLogs").mockResolvedValue({ output: "boom: port in use" });
     wrap(<InstallModal template={TEMPLATE} onClose={vi.fn()} />);
     fireEvent.change(await screen.findByLabelText("Password *"), { target: { value: "hunter2" } });
-    fireEvent.click(await screen.findByText("Install"));
+    fireEvent.click(await screen.findByText("Create & deploy"));
     expect(await screen.findByText(/failed to install/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     await waitFor(() => expect(logs).toHaveBeenCalledWith("app1", 40));
