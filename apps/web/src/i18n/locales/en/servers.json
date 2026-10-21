@@ -7,6 +7,7 @@
   "tabContainers": "Containers",
   "noContainers": "No containers running (they appear a few seconds after the agent reports).",
   "containerName": "Container",
+  "containerLogs": "Logs",
   "net": "Network",
   "disk": "Disk I/O",
   "tabUpdates": "Updates",

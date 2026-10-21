@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   type MessageEvent,
   Param,
@@ -25,6 +26,8 @@ import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
 import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
+import { ContainerOpsService } from "./container-ops.service";
+import { ContainerLogStreamGuard } from "./container-log-stream.guard";
 import {
   CleanupConfigInput,
   CleanupConfigSchema,
@@ -44,7 +47,52 @@ export class ServerOpsController {
     private readonly patch: PatchService,
     private readonly logDrains: LogDrainService,
     private readonly proxy: ProxyOpsService,
+    private readonly containerOps: ContainerOpsService,
   ) {}
+
+  /**
+   * Live logs of ANY container on this host (from the Containers tab). Writer-only; logs may contain
+   * secrets. The guard authorizes BEFORE @Sse commits a 200 stream, and the container is validated
+   * against the host's live inventory so only a container actually on this server can be targeted.
+   */
+  @Sse("containers/logs/stream")
+  @RequireScopes("read:secrets")
+  @UseGuards(ContainerLogStreamGuard)
+  async containerLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("container") container: string,
+    @Query("tail") tail?: string,
+    @Query("follow") follow?: string,
+    @Query("since") since?: string,
+    @Query("search") search?: string,
+  ): Promise<Observable<MessageEvent>> {
+    const stream = await this.containerOps.streamLogs(user.userId, id, container, {
+      tail: tail ? Number(tail) : undefined,
+      follow: follow !== "0",
+      since,
+      search,
+    });
+    return stream.pipe(map((event) => ({ data: JSON.stringify(event) }) as MessageEvent));
+  }
+
+  /** One-shot container-log export (writer-only) — a downloadable text file. */
+  @Get("containers/logs/download")
+  @RequireScopes("read:secrets")
+  @Header("Content-Type", "text/plain; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="container.log"')
+  downloadContainerLogs(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query("container") container: string,
+    @Query("tail") tail?: string,
+    @Query("since") since?: string,
+  ): Promise<string> {
+    return this.containerOps.downloadLogs(user.userId, id, container, {
+      tail: tail ? Number(tail) : undefined,
+      since,
+    });
+  }
 
   @Get("proxy")
   proxyStatus(@CurrentUser() user: AuthUser, @Param("id") id: string) {

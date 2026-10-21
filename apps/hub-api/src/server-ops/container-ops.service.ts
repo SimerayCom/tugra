@@ -1,0 +1,82 @@
+import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { Observable } from "rxjs";
+import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
+import { TeamAccessService } from "../common/team-access.service";
+import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
+import { ContainerMetricsService } from "../metrics/container-metrics.service";
+import { clampTail, normalizeSince, normalizeSearch } from "../common/log-filters";
+
+// A plain docker container name. The target is also matched against the server's live inventory before
+// use, so this is defence in depth against a name that would reach the shell-less docker/grep argv.
+const CONTAINER_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+/**
+ * View the logs of ANY container on a managed host (not just a Tugra app/db), from the server's
+ * Containers tab. Writer-level (servers:ops) because container logs can carry secrets, and the target
+ * container is validated against the server's live inventory so only a container actually running on
+ * that host can be targeted — never an arbitrary name. Reuses the signed `logs` capability + the same
+ * log pipeline the app/database viewers use.
+ */
+@Injectable()
+export class ContainerOpsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: TeamAccessService,
+    private readonly audit: AuditService,
+    private readonly agentWs: AgentWsServer,
+    private readonly logStream: LogStreamService,
+    private readonly containerMetrics: ContainerMetricsService,
+  ) {}
+
+  /** Pre-flight access check (writer + agent online + the container really is on this host). Run from
+   *  a guard so `@Sse` returns a real 403/400/503 instead of a committed 200 stream. */
+  async assertLogAccess(userId: string, serverId: string, container: string): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "servers:ops");
+    if (!this.agentWs.isOnline(serverId)) throw new ServiceUnavailableException("agent offline");
+    await this.assertKnownContainer(serverId, container);
+  }
+
+  private async assertKnownContainer(serverId: string, container: string): Promise<void> {
+    if (!CONTAINER_RE.test(container ?? "")) throw new BadRequestException("invalid container name");
+    const inv = await this.containerMetrics.forServer(serverId);
+    if (!inv.containers.some((c) => c.name === container)) {
+      throw new BadRequestException("unknown container on this server");
+    }
+  }
+
+  async streamLogs(
+    userId: string,
+    serverId: string,
+    container: string,
+    opts: { tail?: number; follow?: boolean; since?: string; search?: string },
+  ): Promise<Observable<LogStreamEvent>> {
+    await this.assertLogAccess(userId, serverId, container);
+    await this.audit.log({ actor: userId, action: "server.container.logs.stream", target: serverId, meta: { container } });
+    return this.logStream.stream(serverId, container, {
+      tail: clampTail(opts.tail),
+      follow: opts.follow ?? true,
+      since: normalizeSince(opts.since),
+      search: normalizeSearch(opts.search),
+    });
+  }
+
+  async downloadLogs(
+    userId: string,
+    serverId: string,
+    container: string,
+    opts: { tail?: number; since?: string },
+  ): Promise<string> {
+    await this.assertLogAccess(userId, serverId, container);
+    const tail = clampTail(opts.tail, 10000);
+    const since = normalizeSince(opts.since);
+    // Fixed argv; container is inventory-validated + charset-checked, since is normalized.
+    const cmd = `docker logs --timestamps --tail ${tail}${since ? ` --since ${since}` : ""} ${container} 2>&1`;
+    const r = await this.agentWs.sendCommand(serverId, cmd, "logs", 60_000);
+    await this.audit.log({ actor: userId, action: "server.container.logs.download", target: serverId, meta: { container } });
+    return r.output.slice(0, 5_000_000);
+  }
+}
