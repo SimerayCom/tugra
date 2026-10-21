@@ -7,6 +7,7 @@ import {
   buildContainersScript,
   buildLogsScript,
   composeProject,
+  composeVolumes,
   interpolateMountContent,
   parseContainers,
 } from "./compose-script";
@@ -213,6 +214,47 @@ describe("compose-script", () => {
     expect(buildLogsScript(img, 50)).toBe("docker logs --tail 50 tugra_abc 2>&1");
     expect(buildLogsScript(img, 0)).toContain("--tail 1");
     expect(buildLogsScript(img, 99999)).toContain("--tail 2000");
+  });
+});
+
+describe("composeVolumes", () => {
+  const WP = `services:
+  wordpress:
+    image: wordpress:6
+    volumes:
+      - wp_data:/var/www/html
+  db:
+    image: mariadb:11
+    volumes:
+      - db_data:/var/lib/mysql
+volumes:
+  wp_data:
+  db_data:
+`;
+
+  it("parses WordPress named volumes with the tugra project docker name and mount points (browsable)", () => {
+    const vols = composeVolumes({ id: "app1", composeFile: WP });
+    const wp = vols.find((v) => v.key === "wp_data")!;
+    expect(wp.dockerName).toBe("tugra_app1_wp_data");
+    expect(wp.browsable).toBe(true);
+    expect(wp.mounts).toEqual([{ service: "wordpress", path: "/var/www/html" }]);
+    expect(vols.find((v) => v.key === "db_data")?.mounts).toEqual([{ service: "db", path: "/var/lib/mysql" }]);
+  });
+
+  it("marks external and custom-named volumes NOT browsable (never read an arbitrary host volume)", () => {
+    const vols = composeVolumes({
+      id: "app1",
+      composeFile: "services:\n  x:\n    image: nginx\nvolumes:\n  ext:\n    external: true\n  named:\n    name: shared_vol\n",
+    });
+    expect(vols.find((v) => v.key === "ext")).toMatchObject({ dockerName: "ext", external: true, browsable: false });
+    expect(vols.find((v) => v.key === "named")).toMatchObject({ dockerName: "shared_vol", browsable: false });
+  });
+
+  it("ignores bind mounts and returns [] for no compose file / invalid YAML", () => {
+    const vols = composeVolumes({ id: "a", composeFile: "services:\n  x:\n    image: nginx\n    volumes:\n      - ./data:/x\n      - /host:/y\n" });
+    expect(vols).toEqual([]);
+    expect(composeVolumes({ id: "a", composeFile: null })).toEqual([]);
+    expect(composeVolumes({ id: "a", composeFile: "::: not yaml :::" })).toEqual([]);
   });
 });
 

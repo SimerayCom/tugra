@@ -6663,6 +6663,45 @@
                           "additionalProperties": false
                         }
                       },
+                      "composeVolumes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "browsable": {
+                              "type": "boolean"
+                            },
+                            "mounts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "service": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "path"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "browsable",
+                            "mounts"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "hasGitToken": {
                         "type": "boolean"
                       },
@@ -7006,6 +7045,7 @@
                       "deployTimeoutSec",
                       "dockerOptions",
                       "volumes",
+                      "composeVolumes",
                       "hasGitToken",
                       "registryUrl",
                       "registryUser",
@@ -7359,6 +7399,45 @@
                         "additionalProperties": false
                       }
                     },
+                    "composeVolumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "browsable": {
+                            "type": "boolean"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "service": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "path"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "browsable",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -7702,6 +7781,7 @@
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
+                    "composeVolumes",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -8140,6 +8220,45 @@
                         "additionalProperties": false
                       }
                     },
+                    "composeVolumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "browsable": {
+                            "type": "boolean"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "service": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "path"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "browsable",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -8483,6 +8602,7 @@
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
+                    "composeVolumes",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -8925,6 +9045,45 @@
                         "additionalProperties": false
                       }
                     },
+                    "composeVolumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "browsable": {
+                            "type": "boolean"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "service": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "path"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "browsable",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -9268,6 +9427,7 @@
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
+                    "composeVolumes",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -13250,6 +13410,45 @@
                         "additionalProperties": false
                       }
                     },
+                    "composeVolumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "browsable": {
+                            "type": "boolean"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "service": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "path"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "browsable",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -13593,6 +13792,7 @@
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
+                    "composeVolumes",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -13964,6 +14164,45 @@
                           "additionalProperties": false
                         }
                       },
+                      "composeVolumes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "browsable": {
+                              "type": "boolean"
+                            },
+                            "mounts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "service": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "service",
+                                  "path"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "browsable",
+                            "mounts"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "hasGitToken": {
                         "type": "boolean"
                       },
@@ -14307,6 +14546,7 @@
                       "deployTimeoutSec",
                       "dockerOptions",
                       "volumes",
+                      "composeVolumes",
                       "hasGitToken",
                       "registryUrl",
                       "registryUser",
@@ -14748,6 +14988,45 @@
                         "additionalProperties": false
                       }
                     },
+                    "composeVolumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "browsable": {
+                            "type": "boolean"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "service": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "path"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "browsable",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -15091,6 +15370,7 @@
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
+                    "composeVolumes",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -16327,6 +16607,45 @@
                         "additionalProperties": false
                       }
                     },
+                    "composeVolumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "browsable": {
+                            "type": "boolean"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "service": {
+                                  "type": "string"
+                                },
+                                "path": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "service",
+                                "path"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "browsable",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -16670,6 +16989,7 @@
                     "deployTimeoutSec",
                     "dockerOptions",
                     "volumes",
+                    "composeVolumes",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",

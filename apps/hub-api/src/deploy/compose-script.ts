@@ -5,6 +5,7 @@
  * the whole stack. The project name namespaces the stack so it can't collide.
  */
 
+import { parse } from "yaml";
 import {
   containerName,
   envFileB64,
@@ -14,6 +15,65 @@ import {
   PROXY_NETWORK,
   type AppSpec,
 } from "./deploy-script";
+
+/** A named volume declared in a compose app's docker-compose.yml. `dockerName` is the real docker
+ *  volume: `<project>_<key>` for a normal declaration, the explicit `name:` when set, or the key
+ *  itself for `external: true`. `browsable` is true ONLY for Tugra-owned auto-named volumes
+ *  (`tugra_<id>_<key>`), so the read-only file browser can never be pointed at an external or
+ *  arbitrarily-named host volume. */
+export interface ComposeVolume {
+  key: string;
+  dockerName: string;
+  external: boolean;
+  browsable: boolean;
+  mounts: { service: string; path: string }[];
+}
+
+/** Parse the named volumes a COMPOSE app declares (top-level `volumes:` + the service mounts that
+ *  reference them). Best-effort + safe: returns [] on a parse error; never throws. Bind mounts
+ *  (`./data:/x`, `/host:/x`) are intentionally excluded — only real docker named volumes. */
+export function composeVolumes(app: { id: string; composeFile?: string | null }): ComposeVolume[] {
+  if (!app.composeFile) return [];
+  let doc: unknown;
+  try {
+    doc = parse(app.composeFile, { merge: true });
+  } catch {
+    return [];
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return [];
+  const topVolumes = (doc as { volumes?: unknown }).volumes;
+  if (!topVolumes || typeof topVolumes !== "object" || Array.isArray(topVolumes)) return [];
+  const proj = composeProject(app);
+  const out = new Map<string, ComposeVolume>();
+  for (const [key, def] of Object.entries(topVolumes as Record<string, unknown>)) {
+    const d = def && typeof def === "object" && !Array.isArray(def) ? (def as Record<string, unknown>) : {};
+    const external = d.external === true || (typeof d.external === "object" && d.external !== null);
+    const named = typeof d.name === "string" && d.name ? d.name : undefined;
+    const dockerName = named ?? (external ? key : `${proj}_${key}`);
+    out.set(key, { key, dockerName, external, browsable: !external && !named && dockerName === `${proj}_${key}`, mounts: [] });
+  }
+  const services = (doc as { services?: unknown }).services;
+  if (services && typeof services === "object" && !Array.isArray(services)) {
+    for (const [svc, sdef] of Object.entries(services as Record<string, unknown>)) {
+      const vols = (sdef as { volumes?: unknown })?.volumes;
+      if (!Array.isArray(vols)) continue;
+      for (const v of vols) {
+        let src: string | undefined;
+        let dst: string | undefined;
+        if (typeof v === "string") {
+          const parts = v.split(":");
+          if (parts.length >= 2) { src = parts[0]; dst = parts[1]; }
+        } else if (v && typeof v === "object" && (v as { type?: unknown }).type === "volume") {
+          const vv = v as { source?: unknown; target?: unknown };
+          if (typeof vv.source === "string") src = vv.source;
+          if (typeof vv.target === "string") dst = vv.target;
+        }
+        if (src && dst && out.has(src)) out.get(src)!.mounts.push({ service: svc, path: dst });
+      }
+    }
+  }
+  return [...out.values()];
+}
 
 /** Host dir + file path for a materialized config mount (sibling of the compose file, so the app's
  *  `down` `rm -rf` cleans it up). Keyed by mount INDEX to keep the host path Tugra-controlled. */
