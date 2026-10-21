@@ -104,6 +104,8 @@ On a fresh Linux host, **one command** installs the prerequisites (git, Docker),
 curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
 ```
 
+<p align="center"><img src="docs/assets/install.png" alt="Tugra one-command install on a fresh Ubuntu host: prerequisites installed, configuration written, the stack coming up healthy, and the owner setup code" width="840" /></p>
+
 Prefer to read before you run (sensible for any script you're handing root-ish Docker access)? Clone and run the installer yourself — it only writes a local `.env` and calls `docker compose`, installs Docker if it's missing, and is idempotent (safe to re-run):
 
 ```bash
