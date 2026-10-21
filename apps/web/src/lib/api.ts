@@ -496,6 +496,12 @@ export const api = {
   getServerContainers(id: string) {
     return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);
   },
+  containerAction(id: string, container: string, action: "restart" | "stop" | "remove", confirmName?: string) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/containers/action`, {
+      method: "POST",
+      body: JSON.stringify({ container, action, confirmName }),
+    });
+  },
   discoverContainers(id: string) {
     return apiFetch<{ containers: DiscoveredContainer[] }>(`/servers/${id}/discover`);
   },

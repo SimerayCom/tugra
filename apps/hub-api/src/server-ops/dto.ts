@@ -20,6 +20,15 @@ export const FleetPatchSchema = z.object({
 });
 export type FleetPatchInput = z.infer<typeof FleetPatchSchema>;
 
+// Lifecycle action on one container from the server's Containers tab. `remove` needs confirmName
+// (type-to-confirm) and is only allowed on foreign containers (service-side guard).
+export const ContainerActionSchema = z.object({
+  container: z.string().min(1).max(128),
+  action: z.enum(["restart", "stop", "remove"]),
+  confirmName: z.string().optional(),
+});
+export type ContainerActionInput = z.infer<typeof ContainerActionSchema>;
+
 // The drain target format the agent ships to. "http" = Tugra's generic batch JSON; "loki" = Grafana Loki
 // push API; "datadog" = Datadog logs intake (token is sent as DD-API-KEY, not a Bearer). syslog (a non-HTTP
 // transport) is planned. For loki/datadog the `endpoint` is that provider's push/intake URL.
