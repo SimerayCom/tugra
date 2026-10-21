@@ -153,9 +153,8 @@ export default function AppDetailPage() {
                 <Btn onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
               )}
               <Btn variant={primary === "deploy" ? "primary" : "ghost"} onClick={() => onDeploy()} disabled={deploy.isPending}>
-                {deploy.isPending ? t("apps.deploying") : t("apps.deploy")}
+                {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
               </Btn>
-              <Btn variant="ghost" onClick={() => onDeploy({ noCache: true })} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>{t("apps.forceDeploy")}</Btn>
               <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
               <Btn
                 variant="ghost"
@@ -172,8 +171,11 @@ export default function AppDetailPage() {
                     role="menu"
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
+                    <Btn variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
+                      {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
+                    </Btn>
                     <Btn variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: t("apps.deleteConfirm"), danger: true })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true })) del.mutate(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>
