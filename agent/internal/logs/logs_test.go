@@ -75,8 +75,11 @@ func TestRunStreamsLinesAndExitsOnce(t *testing.T) {
 
 func TestCloseCancelsFollowOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	// Emit one line then block forever — stands in for `docker logs --follow`.
-	cmd := exec.CommandContext(ctx, "sh", "-c", "printf 'started\\n'; sleep 60")
+	// Emit one line then block forever — stands in for `docker logs --follow`. `exec` replaces the
+	// shell with sleep so the follow is a SINGLE process (like docker logs), not a shell with an
+	// orphaned sleep child: SIGKILL then closes the stdout pipe, the scanner hits EOF and onExit fires.
+	// Without exec, a loaded CI runner can leave the child holding the pipe open past the 5s deadline.
+	cmd := exec.CommandContext(ctx, "sh", "-c", "printf 'started\\n'; exec sleep 60")
 
 	var exits int32
 	done := make(chan struct{})
