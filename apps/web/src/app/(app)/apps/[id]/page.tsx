@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
@@ -33,6 +33,9 @@ import { PageHeader } from "../../../../components/page-header";
 import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
 import { Tabs } from "../../../../components/tabs-nav";
+import { ConfigLayout } from "../../../../components/config-layout";
+import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
+import { resolveTab } from "../../../../lib/tab-param";
 
 export default function AppDetailPage() {
   const t = useT();
@@ -125,6 +128,8 @@ export default function AppDetailPage() {
     ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles") }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
+  // Configuration sub-nav section, deep-linked as ?section= (resolved to a visible group below).
+  const [sectionRaw, setSection] = useTabState("general", CONFIG_GROUP_KEYS, "section");
 
   if (isError && !appData) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -134,6 +139,79 @@ export default function AppDetailPage() {
   const isRunning = appData.status === "RUNNING";
   const headerStatus = deployingNow && appData.status !== "RUNNING" ? { label: "DEPLOYING", color: "var(--c-am)" } : { label: appData.status, color: appColor(appData.status) };
   const primary: "deploy" | "restart" | "start" = appData.status === "RUNNING" ? "restart" : appData.status === "STOPPED" ? "start" : "deploy";
+
+  // Configuration tab is a Coolify-style left sub-nav: group gating lives in config-groups.ts,
+  // and each card's JSX is a thunk so a null webhookToken/domain never renders (and never throws).
+  const configGroups = visibleConfigGroups(appData);
+  const activeSection = resolveTab(sectionRaw, configGroups.map((g) => g.key), "general");
+  const renderConfigCard: Record<ConfigCardId, () => ReactNode> = {
+    deploySettings: () => (
+      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} />
+    ),
+    clusterDeploy: () => (
+      <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} volumes={appData.volumes} constraintServerId={appData.constraintServerId} />
+    ),
+    environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
+    tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
+    buildConfig: () => (
+      <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
+    ),
+    buildArgs: () => <BuildArgsCard id={id} />,
+    dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
+    credentials: () => (
+      <CredentialsCard id={id} source={appData.source} hasGitToken={appData.hasGitToken} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
+    ),
+    env: () => <EnvCard id={id} clusterId={appData.clusterId} />,
+    expose: () => (
+      <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.exposeTitle")}</div>
+          <div style={{ fontSize: 13, color: "var(--c-tx)", marginTop: 2 }}>
+            {t(`apps.exposeMode_${appData.exposeMode === "magic" || appData.exposeMode === "port" || appData.exposeMode === "custom" || appData.exposeMode === "none" ? appData.exposeMode : "none"}`)}
+            {appData.url ? ` · ${appData.url}` : ""}
+          </div>
+        </div>
+        <Btn variant="ghost" onClick={() => setExposeOpen(true)}>{t("apps.exposeChange")}</Btn>
+      </Card>
+    ),
+    domain: () => <DomainCard id={id} domain={appData.domain} https={appData.https} />,
+    domainOptions: () =>
+      appData.domain ? (
+        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} />
+      ) : null,
+    volumes: () => <VolumesCard id={id} volumes={appData.volumes} />,
+    volumeBackups: () => (
+      <VolumeBackupsCard id={id} volumes={appData.volumes} enabled={appData.volumeBackupEnabled} intervalHours={appData.volumeBackupIntervalHours} retention={appData.volumeBackupRetention} destinationId={appData.volumeBackupDestinationId} />
+    ),
+    healthCheck: () => (
+      <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCmd={appData.healthCmd} />
+    ),
+    limits: () => (
+      <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />
+    ),
+    scheduledTasks: () => <ScheduledTasksCard id={id} />,
+    webhooks: () =>
+      appData.webhookToken ? (
+        <Card style={{ padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.webhooks")}</div>
+          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+            {t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <CopyRow label={t("apps.webhookUrl")} value={webhookUrl(appData.webhookToken)} copy={t("apps.copy")} />
+            {appData.webhookSecret && (
+              <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
+            )}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Btn variant="ghost" disabled={regen.isPending} onClick={async () => { if (await confirm({ body: t("apps.regenerateConfirm"), danger: true })) regen.mutate(); }}>
+              {t("apps.regenerate")}
+            </Btn>
+          </div>
+        </Card>
+      ) : null,
+    preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />,
+  };
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -255,106 +333,19 @@ export default function AppDetailPage() {
 
       {tab === "configuration" && appData.canWrite && (
         <>
-          {appData.webhookToken && (
-            <Card style={{ padding: 16, marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.webhooks")}</div>
-              <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
-                {t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <CopyRow label={t("apps.webhookUrl")} value={webhookUrl(appData.webhookToken)} copy={t("apps.copy")} />
-                {appData.webhookSecret && (
-                  <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
-                )}
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <Btn variant="ghost" disabled={regen.isPending} onClick={async () => { if (await confirm({ body: t("apps.regenerateConfirm"), danger: true })) regen.mutate(); }}>
-                  {t("apps.regenerate")}
-                </Btn>
-              </div>
-            </Card>
-          )}
-
-          {appData.source !== "COMPOSE" && (
-            <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />
-          )}
-          {appData.source !== "COMPOSE" && (
-            <HealthCheckCard
-              id={id}
-              healthCheckType={appData.healthCheckType}
-              healthCheckPath={appData.healthCheckPath}
-              healthCheckPort={appData.healthCheckPort}
-              healthCmd={appData.healthCmd}
-            />
-          )}
-          {appData.source !== "COMPOSE" && (
-            <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} />
-          )}
-          {appData.source !== "COMPOSE" && (
-            <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} volumes={appData.volumes} constraintServerId={appData.constraintServerId} />
-          )}
-          {appData.source !== "COMPOSE" && (
-            <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
-          )}
-          {appData.source !== "COMPOSE" && (
-            <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />
-          )}
-          {appData.source !== "COMPOSE" && <VolumesCard id={id} volumes={appData.volumes} />}
-          {appData.source !== "COMPOSE" && <ScheduledTasksCard id={id} />}
-          {!appData.isPreview && (
-            <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />
-          )}
-          {!appData.isPreview && appData.source === "GIT" && (
-            <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />
-          )}
-          <CredentialsCard
-            id={id}
-            source={appData.source}
-            hasGitToken={appData.hasGitToken}
-            registryUrl={appData.registryUrl}
-            registryUser={appData.registryUser}
+          <ConfigLayout
+            navLabel={t("apps.cfgNavLabel")}
+            active={activeSection}
+            onChange={setSection}
+            groups={configGroups.map((g) => ({
+              key: g.key,
+              label: t(g.labelKey),
+              content: g.cardIds.map((cid) => <Fragment key={cid}>{renderConfigCard[cid]()}</Fragment>),
+            }))}
           />
-          {appData.canWrite && !appData.isPreview && (
-            <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.exposeTitle")}</div>
-                <div style={{ fontSize: 13, color: "var(--c-tx)", marginTop: 2 }}>
-                  {t(`apps.exposeMode_${appData.exposeMode === "magic" || appData.exposeMode === "port" || appData.exposeMode === "custom" || appData.exposeMode === "none" ? appData.exposeMode : "none"}`)}
-                  {appData.url ? ` · ${appData.url}` : ""}
-                </div>
-              </div>
-              <Btn variant="ghost" onClick={() => setExposeOpen(true)}>{t("apps.exposeChange")}</Btn>
-            </Card>
-          )}
           {exposeOpen && (
             <ExposeModal appId={id} current={appData.exposeMode} currentDomain={appData.domain} onClose={() => setExposeOpen(false)} />
           )}
-          {appData.canWrite && !appData.isPreview && appData.domainKind === "custom" && (
-            <DomainCard id={id} domain={appData.domain} https={appData.https} />
-          )}
-          {appData.domain && (
-            <DomainOptionsCard
-              id={id}
-              domain={appData.domain}
-              https={appData.https}
-              domainRedirect={appData.domainRedirect}
-              securityHeaders={appData.securityHeaders}
-              forwardAuth={appData.forwardAuth}
-            />
-          )}
-          {appData.source !== "COMPOSE" && appData.volumes.length > 0 && (
-            <VolumeBackupsCard
-              id={id}
-              volumes={appData.volumes}
-              enabled={appData.volumeBackupEnabled}
-              intervalHours={appData.volumeBackupIntervalHours}
-              retention={appData.volumeBackupRetention}
-              destinationId={appData.volumeBackupDestinationId}
-            />
-          )}
-          <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />
-          <EnvCard id={id} clusterId={appData.clusterId} />
-          {appData.source === "GIT" && <BuildArgsCard id={id} />}
         </>
       )}
 
