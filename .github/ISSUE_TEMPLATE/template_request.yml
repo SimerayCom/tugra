@@ -1,0 +1,86 @@
+name: Template request
+description: Request a one-click app template for the Tugra app store
+title: "[Template] <app name>"
+labels: ["template-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Want an app in Tugra's one-click store? Fill this in and we'll adapt it. The app must be
+        open-source / self-hostable and deployable from a public container image or a Compose file.
+  - type: input
+    id: app
+    attributes:
+      label: App name
+      placeholder: e.g. Nextcloud
+    validations:
+      required: true
+  - type: input
+    id: homepage
+    attributes:
+      label: Project homepage
+      description: The app's website or source repository.
+      placeholder: https://github.com/owner/project
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - ai
+        - analytics
+        - automation
+        - cms
+        - communication
+        - database
+        - developer
+        - finance
+        - media
+        - monitoring
+        - productivity
+        - security
+        - tools
+        - Not sure / other
+    validations:
+      required: true
+  - type: textarea
+    id: image-or-compose
+    attributes:
+      label: Container image or Compose
+      description: The image (e.g. `ghcr.io/owner/app:1.2`) or a docker-compose.yml we can adapt. Rendered as code.
+      render: yaml
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Needs a database?
+      options:
+        - "No"
+        - PostgreSQL
+        - MySQL / MariaDB
+        - MongoDB
+        - Redis / Valkey
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Documentation URL
+      description: A link to the app's install / configuration docs (helps us set sensible defaults).
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Ports to expose, required environment variables, persistent volumes, or why this app is useful.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirm
+      options:
+        - label: This app is open-source / self-hostable (not a paid or cloud-only service).
+          required: true
+        - label: I checked the store and it isn't already available in Tugra.
+          required: true
