@@ -26,6 +26,7 @@ import {
   HardDrive,
   Home,
   Package,
+  Gauge,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -57,6 +58,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { key: "home", href: "/home", icon: Home, home: true, fleet: false },
       { key: "dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { key: "fleet", href: "/fleet", icon: Gauge },
       { key: "uptime", href: "/monitors", icon: Activity },
     ],
   },
