@@ -34,6 +34,7 @@ import type {
   DomainView,
   Heartbeat,
   MetricsSample,
+  FleetLatestRow,
   MetricsRange,
   AppContainerMetrics,
   ServerContainers,
@@ -495,6 +496,10 @@ export const api = {
   },
   getServerContainers(id: string) {
     return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);
+  },
+  // Fleet overview: newest metrics sample for every server the caller can see, in one call.
+  getFleetMetrics() {
+    return apiFetch<FleetLatestRow[]>("/fleet/metrics/latest");
   },
   containerAction(id: string, container: string, action: "restart" | "stop" | "remove", confirmName?: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/containers/action`, {

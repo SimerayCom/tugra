@@ -1,0 +1,18 @@
+{
+  "title": "Fleet",
+  "subtitle": "Every server, live — updates every few seconds.",
+  "search": "Search name, host or IP…",
+  "noMatch": "No servers match this filter.",
+  "colServer": "Server",
+  "colCpu": "CPU",
+  "colMem": "Memory",
+  "colDisk": "Disk",
+  "colNet": "Network",
+  "colUptime": "Uptime",
+  "colAgent": "Agent",
+  "colCluster": "Cluster",
+  "clustered": "In cluster",
+  "stale": "data is stale",
+  "metricsError": "Live metrics are temporarily unavailable — showing the last known state.",
+  "filterStatus": "Filter by status"
+}

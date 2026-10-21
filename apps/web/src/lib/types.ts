@@ -450,6 +450,12 @@ export interface MetricsSample {
 
 export type MetricsRange = "1h" | "6h" | "24h" | "7d";
 
+/** One row of GET /fleet/metrics/latest: a server's newest sample, for the fleet overview table. */
+export interface FleetLatestRow {
+  serverId: string;
+  sample: MetricsSample;
+}
+
 export interface ContainerMetricSample {
   ts: number;
   cpu: number;
