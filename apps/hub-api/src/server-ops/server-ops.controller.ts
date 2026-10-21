@@ -31,6 +31,8 @@ import { ContainerLogStreamGuard } from "./container-log-stream.guard";
 import {
   CleanupConfigInput,
   CleanupConfigSchema,
+  ContainerActionInput,
+  ContainerActionSchema,
   CreateLogDrainInput,
   CreateLogDrainSchema,
   UpdateLogDrainInput,
@@ -74,6 +76,20 @@ export class ServerOpsController {
       search,
     });
     return stream.pipe(map((event) => ({ data: JSON.stringify(event) }) as MessageEvent));
+  }
+
+  /** Lifecycle action on a container (restart / stop / remove). Writer-only; strong guards service-side. */
+  @Post("containers/action")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodBody(ContainerActionSchema)
+  async containerAction(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(ContainerActionSchema)) body: ContainerActionInput,
+  ) {
+    await this.containerOps.action(user.userId, id, body.container, body.action, body.confirmName);
+    return { ok: true };
   }
 
   /** One-shot container-log export (writer-only) — a downloadable text file. */

@@ -15,13 +15,25 @@ function make(over: {
   isOnline?: jest.Mock;
   forServer?: jest.Mock;
   stream?: jest.Mock;
+  sendCommand?: jest.Mock;
 } = {}) {
   const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
   const access = { requirePermission: over.requirePermission ?? jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-  const agentWs = { isOnline: over.isOnline ?? jest.fn().mockReturnValue(true) } as unknown as AgentWsServer;
+  const agentWs = {
+    isOnline: over.isOnline ?? jest.fn().mockReturnValue(true),
+    sendCommand: over.sendCommand ?? jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
+  } as unknown as AgentWsServer;
   const logStream = { stream: over.stream ?? jest.fn().mockReturnValue({ pipe: jest.fn() }) } as unknown as LogStreamService;
   const containerMetrics = {
-    forServer: over.forServer ?? jest.fn().mockResolvedValue({ containers: [{ name: "nginx" }, { name: "tugra_db_x" }] }),
+    forServer:
+      over.forServer ??
+      jest.fn().mockResolvedValue({
+        containers: [
+          { name: "nginx", kind: "other" },
+          { name: "tugra_db_x", kind: "db" },
+          { name: "tugra-hub-api-1", kind: "system" },
+        ],
+      }),
   } as unknown as ContainerMetricsService;
   return new ContainerOpsService(prisma, access, audit, agentWs, logStream, containerMetrics);
 }
@@ -56,5 +68,42 @@ describe("ContainerOpsService", () => {
   it("rejects when the agent is offline", async () => {
     const isOnline = jest.fn().mockReturnValue(false);
     await expect(make({ isOnline }).streamLogs("u1", "s1", "nginx", {})).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("restarts a container and audits", async () => {
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    (audit.log as jest.Mock).mockClear();
+    await make({ sendCommand }).action("u1", "s1", "tugra_db_x", "restart");
+    expect(sendCommand).toHaveBeenCalledWith("s1", "docker restart tugra_db_x", "bulk", expect.any(Number));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.container.restart" }));
+  });
+
+  it("force-removes a FOREIGN container when the name is confirmed", async () => {
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    await make({ sendCommand }).action("u1", "s1", "nginx", "remove", "nginx");
+    expect(sendCommand).toHaveBeenCalledWith("s1", "docker rm -f nginx", "bulk", expect.any(Number));
+  });
+
+  it("refuses to remove a MANAGED (db/app) container — steer to resource delete", async () => {
+    const sendCommand = jest.fn();
+    await expect(make({ sendCommand }).action("u1", "s1", "tugra_db_x", "remove", "tugra_db_x")).rejects.toBeInstanceOf(BadRequestException);
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("refuses remove without a matching name confirmation", async () => {
+    const sendCommand = jest.fn();
+    await expect(make({ sendCommand }).action("u1", "s1", "nginx", "remove", "wrong")).rejects.toBeInstanceOf(BadRequestException);
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("never acts on Tugra's own control-plane containers", async () => {
+    const sendCommand = jest.fn();
+    await expect(make({ sendCommand }).action("u1", "s1", "tugra-hub-api-1", "stop")).rejects.toBeInstanceOf(BadRequestException);
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-writer (servers:ops required) for actions", async () => {
+    const requirePermission = jest.fn().mockRejectedValue(new ForbiddenException());
+    await expect(make({ requirePermission }).action("u1", "s1", "nginx", "restart")).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
