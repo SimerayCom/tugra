@@ -826,6 +826,8 @@ export interface Application {
   deployTimeoutSec: number | null;
   dockerOptions: string | null;
   volumes: AppVolume[];
+  // Named volumes a COMPOSE app declares (empty for non-compose); browsable=false → external/custom.
+  composeVolumes: { key: string; browsable: boolean; mounts: { service: string; path: string }[] }[];
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;

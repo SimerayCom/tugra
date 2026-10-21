@@ -75,6 +75,7 @@ import {
   buildContainersScript,
   buildLogsScript,
   composeProject,
+  composeVolumes,
   parseContainers,
 } from "../deploy/compose-script";
 import {
@@ -128,6 +129,15 @@ export const AppViewSchema = z.object({
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
+  // Named volumes a COMPOSE app declares (empty for non-compose). Surfaced so the Files tab can show
+  // them; `browsable` is false for external / custom-named volumes (not Tugra-owned → not browsable).
+  composeVolumes: z.array(
+    z.object({
+      key: z.string(),
+      browsable: z.boolean(),
+      mounts: z.array(z.object({ service: z.string(), path: z.string() })),
+    }),
+  ),
   hasGitToken: z.boolean(),
   registryUrl: z.string().nullable(),
   registryUser: z.string().nullable(),
@@ -1430,13 +1440,23 @@ export class ApplicationsService {
     path = "",
   ): Promise<{ entries: FsEntry[]; truncated: boolean }> {
     const app = await this.requireWrite(userId, id);
-    const declared =
-      Array.isArray(app.volumes) &&
-      (app.volumes as Array<{ name?: string }>).some((v) => v?.name === volumeName);
-    if (!declared) throw new BadRequestException("unknown volume for this app");
+    let dockerName: string;
+    if (app.source === "COMPOSE") {
+      // Only a Tugra-owned, auto-named compose volume (tugra_<id>_<key>) is browsable — never an
+      // external or custom-named volume, which could point at another app's or a host volume.
+      const cv = composeVolumes(app).find((v) => v.key === volumeName);
+      if (!cv || !cv.browsable) throw new BadRequestException("unknown volume for this app");
+      dockerName = cv.dockerName;
+    } else {
+      const declared =
+        Array.isArray(app.volumes) &&
+        (app.volumes as Array<{ name?: string }>).some((v) => v?.name === volumeName);
+      if (!declared) throw new BadRequestException("unknown volume for this app");
+      dockerName = appVolumeName(app, volumeName);
+    }
     const rel = assertSafeFsPath(path);
     if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-    return this.agentWs.sendFsReq(app.serverId, "list", appVolumeName(app, volumeName), rel);
+    return this.agentWs.sendFsReq(app.serverId, "list", dockerName, rel);
   }
 
   /**
@@ -2078,6 +2098,13 @@ export class ApplicationsService {
     return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
   }
 
+  /** The named volumes a COMPOSE app declares, for the Files tab (empty for non-compose). The real
+   *  docker name stays server-side; only the key, mount points and a browsable flag are exposed. */
+  private composeVolumesView(app: Application): { key: string; browsable: boolean; mounts: { service: string; path: string }[] }[] {
+    if (app.source !== "COMPOSE") return [];
+    return composeVolumes(app).map((v) => ({ key: v.key, browsable: v.browsable, mounts: v.mounts }));
+  }
+
   private appConfigMounts(app: Application): AppConfigMount[] {
     return Array.isArray(app.configMounts) ? (app.configMounts as unknown as AppConfigMount[]) : [];
   }
@@ -2327,6 +2354,7 @@ export class ApplicationsService {
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,
       volumes: this.appVolumes(app),
+      composeVolumes: this.composeVolumesView(app),
       hasGitToken: !!app.gitTokenEnc,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
       registryUser: this.appRegistryAuth(app)?.user ?? null,

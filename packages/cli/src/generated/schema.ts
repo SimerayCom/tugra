@@ -7925,6 +7925,14 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
+                        }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
                         registryUser: string | null;
@@ -8130,6 +8138,14 @@ export interface operations {
                         volumes: {
                             name: string;
                             path: string;
+                        }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
                         }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
@@ -8451,6 +8467,14 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
+                        }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
                         registryUser: string | null;
@@ -8725,6 +8749,14 @@ export interface operations {
                         volumes: {
                             name: string;
                             path: string;
+                        }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
                         }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
@@ -11532,6 +11564,14 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
+                        }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
                         registryUser: string | null;
@@ -11804,6 +11844,14 @@ export interface operations {
                         volumes: {
                             name: string;
                             path: string;
+                        }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
                         }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
@@ -12133,6 +12181,14 @@ export interface operations {
                         volumes: {
                             name: string;
                             path: string;
+                        }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
                         }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;
@@ -13001,6 +13057,14 @@ export interface operations {
                         volumes: {
                             name: string;
                             path: string;
+                        }[];
+                        composeVolumes: {
+                            key: string;
+                            browsable: boolean;
+                            mounts: {
+                                service: string;
+                                path: string;
+                            }[];
                         }[];
                         hasGitToken: boolean;
                         registryUrl: string | null;

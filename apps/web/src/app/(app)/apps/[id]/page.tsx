@@ -451,7 +451,16 @@ export default function AppDetailPage() {
 
       {tab === "files" && appData.canWrite && (
         <SectionCard title={t("apps.files.title")} desc={t("apps.files.desc")}>
-          <AppFilesCard id={id} volumes={appData.volumes} />
+          <AppFilesCard
+            id={id}
+            volumes={
+              appData.source === "COMPOSE"
+                ? appData.composeVolumes
+                    .filter((v) => v.browsable)
+                    .map((v) => ({ name: v.key, path: v.mounts.map((m) => `${m.service}:${m.path}`).join(", ") || v.key }))
+                : appData.volumes
+            }
+          />
         </SectionCard>
       )}
     </div>
