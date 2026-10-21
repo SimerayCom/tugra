@@ -25,13 +25,16 @@ export default function AuditPage() {
   const [q, setQ] = useState("");
 
   const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
-    queryKey: ["audit", teamId],
+    // Distinct from the dashboard's plain ["audit-recent"] useQuery: sharing one key fed this
+    // infinite query the dashboard's cached {entries} object, so data.pages was undefined → crash.
+    queryKey: ["audit", "infinite", teamId],
     queryFn: ({ pageParam }) => api.listAudit(teamId ?? undefined, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
   // Client-side filter narrows the already-loaded pages; "Load more" fetches older.
-  const entries = data?.pages.flatMap((p) => p.entries) ?? [];
+  // `?.pages?.` stays defensive so a stray cache shape degrades to empty, never the error boundary.
+  const entries = data?.pages?.flatMap((p) => p.entries) ?? [];
 
   const shown = filterAudit(entries, q);
 
