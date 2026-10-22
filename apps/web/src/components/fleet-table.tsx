@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { memo, type ReactNode, type CSSProperties } from "react";
 import { fmtBytes, formatUptime } from "../lib/fleet";
-import { metricTone, type FleetRow, type FleetSortKey, type SortDir } from "../lib/fleet-view";
+import { metricTone, tempTone, batteryTone, type FleetRow, type FleetSortKey, type SortDir, type MetricTone } from "../lib/fleet-view";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, StatusDot } from "./ui";
+import { MeterBar } from "./meter-bar";
 
 const TONE_COLOR: Record<string, string> = { ok: "var(--c-tx)", warn: "var(--c-am)", crit: "var(--c-r)" };
 const enc = encodeURIComponent;
@@ -61,6 +62,9 @@ export function FleetTable({
                   <SortTh k="mem" label={t("fleet.colMem")} num {...sortProps} />
                   <SortTh k="disk" label={t("fleet.colDisk")} num {...sortProps} />
                   <SortTh k="net" label={t("fleet.colNet")} num {...sortProps} />
+                  <SortTh k="temp" label={t("fleet.colTemp")} num {...sortProps} />
+                  <SortTh k="gpu" label={t("fleet.colGpu")} num {...sortProps} />
+                  <SortTh k="battery" label={t("fleet.colBattery")} num {...sortProps} />
                   <SortTh k="uptime" label={t("fleet.colUptime")} num {...sortProps} />
                   <Th>{t("fleet.colAgent")}</Th>
                   <Th>{t("fleet.colCluster")}</Th>
@@ -89,6 +93,7 @@ const pctColor = (value: number | null, stale: boolean) =>
 
 const FleetRowView = memo(
   function FleetRowView({ row, cluster, staleLabel }: { row: FleetRow; cluster: Cluster; staleLabel: string }) {
+    const t = useT();
     const s = row.server;
     return (
       <tr className="fleet-row" style={{ borderBottom: "1px solid var(--c-bd)", position: "relative" }}>
@@ -104,12 +109,15 @@ const FleetRowView = memo(
             </div>
           </div>
         </Td>
-        <PctTd value={row.cpu} stale={row.stale} />
-        <PctTd value={row.memPct} stale={row.stale} />
-        <PctTd value={row.diskPct} stale={row.stale} />
+        <MeterTd value={row.cpu} tone={metricTone(row.cpu)} text={pctText(row.cpu)} stale={row.stale} label={t("fleet.colCpu")} />
+        <MeterTd value={row.memPct} tone={metricTone(row.memPct)} text={pctText(row.memPct)} stale={row.stale} label={t("fleet.colMem")} />
+        <MeterTd value={row.diskPct} tone={metricTone(row.diskPct)} text={pctText(row.diskPct)} stale={row.stale} label={t("fleet.colDisk")} />
         <Td num className="mono" style={{ color: row.stale ? "var(--c-tx3)" : "var(--c-tx2)" }}>
           {row.net === null ? "—" : `${fmtBytes(row.net)}/s`}
         </Td>
+        <MeterTd value={row.temp} tone={tempTone(row.temp)} text={row.temp === null ? "—" : `${row.temp.toFixed(0)}°C`} stale={row.stale} label={t("fleet.colTemp")} />
+        <MeterTd value={row.gpuUtil} tone={metricTone(row.gpuUtil)} text={pctText(row.gpuUtil)} stale={row.stale} label={t("fleet.colGpu")} />
+        <MeterTd value={row.battery} tone={batteryTone(row.battery, row.batteryState)} text={row.battery === null ? "—" : `${row.battery.toFixed(0)}%`} stale={row.stale} label={t("fleet.colBattery")} />
         <Td num className="mono" style={{ color: "var(--c-tx2)" }}>{formatUptime(s.uptimeSeconds)}</Td>
         <Td className="mono" style={{ color: "var(--c-tx3)" }}>{s.agentVersion ?? "—"}</Td>
         <Td>
@@ -133,6 +141,11 @@ const FleetRowView = memo(
     a.row.memPct === b.row.memPct &&
     a.row.diskPct === b.row.diskPct &&
     a.row.net === b.row.net &&
+    a.row.temp === b.row.temp &&
+    a.row.gpuUtil === b.row.gpuUtil &&
+    a.row.gpuTemp === b.row.gpuTemp &&
+    a.row.battery === b.row.battery &&
+    a.row.batteryState === b.row.batteryState &&
     a.row.server === b.row.server, // ServerView is replaced wholesale on a refetch; ref-equal when unchanged
 );
 
@@ -161,6 +174,9 @@ const FleetCardView = memo(
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "var(--c-tx3)" }}>
           <span>{t("fleet.colNet")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{row.net === null ? "—" : `${fmtBytes(row.net)}/s`}</b></span>
+          {row.temp !== null && <span>{t("fleet.colTemp")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{`${row.temp.toFixed(0)}°C`}</b></span>}
+          {row.gpuUtil !== null && <span>{t("fleet.colGpu")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{`${row.gpuUtil.toFixed(0)}%`}</b></span>}
+          {row.battery !== null && <span>{t("fleet.colBattery")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{`${row.battery.toFixed(0)}%`}</b></span>}
           <span>{t("fleet.colUptime")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{formatUptime(s.uptimeSeconds)}</b></span>
           <span>{t("fleet.colAgent")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{s.agentVersion ?? "—"}</b></span>
         </div>
@@ -176,6 +192,11 @@ const FleetCardView = memo(
     a.row.memPct === b.row.memPct &&
     a.row.diskPct === b.row.diskPct &&
     a.row.net === b.row.net &&
+    a.row.temp === b.row.temp &&
+    a.row.gpuUtil === b.row.gpuUtil &&
+    a.row.gpuTemp === b.row.gpuTemp &&
+    a.row.battery === b.row.battery &&
+    a.row.batteryState === b.row.batteryState &&
     a.row.server === b.row.server,
 );
 
@@ -215,10 +236,15 @@ function SortTh({ k, label, num, sortKey, sortDir, onSort }: {
   );
 }
 
-function PctTd({ value, stale }: { value: number | null; stale: boolean }) {
+const pctText = (v: number | null) => (v === null ? "—" : `${v.toFixed(0)}%`);
+
+/** A right-aligned table cell holding a MeterBar (bar + value). Replaces the old text-only PctTd. */
+function MeterTd({ value, tone, text, stale, label }: { value: number | null; tone: MetricTone; text: string; stale: boolean; label: string }) {
   return (
     <Td num>
-      <span className="mono" style={{ fontWeight: 600, color: pctColor(value, stale) }}>{value === null ? "—" : `${value.toFixed(0)}%`}</span>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <MeterBar value={value} tone={tone} text={text} stale={stale} label={label} />
+      </div>
     </Td>
   );
 }

@@ -9,6 +9,11 @@ export interface FleetRow {
   memPct: number | null; // %
   diskPct: number | null; // %
   net: number | null; // rx+tx bytes/s
+  temp: number | null; // hottest sensor °C (null when the host exposes none — most cloud VMs)
+  gpuUtil: number | null; // max GPU utilisation % over all GPUs
+  gpuTemp: number | null; // max GPU °C
+  battery: number | null; // %
+  batteryState: string | null; // Charging | Discharging | Full | …
   stale: boolean; // the sample is older than the live window → values render greyed, not trusted
 }
 
@@ -42,6 +47,9 @@ export function buildFleetRows(
     const netRx = fin(sample?.netRx);
     const netTx = fin(sample?.netTx);
     const ts = fin(sample?.ts);
+    const gpus = Array.isArray(sample?.gpus) ? sample!.gpus : [];
+    const gpuUtils = gpus.map((g) => fin(g?.util)).filter((v): v is number => v !== null);
+    const gpuTemps = gpus.map((g) => fin(g?.temp)).filter((v): v is number => v !== null);
     return {
       server,
       sample,
@@ -49,13 +57,18 @@ export function buildFleetRows(
       memPct: memUsed !== null && memTotal !== null && memTotal > 0 ? pct(memUsed, memTotal) : null,
       diskPct: diskUsed !== null && diskTotal !== null && diskTotal > 0 ? pct(diskUsed, diskTotal) : null,
       net: netRx !== null && netTx !== null ? netRx + netTx : null,
+      temp: fin(sample?.temp),
+      gpuUtil: gpuUtils.length ? Math.max(...gpuUtils) : null,
+      gpuTemp: gpuTemps.length ? Math.max(...gpuTemps) : null,
+      battery: fin(sample?.battery?.percent),
+      batteryState: typeof sample?.battery?.state === "string" ? sample.battery.state : null,
       // No sample at all → "—" cells (not "stale"); a sample with an old/invalid ts → stale.
       stale: sample ? ts === null || nowMs - ts > staleMs : false,
     };
   });
 }
 
-export type FleetSortKey = "name" | "status" | "cpu" | "mem" | "disk" | "net" | "uptime";
+export type FleetSortKey = "name" | "status" | "cpu" | "mem" | "disk" | "net" | "temp" | "gpu" | "battery" | "uptime";
 export type SortDir = "asc" | "desc";
 
 const collator = new Intl.Collator();
@@ -65,6 +78,9 @@ const NUMERIC: Record<string, (r: FleetRow) => number | null> = {
   mem: (r) => r.memPct,
   disk: (r) => r.diskPct,
   net: (r) => r.net,
+  temp: (r) => r.temp,
+  gpu: (r) => r.gpuUtil,
+  battery: (r) => r.battery,
   uptime: (r) => fin(r.server.uptimeSeconds),
 };
 
@@ -116,5 +132,23 @@ export function metricTone(value: number | null): MetricTone {
   if (value === null) return "ok";
   if (value >= 90) return "crit";
   if (value >= 80) return "warn";
+  return "ok";
+}
+
+/** Temperature tone: amber at 70 °C, red at 85 °C (null = no sensor → ok/neutral). */
+export function tempTone(value: number | null): MetricTone {
+  if (value === null) return "ok";
+  if (value >= 85) return "crit";
+  if (value >= 70) return "warn";
+  return "ok";
+}
+
+/** Battery tone — LOW is bad: red ≤10%, amber ≤20%; charging/full is always ok. */
+export function batteryTone(percent: number | null, state: string | null): MetricTone {
+  if (percent === null) return "ok";
+  const s = (state ?? "").toLowerCase();
+  if (s === "charging" || s === "full") return "ok";
+  if (percent <= 10) return "crit";
+  if (percent <= 20) return "warn";
   return "ok";
 }
