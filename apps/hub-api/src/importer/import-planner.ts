@@ -23,23 +23,26 @@ const volKey = (v: ForeignVolume): string => v.name ?? v.hostPath ?? v.mountPath
  */
 export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportPlan {
   const dbByRef = new Map(fleet.databases.map((d) => [d.sourceRef, d]));
+  // local-docker adopts in place and re-attaches the original named volumes by name; every other source
+  // does NOT copy volume data yet (the user must copy it to the target before cutover).
+  const carried = options.sourceKind === "local-docker";
 
   const dbItems = fleet.databases.map((db) => planDatabase(db));
 
   // Volumes: standalone + app-owned, deduped by their namespaced itemRef.
   const volItems = new Map<string, ImportPlanItem>();
   for (const v of fleet.volumes) {
-    const it = planVolume(v, undefined);
+    const it = planVolume(v, undefined, carried);
     volItems.set(it.itemRef, it);
   }
   for (const app of fleet.apps) {
     for (const v of app.volumes ?? []) {
-      const it = planVolume(v, app.serverRef);
+      const it = planVolume(v, app.serverRef, carried);
       if (!volItems.has(it.itemRef)) volItems.set(it.itemRef, it);
     }
   }
 
-  const appItems = fleet.apps.map((app) => planApp(app, dbByRef));
+  const appItems = fleet.apps.map((app) => planApp(app, dbByRef, carried));
 
   const items = [...dbItems, ...volItems.values(), ...appItems];
   const totals = {
@@ -81,7 +84,7 @@ function planDatabase(db: ForeignDb): ImportPlanItem {
   };
 }
 
-function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>): ImportPlanItem {
+function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarried: boolean): ImportPlanItem {
   const risks: ImportRisk[] = [];
   const build = mapBuildPack(app);
   if (build.note) risks.push({ level: "warn", code: "app.buildpack", message: build.note });
@@ -95,6 +98,7 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>): ImportPlanIt
   const domains = app.domains ?? [];
   if (domains.length > 1) risks.push({ level: "warn", code: "app.domain.multi", message: `${domains.length} domains — the first ("${domains[0].host}") is primary; add the rest after` });
   if ((app.volumes ?? []).some((v) => v.type === "bind")) risks.push({ level: "warn", code: "app.volume.bind", message: "host bind-mounts are converted to named volumes; data must be copied manually" });
+  if ((app.volumes ?? []).some((v) => v.type === "named")) risks.push({ level: "warn", code: "app.volume.named", message: namedVolumeMessage(volumesCarried) });
   if (build.source === "COMPOSE") risks.push({ level: "info", code: "app.compose", message: "compose file is rewritten (magic vars) and validated (assertSafeCompose) on import" });
   if (app.privileged || app.mountsDockerSock) risks.push({ level: "warn", code: "app.privileged", message: "source uses privileged mode or mounts the docker socket — requires explicit acknowledgement to import" });
   if (app.installCommand) risks.push({ level: "warn", code: "app.installCommand", message: "source has an install command Tugra does not model — fold it into the build" });
@@ -131,16 +135,22 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>): ImportPlanIt
   };
 }
 
-function planVolume(vol: ForeignVolume, serverRef: string | undefined): ImportPlanItem {
+function namedVolumeMessage(carried: boolean): string {
+  return carried
+    ? "named volume is re-attached to the adopted container by its original name on redeploy (data is not copied, and it is not removed with the app)"
+    : "named volume data is not copied by this import — it stays on the source host; copy it to the target before cutover or the app starts empty";
+}
+
+function planVolume(vol: ForeignVolume, serverRef: string | undefined, carried: boolean): ImportPlanItem {
+  const risks: ImportRisk[] = [];
+  if (vol.type === "bind") risks.push({ level: "warn", code: "volume.bind", message: "host bind-mount — converted to a named volume; data copied manually" });
+  if (vol.type === "named") risks.push({ level: "warn", code: "volume.named", message: namedVolumeMessage(carried) });
   return {
     itemRef: ns("volume", serverRef, volKey(vol)),
     kind: "volume",
     name: vol.name ?? vol.mountPath,
     proposed: { mountPath: vol.mountPath, type: vol.type, owner: vol.ownerRef ?? null },
-    risks:
-      vol.type === "bind"
-        ? [{ level: "warn", code: "volume.bind", message: "host bind-mount — converted to a named volume; data copied manually" }]
-        : [],
+    risks,
     dependsOn: [],
   };
 }

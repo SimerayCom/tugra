@@ -103,8 +103,10 @@ const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
 // Default rolling health-gate timing (not yet configurable per app).
 const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
 // Raw docker flags that make two overlapping containers impossible (port map, own
-// network/name/ip) → the app can't roll, so we fall back to hard cutover.
-const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name)(\s|=|$)/;
+// network/name/ip, or a shared volume mount) → the app can't roll, so we fall back to hard cutover.
+// -v/--volume/--mount: an adopted container carries its named volume this way; two containers writing
+// one volume during a rolling overlap would corrupt it, so such apps must hard-cutover.
+const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name|-v|--volume|--mount)(\s|=|$)/;
 
 export const AppViewSchema = z.object({
   id: z.string(),

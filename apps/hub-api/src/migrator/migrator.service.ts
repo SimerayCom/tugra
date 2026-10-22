@@ -18,7 +18,9 @@ import {
   NO_DOCKER_MARKER,
   type DiscoveredContainer,
   type DiscoveredEnv,
+  type DiscoveredMount,
 } from "./discover-script";
+import { assertSafeDockerOptions } from "../deploy/docker-options-safety";
 import type { AdoptInput } from "./dto";
 
 const DISCOVER_TIMEOUT_MS = 30_000;
@@ -86,6 +88,12 @@ export class MigratorService {
       throw new BadRequestException("the selected port is not available on this container");
     }
     const chosen = found.ports[dto.portIndex ?? 0] ?? null;
+    // Named volumes must follow the container to its first Tugra redeploy, otherwise the new container
+    // starts EMPTY (data loss). Tugra's own volumes are namespaced per app, so the ORIGINAL volume is
+    // re-attached by name via a dockerOptions `-v` pass-through. Computed BEFORE any write so an
+    // un-carriable mount rejects the adopt cleanly instead of silently dropping data.
+    const dockerOptions = volumeDockerOptions(found.mounts);
+    assertSafeDockerOptions(dockerOptions);
     // Insert the app row only (deploy:false → no docker); exposeMode:none is mandatory (else create()
     // silently mints a magic sslip.io domain). All image/port/env values come from the fresh inspect.
     const app = await this.apps.create(userId, {
@@ -101,6 +109,15 @@ export class MigratorService {
       deploy: false,
       tags: ["adopted"],
     });
+
+    if (dockerOptions) {
+      try {
+        await this.prisma.application.update({ where: { id: app.id }, data: { dockerOptions } });
+      } catch {
+        await this.apps.discardUndeployed(app.id);
+        throw new ServiceUnavailableException("could not adopt the container (could not carry its volumes)");
+      }
+    }
 
     // Take ownership of the running container by renaming it to Tugra's convention. ANY failure — a
     // non-zero exit OR sendCommand rejecting (agent offline / timeout / capability) — must undo the
@@ -155,6 +172,33 @@ export class MigratorService {
     await this.access.requirePermission(userId, server.teamId, "apps:config");
     return server;
   }
+}
+
+// Strict charsets so the produced `-v name:/path` can never carry `,` `=` `:` whitespace or shell syntax.
+const VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const MOUNT_TARGET_RE = /^\/[A-Za-z0-9._/-]+$/;
+
+/**
+ * Discovered `volume` mounts → a dockerOptions string (`-v <volume>:<target> …`) that re-attaches the
+ * ORIGINAL named volumes on redeploy, or null when there are none. Bind/tmpfs mounts are not carried (a
+ * bind is a host-path escape surface). Throws (fail closed) on a volume whose name/target can't be
+ * expressed safely — better to refuse the adopt than to drop persistent data.
+ */
+export function volumeDockerOptions(mounts: DiscoveredMount[]): string | null {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const m of mounts) {
+    if (m.type !== "volume") continue;
+    if (!VOLUME_NAME_RE.test(m.source) || !MOUNT_TARGET_RE.test(m.target)) {
+      throw new BadRequestException(
+        `cannot adopt: the container's volume "${m.source}" mounted at "${m.target}" can't be carried over safely`,
+      );
+    }
+    if (seen.has(m.target)) continue;
+    seen.add(m.target);
+    parts.push(`-v ${m.source}:${m.target}`);
+  }
+  return parts.length ? parts.join(" ") : null;
 }
 
 /** DiscoveredEnv[] → Record, keeping only `keys` when given (else all). */
