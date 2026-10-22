@@ -16,6 +16,17 @@ describe("assertSafeCompose", () => {
     }
   });
 
+  it("rejects a RELATIVE bind into the Tugra-managed compose dir (the dir itself, .env, mounts, compose files)", () => {
+    for (const src of ["./:/host", ".:/host", "./.env:/x", "./mounts:/x", "./mounts/0:/x", "./docker-compose.yml:/x", "./docker-compose.tugra.yml:/x"]) {
+      expect(() => assertSafeCompose(wrap(`    volumes:\n      - "${src}"`))).toThrow(/sensitive host path/);
+    }
+  });
+
+  it("still accepts a named volume and a fresh relative subdir bind", () => {
+    expect(() => assertSafeCompose(wrap('    volumes:\n      - "mydata:/var/lib/x"'))).not.toThrow();
+    expect(() => assertSafeCompose(wrap('    volumes:\n      - "./data:/var/lib/x"'))).not.toThrow();
+  });
+
   it("rejects every compose-go truthy spelling of privileged (yes/on/y/1/t), not just `true`", () => {
     for (const val of ["true", "yes", "on", "y", "1", "t", "YES", "On"]) {
       expect(() => assertSafeCompose(wrap(`    privileged: ${val}`))).toThrow(/privileged/);

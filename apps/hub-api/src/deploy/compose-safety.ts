@@ -68,9 +68,13 @@ export function isSensitivePath(raw: string): boolean {
   // so `//etc`, `/./etc`, `/a/../etc` all reduce to the real target before prefix-matching.
   const p = posix.normalize(src.replace(/\/{2,}/g, "/")).replace(/\/+$/, "") || "/";
   if (!posix.isAbsolute(p)) {
-    // Not a host bind: a bare name is a named volume (safe). A relative path that climbs out of the
-    // (Tugra-managed) compose dir with `..` is a traversal → reject; a contained `./data` is fine.
-    return p.startsWith("..");
+    // Not a host bind: a bare name is a named volume (safe). A RELATIVE path binds INSIDE the
+    // Tugra-managed compose dir, which holds `.env` (ALL resolved secrets), the materialized config
+    // mounts and the compose files. Reject a `..` traversal, the dir itself, and those sensitive
+    // siblings; a bare named volume and a fresh relative subdir (e.g. `./data`) are still fine.
+    if (p.startsWith("..")) return true;
+    const first = p.split("/")[0];
+    return p === "." || first === ".env" || first === "mounts" || /^docker-compose.*\.ya?ml$/.test(first);
   }
   if (SAFE_HOST_FILES.has(p)) return false;
   if (p === "/") return true;

@@ -169,7 +169,7 @@ describe("validateConfigMountTarget", () => {
   });
 
   it("rejects relative, traversal, non-normalized, empty, and quote/control-char targets", () => {
-    for (const badTarget of ["etc/app.conf", "../x", "/a/../b", "/a//b", "/a/./b", "/etc/foo/", "", '/a/"b', "/a\nb", "/a`b"]) {
+    for (const badTarget of ["etc/app.conf", "../x", "/a/../b", "/a//b", "/a/./b", "/etc/foo/", "", '/a/"b', "/a\nb", "/a`b", "/a:b", "/etc/x:/y"]) {
       expect(() => validateConfigMountTarget(badTarget)).toThrow();
     }
   });
