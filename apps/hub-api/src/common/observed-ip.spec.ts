@@ -186,6 +186,29 @@ describe("reconcileReportedIp", () => {
   it("keeps a good observed egress IP (no change)", () => {
     expect(reconcileReportedIp({ publicIp: "203.0.113.7", ipSource: "observed" }, ["10.0.0.5"])).toBeNull();
   });
+  it("repairs a local server's docker-bridge observed IP from a reported public IP", () => {
+    // A single-box agent's in-container source IP (172.18.x) was wrongly recorded as the public IP; it is
+    // never reachable, so for the LOCAL server a reported real address must replace it.
+    expect(reconcileReportedIp({ publicIp: "172.18.0.7", ipSource: "observed" }, ["203.0.113.7"], true)).toEqual({
+      publicIp: "203.0.113.7",
+      ipSource: "reported",
+    });
+  });
+  it("repairs a local docker-bridge IP from a real LAN interface over another bridge IP", () => {
+    expect(
+      reconcileReportedIp({ publicIp: "172.18.0.7", ipSource: "observed" }, ["172.17.0.1", "192.168.1.5"], true),
+    ).toEqual({ publicIp: "192.168.1.5", ipSource: "reported" });
+  });
+  it("never (re)stores a docker-bridge address for a local server that reports only bridges", () => {
+    // A containerized agent whose only interface is the bridge must not land back on 172.x via the last-resort
+    // fallback — leave publicIp unset so the install-time manual pin / UI is the only source.
+    expect(reconcileReportedIp({ publicIp: "172.18.0.7", ipSource: "observed" }, ["172.17.0.1"], true)).toBeNull();
+    expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["172.18.0.9"], true)).toBeNull();
+  });
+  it("keeps a remote server's observed 172.x (same-VPC/LAN is reachable there — not docker-bridge filtered)", () => {
+    // isLocal defaults false: a remote agent connecting over a 172.16/12 VPC keeps its reachable address.
+    expect(reconcileReportedIp({ publicIp: "172.31.5.9", ipSource: "observed" }, ["10.0.0.5"])).toBeNull();
+  });
   it("adopts a reported IP when the observed one is loopback", () => {
     expect(reconcileReportedIp({ publicIp: "127.0.0.1", ipSource: "observed" }, ["192.168.1.5"])).toEqual({
       publicIp: "192.168.1.5",

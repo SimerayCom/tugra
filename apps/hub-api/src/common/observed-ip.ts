@@ -137,14 +137,28 @@ export function bestReportedIp(reportedIps: string[]): string | null {
 export function reconcileReportedIp(
   current: { publicIp: string | null; ipSource: string },
   reportedIps: string[],
+  isLocal = false,
 ): { publicIp?: string; publicIpv6?: string; ipSource?: string } | null {
   if (current.ipSource === "manual") return null;
-  // A real observed egress IP is authoritative — keep it. A previously-reported IP,
-  // an empty, or a loopback address falls through so reporting can (re)fill it and
-  // track interface-IP changes.
-  if (current.ipSource === "observed" && current.publicIp && !isLoopbackIp(current.publicIp)) return null;
+  // A real observed egress IP is authoritative — keep it. A previously-reported IP, an empty or a loopback
+  // falls through so reporting / a manual pin can (re)fill it and track interface-IP changes. For the hub's
+  // OWN single-box agent (isLocal) a stored docker-bridge address (172.16-31.x) is the agent's in-container
+  // source IP — never reachable — so it is ALSO repairable; for a remote server a 172.x may be a reachable
+  // same-VPC/LAN address, so it stays authoritative there.
+  const bridgeRepairable = isLocal && !!current.publicIp && isDockerBridgeV4(current.publicIp);
+  if (
+    current.ipSource === "observed" &&
+    current.publicIp &&
+    !isLoopbackIp(current.publicIp) &&
+    !bridgeRepairable
+  )
+    return null;
   const pick = bestReportedIp(reportedIps);
   if (!pick || pick === current.publicIp) return null;
+  // Never (re)store the hub's own docker-bridge address as a reachable IP for the local server — a
+  // containerized agent whose only interface is the bridge would otherwise land back on 172.x via
+  // bestReportedIp's last-resort fallback, undoing the skip and dead-linking every app URL.
+  if (isLocal && isDockerBridgeV4(pick)) return null;
   // Route by family, mirroring ipFields — an IPv6 candidate never lands in the
   // IPv4 publicIp column.
   return isIpv6(pick) ? { publicIpv6: pick } : { publicIp: pick, ipSource: "reported" };

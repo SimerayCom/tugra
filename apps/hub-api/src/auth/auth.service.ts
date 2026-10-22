@@ -18,6 +18,7 @@ import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { MailService } from "../mail/mail.service";
+import { isPublicIp } from "../common/observed-ip";
 import {
   resetPasswordEmail,
   verifyEmail as verifyEmailTemplate,
@@ -122,6 +123,13 @@ export class AuthService {
   private async provisionLocalServer(tx: Prisma.TransactionClient, teamId: string): Promise<void> {
     const token = this.config.get<string>("LOCAL_AGENT_ENROLL_TOKEN");
     if (!token) return;
+    // install.sh best-effort-detects the host's real public IP into LOCAL_SERVER_PUBLIC_IP. Pin it as a
+    // MANUAL address so app URLs are reachable from outside — otherwise the first agent report would record
+    // the agent's in-container docker-bridge source IP (172.18.x) and every deployed app URL would dead-link.
+    // Re-validated here, so a blank/private/garbage value is simply ignored (the hub falls back to its
+    // observed-IP hygiene, which now skips docker-bridge addresses).
+    const pinIp = this.config.get<string>("LOCAL_SERVER_PUBLIC_IP")?.trim();
+    const publicIp = pinIp && isPublicIp(pinIp) ? pinIp : null;
     await tx.server.create({
       data: {
         name: "This machine",
@@ -131,6 +139,7 @@ export class AuthService {
         enrollTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         status: ServerStatus.PENDING,
         isLocal: true,
+        ...(publicIp ? { publicIp, ipSource: "manual" } : {}),
         // Mirror ServersService DEFAULT_CAPABILITIES (least privilege — the interactive terminal is opt-in).
         capabilities: ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"],
       },

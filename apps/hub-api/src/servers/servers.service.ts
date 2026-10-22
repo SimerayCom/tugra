@@ -31,7 +31,7 @@ import {
   verifyEd25519,
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
-import { isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
+import { isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 
@@ -420,9 +420,18 @@ export class ServersService {
    * the operator has manually pinned the server's address (so an observation
    * never clobbers a manual override).
    */
-  private ipFields(observed: string | null | undefined, currentIpSource: string): Prisma.ServerUpdateInput {
+  private ipFields(
+    observed: string | null | undefined,
+    currentIpSource: string,
+    isLocal = false,
+  ): Prisma.ServerUpdateInput {
     if (!observed || currentIpSource === "manual") return {};
     if (isLoopbackIp(observed)) return {}; // a loopback egress is not a reachable address
+    // For the hub's OWN single-box agent (isLocal), a docker-bridge source IP (172.16-31.x) is the agent's
+    // in-container address — never reachable from other devices — so recording it dead-links every app URL;
+    // skip it so a real interface IP or provisionLocalServer's manual pin wins. A REMOTE server's 172.x may be
+    // a reachable same-VPC/LAN address, so it is still recorded there. Real public and LAN IPs are always kept.
+    if (isLocal && isDockerBridgeV4(observed)) return {};
     return isIpv6(observed)
       ? { publicIpv6: observed }
       : { publicIp: observed, ipSource: "observed" };
@@ -457,7 +466,7 @@ export class ServersService {
         hostname: input.hostname,
         status: ServerStatus.ONLINE,
         lastSeenAt: new Date(),
-        ...this.ipFields(input.observedIp, server.ipSource),
+        ...this.ipFields(input.observedIp, server.ipSource, server.isLocal),
       },
     });
     await this.audit.log({
@@ -484,7 +493,7 @@ export class ServersService {
     // IP is tracked on every auth). Also refresh agentVersion when the agent reports one (only on enroll
     // before this): a self-updated agent reconnects via auth, so this is how the new version becomes
     // visible. Store verbatim; never blank an existing value from an older agent that omits it.
-    const extra = this.ipFields(observedIp, server.ipSource);
+    const extra = this.ipFields(observedIp, server.ipSource, server.isLocal);
     if (agentVersion) extra.agentVersion = agentVersion;
     await this.markOnline(serverId, extra);
     return true;
@@ -547,9 +556,9 @@ export class ServersService {
     // Best-effort like the update below: a read blip must never throw and tear
     // down the agent connection (host_info arrives on every reconnect).
     const server = await this.prisma.server
-      .findUnique({ where: { id: serverId }, select: { publicIp: true, ipSource: true } })
+      .findUnique({ where: { id: serverId }, select: { publicIp: true, ipSource: true, isLocal: true } })
       .catch(() => null);
-    const reconcile = server ? reconcileReportedIp(server, reportedIps) : null;
+    const reconcile = server ? reconcileReportedIp(server, reportedIps, server.isLocal) : null;
     await this.prisma.server
       .update({
         where: { id: serverId },

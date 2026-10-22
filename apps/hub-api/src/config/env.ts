@@ -69,6 +69,11 @@ export const envSchema = z
     .string()
     .min(32, "LOCAL_AGENT_ENROLL_TOKEN must be at least 32 chars — a high-entropy enroll token, not a guessable value")
     .optional(),
+  // Turnkey single-box install only: the host's real public IP, best-effort-detected by install.sh. When set,
+  // provisionLocalServer pins it on "This machine" (ipSource="manual") so deployed app URLs are reachable from
+  // outside — without it the hub would fall back to the agent's in-container docker-bridge address. Optional;
+  // a blank/private/garbage value is ignored (re-validated with isPublicIp before it is used).
+  LOCAL_SERVER_PUBLIC_IP: z.string().optional(),
   // The uiMode new accounts get by default. A turnkey single-box install sets "home" so the owner lands on
   // the launcher; unset → "home"/"fleet" falls back to the schema default ("fleet").
   DEFAULT_UI_MODE: z.enum(["fleet", "home"]).optional(),
