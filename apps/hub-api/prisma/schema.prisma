@@ -400,6 +400,17 @@ model Metric {
   netTx     BigInt
   diskRead  BigInt @default(0) // bytes/s; @default so the additive migration needs no backfill
   diskWrite BigInt @default(0)
+  // Optional sensor metrics — NULL (not 0) when the host exposes none (most cloud VMs), so the UI can
+  // render "—" rather than a fake reading. gpu* are aggregates over all GPUs (max util/temp, summed
+  // VRAM); `detail` keeps the per-sensor map + per-GPU list for the detail view.
+  temp         Float?
+  gpuUtil      Float?
+  gpuMemUsed   BigInt?
+  gpuMemTotal  BigInt?
+  gpuTemp      Float?
+  batteryPct   Float?
+  batteryState String?
+  detail       Json?
 
   @@index([serverId, ts])
   @@index([ts]) // for the retention prune (deleteMany where ts < cutoff, across all servers)

@@ -1,4 +1,4 @@
-import { MetricsService } from "./metrics.service";
+import { MetricsService, sanitizeSensors } from "./metrics.service";
 import type { MetricsSample } from "@tugra/shared";
 
 describe("MetricsService", () => {
@@ -115,5 +115,73 @@ describe("MetricsService", () => {
     const { svc, findMany } = make();
     expect(await svc.latestForServers([])).toEqual([]);
     expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("ingest persists sanitized sensor columns + publishes the sanitized wire (never the raw strings)", async () => {
+    const { svc, create, publish } = make();
+    const withSensors: MetricsSample = {
+      ...sample,
+      temp: 61.2,
+      sensors: { coretemp_core0: 61.2 },
+      gpus: [
+        { name: "NVIDIA RTX 3060", util: 42, memUsed: 2_000_000, memTotal: 12_000_000, temp: 55, power: 120 },
+        { name: "AMD", util: 10, memUsed: 1_000_000, memTotal: 8_000_000, temp: 40 },
+      ],
+      battery: { percent: 73, state: "Discharging" },
+    };
+    await svc.ingest("s1", withSensors);
+    const data = create.mock.calls[0][0].data;
+    expect(data.temp).toBe(61.2);
+    expect(data.gpuUtil).toBe(42); // max over GPUs
+    expect(data.gpuMemUsed).toBe(3_000_000n); // summed, BigInt
+    expect(data.gpuTemp).toBe(55); // max
+    expect(data.batteryPct).toBe(73);
+    expect(data.batteryState).toBe("Discharging");
+    expect(data.detail).toMatchObject({ sensors: { coretemp_core0: 61.2 } });
+    const published = JSON.parse(publish.mock.calls[0][1]);
+    expect(published.temp).toBe(61.2);
+    expect(published.battery).toEqual({ percent: 73, state: "Discharging" });
+  });
+
+  it("ingest leaves sensor columns NULL for a legacy/sensorless sample and does not throw", async () => {
+    const { svc, create } = make();
+    await expect(svc.ingest("s1", sample)).resolves.toBeUndefined();
+    const data = create.mock.calls[0][0].data;
+    expect(data.temp).toBeNull();
+    expect(data.gpuUtil).toBeNull();
+    expect(data.batteryPct).toBeNull();
+  });
+
+  it("toSample maps NULL sensor columns to absent (not 0), reconstructs GPUs from detail", async () => {
+    // recent() reverses the rows (newest-first query → oldest-first result), so list the populated row
+    // first here; after the reverse, out[0] is the NULL row and out[1] is the populated one.
+    const { svc } = make([
+      { ts: new Date(2000), cpu: 1, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n, temp: 50, batteryPct: 80, batteryState: "Full", gpuUtil: 30, gpuMemUsed: 5n, gpuMemTotal: 10n, gpuTemp: 44, detail: { gpus: [{ name: "GPU0", util: 30, memUsed: 5, memTotal: 10, temp: 44 }] } },
+      { ts: new Date(1000), cpu: 1, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n, temp: null, batteryPct: null, gpuUtil: null, detail: null },
+    ]);
+    const out = await svc.recent("s1", 60);
+    expect(out[0].temp).toBeUndefined(); // NULL → absent, renders "—"
+    expect(out[0].battery).toBeUndefined();
+    expect(out[0].gpus).toBeUndefined();
+    expect(out[1].temp).toBe(50);
+    expect(out[1].battery).toEqual({ percent: 80, state: "Full" });
+    expect(out[1].gpus).toEqual([{ name: "GPU0", util: 30, memUsed: 5, memTotal: 10, temp: 44 }]);
+  });
+
+  it("sanitizeSensors clamps hostile input (huge temp, 20 GPUs, util 500, giant name, pct -5)", () => {
+    const hostile = {
+      ...sample,
+      temp: 1e9,
+      gpus: Array.from({ length: 20 }, (_, i) => ({ name: "x".repeat(10_000), util: 500, memUsed: -1, memTotal: Infinity, temp: 1e9, power: -3 })),
+      battery: { percent: -5, state: "evil\u0000state".repeat(50) },
+    } as unknown as MetricsSample;
+    const s = sanitizeSensors(hostile);
+    expect(s.temp).toBe(250); // clamped to the upper bound
+    const gpus = (s.detail as { gpus: unknown[] }).gpus;
+    expect(gpus).toHaveLength(8); // capped
+    expect((gpus[0] as { name: string }).name.length).toBe(64); // name sliced
+    expect((gpus[0] as { util: number }).util).toBe(100); // util clamped
+    expect(s.batteryPct).toBe(0); // clamped to the lower bound
+    expect(s.batteryState).toBe("Unknown"); // not in the allowlist → Unknown
   });
 });
