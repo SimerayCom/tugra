@@ -50,7 +50,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 
 - **Fleet-first, not single-box** — group servers into clusters, form a real Docker Swarm across them, and run one command across your whole fleet in a single bulk-ops call instead of SSH-ing into each box.
 - **Agent-native too** — a built-in MCP server exposes 46 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
-- **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned, backed up and restored the same way.
+- **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered by the volume backups).
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
 - **Open-core, not open-washed** — everything above ships free under AGPL-3.0 in *this* repository. Pro/Cloud (SSO, audit-log export, whitelabel, multi-tenant billing) is a separately-licensed add-on — nothing here phones home, nags you to upgrade, or silently caps what you can do.
@@ -71,7 +71,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | **Data** | | | | | | |
 | Managed database engines | **9** | 8 | 6 | — | — | — |
 | Scheduled S3 backups + restore | ✅ | ✅ | ✅ | — | — | ~ |
-| Arbitrary Docker-volume backups | ✅ | — | ✅ | — | — | — |
+| App Docker-volume backups | ✅ | — | ✅ | — | — | — |
 | **Domains & TLS** | | | | | | |
 | Custom domains + automatic SSL | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | DNS-01 wildcard certificates | ✅ | ~ | — | — | — | ~ |
@@ -91,10 +91,10 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | MCP / agent control | ✅ 46 tools⁵ | ✅ | ✅ | — | — | ~² |
 | **Trust & license** | | | | | | |
 | No phone-home (zero telemetry) | ✅ | — | — | ~ | — | ✅ |
-| Migrate in (import from Coolify) | ✅ | — | — | — | — | — |
+| Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + terms⁴ | MIT |
 
-<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
+<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. ⁹ Imports Coolify apps + their config/env, and adopts already-running containers in place (keeping their named volumes). Database/volume **data** moves via a guided dump-and-restore (import-from-url) or same-host adopt — there is no fully-automated cross-host data copy yet. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
 
 ## Quick start
 
