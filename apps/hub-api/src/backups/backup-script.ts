@@ -172,7 +172,10 @@ export function buildBackupScript(db: DbSpec, filename: string, dest: Destinatio
   if (dest.type === "S3" && dest.s3) {
     lines.push(MC_INSTALL);
     const target = mcTarget(dest.s3, db.id, filename);
-    lines.push(`${mcHostEnv(dest.s3)} sh -c ${shq(`${pipe.join(" | ")} | mc pipe ${target}`)}`);
+    // bash -o pipefail (NOT plain `sh -c`): the inner shell must fail the whole command when the DUMP
+    // stage fails — otherwise `mc pipe` still exits 0 after uploading a truncated/empty object and the
+    // backup is recorded SUCCESS (silent data loss). The outer script's pipefail does not reach this subshell.
+    lines.push(`${mcHostEnv(dest.s3)} bash -o pipefail -c ${shq(`${pipe.join(" | ")} | mc pipe ${target}`)}`);
     // size of the uploaded object
     lines.push(`${mcHostEnv(dest.s3)} mc stat --json ${target}`);
   } else {

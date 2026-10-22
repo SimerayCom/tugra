@@ -10,11 +10,22 @@ export const CreateAppSchema = z
     templateSlug: z.string().min(1).optional(),
     source: z.enum(["IMAGE", "GIT", "COMPOSE"]).optional(),
     image: z.string().min(1).optional(),
-    gitUrl: z.string().min(1).optional(),
+    // https/ssh only (never a local path or a value starting with `-`, which git would read as an option)
+    gitUrl: z
+      .string()
+      .min(1)
+      .regex(/^(https:\/\/|git@|ssh:\/\/)/, "git URL must be https:// or ssh")
+      .optional(),
     gitBranch: z.string().min(1).optional(),
     gitSourceId: z.string().min(1).optional(),
     buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]).optional(),
-    dockerfilePath: z.string().min(1).optional(),
+    // relative path inside the repo, no `..` traversal and no shell metacharacters (it is spliced into
+    // the `docker build -f` command; the deploy script also shell-quotes it as defense-in-depth)
+    dockerfilePath: z
+      .string()
+      .min(1)
+      .regex(/^(?!\/)(?!.*\.\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$/, "invalid dockerfile path")
+      .optional(),
     buildCommand: z.string().min(1).optional(),
     outputDir: z.string().min(1).optional(),
     composeFile: z.string().min(1).optional(),

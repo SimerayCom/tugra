@@ -58,7 +58,7 @@ describe("ProxyOpsService", () => {
       .mockResolvedValueOnce({ exitCode: 0, output: "" }) // setup
       .mockResolvedValueOnce({ exitCode: 0, output: "running\n" }); // status-after
     const r = await make(Role.OWNER, send).start("u1", "s1");
-    expect(send).toHaveBeenCalledWith("s1", expect.stringContaining("traefik:v3.1"), "deploy", expect.any(Number));
+    expect(send).toHaveBeenCalledWith("s1", expect.stringContaining("traefik:v3.7"), "deploy", expect.any(Number));
     expect(r.status).toBe("running");
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.proxy.start" }));
   });

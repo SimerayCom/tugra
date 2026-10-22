@@ -33,6 +33,17 @@ const SECRET_FIELD_NAMES = new Set([
   "downloadUrl",
   "shareUrl",
   "migrationUrl",
+  // a managed DB's connection string embeds its password; username is the other half. The DatabaseView
+  // exposes both to a writer, and the MCP read path bypasses the REST RedactSecretsInterceptor, so a
+  // read-SCOPED PAT (still owned by a writer) would otherwise read the DB password out of connectionUri.
+  "connectionUri",
+  "username",
+  // app config that carries inline secrets / grants write-equivalent power, and must not reach a
+  // read-scoped MCP client: the raw compose file (may embed env/secrets), docker run options (can
+  // mount host paths / inject env), and the deploy webhook token.
+  "composeFile",
+  "dockerOptions",
+  "webhookToken",
 ]);
 
 const MAX_STRING_LEN = 2000;

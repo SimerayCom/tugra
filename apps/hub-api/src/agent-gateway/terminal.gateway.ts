@@ -14,6 +14,7 @@ import type { TermExitMsg, TermOutputMsg } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { ApiTokensService } from "../api-tokens/api-tokens.service";
+import { scopeSatisfies } from "../api-tokens/scopes";
 import { AuditService } from "../audit/audit.service";
 import { isApiToken } from "../api-tokens/api-token.util";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
@@ -258,6 +259,10 @@ export class TerminalGateway
     if (isApiToken(token)) {
       const u = await this.apiTokens.validate(token);
       if (!u) return null;
+      // An interactive root shell is the single most powerful PAT capability, so it requires the
+      // highest scope — a read/write/deploy token must NOT open a terminal. (The HTTP guard pipeline
+      // never ran for this WS entry point, so the scope check is enforced here explicitly.)
+      if (!scopeSatisfies(u.scopes ?? [], "admin")) return null;
       // The terminal is a PAT entry point outside the HTTP guard pipeline, so it must apply the SAME
       // instance-level API gating as ApiAuthGuard — otherwise the kill-switch / IP allowlist wouldn't
       // cover the most sensitive PAT capability (an interactive server shell).

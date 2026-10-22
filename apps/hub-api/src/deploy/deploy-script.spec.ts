@@ -448,7 +448,7 @@ describe("deploy-script", () => {
       "v1",
     );
     expect(s).not.toContain("GIT_ASKPASS");
-    expect(s).toContain("git clone --depth 1 --branch 'main' 'https://github.com/x/y.git'");
+    expect(s).toContain("git clone --depth 1 --branch 'main' -- 'https://github.com/x/y.git'");
   });
 
   it("IMAGE pull authenticates to a private registry via --password-stdin (no raw token)", () => {
@@ -699,7 +699,7 @@ describe("deploy-script", () => {
       gitBranch: "dev",
       buildType: "NIXPACKS",
     }, "v2");
-    expect(s).toContain("git clone --depth 1 --branch 'dev' 'https://github.com/u/r.git'");
+    expect(s).toContain("git clone --depth 1 --branch 'dev' -- 'https://github.com/u/r.git'");
     // plan → (jq-guarded curl/wget inject) → cached build
     expect(s).toContain("nixpacks plan -f json /etc/tugra/builds/abc > /etc/tugra/builds/abc.plan.json");
     expect(s).toContain("if command -v jq >/dev/null 2>&1; then");
@@ -722,7 +722,7 @@ describe("deploy-script", () => {
       buildType: "DOCKERFILE",
       dockerfilePath: "docker/Dockerfile",
     }, "v3");
-    expect(s).toContain("docker build -t tugra_abc:v3 -f /etc/tugra/builds/abc/docker/Dockerfile");
+    expect(s).toContain("docker build -t tugra_abc:v3 -f '/etc/tugra/builds/abc/docker/Dockerfile'");
     expect(s).not.toContain("nixpacks");
   });
 
