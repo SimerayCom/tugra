@@ -43,8 +43,11 @@ export const MC_ALIAS = "tdest";
 // The MinIO client (mc) is downloaded on-agent for S3 backup/restore. Pin a specific release + verify its
 // sha256 (supply-chain integrity — the old install curl'd the mutable "latest" with no check), and detect
 // the host arch so arm64 servers get the right binary (the old install was amd64-only → broken on arm64).
-// To bump: pick a RELEASE from dl.min.io, download linux-amd64 + linux-arm64, and copy the matching
-// `mc.<RELEASE>.sha256sum` (the constants below were cross-checked against MinIO's published sha256sum).
+// Source: GitHub Releases — MinIO discontinued the free dl.min.io binary mirror (it now returns 410 Gone),
+// which silently broke every S3 backup. The GitHub asset is byte-identical (same sha256) and keeps mc out
+// of the agent image (license separation: mc is AGPL, the agent is MIT).
+// To bump: pick a RELEASE from github.com/minio/mc/releases, and copy the matching `.sha256sum` for
+// linux-amd64 + linux-arm64 into the constants below.
 export const MC_VERSION = "RELEASE.2025-08-13T08-35-41Z";
 export const MC_SHA256: Record<string, string> = {
   amd64: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891",
@@ -64,7 +67,7 @@ export const MC_INSTALL = [
   `    aarch64|arm64) _p=arm64; _s=${MC_SHA256.arm64};;`,
   '    *) echo "tugra: unsupported arch $_a for mc" >&2; exit 1;;',
   "  esac;",
-  `  curl -fsSL "https://dl.min.io/client/mc/release/linux-$_p/archive/mc.${MC_VERSION}" -o /usr/local/bin/mc &&`,
+  `  curl -fsSL "https://github.com/minio/mc/releases/download/${MC_VERSION}/mc.linux-$_p.${MC_VERSION}" -o /usr/local/bin/mc &&`,
   '  echo "$_s  /usr/local/bin/mc" | sha256sum -c - >/dev/null 2>&1 &&',
   "  chmod +x /usr/local/bin/mc ||",
   '  { echo "tugra: mc download/verify failed" >&2; rm -f /usr/local/bin/mc; exit 1; };',
