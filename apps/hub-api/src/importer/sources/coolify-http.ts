@@ -68,7 +68,16 @@ export class CoolifyHttpClient implements CoolifyClient {
           res.on("end", () =>
             done(() => {
               if (status < 200 || status >= 300) {
-                return reject(new Error(`Coolify API error ${status}${status === 401 || status === 403 ? " (check the API token / its ability)" : ""}`));
+                // 401 = no/invalid token; 403 = valid token but not authorized — in Coolify that is
+                // almost always the token's ability/team (servers are a root-team resource) or the
+                // instance's API "Allowed IPs" setting excluding this hub's address.
+                const hint =
+                  status === 401
+                    ? " (check the API token)"
+                    : status === 403
+                      ? " (token valid but not authorized — check its ability/team is admin and Coolify's API \"Allowed IPs\" setting allows this hub)"
+                      : "";
+                return reject(new Error(`Coolify API error ${status}${hint}`));
               }
               const body = Buffer.concat(chunks).toString("utf8");
               try {
