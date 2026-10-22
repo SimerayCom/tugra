@@ -57,7 +57,17 @@ export class BackupRunnerService {
     const d = await this.prisma.backupDestination.findUnique({
       where: { id: destinationId },
     });
-    if (!d || d.type !== "S3") return LOCAL_DEST;
+    if (!d) return LOCAL_DEST;
+    // Encryption is configurable on LOCAL destinations too (the dump is gpg-encrypted on the server's own
+    // disk). Carry it through for every type — collapsing a non-S3 destination to the unencrypted LOCAL_DEST
+    // silently dropped encryptionEnabled/encryptionKey, so a "LOCAL + encrypted" backup was stored in cleartext.
+    const encryption = {
+      enabled: d.encryptionEnabled,
+      key: d.encryptionKey ? this.crypto.decrypt(d.encryptionKey) : "",
+    };
+    if (d.type !== "S3") {
+      return { type: "LOCAL", encryption };
+    }
     return {
       type: "S3",
       s3: {
@@ -68,10 +78,7 @@ export class BackupRunnerService {
         secretKey: d.s3SecretKey ? this.crypto.decrypt(d.s3SecretKey) : "",
         prefix: d.s3Prefix ?? "",
       },
-      encryption: {
-        enabled: d.encryptionEnabled,
-        key: d.encryptionKey ? this.crypto.decrypt(d.encryptionKey) : "",
-      },
+      encryption,
     };
   }
 
