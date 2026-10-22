@@ -15,7 +15,7 @@ describe("mc install (supply-chain pinned + arch-aware)", () => {
     expect(MC_INSTALL).toContain("$(uname -m)");
     expect(MC_INSTALL).toContain("x86_64|amd64) _p=amd64");
     expect(MC_INSTALL).toContain("aarch64|arm64) _p=arm64");
-    expect(MC_INSTALL).toContain(`archive/mc.${MC_VERSION}`);
+    expect(MC_INSTALL).toContain(`releases/download/${MC_VERSION}/mc.linux-`);
   });
 
   it("verifies the sha256 and never runs an unverified/foreign-arch binary", () => {
@@ -29,6 +29,6 @@ describe("mc install (supply-chain pinned + arch-aware)", () => {
   });
 
   it("fetches over https with -f (fail on HTTP error)", () => {
-    expect(MC_INSTALL).toContain('curl -fsSL "https://dl.min.io/client/mc/release/linux-$_p/archive/mc.');
+    expect(MC_INSTALL).toContain('curl -fsSL "https://github.com/minio/mc/releases/download/');
   });
 });
