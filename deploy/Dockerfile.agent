@@ -30,8 +30,11 @@ LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
 # docker CLI image instead; apt provides git + ca-certificates + curl + bash.
 # bash is required: the hub's backup/restore scripts use `set -o pipefail`, which the
 # base image's /bin/sh (dash < 0.5.13) rejects — the agent runs scripts via bash.
+# gnupg (gpg) is required for encrypted backups: the backup/restore pipeline pipes the
+# dump through `gpg --symmetric` (and `gpg -d` on restore); without it an encrypted
+# destination's backup fails with "gpg: command not found".
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl bash \
+ && apt-get install -y --no-install-recommends git ca-certificates curl bash gnupg \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose

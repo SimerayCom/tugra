@@ -112,4 +112,45 @@ describe("BackupRunnerService.prune — per-backup destination", () => {
     expect(spy).not.toHaveBeenCalledWith("d0");
     expect(del).toHaveBeenCalledTimes(2);
   });
+
+  it("destinationSpecById: a LOCAL destination carries its encryption config (not collapsed to cleartext)", async () => {
+    const prisma = {
+      backupDestination: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: "dL",
+          type: "LOCAL",
+          encryptionEnabled: true,
+          encryptionKey: "enc(key)",
+        }),
+      },
+    } as unknown as PrismaService;
+    const crypto = { decrypt: (v: string) => v.replace(/^enc\((.*)\)$/, "$1") } as unknown as CryptoService;
+    const svc = new BackupRunnerService(
+      prisma,
+      { log: jest.fn() } as unknown as AuditService,
+      crypto,
+      {} as unknown as AgentWsServer,
+      {} as unknown as NotificationsService,
+    );
+    const spec = await svc.destinationSpecById("dL");
+    expect(spec.type).toBe("LOCAL");
+    expect(spec.encryption.enabled).toBe(true); // was silently dropped before the fix
+    expect(spec.encryption.key).toBe("key"); // decrypted, so the dump is actually gpg-encrypted on disk
+  });
+
+  it("destinationSpecById: a missing destination falls back to the unencrypted LOCAL default", async () => {
+    const prisma = {
+      backupDestination: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const svc = new BackupRunnerService(
+      prisma,
+      { log: jest.fn() } as unknown as AuditService,
+      { decrypt: (v: string) => v } as unknown as CryptoService,
+      {} as unknown as AgentWsServer,
+      {} as unknown as NotificationsService,
+    );
+    const spec = await svc.destinationSpecById("nope");
+    expect(spec.type).toBe("LOCAL");
+    expect(spec.encryption.enabled).toBe(false);
+  });
 });
