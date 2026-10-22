@@ -8,7 +8,7 @@
   "baseUrl": "Coolify URL",
   "baseUrlPlaceholder": "https://coolify.example.com",
   "token": "API token",
-  "tokenHint": "A read token is enough to preview. Secret values are fetched only when you apply.",
+  "tokenHint": "Create the token on your admin/owner team with the read ability (add read:sensitive too — it's used at apply time to fetch env values). A 403 means Coolify's API \"Allowed IPs\" setting is on and doesn't include this hub's IP; add it there or clear the list.",
   "connect": "Connect & preview",
   "connecting": "Connecting…",
   "planning": "Reading the fleet…",

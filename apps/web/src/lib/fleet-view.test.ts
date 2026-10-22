@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { FleetLatestRow, MetricsSample, ServerView } from "./types";
-import { buildFleetRows, sortFleetRows, matchesFleetSearch, metricTone, type FleetRow } from "./fleet-view";
+import { buildFleetRows, sortFleetRows, matchesFleetSearch, metricTone, tempTone, batteryTone, type FleetRow } from "./fleet-view";
 
 const NOW = 1_700_000_000_000;
 
@@ -18,7 +18,7 @@ function sample(over: Partial<MetricsSample> = {}): MetricsSample {
 }
 
 const row = (f: Partial<FleetRow> & { server: ServerView }): FleetRow =>
-  ({ sample: null, cpu: null, memPct: null, diskPct: null, net: null, stale: false, ...f });
+  ({ sample: null, cpu: null, memPct: null, diskPct: null, net: null, temp: null, gpuUtil: null, gpuTemp: null, battery: null, batteryState: null, stale: false, ...f });
 
 describe("buildFleetRows", () => {
   it("joins each server with its sample by id and derives cpu/mem%/disk%/net", () => {
@@ -125,5 +125,44 @@ describe("metricTone", () => {
     expect(metricTone(89.9)).toBe("warn");
     expect(metricTone(90)).toBe("crit");
     expect(metricTone(null)).toBe("ok");
+  });
+});
+
+describe("sensor metrics (temp / GPU / battery)", () => {
+  const srv = (over: Partial<ServerView> = {}): ServerView => ({ id: "a", name: "box", status: "online", ...over } as ServerView);
+
+  it("maps temp, the hottest GPU util/temp, and battery; absent → null", () => {
+    const withSensors = buildFleetRows(
+      [srv()],
+      [{ serverId: "a", sample: { ...sample(), temp: 61.4, gpus: [{ name: "g0", util: 20, memUsed: 1, memTotal: 2, temp: 50 }, { name: "g1", util: 73, memUsed: 1, memTotal: 2, temp: 66 }], battery: { percent: 48, state: "Discharging" } } }],
+      NOW,
+    );
+    expect(withSensors[0].temp).toBe(61.4);
+    expect(withSensors[0].gpuUtil).toBe(73); // max util over GPUs
+    expect(withSensors[0].gpuTemp).toBe(66); // max temp over GPUs
+    expect(withSensors[0].battery).toBe(48);
+    expect(withSensors[0].batteryState).toBe("Discharging");
+
+    const none = buildFleetRows([srv()], [{ serverId: "a", sample: sample() }], NOW)[0];
+    expect(none.temp).toBeNull();
+    expect(none.gpuUtil).toBeNull();
+    expect(none.battery).toBeNull();
+  });
+
+  it("tempTone: warn ≥70, crit ≥85, null → ok", () => {
+    expect(tempTone(69.9)).toBe("ok");
+    expect(tempTone(70)).toBe("warn");
+    expect(tempTone(84.9)).toBe("warn");
+    expect(tempTone(85)).toBe("crit");
+    expect(tempTone(null)).toBe("ok");
+  });
+
+  it("batteryTone is low-is-bad and ok while charging/full", () => {
+    expect(batteryTone(10, "Discharging")).toBe("crit");
+    expect(batteryTone(20, "Discharging")).toBe("warn");
+    expect(batteryTone(50, "Discharging")).toBe("ok");
+    expect(batteryTone(5, "Charging")).toBe("ok"); // charging overrides low
+    expect(batteryTone(5, "Full")).toBe("ok");
+    expect(batteryTone(null, null)).toBe("ok");
   });
 });
