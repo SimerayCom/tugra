@@ -1653,6 +1653,47 @@ export class ApplicationsService {
     });
   }
 
+  /** Config mounts (serviceName/target/mode + current content) of a COMPOSE app, for the editor UI.
+   *  Content holds `${KEY}` placeholders at rest (resolved only at deploy) but can also hold literal
+   *  text a user typed, so the route is gated `read:secrets`. Empty when the app declares none. */
+  async listConfigMounts(userId: string, id: string): Promise<AppConfigMount[]> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
+    return this.appConfigMounts(app);
+  }
+
+  /**
+   * Replace ONLY the content of the config mount whose target matches. serviceName, target and mode
+   * stay exactly as stored — the mount is addressed by its exact target, never added or re-keyed, so
+   * the raw YAML service key and the index-derived host path stay server-controlled. Applies on the
+   * next deploy (the override carries a content fingerprint so compose recreates the service). Audits
+   * size + sha256 only, never the content.
+   */
+  async setConfigMountContent(userId: string, id: string, target: string, content: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
+    validateConfigMountTarget(target); // reuse the install-time shape/injection guard
+    const mounts = this.appConfigMounts(app);
+    const idx = mounts.findIndex((m) => m.target === target);
+    if (idx < 0) throw new NotFoundException("config mount not found");
+    // Keep the whole app's materialized script within the agent's single-argv limit (see compose-script
+    // base64 inflation); cap one mount and the sum across mounts.
+    const total = mounts.reduce((n, m, i) => n + (i === idx ? content.length : m.content.length), 0);
+    if (total > 256 * 1024) throw new BadRequestException("config mounts exceed the total size limit");
+    await this.ensureNoActiveDeploy(id);
+    const next = mounts.map((m, i) => (i === idx ? { ...m, content } : m));
+    await this.prisma.application.update({
+      where: { id },
+      data: { configMounts: next as unknown as Prisma.InputJsonValue },
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "app.config_mount.update",
+      target: id,
+      meta: { target, bytes: content.length, sha256: createHash("sha256").update(content).digest("hex") },
+    });
+  }
+
   /** Per-app deploy/rollback timeout in ms (default 5 min). */
   private deployTimeoutMs(app: Application): number {
     return (app.deployTimeoutSec ?? 300) * 1000;

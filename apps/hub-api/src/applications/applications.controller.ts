@@ -44,6 +44,8 @@ import {
   SetBuildArgsSchema,
   SetComposeFileInput,
   SetComposeFileSchema,
+  SetConfigMountContentInput,
+  SetConfigMountContentSchema,
   SetDockerOptionsInput,
   SetDockerOptionsSchema,
   SetCredentialsInput,
@@ -331,6 +333,24 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetComposeFileSchema)) body: SetComposeFileInput,
   ) {
     await this.apps.setComposeFile(user.userId, id, body.composeFile);
+    return { ok: true };
+  }
+
+  @Get(":id/config-mounts")
+  @RequireScopes("read:secrets") // mount content may contain literal secrets the user typed
+  getConfigMounts(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.listConfigMounts(user.userId, id);
+  }
+
+  @Put(":id/config-mounts")
+  @HttpCode(200)
+  @ApiZodBody(SetConfigMountContentSchema)
+  async setConfigMount(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetConfigMountContentSchema)) body: SetConfigMountContentInput,
+  ) {
+    await this.apps.setConfigMountContent(user.userId, id, body.target, body.content);
     return { ok: true };
   }
 

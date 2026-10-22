@@ -81,6 +81,19 @@ export const SetComposeFileSchema = z.object({
 });
 export type SetComposeFileInput = z.infer<typeof SetComposeFileSchema>;
 
+// Edit ONLY the content of one existing config mount on a COMPOSE app. The mount is addressed by its
+// exact `target`; serviceName/target/mode stay server-controlled and are never accepted here (.strict()
+// rejects them), so the YAML service key and index-derived host path can't be steered. Applies on the
+// next deploy. Content holds `${KEY}` placeholders resolved at deploy; a NUL byte would break the jsonb
+// write, so it is rejected up front.
+export const SetConfigMountContentSchema = z
+  .object({
+    target: z.string().min(1).max(4096),
+    content: z.string().max(64 * 1024).refine((s) => !s.includes("\0"), "content must not contain a NUL byte"),
+  })
+  .strict();
+export type SetConfigMountContentInput = z.infer<typeof SetConfigMountContentSchema>;
+
 export const SetBuildConfigSchema = z
   .object({
     registryId: z.string().min(1).nullable().optional(),

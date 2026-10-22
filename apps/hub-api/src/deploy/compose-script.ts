@@ -6,6 +6,7 @@
  */
 
 import { parse } from "yaml";
+import { createHash } from "node:crypto";
 import {
   containerName,
   envFileB64,
@@ -128,40 +129,44 @@ export function composeOverridePath(app: { id: string }): string {
 export function composeOverride(app: AppSpec): string {
   const magic = !!(app.domain && app.composeWebService);
   const mounts = app.configMounts ?? [];
-  // Accumulate per-service: the head fragments (networks/labels for the web service) and a LIST of
-  // bind items. A service may need BOTH (web service + a config mount) and a single override file can
-  // name it only once — and multiple mounts on one service must share ONE `volumes:` key (duplicate
-  // mapping keys are invalid YAML → `docker compose up` would fail).
-  const head = new Map<string, string[]>();
+  // Name each service ONCE in the override (duplicate YAML mapping keys are invalid). A service may need
+  // networks (the web service), a MERGED `labels:` block (traefik routing for the web service AND a
+  // content-fingerprint per mount) and a shared `volumes:` block (all its config-mount binds).
+  const order: string[] = [];
+  const networks = new Map<string, string[]>();
+  const labels = new Map<string, string[]>();
   const binds = new Map<string, string[]>();
   const touch = (name: string) => {
-    if (!head.has(name)) head.set(name, []);
+    if (!order.includes(name)) order.push(name);
+  };
+  const add = (map: Map<string, string[]>, name: string, line: string) => {
+    touch(name);
+    (map.get(name) ?? map.set(name, []).get(name)!).push(line);
   };
 
   if (magic && app.composeWebService) {
     // The web service is kept on `default` AND joined to the proxy (declaring `networks:` drops the
     // implicit default membership → it would lose reach to its DB/siblings). Values JSON-quoted.
-    touch(app.composeWebService);
-    head.get(app.composeWebService)!.push(
-      "    networks:",
-      "      - default",
-      `      - ${PROXY_NETWORK}`,
-      "    labels:",
-      ...traefikLabels(app).map((l) => `      - ${JSON.stringify(l)}`),
-    );
+    const name = app.composeWebService;
+    touch(name);
+    networks.set(name, ["      - default", `      - ${PROXY_NETWORK}`]);
+    for (const l of traefikLabels(app)) add(labels, name, `      - ${JSON.stringify(l)}`);
   }
   mounts.forEach((m, i) => {
-    touch(m.serviceName);
-    (binds.get(m.serviceName) ?? binds.set(m.serviceName, []).get(m.serviceName)!).push(
-      `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`,
-    );
+    add(binds, m.serviceName, `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`);
+    // Fingerprint label so a content edit changes this service's compose config → `up -d` recreates it.
+    add(labels, m.serviceName, `      - ${JSON.stringify(`tugra.config-mount.${i}=${mountFp(m.content)}`)}`);
   });
 
   const lines: string[] = ["services:"];
-  for (const name of head.keys()) {
-    lines.push(`  ${name}:`, ...(head.get(name) ?? []));
+  for (const name of order) {
+    lines.push(`  ${name}:`);
+    const n = networks.get(name);
+    if (n && n.length) lines.push("    networks:", ...n);
+    const l = labels.get(name);
+    if (l && l.length) lines.push("    labels:", ...l); // ONE labels: key (traefik + mount fingerprints)
     const b = binds.get(name);
-    if (b && b.length) lines.push("    volumes:", ...b); // one volumes: key, all binds appended
+    if (b && b.length) lines.push("    volumes:", ...b); // ONE volumes: key, all binds appended
   }
   if (magic) lines.push("networks:", `  ${PROXY_NETWORK}:`, "    external: true");
   lines.push("");
@@ -179,6 +184,15 @@ function shq(v: string): string {
 
 function b64(s: string): string {
   return Buffer.from(s, "utf8").toString("base64");
+}
+
+/** 12-hex content fingerprint, stamped as a per-mount label on its service in the override. It changes
+ *  exactly when the stored (placeholder) content changes, so `docker compose up -d` recreates that one
+ *  service to load the edited file (a bind whose host path is unchanged would otherwise keep the old
+ *  file loaded). Over the placeholder content, never the interpolated one, so a resolved secret never
+ *  lands in a docker label. */
+function mountFp(s: string): string {
+  return createHash("sha256").update(s, "utf8").digest("hex").slice(0, 12);
 }
 
 export function buildComposeUpScript(app: AppSpec, noCache = false): string {

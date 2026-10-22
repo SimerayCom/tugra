@@ -1,4 +1,4 @@
-import { SetLimitsSchema } from "./dto";
+import { SetConfigMountContentSchema, SetLimitsSchema } from "./dto";
 
 describe("SetLimitsSchema — resource reservations", () => {
   it("accepts a reservation at or below the limit", () => {
@@ -14,5 +14,21 @@ describe("SetLimitsSchema — resource reservations", () => {
   it("accepts a reservation alone (no limit to cross-check against)", () => {
     expect(() => SetLimitsSchema.parse({ reserveMemoryMb: 512 })).not.toThrow();
     expect(() => SetLimitsSchema.parse({ reserveCpus: 4 })).not.toThrow();
+  });
+});
+
+describe("SetConfigMountContentSchema — content-only mount edit", () => {
+  it("accepts {target, content}, including empty content", () => {
+    expect(SetConfigMountContentSchema.safeParse({ target: "/etc/redis.conf", content: "" }).success).toBe(true);
+    expect(SetConfigMountContentSchema.safeParse({ target: "/etc/redis.conf", content: "appendonly yes\n" }).success).toBe(true);
+  });
+
+  it("rejects a NUL byte, oversize content, a missing target, and extra keys (selectors are immutable)", () => {
+    expect(SetConfigMountContentSchema.safeParse({ target: "/x", content: "a\0b" }).success).toBe(false);
+    expect(SetConfigMountContentSchema.safeParse({ target: "/x", content: "a".repeat(64 * 1024 + 1) }).success).toBe(false);
+    expect(SetConfigMountContentSchema.safeParse({ content: "a" }).success).toBe(false);
+    // .strict() blocks any attempt to change the server-controlled selectors through this endpoint
+    expect(SetConfigMountContentSchema.safeParse({ target: "/x", content: "a", serviceName: "redis" }).success).toBe(false);
+    expect(SetConfigMountContentSchema.safeParse({ target: "/x", content: "a", mode: "0600" }).success).toBe(false);
   });
 });
