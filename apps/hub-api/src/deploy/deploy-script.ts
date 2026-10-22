@@ -18,8 +18,12 @@ export const HEALTH_PROBE_IMAGE =
   "curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69";
 
 // The reverse-proxy (one per server), launched by buildProxySetupScript.
+// v3.7.x (not v3.1): Traefik v3.1's bundled Docker client advertises API 1.24, which Docker Engine 29+
+// rejects ("client version 1.24 is too old; minimum 1.40"), so its docker provider loaded ZERO routers and
+// every app answered 404 while running healthy. v3.7+ negotiates a supported API version. (DOCKER_API_VERSION
+// env does NOT help — v3.1's client ignores it.)
 export const PROXY_IMAGE =
-  "traefik:v3.1@sha256:74d72c7a1345984f186bddbabcc462b2128d0d8054177dc84afaeac4db1f0f56";
+  "traefik:v3.7.16@sha256:22a759fb803abb5c3a7ba5d5a55a201c5fb0fc8993d5c72c47a89075e64f1953";
 
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -889,12 +893,6 @@ export function buildProxySetupScript(
     ...portPublish,
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
     "-v /etc/tugra/letsencrypt:/letsencrypt",
-    // Pin the Docker API version the proxy's client negotiates. Traefik's bundled docker client advertises an
-    // old default (API 1.24); Docker Engine 29+ dropped support for clients below 1.40 and rejects it with
-    // "client version 1.24 is too old", so the docker provider loads ZERO routers and Traefik 404s every request
-    // while apps run healthy. 1.41 is honoured by Docker 20.10 through 29+ (minAPI 1.40), so it works on old and
-    // new hosts alike. The client reads it from the environment.
-    "-e DOCKER_API_VERSION=1.41",
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
     ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
     PROXY_IMAGE,
