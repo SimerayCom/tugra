@@ -64,30 +64,39 @@ export class CoolifySource implements ImportSource {
     const servers = (await this.client.get<CoolifyServer[]>("/servers")) ?? [];
     const apps = (await this.client.get<CoolifyApp[]>("/applications")) ?? [];
     const databases = (await this.client.get<CoolifyDatabase[]>("/databases")) ?? [];
-
-    // Enrichment: degrade with a warning rather than aborting the whole discovery.
-    const resourcesByServer: Record<string, string[]> = {};
-    for (const s of servers) {
-      const resources = await tryGet<Array<{ uuid?: string }>>(`/servers/${s.uuid}/resources`, [], `resources for server ${s.name ?? s.uuid}`);
-      resourcesByServer[s.uuid] = resources.map((r) => r?.uuid).filter((u): u is string => !!u);
-    }
-
     const serviceList = await tryGet<CoolifyService[]>("/services", [], "services");
-    const services: CoolifyService[] = [];
-    for (const s of serviceList) {
-      // GET /services does NOT eager-load member apps/databases; the detail endpoint does.
-      services.push(await tryGet<CoolifyService>(`/services/${s.uuid}`, s, `service ${s.name ?? s.uuid}`));
-    }
 
+    // Enrichment is one GET per resource. A large Coolify fleet is hundreds of calls; doing them
+    // SEQUENTIALLY overran the request timeout (the import showed "Reading the fleet…" then failed with a
+    // socket reset). Run them with bounded concurrency instead. Each call still degrades to a warning
+    // rather than aborting, and the shared maps are keyed by uuid so concurrent writes never collide.
+    const resourcesByServer: Record<string, string[]> = {};
     const envsByResource: Record<string, CoolifyEnv[]> = {};
     const volumesByResource: Record<string, CoolifyVolume[]> = {};
-    for (const a of apps) {
-      envsByResource[a.uuid] = extractEnvs(await tryGet<unknown>(`/applications/${a.uuid}/envs`, [], `env for ${a.name ?? a.uuid}`));
-      volumesByResource[a.uuid] = extractVolumes(await tryGet<unknown>(`/applications/${a.uuid}/storages`, [], `storage for ${a.name ?? a.uuid}`));
-    }
-    for (const d of databases) {
+
+    await mapLimit(servers, DISCOVER_CONCURRENCY, async (s) => {
+      const resources = await tryGet<Array<{ uuid?: string }>>(`/servers/${s.uuid}/resources`, [], `resources for server ${s.name ?? s.uuid}`);
+      resourcesByServer[s.uuid] = resources.map((r) => r?.uuid).filter((u): u is string => !!u);
+    });
+
+    // GET /services does NOT eager-load member apps/databases; the detail endpoint does. Preserve order.
+    const services = await mapLimit(serviceList, DISCOVER_CONCURRENCY, (s) =>
+      tryGet<CoolifyService>(`/services/${s.uuid}`, s, `service ${s.name ?? s.uuid}`),
+    );
+
+    await mapLimit(apps, DISCOVER_CONCURRENCY, async (a) => {
+      // The two per-app reads are independent → fetch them together.
+      const [envs, vols] = await Promise.all([
+        tryGet<unknown>(`/applications/${a.uuid}/envs`, [], `env for ${a.name ?? a.uuid}`),
+        tryGet<unknown>(`/applications/${a.uuid}/storages`, [], `storage for ${a.name ?? a.uuid}`),
+      ]);
+      envsByResource[a.uuid] = extractEnvs(envs);
+      volumesByResource[a.uuid] = extractVolumes(vols);
+    });
+
+    await mapLimit(databases, DISCOVER_CONCURRENCY, async (d) => {
       volumesByResource[d.uuid] = extractVolumes(await tryGet<unknown>(`/databases/${d.uuid}/storages`, [], `storage for ${d.name ?? d.uuid}`));
-    }
+    });
 
     return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, volumesByResource, warnings });
   }
@@ -117,6 +126,24 @@ export class CoolifySource implements ImportSource {
   }
 
   async close(): Promise<void> {}
+}
+
+/** Max concurrent enrichment GETs during discover — fast enough for a large fleet without hammering Coolify. */
+const DISCOVER_CONCURRENCY = 8;
+
+/** Run `fn` over `items` with at most `limit` promises in flight, preserving result order. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
 }
 
 /** Pure: Coolify's /envs list merges production + preview-deployment twins; keep only real (key'd, non-preview) rows. */

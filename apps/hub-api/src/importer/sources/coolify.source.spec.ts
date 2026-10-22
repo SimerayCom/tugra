@@ -1,4 +1,4 @@
-import { CoolifySource, type CoolifyClient } from "./coolify.source";
+import { CoolifySource, mapLimit, type CoolifyClient } from "./coolify.source";
 
 class FakeClient implements CoolifyClient {
   calls: string[] = [];
@@ -108,5 +108,28 @@ describe("CoolifySource", () => {
     it("capabilities are read-only (api)", () => {
       expect(new CoolifySource(new FakeClient({})).capabilities()).toEqual({ apiRead: true, sshRead: false, dbDataDump: false, volumeRead: false });
     });
+  });
+});
+
+describe("mapLimit", () => {
+  it("preserves order and never exceeds the concurrency limit", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const out = await mapLimit([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 3, async (n) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+      return n * 10;
+    });
+    expect(out).toEqual([0, 10, 20, 30, 40, 50, 60, 70, 80, 90]); // order preserved
+    expect(peak).toBeLessThanOrEqual(3); // bounded concurrency
+    expect(peak).toBeGreaterThan(1); // actually ran in parallel
+  });
+
+  it("handles an empty list without spawning work", async () => {
+    const fn = jest.fn();
+    expect(await mapLimit([], 8, fn)).toEqual([]);
+    expect(fn).not.toHaveBeenCalled();
   });
 });

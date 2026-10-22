@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
@@ -21,6 +21,8 @@ const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, s
  */
 @Injectable()
 export class ImporterService {
+  private readonly logger = new Logger(ImporterService.name);
+
   constructor(
     private readonly migrator: MigratorService,
     private readonly prisma: PrismaService,
@@ -80,7 +82,11 @@ export class ImporterService {
     // coolify: resolve the owned, unexpired session → discover over the SSRF-safe client.
     const { source, session } = await this.openSession(userId, input.sessionId);
     try {
+      const t0 = Date.now();
       const fleet = await source.discover();
+      this.logger.log(
+        `coolify discover: ${fleet.servers.length} servers, ${fleet.apps.length} apps, ${fleet.databases.length} dbs, ${fleet.services.length} services in ${Date.now() - t0}ms`,
+      );
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
       return planImport(fleet, { sourceKind: "coolify" });
     } finally {
