@@ -1,6 +1,7 @@
 # Hub API (NestJS + Prisma). Build context = repo root (pnpm workspace).
-# node:20 (not slim) so native deps (argon2, libsodium) + prisma engines build cleanly.
-FROM node:20
+# node:22 LTS (not slim) so native deps (argon2, libsodium) + prisma engines build cleanly.
+# (Node 20 reached end-of-life; 22 is the active LTS that still gets security patches.)
+FROM node:22
 
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
