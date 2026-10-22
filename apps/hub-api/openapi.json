@@ -6702,6 +6702,9 @@
                           "additionalProperties": false
                         }
                       },
+                      "hasConfigMounts": {
+                        "type": "boolean"
+                      },
                       "hasGitToken": {
                         "type": "boolean"
                       },
@@ -7046,6 +7049,7 @@
                       "dockerOptions",
                       "volumes",
                       "composeVolumes",
+                      "hasConfigMounts",
                       "hasGitToken",
                       "registryUrl",
                       "registryUser",
@@ -7440,6 +7444,9 @@
                         "additionalProperties": false
                       }
                     },
+                    "hasConfigMounts": {
+                      "type": "boolean"
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -7784,6 +7791,7 @@
                     "dockerOptions",
                     "volumes",
                     "composeVolumes",
+                    "hasConfigMounts",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -8261,6 +8269,9 @@
                         "additionalProperties": false
                       }
                     },
+                    "hasConfigMounts": {
+                      "type": "boolean"
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -8605,6 +8616,7 @@
                     "dockerOptions",
                     "volumes",
                     "composeVolumes",
+                    "hasConfigMounts",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -9086,6 +9098,9 @@
                         "additionalProperties": false
                       }
                     },
+                    "hasConfigMounts": {
+                      "type": "boolean"
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -9430,6 +9445,7 @@
                     "dockerOptions",
                     "volumes",
                     "composeVolumes",
+                    "hasConfigMounts",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -13641,6 +13657,9 @@
                         "additionalProperties": false
                       }
                     },
+                    "hasConfigMounts": {
+                      "type": "boolean"
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -13985,6 +14004,7 @@
                     "dockerOptions",
                     "volumes",
                     "composeVolumes",
+                    "hasConfigMounts",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -14395,6 +14415,9 @@
                           "additionalProperties": false
                         }
                       },
+                      "hasConfigMounts": {
+                        "type": "boolean"
+                      },
                       "hasGitToken": {
                         "type": "boolean"
                       },
@@ -14739,6 +14762,7 @@
                       "dockerOptions",
                       "volumes",
                       "composeVolumes",
+                      "hasConfigMounts",
                       "hasGitToken",
                       "registryUrl",
                       "registryUser",
@@ -15219,6 +15243,9 @@
                         "additionalProperties": false
                       }
                     },
+                    "hasConfigMounts": {
+                      "type": "boolean"
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -15563,6 +15590,7 @@
                     "dockerOptions",
                     "volumes",
                     "composeVolumes",
+                    "hasConfigMounts",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",
@@ -16838,6 +16866,9 @@
                         "additionalProperties": false
                       }
                     },
+                    "hasConfigMounts": {
+                      "type": "boolean"
+                    },
                     "hasGitToken": {
                       "type": "boolean"
                     },
@@ -17182,6 +17213,7 @@
                     "dockerOptions",
                     "volumes",
                     "composeVolumes",
+                    "hasConfigMounts",
                     "hasGitToken",
                     "registryUrl",
                     "registryUser",

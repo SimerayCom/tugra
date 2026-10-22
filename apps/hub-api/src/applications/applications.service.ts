@@ -140,6 +140,8 @@ export const AppViewSchema = z.object({
       mounts: z.array(z.object({ service: z.string(), path: z.string() })),
     }),
   ),
+  // Whether this COMPOSE app has any editable config mounts (content fetched on demand, not here).
+  hasConfigMounts: z.boolean(),
   hasGitToken: z.boolean(),
   registryUrl: z.string().nullable(),
   registryUser: z.string().nullable(),
@@ -2395,6 +2397,7 @@ export class ApplicationsService {
       buildCommand: app.buildCommand,
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
+      hasConfigMounts: this.appConfigMounts(app).length > 0,
       healthCmd: app.healthCmd,
       healthCheckType: app.healthCheckType,
       healthCheckPath: app.healthCheckPath,

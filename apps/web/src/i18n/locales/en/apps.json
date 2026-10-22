@@ -79,6 +79,17 @@
   "composeSave": "Save",
   "composeSaveDeploy": "Save & deploy",
   "composeSaved": "Compose file saved",
+  "cfgMounts": {
+    "title": "Config files",
+    "hint": "Files Tugra mounts read-only into your containers. Only the content can be changed. Avoid pasting secrets — config files are stored unencrypted. Changes apply on the next deploy.",
+    "mode": "Mode {mode}",
+    "unsaved": "Unsaved changes",
+    "reset": "Reset",
+    "save": "Save",
+    "saveDeploy": "Save & deploy",
+    "saved": "Config file saved",
+    "redeploy": "Saved — redeploy to apply the new content."
+  },
   "image": "Image (e.g. nginx:alpine)",
   "gitUrl": "Git repo URL",
   "branch": "Branch (main)",

@@ -15,6 +15,7 @@ import type {
   IngressView,
   SavedView,
   Application,
+  AppConfigMount,
   AppVolume,
   FileListing,
   BulkOperation,
@@ -1028,6 +1029,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ composeFile }),
     });
+  },
+  getAppConfigMounts(id: string) {
+    return apiFetch<AppConfigMount[]>(`/apps/${id}/config-mounts`);
+  },
+  setAppConfigMount(id: string, body: { target: string; content: string }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/config-mounts`, { method: "PUT", body: JSON.stringify(body) });
   },
   setAppPlacement(id: string, body: { constraints: PlacementConstraint[]; spreadLabelKey: string | null }) {
     return apiFetch<{ ok: boolean }>(`/apps/${id}/placement`, { method: "PUT", body: JSON.stringify(body) });
