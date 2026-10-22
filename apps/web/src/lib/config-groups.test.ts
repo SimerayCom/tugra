@@ -18,6 +18,7 @@ function facts(over: Partial<ConfigGatingFacts> = {}): ConfigGatingFacts {
     domain: "app.example.com",
     domainKind: "custom",
     volumes: [{ name: "data", path: "/data" }],
+    hasConfigMounts: false,
     ...over,
   };
 }

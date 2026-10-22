@@ -37,6 +37,7 @@ export type ConfigCardId =
   | "domainOptions"
   | "volumes"
   | "volumeBackups"
+  | "configMounts"
   | "healthCheck"
   | "limits"
   | "scheduledTasks"
@@ -52,6 +53,7 @@ export interface ConfigGatingFacts {
   domain: string | null;
   domainKind: string | null;
   volumes: readonly unknown[];
+  hasConfigMounts: boolean;
 }
 
 const notCompose = (a: ConfigGatingFacts) => a.source !== "COMPOSE";
@@ -80,6 +82,7 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // Storage
   { id: "volumes", group: "storage", visible: notCompose },
   { id: "volumeBackups", group: "storage", visible: (a) => notCompose(a) && a.volumes.length > 0 },
+  { id: "configMounts", group: "storage", visible: (a) => a.source === "COMPOSE" && a.canWrite && a.hasConfigMounts },
   // Health & Resources
   { id: "healthCheck", group: "health-resources", visible: notCompose },
   { id: "limits", group: "health-resources", visible: notCompose },

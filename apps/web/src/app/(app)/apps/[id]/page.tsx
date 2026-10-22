@@ -11,6 +11,7 @@ import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { AppFilesCard } from "../../../../components/app-files-card";
+import { ConfigMountsCard } from "../../../../components/config-mounts-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
@@ -183,6 +184,7 @@ export default function AppDetailPage() {
     volumeBackups: () => (
       <VolumeBackupsCard id={id} volumes={appData.volumes} enabled={appData.volumeBackupEnabled} intervalHours={appData.volumeBackupIntervalHours} retention={appData.volumeBackupRetention} destinationId={appData.volumeBackupDestinationId} />
     ),
+    configMounts: () => <ConfigMountsCard id={id} onDeploy={() => onDeploy()} />,
     healthCheck: () => (
       <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCmd={appData.healthCmd} />
     ),

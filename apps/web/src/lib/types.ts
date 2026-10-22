@@ -811,6 +811,13 @@ export interface TemplateManifest extends Template {
   composeFile?: string; // only when the caller can write to the server's team
 }
 
+export interface AppConfigMount {
+  serviceName: string;
+  target: string;
+  mode: string | null;
+  content: string;
+}
+
 export interface Application {
   id: string;
   name: string;
@@ -838,6 +845,7 @@ export interface Application {
   volumes: AppVolume[];
   // Named volumes a COMPOSE app declares (empty for non-compose); browsable=false → external/custom.
   composeVolumes: { key: string; browsable: boolean; mounts: { service: string; path: string }[] }[];
+  hasConfigMounts: boolean;
   hasGitToken: boolean;
   registryUrl: string | null;
   registryUser: string | null;
