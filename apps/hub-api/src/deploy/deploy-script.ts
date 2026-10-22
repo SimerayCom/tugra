@@ -889,6 +889,12 @@ export function buildProxySetupScript(
     ...portPublish,
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
     "-v /etc/tugra/letsencrypt:/letsencrypt",
+    // Pin the Docker API version the proxy's client negotiates. Traefik's bundled docker client advertises an
+    // old default (API 1.24); Docker Engine 29+ dropped support for clients below 1.40 and rejects it with
+    // "client version 1.24 is too old", so the docker provider loads ZERO routers and Traefik 404s every request
+    // while apps run healthy. 1.41 is honoured by Docker 20.10 through 29+ (minAPI 1.40), so it works on old and
+    // new hosts alike. The client reads it from the environment.
+    "-e DOCKER_API_VERSION=1.41",
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
     ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
     PROXY_IMAGE,
