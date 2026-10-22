@@ -49,7 +49,20 @@ func (w *chunkWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Run executes `command` via `sh -c`, capturing combined stdout+stderr.
+// shellBin is the interpreter used to run the hub's command scripts. Those scripts use
+// `set -o pipefail` (so a failed producer in `pg_dump | gzip > file` fails the whole
+// pipeline instead of silently writing a truncated backup), which POSIX sh / dash < 0.5.13
+// do not support — dash aborts on `set: Illegal option -o pipefail` before anything runs.
+// Prefer bash (the agent image ships it); fall back to sh so an unusual image without bash
+// still runs the non-pipefail scripts.
+var shellBin = func() string {
+	if p, err := exec.LookPath("bash"); err == nil {
+		return p
+	}
+	return "sh"
+}()
+
+// Run executes `command` via the resolved shell (bash, else sh), capturing combined stdout+stderr.
 func Run(ctx context.Context, command string, timeout time.Duration) Result {
 	return RunStreaming(ctx, command, timeout, nil)
 }
@@ -61,7 +74,7 @@ func RunStreaming(ctx context.Context, command string, timeout time.Duration, on
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(c, "sh", "-c", command)
+	cmd := exec.CommandContext(c, shellBin, "-c", command)
 	// Run in its own process group and kill the whole group on timeout/cancel; otherwise only `sh`
 	// dies and its docker/git children linger holding the output pipes. WaitDelay force-closes the
 	// pipes if a straggler still holds them after the kill.
