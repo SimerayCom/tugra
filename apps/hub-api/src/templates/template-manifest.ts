@@ -284,7 +284,7 @@ export function validateConfigMountTarget(target: string): void {
   };
   if (typeof target !== "string" || target.trim() === "") bad("empty");
   // No control/quote chars — the target is JSON-quoted into the YAML bind (`"<host>:<target>:ro"`).
-  if (/[\0\n\r"'`]/.test(target)) bad("must not contain control or quote characters");
+  if (/[\0\n\r"'`:]/.test(target)) bad("must not contain control, quote, or ':' characters");
   if (!posix.isAbsolute(target)) bad("must be an absolute path");
   if (target.split("/").some((seg) => seg === "..")) bad("must not contain '..'");
   if (target.endsWith("/")) bad("must be a file path, not a directory"); // normalize keeps trailing '/'
