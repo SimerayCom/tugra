@@ -161,26 +161,29 @@ export function mapCoolifyBuildPack(app: CoolifyApp): { kind: ForeignApp["kind"]
 /** Parse Coolify's comma-separated `fqdn` (full URLs with scheme) into neutral domains; first is primary. */
 export function parseFqdns(fqdn: string | null | undefined): ForeignDomain[] {
   if (!fqdn) return [];
-  const out: ForeignDomain[] = [];
-  fqdn
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .forEach((part, i) => {
-      let u: URL;
-      try {
-        u = new URL(/^https?:\/\//i.test(part) ? part : `https://${part}`);
-      } catch {
-        return;
-      }
-      out.push({
-        host: u.hostname,
-        https: u.protocol === "https:",
-        port: u.port ? Number(u.port) : undefined,
-        path: u.pathname && u.pathname !== "/" ? u.pathname : undefined,
-        primary: i === 0,
-      });
-    });
+  // Coolify frequently lists the SAME host twice — an http and an https entry (e.g.
+  // "https://x.com,http://x.com") — which must not be counted as two domains. Collapse by host+port+path
+  // (https wins when a host appears both ways); the first DISTINCT domain is the primary.
+  const byKey = new Map<string, ForeignDomain>();
+  for (const part of fqdn.split(",").map((s) => s.trim()).filter(Boolean)) {
+    let u: URL;
+    try {
+      u = new URL(/^https?:\/\//i.test(part) ? part : `https://${part}`);
+    } catch {
+      continue;
+    }
+    const port = u.port ? Number(u.port) : undefined;
+    const path = u.pathname && u.pathname !== "/" ? u.pathname : undefined;
+    const key = `${u.hostname}|${port ?? ""}|${path ?? ""}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      if (u.protocol === "https:") existing.https = true;
+    } else {
+      byKey.set(key, { host: u.hostname, https: u.protocol === "https:", port, path, primary: false });
+    }
+  }
+  const out = [...byKey.values()];
+  if (out.length) out[0].primary = true;
   return out;
 }
 

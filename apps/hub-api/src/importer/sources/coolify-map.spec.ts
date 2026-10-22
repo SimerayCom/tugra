@@ -54,6 +54,13 @@ describe("parsers", () => {
     expect(parseFqdns("https://a.com/api")).toEqual([{ host: "a.com", https: true, port: undefined, path: "/api", primary: true }]);
     expect(parseFqdns(null)).toEqual([]);
   });
+  it("parseFqdns collapses an http+https pair for the SAME host into ONE domain (https wins, either order)", () => {
+    // Coolify lists both schemes of one domain; that must not count as two.
+    expect(parseFqdns("https://x.com,http://x.com")).toEqual([{ host: "x.com", https: true, port: undefined, path: undefined, primary: true }]);
+    expect(parseFqdns("http://x.com,https://x.com")).toEqual([{ host: "x.com", https: true, port: undefined, path: undefined, primary: true }]);
+    // different host, or same host with a different path/port, stay distinct
+    expect(parseFqdns("https://x.com,https://x.com/admin").length).toBe(2);
+  });
   it("parsePorts keeps positive integers only", () => {
     expect(parsePorts("3000,8080")).toEqual([3000, 8080]);
     expect(parsePorts("")).toEqual([]);
