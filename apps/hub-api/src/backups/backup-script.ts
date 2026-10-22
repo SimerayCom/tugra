@@ -102,10 +102,14 @@ export function dumpDbToStdout(engine: DbEngine, name: string, creds: DbCredenti
       // connects as `default` with no password, which has no grant on the managed DB, so the dump failed.
       // CH_WAIT polls `SELECT 1` because clickhouse-server accepts connections only seconds after the container
       // reports running — an un-waited BACKUP raced the server startup and errored "Connection refused".
+      // chown: `docker exec` runs as root, so a root-created backups dir is unwritable by the clickhouse
+      // user (uid 101) the server runs as → BACKUP failed "Cannot open …zip.lock: Permission denied". Hand
+      // the dir to clickhouse (idempotent — also heals a dir left root-owned by an earlier broken run).
       const chCli = `clickhouse-client --host 127.0.0.1 --port 9000 --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD"`;
       const chWait = `i=0; until ${chCli} --query "SELECT 1" >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 30 ] && { echo "tugra: clickhouse not ready" >&2; exit 1; }; sleep 2; done;`;
+      const chDir = "mkdir -p /var/lib/clickhouse/backups; chown clickhouse:clickhouse /var/lib/clickhouse/backups 2>/dev/null || true;";
       return `docker exec ${name} sh -c ${shq(
-        `${chWait} mkdir -p /var/lib/clickhouse/backups; ${chCli} --query "BACKUP DATABASE \\"${database}\\" TO File('/var/lib/clickhouse/backups/tugra_backup.zip')" >/dev/null && cat /var/lib/clickhouse/backups/tugra_backup.zip; rc=$?; rm -f /var/lib/clickhouse/backups/tugra_backup.zip; exit $rc`,
+        `${chWait} ${chDir} ${chCli} --query "BACKUP DATABASE \\"${database}\\" TO File('/var/lib/clickhouse/backups/tugra_backup.zip')" >/dev/null && cat /var/lib/clickhouse/backups/tugra_backup.zip; rc=$?; rm -f /var/lib/clickhouse/backups/tugra_backup.zip; exit $rc`,
       )}`;
     }
     case "LIBSQL":
@@ -116,6 +120,33 @@ export function dumpDbToStdout(engine: DbEngine, name: string, creds: DbCredenti
 /** A managed Tugra database's dump command — the DbSpec-shaped wrapper over {@link dumpDbToStdout}. */
 function dumpToStdout(db: DbSpec): string {
   return dumpDbToStdout(db.engine, dbContainerName(db), db.credentials);
+}
+
+/**
+ * A command that BLOCKS until the engine actually accepts connections, or null if the engine needs none
+ * (or embeds its own wait). A container reports "running" seconds before the server is ready to serve — a
+ * backup fired right after provision, or a restore into a just-created container (clone / migration), would
+ * otherwise race the startup and fail. Run as its own line before the dump/restore so a never-ready server
+ * fails loud. MySQL/MariaDB: poll `SELECT 1` on the target DB over TCP (also waits for the DB to be created
+ * by first-boot init). ClickHouse embeds its own SELECT 1 wait inside the dump/restore command, so it
+ * returns null here.
+ */
+export function readinessPrelude(engine: DbEngine, name: string, creds: DbCredentials): string | null {
+  const { username, password, database } = creds;
+  switch (engine) {
+    case "MYSQL":
+    case "MARIADB": {
+      const client = engine === "MARIADB" ? "mariadb" : "mysql";
+      const u = shqInner(username);
+      const db = shqInner(database);
+      const wait =
+        `i=0; until ${client} -u${u} --protocol=TCP -h127.0.0.1 -e "SELECT 1" ${db} >/dev/null 2>&1; ` +
+        `do i=$((i+1)); [ $i -ge 60 ] && { echo "tugra: ${client} not ready" >&2; exit 1; }; sleep 1; done`;
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} sh -c ${shq(wait)}`;
+    }
+    default:
+      return null;
+  }
 }
 
 // Quote a value that is embedded inside an already single-quoted `sh -c` string.
@@ -133,6 +164,8 @@ function gpgDecrypt(dest: DestinationSpec): string {
 
 export function buildBackupScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
   const lines = ["set -e", "set -o pipefail"];
+  const prelude = readinessPrelude(db.engine, dbContainerName(db), db.credentials);
+  if (prelude) lines.push(prelude);
   const pipe = [dumpToStdout(db), "gzip"];
   if (dest.encryption.enabled) pipe.push(gpgEncrypt(dest));
 
@@ -233,13 +266,17 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       break;
     }
     case "MYSQL":
-      // --protocol=TCP -h127.0.0.1: force TCP (see the dump path) — the default unix-socket path differs
-      // across images and is usually absent inside the container, which broke the restore client's connect.
-      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
+    case "MARIADB": {
+      // Wait for the server to accept connections before piping the dump in (a restore into a freshly
+      // created container — clone / migration — otherwise races startup). --protocol=TCP -h127.0.0.1:
+      // force TCP — the default unix-socket path differs across images and is usually absent inside the
+      // container, which broke the restore client's connect.
+      const prelude = readinessPrelude(db.engine, name, db.credentials);
+      if (prelude) lines.push(prelude);
+      const client = db.engine === "MARIADB" ? "mariadb" : "mysql";
+      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} ${client} -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
       break;
-    case "MARIADB":
-      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mariadb -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
-      break;
+    }
     case "MONGO":
       lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop`);
       break;
@@ -287,8 +324,11 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       const zip = "/var/lib/clickhouse/backups/tugra_restore.zip";
       const chCli = `clickhouse-client --host 127.0.0.1 --port 9000 --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD"`;
       const chWait = `i=0; until ${chCli} --query "SELECT 1" >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 30 ] && { echo "tugra: clickhouse not ready" >&2; exit 1; }; sleep 2; done;`;
+      // chown the backups dir to the clickhouse user (docker exec is root; the server runs as uid 101 and
+      // must create its .lock / read the staged zip) — see the dump path.
+      const chDir = "mkdir -p /var/lib/clickhouse/backups; chown clickhouse:clickhouse /var/lib/clickhouse/backups 2>/dev/null || true;";
       const inner =
-        `${chWait} mkdir -p /var/lib/clickhouse/backups; ` +
+        `${chWait} ${chDir} ` +
         `${chCli} --query "DROP DATABASE IF EXISTS \\"${tmpDb}\\" SYNC" 2>/dev/null; ` +
         `cat > ${zip} && ` +
         `${chCli} --query "RESTORE DATABASE \\"${database}\\" AS \\"${tmpDb}\\" FROM File('${zip}')" >/dev/null && ` +
