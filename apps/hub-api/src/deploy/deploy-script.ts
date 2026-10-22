@@ -365,7 +365,9 @@ export function traefikLabels(app: AppSpec): string[] {
   // health path — otherwise Traefik would round-robin live traffic onto a booting
   // container (502s) during the overlap. Set only by buildRollingDeployScript; a
   // hard-cutover deploy never carries it (no behaviour change for existing apps).
-  // Assumes the health path returns success; the health path is currently fixed.
+  // Traefik's check counts only 2xx/3xx as UP (its `.status` label is a single int, not a range), so
+  // buildRollingDeployScript re-creates the live container WITHOUT this label when the deploy gate
+  // accepted a >= 400 probe response (see `relabel` there) — else that app would 503 after the rename.
   if (app.rollingHealthPath) {
     labels.push(
       `traefik.http.services.${r}.loadbalancer.healthcheck.path=${app.rollingHealthPath}`,
@@ -781,6 +783,21 @@ export function buildRollingDeployScript(
   // (only meaningful for a routed app; the external probe already gates the cutover).
   const hcPath = opts.probe.kind === "httpExternal" ? opts.probe.path : "/";
   const rApp: AppSpec = { ...app, rollingHealthPath: app.domain ? hcPath : null };
+  // Traefik's LB check (its `healthcheck.status` label is a single int, not a range) only counts 2xx/3xx
+  // as UP, but the httpExternal gate accepts any code < 500 (404/401/403/400 = booted). Labels are
+  // immutable across `docker rename`, so when the gate passed on a >= 400 code the renamed rollout would be
+  // marked DOWN by its own check label (every request 503, deploy reported success). In that case re-create
+  // the live container from `app` (NO LB-check label) instead of renaming the labelled rollout. `$code` is
+  // the passing probe's status (set by the httpExternal gate fragment).
+  const relabel =
+    opts.probe.kind === "httpExternal"
+      ? [
+          `  if [ "$code" -ge 400 ]; then`,
+          `    docker rm -f ${rollout} 2>/dev/null || true`,
+          `    if ${runContainerArgs(app, version, canonical)}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: relabel_failed"; exit 1; fi`,
+          "  fi",
+        ]
+      : [];
   return [
     "set -e",
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
@@ -791,6 +808,7 @@ export function buildRollingDeployScript(
     ...buildHealthGateFragment(rollout, opts.probe, opts),
     `if [ "$healthy" = 1 ]; then`,
     `  docker rm -f ${canonical} 2>/dev/null || true`,
+    ...relabel,
     // Gate success on the rename actually landing — otherwise the live container keeps
     // the temp name and every lifecycle command (stop/start/logs) would miss it.
     `  if docker rename ${rollout} ${canonical}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`,

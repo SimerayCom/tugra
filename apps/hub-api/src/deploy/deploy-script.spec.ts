@@ -144,6 +144,25 @@ describe("deploy-script", () => {
       expect(s).toContain("traefik.http.services.tugra_abc.loadbalancer.healthcheck.interval=3s");
     });
 
+    it("gate-accepted >=400 probe: live container is re-created WITHOUT the LB check label (no 503 after rename)", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate });
+      expect(s).toContain('if [ "$code" -ge 400 ]; then');
+      const runs = s.split("\n").filter((l) => l.includes("docker run -d --name"));
+      const rollout = runs.find((l) => l.includes("--name tugra_abc__rollout"))!;
+      const live = runs.find((l) => l.includes("--name tugra_abc "))!;
+      expect(rollout).toContain("loadbalancer.healthcheck.path=/");
+      expect(live).toBeDefined();
+      expect(live).not.toContain("loadbalancer.healthcheck");
+      expect(live).toContain("traefik.http.routers.tugra_abc.rule=Host(`app.example.com`)"); // same routing
+      // happy path (2xx/3xx) still renames the gated rollout into place
+      expect(s).toContain("docker rename tugra_abc__rollout tugra_abc");
+    });
+
+    it("non-httpExternal (stableWait) rolling probe emits no >=400 relabel branch (no $code available)", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "stableWait" }, ...gate });
+      expect(s).not.toContain('"$code" -ge 400');
+    });
+
     it("a hard-cutover (non-rolling) deploy carries NO LB health check (no regression)", () => {
       const s = buildRunScript(domained, "v1");
       expect(s).not.toContain("loadbalancer.healthcheck");
