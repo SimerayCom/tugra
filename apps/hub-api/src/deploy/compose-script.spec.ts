@@ -154,6 +154,24 @@ describe("compose-script", () => {
     expect(buildComposeUpScript(base)).not.toContain("docker-compose.tugra.yml");
   });
 
+  it("stamps a per-mount content fingerprint label (over the placeholder, not the resolved secret) so an edit recreates the service", () => {
+    const overrideOf = (content: string): string => {
+      const s = buildComposeUpScript({
+        ...base,
+        env: { REDIS_PASSWORD: "s3cret" },
+        configMounts: [{ serviceName: "redis", target: "/etc/redis.conf", content, mode: "0600" }],
+      });
+      const o = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
+      return Buffer.from(o![1], "base64").toString();
+    };
+    const y1 = overrideOf("requirepass ${REDIS_PASSWORD}\n");
+    expect(y1).toMatch(/tugra\.config-mount\.0=[0-9a-f]{12}/);
+    expect(y1).not.toContain("s3cret"); // fingerprint is of the placeholder content, never the resolved value
+    const fp1 = y1.match(/tugra\.config-mount\.0=([0-9a-f]{12})/)![1];
+    const fp2 = overrideOf("appendonly yes\n").match(/tugra\.config-mount\.0=([0-9a-f]{12})/)![1];
+    expect(fp2).not.toBe(fp1); // editing content changes the fingerprint → compose sees a config change
+  });
+
   it("writes a .env and passes --env-file when the app has env vars", () => {
     const s = buildComposeUpScript({ ...base, env: { FOO: "bar" } });
     expect(s).toContain("base64 -d > /etc/tugra/compose/abc/.env");

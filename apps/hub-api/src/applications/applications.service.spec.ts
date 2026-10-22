@@ -889,6 +889,96 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ composeFile: yaml }) }));
   });
 
+  it("setConfigMountContent rejects a non-compose app before any write", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setConfigMountContent("u1", "app1", "/etc/app.conf", "x"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setConfigMountContent 404s on an unknown target and never appends a mount (immutability)", async () => {
+    const update = jest.fn();
+    const composeApp = { ...app, source: "COMPOSE", configMounts: [{ serviceName: "redis", target: "/etc/redis.conf", content: "a", mode: "0600" }] };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setConfigMountContent("u1", "app1", "/etc/other.conf", "x"),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setConfigMountContent replaces ONLY content, keeps serviceName/target/mode/order, audits no content", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const composeApp = {
+      ...app,
+      source: "COMPOSE",
+      configMounts: [
+        { serviceName: "redis", target: "/etc/redis.conf", content: "requirepass ${REDIS_PASSWORD}", mode: "0600" },
+        { serviceName: "redis", target: "/x", content: "b" },
+      ],
+    };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setConfigMountContent("u1", "app1", "/etc/redis.conf", "appendonly yes\n");
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "app1" },
+      data: {
+        configMounts: [
+          { serviceName: "redis", target: "/etc/redis.conf", content: "appendonly yes\n", mode: "0600" },
+          { serviceName: "redis", target: "/x", content: "b" },
+        ],
+      },
+    });
+    const call = (audit.log as jest.Mock).mock.calls.map((c) => c[0]).find((e) => e?.action === "app.config_mount.update");
+    expect(call).toMatchObject({ target: "app1", meta: { target: "/etc/redis.conf", bytes: "appendonly yes\n".length } });
+    expect(JSON.stringify(call?.meta)).not.toContain("appendonly"); // content is never audited
+  });
+
+  it("setConfigMountContent refuses while a deploy is running and does not write", async () => {
+    const update = jest.fn();
+    const composeApp = { ...app, source: "COMPOSE", configMounts: [{ serviceName: "redis", target: "/etc/redis.conf", content: "a" }] };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(composeApp), update },
+      deployment: { findFirst: jest.fn().mockResolvedValue({ id: "running", status: "RUNNING" }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, {} as AgentWsServer).setConfigMountContent("u1", "app1", "/etc/redis.conf", "x"),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setConfigMountContent rejects a path-guard-failing target before any read-modify-write", async () => {
+    const update = jest.fn();
+    const composeApp = { ...app, source: "COMPOSE", configMounts: [{ serviceName: "redis", target: "/etc/redis.conf", content: "a" }] };
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(composeApp), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    for (const badTarget of ["../etc/passwd", "relative/x", "/etc/x:/y"]) {
+      await expect(
+        make(prisma, access, {} as AgentWsServer).setConfigMountContent("u1", "app1", badTarget, "x"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("listConfigMounts returns a compose app's mounts and rejects a non-compose app", async () => {
+    const mounts = [{ serviceName: "redis", target: "/etc/redis.conf", content: "a", mode: "0600" }];
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const okPrisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", configMounts: mounts }) } } as unknown as PrismaService;
+    await expect(make(okPrisma, access, {} as AgentWsServer).listConfigMounts("u1", "app1")).resolves.toEqual(mounts);
+    const imgPrisma = { application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService;
+    await expect(make(imgPrisma, access, {} as AgentWsServer).listConfigMounts("u1", "app1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("stores build args encrypted on setBuildArgs", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
