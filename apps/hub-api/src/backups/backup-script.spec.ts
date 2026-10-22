@@ -180,6 +180,19 @@ describe("backup-script", () => {
       // the real DB is dropped only AFTER a successful restore-to-temp (real DROP is the LAST DROP)
       expect(s.indexOf("RESTORE DATABASE")).toBeLessThan(s.lastIndexOf("DROP DATABASE"));
     });
+
+    it("restore-to (clone): reads the object under the SOURCE id, restores into the TARGET container", () => {
+      // db = the TARGET we load into (container tugra_db_db1), storageDbId = the SOURCE the backup was saved under
+      const s = buildRestoreScript(spec("POSTGRES"), "t.dump.gz", s3Dest, "src-db-9");
+      expect(s).toContain("mc cat tdest/my-bucket/tugra/src-db-9/t.dump.gz"); // object key uses the SOURCE id
+      expect(s).not.toContain("/db1/t.dump.gz"); // NOT the target's id (the clone bug)
+      expect(s).toContain("docker exec -i -e PGPASSWORD='pw' tugra_db_db1"); // but restores INTO the target container
+      // local destination clone resolves the source path the same way
+      const l = buildRestoreScript(spec("POSTGRES"), "t.dump.gz", LOCAL_DEST, "src-db-9");
+      expect(l).toContain("cat /etc/tugra/backups/src-db-9/t.dump.gz");
+      // default (no storageDbId) keeps the same-db behaviour
+      expect(buildRestoreScript(spec("POSTGRES"), "t.dump.gz", s3Dest)).toContain("tugra/db1/t.dump.gz");
+    });
   });
 
   describe("buildImportScript", () => {

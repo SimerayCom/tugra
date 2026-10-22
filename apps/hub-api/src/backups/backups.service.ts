@@ -175,7 +175,7 @@ export class BackupsService {
     const dest = await this.runner.destinationSpecById(backup.destinationId);
     await this.runRestore({
       db,
-      command: buildRestoreScript(this.runner.toSpec(db), backup.filename, dest),
+      command: buildRestoreScript(this.runner.toSpec(db), backup.filename, dest, backup.databaseId),
       kind: RestoreKind.RESTORE,
       createdBy: userId,
       backupId: backup.id,
@@ -205,7 +205,9 @@ export class BackupsService {
     const dest = await this.runner.destinationSpecById(backup.destinationId);
     await this.runRestore({
       db: target,
-      command: buildRestoreScript(this.runner.toSpec(target), backup.filename, dest),
+      // The backup object/file lives under the SOURCE db's id, but we restore into the TARGET container —
+      // pass the source id as the storage id so the S3 object key / local path resolves to where it was saved.
+      command: buildRestoreScript(this.runner.toSpec(target), backup.filename, dest, backup.databaseId),
       kind: RestoreKind.RESTORE_TO,
       createdBy: userId,
       backupId: backup.id,
