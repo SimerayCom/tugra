@@ -498,6 +498,12 @@ export class AuthService {
     userId: string,
   ): Promise<{ otpauthUrl: string; qrDataUrl: string }> {
     const user = await this.requireUser(userId);
+    // Refuse to re-run setup on an account that already has 2FA enabled: overwriting twoFaSecret with a
+    // fresh secret (and twoFaEnabled:false) would silently DISABLE the victim's working 2FA with nothing
+    // but a live session. Disabling must go through the password/TOTP-gated disable path first.
+    if (user.twoFaEnabled) {
+      throw new ConflictException("2FA is already enabled — disable it first to re-enroll");
+    }
     const secret = this.totp.generateSecret();
     await this.prisma.user.update({
       where: { id: userId },

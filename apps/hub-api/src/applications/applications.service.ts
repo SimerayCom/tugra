@@ -1455,8 +1455,16 @@ export class ApplicationsService {
       dockerName = appVolumeName(app, volumeName);
     }
     const rel = assertSafeFsPath(path);
-    if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-    return this.agentWs.sendFsReq(app.serverId, "list", dockerName, rel);
+    // A swarm (clustered) app's stateful volume lives on the node it is PINNED to (constraintServerId),
+    // not on app.serverId (the cluster's entry/manager) — targeting serverId would list the wrong host's
+    // filesystem (empty or a different app's data). Resolve the real node for clustered apps.
+    let targetServer = app.serverId;
+    if (app.clusterId) {
+      if (!app.constraintServerId) throw new BadRequestException("clustered app has no pinned node to browse");
+      targetServer = app.constraintServerId;
+    }
+    if (!this.agentWs.isOnline(targetServer)) throw new ServiceUnavailableException("agent offline");
+    return this.agentWs.sendFsReq(targetServer, "list", dockerName, rel);
   }
 
   /**
@@ -1569,7 +1577,9 @@ export class ApplicationsService {
    * persisted logs served by deployments().
    */
   async streamLogs(userId: string, id: string) {
-    await this.require(userId, id);
+    // Writer-only: build/deploy logs can echo secrets (env values printed during a build), and the REST
+    // `deployments()` / persisted-log path is already writer-gated — a viewer must not read them over SSE.
+    await this.requireWrite(userId, id);
     return this.deployLogs.subscribe(id);
   }
 

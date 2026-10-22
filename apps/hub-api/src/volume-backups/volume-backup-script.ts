@@ -62,7 +62,9 @@ export function buildVolumeBackupScript(
   if (dest.type === "S3" && dest.s3) {
     lines.push(MC_INSTALL);
     const target = mcTarget(dest.s3, ns(appId, volumeName), filename);
-    lines.push(`${mcHostEnv(dest.s3)} sh -c ${shq(`${pipe.join(" | ")} | mc pipe ${target}`)}`);
+    // bash -o pipefail so a failed tar/dump stage fails the whole command (plain `sh -c` would let
+    // `mc pipe` exit 0 after uploading a truncated object → backup wrongly recorded SUCCESS).
+    lines.push(`${mcHostEnv(dest.s3)} bash -o pipefail -c ${shq(`${pipe.join(" | ")} | mc pipe ${target}`)}`);
     lines.push(`${mcHostEnv(dest.s3)} mc stat --json ${target}`);
   } else {
     const dir = volumeBackupDir(appId, volumeName);

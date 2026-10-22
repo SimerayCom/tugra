@@ -75,7 +75,7 @@ describe("TerminalGateway", () => {
 
   it("accepts a personal access token", async () => {
     const { gw, agentWs } = make({
-      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["admin"] }),
       server: { id: "s1", teamId: "t1" },
     });
     const ws = fakeWs();
@@ -85,7 +85,7 @@ describe("TerminalGateway", () => {
 
   it("rejects a PAT terminal when the API is disabled (kill-switch reaches the WS path)", async () => {
     const { gw, agentWs } = make({
-      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["admin"] }),
       server: { id: "s1", teamId: "t1" },
       apiEnabled: false,
     });
@@ -97,7 +97,7 @@ describe("TerminalGateway", () => {
 
   it("rejects a PAT terminal from a source IP outside the allowlist", async () => {
     const { gw, agentWs } = make({
-      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["admin"] }),
       server: { id: "s1", teamId: "t1" },
       apiAllowedIps: ["10.0.0.0/8"],
     });
@@ -109,13 +109,25 @@ describe("TerminalGateway", () => {
 
   it("allows a PAT terminal from an allowlisted source IP", async () => {
     const { gw, agentWs } = make({
-      validate: jest.fn().mockResolvedValue({ userId: "u1" }),
+      validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["admin"] }),
       server: { id: "s1", teamId: "t1" },
       apiAllowedIps: ["203.0.113.0/24"],
     });
     const ws = fakeWs();
     await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc", "203.0.113.7"));
     expect(agentWs.sendToAgent).toHaveBeenCalled();
+  });
+
+  it("rejects a PAT terminal when the token lacks the admin scope (read-only token → no root shell)", async () => {
+    const { gw, agentWs } = make({
+      validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["read", "write", "deploy"] }),
+      server: { id: "s1", teamId: "t1" },
+      apiAllowedIps: ["203.0.113.0/24"],
+    });
+    const ws = fakeWs();
+    await connect(gw, ws, req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc", "203.0.113.7"));
+    expect(ws.close).toHaveBeenCalledWith(1008, "unauthorized");
+    expect(agentWs.sendToAgent).not.toHaveBeenCalled();
   });
 
   it("does NOT gate a session JWT terminal (only PATs)", async () => {
