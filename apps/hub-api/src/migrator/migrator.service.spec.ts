@@ -1,10 +1,30 @@
-import { ForbiddenException } from "@nestjs/common";
-import { MigratorService } from "./migrator.service";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { MigratorService, volumeDockerOptions } from "./migrator.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
+
+describe("volumeDockerOptions (adopt carries named volumes so redeploy keeps data)", () => {
+  it("carries named volumes as -v, dedupes by target, and skips bind/tmpfs", () => {
+    const opts = volumeDockerOptions([
+      { type: "volume", source: "wp_data", target: "/var/www/html" },
+      { type: "bind", source: "/srv/x", target: "/data" }, // host bind — not carried
+      { type: "volume", source: "wp_db", target: "/var/lib/mysql" },
+      { type: "volume", source: "dupe", target: "/var/www/html" }, // same target — deduped
+    ]);
+    expect(opts).toBe("-v wp_data:/var/www/html -v wp_db:/var/lib/mysql");
+  });
+  it("returns null when there are no named volumes (unchanged adopt path)", () => {
+    expect(volumeDockerOptions([{ type: "bind", source: "/srv/x", target: "/data" }])).toBeNull();
+    expect(volumeDockerOptions([])).toBeNull();
+  });
+  it("fails closed on an unsafe volume name/target rather than dropping data", () => {
+    expect(() => volumeDockerOptions([{ type: "volume", source: "bad name", target: "/d" }])).toThrow(BadRequestException);
+    expect(() => volumeDockerOptions([{ type: "volume", source: "ok", target: "../etc" }])).toThrow(BadRequestException);
+  });
+});
 
 const server = { id: "s1", teamId: "t1" };
 
