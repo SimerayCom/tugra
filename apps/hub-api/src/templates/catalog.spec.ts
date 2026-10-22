@@ -41,6 +41,18 @@ describe("template catalog", () => {
     }
   });
 
+  it("no template value carries the corrupt `$localhost` self-URL (resolver must consume the `$` of `$SERVICE_*`)", () => {
+    for (const [slug, tpl] of Object.entries(TEMPLATES)) {
+      const haystacks = [
+        tpl.composeFile,
+        ...(tpl.mounts ?? []).map((m) => m.content),
+        ...Object.values(tpl.env ?? {}),
+        ...Object.values(tpl.variables ?? {}),
+      ].filter((s): s is string => typeof s === "string");
+      expect(`${slug}:${haystacks.some((s) => /\$(https?:\/\/)?localhost/.test(s))}`).toBe(`${slug}:false`);
+    }
+  });
+
   it("ships no unsupported compose features (inline content / relative binds)", () => {
     for (const [slug, tpl] of Object.entries(TEMPLATES)) {
       expect(`${slug}:${/^\s*content:/m.test(tpl.composeFile)}`).toBe(`${slug}:false`);

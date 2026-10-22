@@ -89,6 +89,33 @@ describe("template-manifest", () => {
     expect(m.exposure).toEqual([{ serviceName: "wordpress", containerPort: 80, defaultMode: "domain", public: true }]);
   });
 
+  it("derives exposure from a curated compose's published ports (first = primary domain, rest = host ports)", () => {
+    const composeFile =
+      'services:\n  web:\n    image: x\n    ports:\n      - "8080:80"\n      - "9090:9090"\n  db:\n    image: y\n    ports:\n      - "5432:5432"\n';
+    expect(toManifest(def({ composeFile })).exposure).toEqual([
+      { serviceName: "web", containerPort: 80, defaultMode: "domain", public: true },
+      { serviceName: "web", containerPort: 9090, defaultMode: "hostPort", public: false },
+      { serviceName: "db", containerPort: 5432, defaultMode: "hostPort", public: false },
+    ]);
+  });
+
+  it("keeps explicit exposure / web authoritative over the compose-derived one", () => {
+    const composeFile = 'services:\n  app:\n    image: x\n    ports:\n      - "8080:80"\n';
+    expect(toManifest(def({ composeFile, web: { service: "app", port: 3000 } })).exposure).toEqual([
+      { serviceName: "app", containerPort: 3000, defaultMode: "domain", public: true },
+    ]);
+    const explicit = [{ serviceName: "app", containerPort: 81, defaultMode: "hostPort" as const }];
+    expect(toManifest(def({ composeFile, exposure: explicit })).exposure).toEqual(explicit);
+    expect(toManifest(def()).exposure).toBeUndefined(); // no ports, no hints → omitted
+  });
+
+  it("every curated template that publishes a quoted host port ends up with exposure metadata", () => {
+    for (const [slug, tpl] of Object.entries(TEMPLATES)) {
+      if (!/^\s+-\s*"\d+:\d+"\s*$/m.test(tpl.composeFile)) continue;
+      expect(`${slug}:${(toManifest(tpl).exposure ?? []).length > 0}`).toBe(`${slug}:true`);
+    }
+  });
+
   it("omits empty optional sections (no fields/variables/exposure/mounts keys)", () => {
     const m = toManifest(def()); // no secrets, no env, no web
     expect(m.fields).toBeUndefined();

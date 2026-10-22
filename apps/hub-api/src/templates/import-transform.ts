@@ -335,7 +335,10 @@ function resolveTokensInText(text: string, secrets: SecretMap, urls: UrlMap, hos
       text = text.split(tok).join(secrets.get(tok)!.key);
     } else {
       const lit = urlLiteral(urls.get(tok)!, hostPort);
-      text = text.split(`\${${tok}}`).join(lit).split(tok).join(lit);
+      // Order matters: `${tok}` first, then the bare compose `$tok` form (consume its leading `$`, else
+      // it leaves a corrupt `$localhost:<port>`), then any remaining bare `tok`. Tokens are already sorted
+      // longest-first (above) so `$SERVICE_URL_X` is not eaten by a shorter prefix.
+      text = text.split(`\${${tok}}`).join(lit).split(`$${tok}`).join(lit).split(tok).join(lit);
     }
   }
   return text;

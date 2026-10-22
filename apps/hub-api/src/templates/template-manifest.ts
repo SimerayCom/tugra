@@ -112,6 +112,61 @@ function secretToField(s: SecretSpec): FormField {
 }
 
 /**
+ * Derive exposure metadata from a hand-authored (curated) compose's published ports, for templates that
+ * carry neither `exposure` nor `web`. Line/indent based (no YAML dep). Only the `- "<host>:<container>"`
+ * double-quoted form is recognised — exactly the shape `rewriteHostPorts` can renumber, so every returned
+ * entry is rewrite-compatible. The FIRST published port (document order) is the primary `domain` target
+ * (mirrors `inferComposeWeb`), so the manifest agrees with what deploy routes to; any further port is a
+ * plain `hostPort`. A container port already seen is skipped (rewriteHostPorts matches by container port).
+ */
+export function deriveExposureFromCompose(compose: string): ExposePort[] {
+  const out: ExposePort[] = [];
+  const seen = new Set<number>();
+  let inServices = false;
+  let serviceIndent = -1;
+  let service: string | null = null;
+  let inPorts = false;
+  let portsIndent = -1;
+  for (const line of compose.split("\n")) {
+    if (line.trim() === "" || /^\s*#/.test(line)) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) {
+      inServices = /^services:\s*$/.test(line);
+      service = null;
+      inPorts = false;
+      serviceIndent = -1;
+      continue;
+    }
+    if (!inServices) continue;
+    if (serviceIndent === -1) serviceIndent = indent;
+    if (indent === serviceIndent) {
+      const m = /^\s*([A-Za-z0-9._-]+):\s*$/.exec(line);
+      service = m ? m[1] : null;
+      inPorts = false;
+      continue;
+    }
+    if (!service) continue;
+    // Any `key:` line (bare or with a value) ends the previous block; only a bare `ports:` opens one.
+    const key = /^(\s*)([A-Za-z0-9._-]+):(?:\s|$)/.exec(line);
+    if (key) {
+      inPorts = key[2] === "ports" && /^\s*ports:\s*$/.test(line);
+      portsIndent = key[1].length;
+      continue;
+    }
+    if (inPorts && indent >= portsIndent) {
+      const item = /^\s*-\s*"(\d+):(\d+)"\s*$/.exec(line);
+      if (!item) continue;
+      const containerPort = Number(item[2]);
+      if (seen.has(containerPort)) continue;
+      seen.add(containerPort);
+      const primary = out.length === 0;
+      out.push({ serviceName: service, containerPort, defaultMode: primary ? "domain" : "hostPort", public: primary });
+    }
+  }
+  return out;
+}
+
+/**
  * Map a legacy `TemplateDef` to a `TemplateManifest` (backward-compatible, lossless): its `secrets[]`
  * become typed `fields[]`, its static `env` becomes `variables` (minus any key a secret field owns),
  * and its `web` primary service becomes a single domain `exposure`. Empty optional sections are
@@ -127,13 +182,15 @@ export function toManifest(tpl: TemplateDef): TemplateManifest {
     if (!fieldKeys.has(k)) variables[k] = v;
   }
 
-  // Prefer the importer's explicit exposure metadata (v2); fall back to the `web` hint.
+  // Prefer the importer's explicit exposure metadata (v2); fall back to the `web` hint; finally (curated
+  // templates carry neither) derive it from the compose's own published ports so the UI/deploy know the
+  // web port and installs get a freshly allocated host port instead of the baked one.
   const exposure: ExposePort[] =
     tpl.exposure && tpl.exposure.length > 0
       ? tpl.exposure
       : tpl.web
         ? [{ serviceName: tpl.web.service, containerPort: tpl.web.port, defaultMode: "domain", public: true }]
-        : [];
+        : deriveExposureFromCompose(tpl.composeFile);
 
   const mounts: ConfigMount[] = tpl.mounts ?? [];
 

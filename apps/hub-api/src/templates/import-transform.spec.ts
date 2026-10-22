@@ -85,6 +85,15 @@ describe("transformCompose", () => {
     expect(r.compose).toContain("http://localhost:20010");
   });
 
+  it("consumes the `$` of the bare `$SERVICE_*` compose form (no corrupt `$localhost`)", () => {
+    const raw =
+      "services:\n  app:\n    image: x\n    environment:\n      - APP_URL=$SERVICE_URL_APP\n      - APP_HOST=$SERVICE_FQDN_APP\n      - APP_BRACED=${SERVICE_FQDN_APP}\n";
+    const r = transformCompose(raw, 20010, 80);
+    expect(r.compose).not.toContain("$localhost");
+    expect(r.compose).not.toContain("$http");
+    expect(r.compose).not.toMatch(/(?<![A-Za-z0-9_])SERVICE_[A-Z0-9_]+/); // no unresolved magic token
+  });
+
   it("recovers an inline content mount into mounts[] and bakes a clean compose", () => {
     const raw =
       "services:\n  app:\n    image: x\n    ports:\n      - '8080:80'\n    volumes:\n      - type: bind\n        target: /etc/app.conf\n        content: \"a=1\"\n";
