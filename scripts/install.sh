@@ -208,6 +208,18 @@ ensure_env SETUP_CODE            "$(rand_hex 4)"    # first-run owner-claim code
 # Single-box quick start: the hub auto-creates a "This machine" server when LOCAL_AGENT_ENROLL_TOKEN is set,
 # and the bundled `agent` compose service connects with the same token. Generate-once so re-runs are stable.
 ensure_env LOCAL_AGENT_ENROLL_TOKEN "$(rand_hex 24)"   # 48 hex chars
+# Best-effort-detect the host's real public IP so the hub pins it on "This machine". Without it, the first
+# agent report records the agent's in-container docker-bridge source IP (172.18.x) and every deployed app URL
+# dead-links. Left unset if detection fails or isn't a bare IPv4; the hub then falls back to its IP hygiene.
+if ! env_has LOCAL_SERVER_PUBLIC_IP; then
+  # `|| PUB_IP=""` is REQUIRED: under `set -euo pipefail` a fully-offline probe (all curls fail) makes the
+  # substitution exit non-zero and would otherwise abort the whole installer. Best-effort means unset-on-failure.
+  PUB_IP="$( { curl -fsS -m 5 https://api.ipify.org || curl -fsS -m 5 https://ifconfig.me || curl -fsS -m 5 https://icanhazip.com; } 2>/dev/null | tr -d '[:space:]' )" || PUB_IP=""
+  case "$PUB_IP" in
+    "" | *[!0-9.]*) : ;;                              # empty / not a bare IPv4 (IPv6 or an HTML error page) → skip
+    *) ensure_env LOCAL_SERVER_PUBLIC_IP "$PUB_IP" ;; # hub re-validates it with isPublicIp before pinning
+  esac
+fi
 # Agent image ref (the agent re-invokes itself as the sandboxed file helper; hub uses AGENT_IMAGE for installs).
 ensure_env TUGRA_AGENT_IMAGE "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
 ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
