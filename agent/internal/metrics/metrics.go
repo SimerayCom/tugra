@@ -4,6 +4,8 @@ package metrics
 import (
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
@@ -84,6 +86,37 @@ type Collector struct {
 	prevDiskRead, prevDiskWrite uint64
 	prevTimeDisk                time.Time
 	hasPrevDisk                 bool
+
+	// Slow/optional sensors (temperature + GPU) are refreshed OFF the hot path: gopsutil's sensor read
+	// can block and nvidia-smi can hang, while Sample() runs inline right before the heartbeat, so a
+	// synchronous call could make the server flap OFFLINE. kickSlow() launches at most one background
+	// refresh when the cache is stale; Sample() only copies the cache. Battery is a fast sysfs read,
+	// done inline.
+	slowMu       sync.Mutex
+	slowInflight atomic.Bool
+	slowAt       time.Time
+	tempCache    *float64
+	sensorsCache map[string]float64
+	gpuCache     []protocol.GPUStat
+}
+
+// kickSlow launches one background refresh of the temperature + GPU caches when the last one is older
+// than ~4s and none is already running. It never blocks the caller.
+func (c *Collector) kickSlow() {
+	c.slowMu.Lock()
+	fresh := !c.slowAt.IsZero() && time.Since(c.slowAt) < 4*time.Second
+	c.slowMu.Unlock()
+	if fresh || !c.slowInflight.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.slowInflight.Store(false)
+		temp, sensorMap := collectTemp()
+		gpus := collectGPU()
+		c.slowMu.Lock()
+		c.tempCache, c.sensorsCache, c.gpuCache, c.slowAt = temp, sensorMap, gpus, time.Now()
+		c.slowMu.Unlock()
+	}()
 }
 
 // NewCollector returns a Collector whose first Sample reports zero network rate.
@@ -130,5 +163,18 @@ func (c *Collector) Sample() (protocol.MetricsSample, error) {
 		}
 		c.prevDiskRead, c.prevDiskWrite, c.prevTimeDisk, c.hasPrevDisk = read, write, now, true
 	}
+	// Optional sensors: temperature + GPU come from the background cache (never blocks the heartbeat);
+	// battery is a fast inline sysfs read. Absent hardware leaves the fields nil → omitted on the wire.
+	c.kickSlow()
+	c.slowMu.Lock()
+	s.Temp = c.tempCache
+	if len(c.sensorsCache) > 0 {
+		s.Sensors = c.sensorsCache
+	}
+	if len(c.gpuCache) > 0 {
+		s.Gpus = c.gpuCache
+	}
+	c.slowMu.Unlock()
+	s.Battery = readBattery()
 	return s, nil
 }
