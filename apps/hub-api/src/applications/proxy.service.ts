@@ -32,12 +32,18 @@ export class ProxyService {
     // MUST honor the server's bind mode — otherwise a deploy would silently re-publish :80/:443 (reverting a
     // loopback/none server) or fail where another web server holds those ports. Default servers stay public.
     const { bind, ...dns } = await this.proxyConfig(serverId);
-    await this.agentWs.sendCommand(
+    const r = await this.agentWs.sendCommand(
       serverId,
       buildProxySetupScript({ acmeEmail: email, bind, ...dns }),
       "deploy",
       60_000,
     );
+    // The setup script does `docker rm -f tugra-proxy` BEFORE `docker run`, so a failed re-run (port
+    // taken, docker error) leaves NO proxy and every routed app on this server down. Never let that pass
+    // as a successful deploy — surface it so the caller fails loudly.
+    if (r.exitCode !== 0) {
+      throw new BadRequestException(`reverse-proxy (Traefik) setup failed on this server: ${r.output.trim().slice(-500)}`);
+    }
   }
 
   /** The server's proxy bind mode + its DNS-01 provider/decrypted creds (the latter only when certMode is

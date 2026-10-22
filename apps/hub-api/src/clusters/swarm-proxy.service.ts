@@ -7,6 +7,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { envFileB64 } from "../deploy/deploy-script";
 import {
   buildClassicProxyRunningScript,
+  buildSwarmProxyCertDirScript,
   buildSwarmProxyEnsureScript,
   buildSwarmProxyStatusScript,
   buildSwarmProxyTeardownScript,
@@ -90,7 +91,9 @@ export class SwarmProxyService {
     const pool: IngressPoolNode[] = [{ id: mgr.id, name: mgr.name, swarmNodeId: mgr.swarmNodeId, publicIp: mgr.publicIp }];
     if (mgr.ingressReplicas > 1) {
       const extra = await this.prisma.server.findMany({
-        where: { clusterId, id: { not: mgr.id }, status: "ONLINE", swarmNodeId: { not: null } },
+        // MANAGERS only: Traefik's swarm provider needs the manager-only Docker API, so a worker replica
+        // would start but discover zero services. Workers stay out of the pool (and get their label stripped).
+        where: { clusterId, id: { not: mgr.id }, status: "ONLINE", swarmNodeId: { not: null }, swarmRole: "MANAGER", capabilities: { has: "swarm" } },
         orderBy: { id: "asc" },
         take: mgr.ingressReplicas - 1,
         select: { id: true, name: true, swarmNodeId: true, publicIp: true },
@@ -196,6 +199,19 @@ export class SwarmProxyService {
     } else {
       confighash = createHash("sha256").update(`${email}|http|${pool.length}|${poolKey}`).digest("hex").slice(0, 12);
     }
+    // The Traefik service bind-mounts a NODE-LOCAL ACME dir; a missing source makes the task fail to start
+    // on that node, so every replica node needs it. The manager's ensure script creates it for itself —
+    // prepare every OTHER pool node first (idempotent; a no-op for the single-node pool). Fail loudly rather
+    // than let the service sit at <N/N replicas with nothing in the deploy log.
+    const certDirScript = buildSwarmProxyCertDirScript(!!dns);
+    await Promise.all(
+      pool.slice(1).map(async (p) => {
+        const r = await this.agentWs.sendCommand(p.id, certDirScript, "swarm").catch(() => ({ exitCode: 1, output: "" }));
+        if (r.exitCode !== 0) {
+          throw new ServiceUnavailableException(`could not prepare the ingress ACME store on swarm node '${p.name}'`);
+        }
+      }),
+    );
     await this.agentWs.sendCommand(
       mgr.id,
       buildSwarmProxyEnsureScript({ nodeIds, unlabelNodeIds, replicas: pool.length, acmeEmail: email, confighash, secretPrefix, dns }),

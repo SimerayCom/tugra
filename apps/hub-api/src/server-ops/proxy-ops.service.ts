@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -53,7 +54,12 @@ export class ProxyOpsService {
     // The bind mode is applied here — `start` recreates the proxy container, so changing it
     // and re-starting the proxy publishes :80/:443 differently (public / loopback / tunnel-only).
     const s = await this.prisma.server.findUnique({ where: { id: serverId }, select: { proxyBind: true } }).catch(() => null);
-    await this.agentWs.sendCommand(serverId, buildProxySetupScript({ acmeEmail: email, bind: s?.proxyBind, ...dns }), "deploy", PROXY_TIMEOUT_MS);
+    const r = await this.agentWs.sendCommand(serverId, buildProxySetupScript({ acmeEmail: email, bind: s?.proxyBind, ...dns }), "deploy", PROXY_TIMEOUT_MS);
+    // The script removes the old container before `docker run`; a non-zero exit means the proxy is now
+    // gone/broken. Fail loudly (and skip the success audit + status probe) rather than reporting success.
+    if (r.exitCode !== 0) {
+      throw new BadRequestException(`reverse-proxy (Traefik) start failed: ${r.output.trim().slice(-500)}`);
+    }
     await this.audit.log({ actor: userId, action: "server.proxy.start", target: serverId });
     return this.statusAfter(serverId);
   }

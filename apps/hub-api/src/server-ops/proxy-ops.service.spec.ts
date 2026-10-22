@@ -63,6 +63,13 @@ describe("ProxyOpsService", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.proxy.start" }));
   });
 
+  it("start throws on a non-zero setup exit, without auditing success or probing status", async () => {
+    const send = jest.fn().mockResolvedValueOnce({ exitCode: 125, output: "docker: port is already allocated" });
+    await expect(make(Role.OWNER, send).start("u1", "s1")).rejects.toThrow(/port is already allocated/);
+    expect(send).toHaveBeenCalledTimes(1); // no status-after call
+    expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "server.proxy.start" }));
+  });
+
   it("status parses the container state", async () => {
     expect((await make(Role.VIEWER, jest.fn().mockResolvedValue({ exitCode: 0, output: "running\n" })).status("u1", "s1")).status).toBe("running");
     expect((await make(Role.VIEWER, jest.fn().mockResolvedValue({ exitCode: 0, output: "exited\n" })).status("u1", "s1")).status).toBe("stopped");
