@@ -115,12 +115,59 @@ describe("MonitorsService.update", () => {
     const createMany = jest.fn().mockResolvedValue({});
     const prisma = {
       monitor: { findUnique: jest.fn().mockResolvedValue(monitor), update: jest.fn().mockResolvedValue(monitor) },
+      notificationChannel: { findMany: jest.fn().mockResolvedValue([{ id: "c1" }, { id: "c2" }]) },
       monitorChannel: { deleteMany, createMany },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue(Role.OWNER) } as unknown as TeamAccessService;
     await make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() }).update("u1", "m1", { channelIds: ["c1", "c2"] });
     expect(deleteMany).toHaveBeenCalledWith({ where: { monitorId: "m1" } });
     expect(createMany).toHaveBeenCalledWith(expect.objectContaining({ data: [{ monitorId: "m1", channelId: "c1" }, { monitorId: "m1", channelId: "c2" }] }));
+  });
+
+  it("rejects channelIds that belong to another team (no cross-team spam)", async () => {
+    const createMany = jest.fn();
+    const prisma = {
+      monitor: { findUnique: jest.fn().mockResolvedValue(monitor), update: jest.fn() },
+      notificationChannel: { findMany: jest.fn().mockResolvedValue([]) }, // c9 is not owned by team t1
+      monitorChannel: { deleteMany: jest.fn(), createMany },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, { schedule: jest.fn(), unschedule: jest.fn() }).update("u1", "m1", { channelIds: ["c9"] }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("MonitorsService.create authz (cross-team targets)", () => {
+  it("rejects a serverId that belongs to another team and creates nothing", async () => {
+    const create = jest.fn();
+    const prisma = {
+      server: { findFirst: jest.fn().mockResolvedValue(null) }, // s9 is not in team t1
+      monitor: { create },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, { schedule: jest.fn() }).create("u1", {
+        teamId: "t1", name: "x", type: "METRIC", metric: "CPU", thresholdPct: 90, serverId: "s9",
+      } as unknown as Parameters<MonitorsService["create"]>[1]),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a channelId that belongs to another team and creates nothing", async () => {
+    const create = jest.fn();
+    const prisma = {
+      notificationChannel: { findMany: jest.fn().mockResolvedValue([]) }, // c9 not owned by t1
+      monitor: { create },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(
+      make(prisma, access, { schedule: jest.fn() }).create("u1", {
+        teamId: "t1", name: "x", type: "HTTP", target: "https://x.com", channelIds: ["c9"],
+      } as unknown as Parameters<MonitorsService["create"]>[1]),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(create).not.toHaveBeenCalled();
   });
 });
 

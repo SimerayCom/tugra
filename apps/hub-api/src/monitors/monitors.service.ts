@@ -50,8 +50,29 @@ export class MonitorsService {
     private readonly scheduler: MonitorSchedulerService,
   ) {}
 
+  /** A monitor may only reference a server and notification channels that belong to its OWN team.
+   *  Without this guard, create/update would accept a foreign serverId (leaking another team's
+   *  host metrics into this monitor and its alerts) or a foreign channelId (spamming another team's
+   *  channel) supplied by raw id, since the caller only proves write access to its own team. */
+  private async assertTeamOwnsTargets(
+    teamId: string,
+    serverId: string | null | undefined,
+    channelIds: string[] | undefined,
+  ): Promise<void> {
+    if (serverId) {
+      const srv = await this.prisma.server.findFirst({ where: { id: serverId, teamId }, select: { id: true } });
+      if (!srv) throw new ForbiddenException("server does not belong to this team");
+    }
+    const ids = channelIds ? [...new Set(channelIds)] : [];
+    if (ids.length) {
+      const owned = await this.prisma.notificationChannel.findMany({ where: { id: { in: ids }, teamId }, select: { id: true } });
+      if (owned.length !== ids.length) throw new ForbiddenException("notification channel does not belong to this team");
+    }
+  }
+
   async create(userId: string, dto: CreateMonitorInput): Promise<MonitorView> {
     await this.access.requirePermission(userId, dto.teamId, 'monitors');
+    await this.assertTeamOwnsTargets(dto.teamId, dto.serverId, dto.channelIds);
     const m = await this.prisma.monitor.create({
       data: {
         name: dto.name,
@@ -128,6 +149,7 @@ export class MonitorsService {
     const m = await this.prisma.monitor.findUnique({ where: { id } });
     if (!m) throw new NotFoundException("monitor not found");
     await this.access.requirePermission(userId, m.teamId, 'monitors');
+    await this.assertTeamOwnsTargets(m.teamId, undefined, dto.channelIds);
 
     const updated = await this.prisma.monitor.update({
       where: { id },
