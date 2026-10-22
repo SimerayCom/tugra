@@ -185,13 +185,21 @@ export function buildBackupScript(db: DbSpec, filename: string, dest: Destinatio
   return lines.join("\n");
 }
 
-export function buildRestoreScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
+export function buildRestoreScript(
+  db: DbSpec,
+  filename: string,
+  dest: DestinationSpec,
+  // The id the backup is STORED under (S3 object prefix / local path). Defaults to the target db's id for a
+  // same-database restore, but for a cross-database restore ("restore-to" / clone) the backup lives under the
+  // SOURCE db's id while `db` is the TARGET we load into — so the two differ and the caller passes the source.
+  storageDbId: string = db.id,
+): string {
   // source → [gpg -d] → gunzip → engine restore. Source is a stored backup
   // (S3 object or local file); the pipeline + engine handling is shared.
   const source =
     dest.type === "S3" && dest.s3
-      ? `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, db.id, filename)}`
-      : `cat ${backupPath(db.id, filename)}`;
+      ? `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, storageDbId, filename)}`
+      : `cat ${backupPath(storageDbId, filename)}`;
   // Postgres backups written before the custom-format switch are plain SQL
   // (`.sql.gz`); newer ones are `.dump.gz`. Both are OUR dumps of a single DB,
   // so the plain path can safely run atomically (--single-transaction).
