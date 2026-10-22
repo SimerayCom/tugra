@@ -27,9 +27,11 @@ LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
       org.opencontainers.image.vendor="Simeray Ltd"
 # Debian's docker.io package ships no `docker compose` v2 plugin and no buildx, which breaks every
 # COMPOSE-source app and template deploy. Take the (statically linked) CLI + plugins from the official
-# docker CLI image instead; apt only provides git + ca-certificates + curl.
+# docker CLI image instead; apt provides git + ca-certificates + curl + bash.
+# bash is required: the hub's backup/restore scripts use `set -o pipefail`, which the
+# base image's /bin/sh (dash < 0.5.13) rejects — the agent runs scripts via bash.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl \
+ && apt-get install -y --no-install-recommends git ca-certificates curl bash \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose

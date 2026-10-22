@@ -26,6 +26,35 @@ func TestRunNonZeroExit(t *testing.T) {
 	}
 }
 
+// The hub's backup/restore scripts begin with `set -o pipefail`, which dash < 0.5.13
+// rejects outright ("Illegal option -o pipefail", exit 2) — that silently broke every
+// database backup. Run must use a shell that accepts the option.
+func TestRunAcceptsPipefail(t *testing.T) {
+	r := Run(context.Background(), "set -e\nset -o pipefail\necho ok", 5*time.Second)
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d (output: %q)", r.ExitCode, r.Output)
+	}
+	if strings.Contains(r.Output, "Illegal option") {
+		t.Fatalf("shell rejected pipefail: %q", r.Output)
+	}
+	if !strings.Contains(r.Output, "ok") {
+		t.Fatalf("expected output 'ok', got %q", r.Output)
+	}
+}
+
+// pipefail must be ACTIVE, not merely accepted: a failing producer in a pipe (a failed
+// pg_dump in `pg_dump | gzip > file`) must abort, or a truncated backup would be recorded
+// as SUCCESS. With set -e + pipefail the failure stops the script before the next line.
+func TestRunPipefailIsActive(t *testing.T) {
+	r := Run(context.Background(), "set -e\nset -o pipefail\nfalse | cat\necho unreachable", 5*time.Second)
+	if r.ExitCode == 0 {
+		t.Fatalf("expected non-zero exit from a failed producer under pipefail, got 0 (output: %q)", r.Output)
+	}
+	if strings.Contains(r.Output, "unreachable") {
+		t.Fatalf("pipefail inactive: a failed producer did not abort the script (output: %q)", r.Output)
+	}
+}
+
 func TestRunStreamingEmitsChunks(t *testing.T) {
 	var mu sync.Mutex
 	var chunks []string
