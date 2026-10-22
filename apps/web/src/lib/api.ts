@@ -152,8 +152,21 @@ export class ApiError extends Error {
   }
 }
 
-/** Try a cookie-based refresh; the hub reads tg_refresh from the cookie and rotates the session. */
-async function tryRefresh(): Promise<boolean> {
+/**
+ * Try a cookie-based refresh; the hub reads tg_refresh from the cookie and ROTATES the session (the old
+ * refresh token is invalidated the moment it's used). The app fires many concurrent requests (fleet poll,
+ * metric streams, parallel queries), so when the 15-min access token expires they all 401 at once.
+ * Without single-flighting, each would POST /auth/refresh with the SAME cookie — the first rotates it, the
+ * rest present the now-rotated token, and the hub's reuse-detection REVOKES the whole family, logging the
+ * user out mid-session (the "it signs me out after ~15 min" symptom). Share ONE in-flight refresh so the
+ * rotation can never race itself; the next 401 cycle starts a fresh one.
+ */
+let refreshing: Promise<boolean> | null = null;
+function tryRefresh(): Promise<boolean> {
+  if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
+  return refreshing;
+}
+async function doRefresh(): Promise<boolean> {
   const headers = new Headers({ "content-type": "application/json" });
   const csrf = readCookie(TG_CSRF);
   if (csrf) headers.set("x-csrf-token", csrf);
