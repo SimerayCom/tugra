@@ -99,15 +99,23 @@ describe("backup-script", () => {
       // connect explicitly as the managed user (default-user has no grant) + wait for the server to accept
       expect(s).toContain('--user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD"');
       expect(s).toContain('--query "SELECT 1"'); // readiness poll before the BACKUP
+      // hand the backups dir to the clickhouse user (docker exec is root → server uid 101 can't write .lock)
+      expect(s).toContain("chown clickhouse:clickhouse /var/lib/clickhouse/backups");
     });
 
-    it("dumps MySQL/MariaDB with consistent-snapshot flags (no table locks) over forced TCP", () => {
+    it("dumps MySQL/MariaDB with consistent-snapshot flags (no table locks) over forced TCP, after a readiness wait", () => {
       const my = buildBackupScript(spec("MYSQL"), "t", s3Dest);
       expect(my).toContain("mysqldump --single-transaction --quick --no-tablespaces");
       expect(my).toContain("--protocol=TCP -h127.0.0.1"); // default unix-socket path is unreliable across images
+      expect(my).toContain('mysql -u'); // readiness prelude polls the mysql client
+      expect(my).toContain('SELECT 1'); // …with SELECT 1 before the dump runs
+      // the readiness wait must precede the dump (so a just-provisioned server isn't dumped before it's up)
+      expect(my.indexOf("SELECT 1")).toBeLessThan(my.indexOf("mysqldump"));
       const maria = buildBackupScript(spec("MARIADB"), "t", s3Dest);
       expect(maria).toContain("mariadb-dump --single-transaction --quick");
       expect(maria).toContain("--protocol=TCP -h127.0.0.1");
+      expect(maria).toContain('mariadb -u'); // MariaDB readiness uses the mariadb client
+      expect(maria.indexOf("SELECT 1")).toBeLessThan(maria.indexOf("mariadb-dump"));
     });
   });
 
@@ -289,9 +297,13 @@ describe("backup-script", () => {
   });
 
   describe("extra engines (Dilim 17)", () => {
-    it("MariaDB dumps via mariadb-dump and restores via mariadb client", () => {
+    it("MariaDB dumps via mariadb-dump and restores via mariadb client, each after a readiness wait", () => {
       expect(buildBackupScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb-dump --single-transaction --quick -u'tugra'");
-      expect(buildRestoreScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb -u'tugra' --protocol=TCP -h127.0.0.1 'appdb'");
+      const r = buildRestoreScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST);
+      expect(r).toContain("mariadb -u'tugra' --protocol=TCP -h127.0.0.1 'appdb'");
+      // the restore waits for the (possibly just-created) server before piping the dump in
+      expect(r).toContain('SELECT 1');
+      expect(r.indexOf("SELECT 1")).toBeLessThan(r.indexOf("gunzip | docker exec"));
     });
 
     it("KeyDB dumps via keydb-cli SAVE + rdb", () => {
