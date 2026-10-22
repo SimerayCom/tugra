@@ -26196,6 +26196,65 @@
                           },
                           "diskWrite": {
                             "type": "number"
+                          },
+                          "temp": {
+                            "type": "number"
+                          },
+                          "sensors": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            }
+                          },
+                          "gpus": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "util": {
+                                  "type": "number"
+                                },
+                                "memUsed": {
+                                  "type": "number"
+                                },
+                                "memTotal": {
+                                  "type": "number"
+                                },
+                                "temp": {
+                                  "type": "number"
+                                },
+                                "power": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "util",
+                                "memUsed",
+                                "memTotal"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "battery": {
+                            "type": "object",
+                            "properties": {
+                              "percent": {
+                                "type": "number"
+                              },
+                              "state": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "percent",
+                              "state"
+                            ],
+                            "additionalProperties": false,
+                            "nullable": true
                           }
                         },
                         "required": [

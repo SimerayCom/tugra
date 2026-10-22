@@ -33,6 +33,12 @@ export const MetricsSampleSchema = z.object({
   netTx: z.number(),
   diskRead: z.number(),
   diskWrite: z.number(),
+  temp: z.number().optional(),
+  sensors: z.record(z.number()).optional(),
+  gpus: z
+    .array(z.object({ name: z.string(), util: z.number(), memUsed: z.number(), memTotal: z.number(), temp: z.number().optional(), power: z.number().optional() }))
+    .optional(),
+  battery: z.object({ percent: z.number(), state: z.string() }).nullable().optional(),
 });
 export const FleetLatestRowSchema = z.object({
   serverId: z.string(),

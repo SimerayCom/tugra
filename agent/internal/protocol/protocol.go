@@ -23,6 +23,28 @@ type MetricsSample struct {
 	NetTx     float64 `json:"netTx"`
 	DiskRead  float64 `json:"diskRead"`  // bytes/s (physical-disk read throughput)
 	DiskWrite float64 `json:"diskWrite"` // bytes/s
+	// Optional sensor metrics — nil / omitted when the host exposes none (most cloud VMs). A pointer
+	// plus omitempty keeps "no sensor" ABSENT on the wire, never a misleading 0.
+	Temp    *float64           `json:"temp,omitempty"`    // hottest CPU-ish sensor, °C
+	Sensors map[string]float64 `json:"sensors,omitempty"` // per-sensor °C (detail view)
+	Gpus    []GPUStat          `json:"gpus,omitempty"`
+	Battery *Battery           `json:"battery,omitempty"`
+}
+
+// GPUStat is one GPU's live usage. Mem is in bytes; Temp/Power are 0 when the vendor doesn't report them.
+type GPUStat struct {
+	Name     string  `json:"name"`
+	Util     float64 `json:"util"`     // 0-100 %
+	MemUsed  float64 `json:"memUsed"`  // bytes
+	MemTotal float64 `json:"memTotal"` // bytes
+	Temp     float64 `json:"temp"`     // °C
+	Power    float64 `json:"power"`    // watts
+}
+
+// Battery is the system battery (laptop / UPS hosts); nil on servers and VMs with none.
+type Battery struct {
+	Percent float64 `json:"percent"` // 0-100
+	State   string  `json:"state"`   // Charging | Discharging | Full | Not charging | Unknown
 }
 
 // Agent -> Hub

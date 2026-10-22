@@ -446,6 +446,24 @@ export interface MetricsSample {
   netTx: number;
   diskRead: number;
   diskWrite: number;
+  temp?: number;
+  sensors?: Record<string, number>;
+  gpus?: GpuStat[];
+  battery?: BatterySample | null;
+}
+
+export interface GpuStat {
+  name: string;
+  util: number;
+  memUsed: number;
+  memTotal: number;
+  temp?: number;
+  power?: number;
+}
+
+export interface BatterySample {
+  percent: number;
+  state: string;
 }
 
 export type MetricsRange = "1h" | "6h" | "24h" | "7d";

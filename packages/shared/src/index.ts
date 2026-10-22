@@ -189,6 +189,27 @@ export interface MetricsSample {
   netTx: number; // bytes/s
   diskRead: number; // bytes/s (physical-disk read throughput)
   diskWrite: number; // bytes/s
+  // Optional sensor metrics — absent when the host exposes none (most cloud VMs).
+  temp?: number; // hottest CPU-ish sensor, °C
+  sensors?: Record<string, number>; // per-sensor °C
+  gpus?: GpuStat[];
+  battery?: BatterySample | null;
+}
+
+/** One GPU's live usage (NVIDIA via nvidia-smi, AMD via sysfs). Mem is in bytes. */
+export interface GpuStat {
+  name: string;
+  util: number; // 0..100 %
+  memUsed: number; // bytes
+  memTotal: number; // bytes
+  temp?: number; // °C
+  power?: number; // watts
+}
+
+/** System battery on laptop / UPS hosts; absent on servers and VMs. */
+export interface BatterySample {
+  percent: number; // 0..100
+  state: string; // Charging | Discharging | Full | Not charging | Unknown
 }
 
 // ---- Hub -> Agent --------------------------------------------------------
