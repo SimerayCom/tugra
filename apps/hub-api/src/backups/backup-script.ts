@@ -70,10 +70,14 @@ export function dumpDbToStdout(engine: DbEngine, name: string, creds: DbCredenti
     case "MYSQL":
       // --single-transaction: consistent InnoDB snapshot without locking tables;
       // --quick: stream rows (don't buffer whole tables in RAM); --no-tablespaces:
-      // avoid needing PROCESS privilege.
-      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump --single-transaction --quick --no-tablespaces -u${shq(username)} ${shq(database)}`;
+      // avoid needing PROCESS privilege. --protocol=TCP -h127.0.0.1: force a TCP
+      // connection — the default is a unix socket whose path differs across images
+      // (e.g. /run/mysqld vs /var/run/mysqld) and is often absent inside the
+      // container, which made the client connect to the wrong/missing socket and
+      // the dump fail with an empty/garbage result.
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mysqldump --single-transaction --quick --no-tablespaces -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`;
     case "MARIADB":
-      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mariadb-dump --single-transaction --quick -u${shq(username)} ${shq(database)}`;
+      return `docker exec -e MYSQL_PWD=${shq(password)} ${name} mariadb-dump --single-transaction --quick -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`;
     case "MONGO":
       return `docker exec ${name} mongodump --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive`;
     case "REDIS":
@@ -82,20 +86,28 @@ export function dumpDbToStdout(engine: DbEngine, name: string, creds: DbCredenti
       return `docker exec ${name} sh -c ${shq(`keydb-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
     case "DRAGONFLY":
       // Redis-wire compatible. `SAVE RDB <base>` forces a SINGLE-file RDB snapshot (default is the
-      // multi-file DFS format). `-e` makes redis-cli exit non-zero on a command-level -ERR (by default it
-      // exits 0 and only PRINTS the error → a failed SAVE would be masked as success). Password via
-      // REDISCLI_AUTH env so it never hits redis-cli's argv. rc-preserving: cleanup rm never masks the exit.
+      // multi-file DFS format). We do NOT use redis-cli's `-e` here: the version bundled in the Dragonfly
+      // image exits 0 even on a command error with `-e`, so it can't be trusted to signal a failed SAVE.
+      // Instead capture the reply and require it to be exactly "OK" — only then is the snapshot read. Password
+      // via REDISCLI_AUTH env so it never hits redis-cli's argv. rc-preserving: cleanup rm never masks the exit.
       return `docker exec -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(
-        "rm -f /data/tugra_backup.rdb; redis-cli -e --no-auth-warning SAVE RDB tugra_backup >/dev/null && cat /data/tugra_backup.rdb; rc=$?; rm -f /data/tugra_backup.rdb; exit $rc",
+        'rm -f /data/tugra_backup.rdb; r=$(redis-cli --no-auth-warning SAVE RDB tugra_backup 2>&1); if [ "$r" = OK ]; then cat /data/tugra_backup.rdb; rc=0; else echo "dragonfly SAVE failed: $r" >&2; rc=1; fi; rm -f /data/tugra_backup.rdb; exit $rc',
       )}`;
-    case "CLICKHOUSE":
+    case "CLICKHOUSE": {
       // `BACKUP … TO File('.zip')` (File backend). Written under /var/lib/clickhouse/backups — the default
       // `backups.allowed_path` (File() paths are allow-list-gated). Identifier is DOUBLE-QUOTE quoted (\"…\"),
       // NOT backtick — backticks inside the double-quoted --query would trigger shell command substitution in
-      // the container's `sh -c`. clickhouse-client reads auth from the container env (no password on argv).
+      // the container's `sh -c`. We pass explicit --host/--port/--user/--password (the user/password come from
+      // the container's own CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never on our argv): the default client
+      // connects as `default` with no password, which has no grant on the managed DB, so the dump failed.
+      // CH_WAIT polls `SELECT 1` because clickhouse-server accepts connections only seconds after the container
+      // reports running — an un-waited BACKUP raced the server startup and errored "Connection refused".
+      const chCli = `clickhouse-client --host 127.0.0.1 --port 9000 --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD"`;
+      const chWait = `i=0; until ${chCli} --query "SELECT 1" >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 30 ] && { echo "tugra: clickhouse not ready" >&2; exit 1; }; sleep 2; done;`;
       return `docker exec ${name} sh -c ${shq(
-        `mkdir -p /var/lib/clickhouse/backups; clickhouse-client --query "BACKUP DATABASE \\"${database}\\" TO File('/var/lib/clickhouse/backups/tugra_backup.zip')" >/dev/null && cat /var/lib/clickhouse/backups/tugra_backup.zip; rc=$?; rm -f /var/lib/clickhouse/backups/tugra_backup.zip; exit $rc`,
+        `${chWait} mkdir -p /var/lib/clickhouse/backups; ${chCli} --query "BACKUP DATABASE \\"${database}\\" TO File('/var/lib/clickhouse/backups/tugra_backup.zip')" >/dev/null && cat /var/lib/clickhouse/backups/tugra_backup.zip; rc=$?; rm -f /var/lib/clickhouse/backups/tugra_backup.zip; exit $rc`,
       )}`;
+    }
     case "LIBSQL":
       throw new Error("backup not supported for libsql"); // unreachable — gated by supportsBackup()
   }
@@ -221,28 +233,46 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       break;
     }
     case "MYSQL":
-      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} ${shq(database)}`);
+      // --protocol=TCP -h127.0.0.1: force TCP (see the dump path) — the default unix-socket path differs
+      // across images and is usually absent inside the container, which broke the restore client's connect.
+      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mysql -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
       break;
     case "MARIADB":
-      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mariadb -u${shq(username)} ${shq(database)}`);
+      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} mariadb -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
       break;
     case "MONGO":
       lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop`);
       break;
     case "REDIS":
-    case "KEYDB":
-      lines.push(`${decode.join(" | ")} > /tmp/${name}.rdb`);
-      lines.push(`docker cp /tmp/${name}.rdb ${name}:/data/dump.rdb`);
-      lines.push(`docker restart ${name}`);
-      lines.push(`rm -f /tmp/${name}.rdb`);
+    case "KEYDB": {
+      // A graceful `docker restart` sends SIGTERM, which makes redis/keydb SAVE its CURRENT (just-wiped)
+      // dataset to /data/dump.rdb on shutdown — clobbering the file we copied in, so the restore silently
+      // produced an empty DB. Fix: validate the RDB signature, then `docker kill` (SIGKILL → no shutdown
+      // save) while the container is stopped, copy the dump in, `docker start` (boots and loads dump.rdb),
+      // and wait for PONG so a failed boot surfaces instead of looking like success.
+      const cli = db.engine === "KEYDB" ? "keydb-cli" : "redis-cli";
+      const tmp = `/tmp/${name}.rdb`;
+      lines.push(`trap 'rm -f ${tmp}' EXIT`);
+      lines.push(`${decode.join(" | ")} > ${tmp}`);
+      lines.push(`head -c5 ${tmp} | grep -q REDIS`);
+      lines.push(`docker kill ${name} >/dev/null 2>&1 || true`);
+      lines.push(`docker cp ${tmp} ${name}:/data/dump.rdb`);
+      lines.push(`docker start ${name}`);
+      lines.push(
+        `ok=0; for i in $(seq 1 60); do if docker exec ${name} sh -c ${shq(`${cli} -a ${shqInner(password)} --no-auth-warning PING 2>&1`)} | grep -q PONG; then ok=1; break; fi; sleep 1; done; [ "$ok" = 1 ] || { echo "${db.engine} did not become ready after restore" >&2; exit 1; }`,
+      );
       break;
+    }
     case "DRAGONFLY": {
       // DFLY LOAD does FlushAll-then-load, so VALIDATE the RDB signature FIRST — an obviously corrupt/wrong
-      // file must not wipe the live dataset before we even try to load it. `-e` makes a failed load exit
-      // non-zero (redis-cli otherwise exits 0 on a command-level -ERR, masking a failed restore as success).
+      // file must not wipe the live dataset before we even try to load it. We do NOT rely on redis-cli's `-e`
+      // (the Dragonfly-bundled build can exit 0 even on error); instead capture the DFLY LOAD reply and
+      // require it to be exactly "OK", so a failed load surfaces as a non-zero exit rather than silent success.
       const inner =
-        "cat > /data/tugra_restore.rdb && head -c5 /data/tugra_restore.rdb | grep -q REDIS && " +
-        "redis-cli -e --no-auth-warning DFLY LOAD /data/tugra_restore.rdb; rc=$?; rm -f /data/tugra_restore.rdb; exit $rc";
+        "cat > /data/tugra_restore.rdb && head -c5 /data/tugra_restore.rdb | grep -q REDIS || " +
+        '{ rm -f /data/tugra_restore.rdb; echo "tugra: bad rdb signature" >&2; exit 1; }; ' +
+        "r=$(redis-cli --no-auth-warning DFLY LOAD /data/tugra_restore.rdb 2>&1); rm -f /data/tugra_restore.rdb; " +
+        '[ "$r" = OK ] || { echo "dragonfly DFLY LOAD failed: $r" >&2; exit 1; }';
       lines.push(`${decode.join(" | ")} | docker exec -i -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(inner)}`);
       break;
     }
@@ -251,16 +281,19 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       // never destroys the live DB before the restore is known good (stage-then-swap). A prior-run temp is
       // cleared up front; on failure the data survives in EITHER the real DB or the temp (never both dropped).
       // Identifiers are DOUBLE-QUOTE quoted (\"…\") — backticks in the double-quoted --query would trigger shell
-      // command substitution. clickhouse-client reads its credentials from the container env.
+      // command substitution. Explicit --host/--port/--user/--password (user/password from the container's own
+      // CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env) + a SELECT 1 readiness wait — same reasons as the dump path.
       const tmpDb = `${database}__tugra_restore_tmp`;
       const zip = "/var/lib/clickhouse/backups/tugra_restore.zip";
+      const chCli = `clickhouse-client --host 127.0.0.1 --port 9000 --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD"`;
+      const chWait = `i=0; until ${chCli} --query "SELECT 1" >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 30 ] && { echo "tugra: clickhouse not ready" >&2; exit 1; }; sleep 2; done;`;
       const inner =
-        "mkdir -p /var/lib/clickhouse/backups; " +
-        `clickhouse-client --query "DROP DATABASE IF EXISTS \\"${tmpDb}\\" SYNC" 2>/dev/null; ` +
+        `${chWait} mkdir -p /var/lib/clickhouse/backups; ` +
+        `${chCli} --query "DROP DATABASE IF EXISTS \\"${tmpDb}\\" SYNC" 2>/dev/null; ` +
         `cat > ${zip} && ` +
-        `clickhouse-client --query "RESTORE DATABASE \\"${database}\\" AS \\"${tmpDb}\\" FROM File('${zip}')" >/dev/null && ` +
-        `clickhouse-client --query "DROP DATABASE IF EXISTS \\"${database}\\" SYNC" && ` +
-        `clickhouse-client --query "RENAME DATABASE \\"${tmpDb}\\" TO \\"${database}\\""; ` +
+        `${chCli} --query "RESTORE DATABASE \\"${database}\\" AS \\"${tmpDb}\\" FROM File('${zip}')" >/dev/null && ` +
+        `${chCli} --query "DROP DATABASE IF EXISTS \\"${database}\\" SYNC" && ` +
+        `${chCli} --query "RENAME DATABASE \\"${tmpDb}\\" TO \\"${database}\\""; ` +
         `rc=$?; rm -f ${zip}; exit $rc`;
       lines.push(`${decode.join(" | ")} | docker exec -i ${name} sh -c ${shq(inner)}`);
       break;

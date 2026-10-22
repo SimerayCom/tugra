@@ -79,9 +79,11 @@ describe("backup-script", () => {
       expect(buildBackupScript(spec("REDIS"), "t", s3Dest)).toContain("redis-cli");
     });
 
-    it("Dragonfly: SAVE RDB single-file snapshot with -e (honest fail), password via REDISCLI_AUTH", () => {
+    it("Dragonfly: SAVE RDB single-file snapshot, reply must be OK (no -e), password via REDISCLI_AUTH", () => {
       const s = buildBackupScript(spec("DRAGONFLY"), "t", s3Dest);
-      expect(s).toContain("redis-cli -e --no-auth-warning SAVE RDB tugra_backup"); // -e → non-zero exit on error
+      expect(s).toContain("redis-cli --no-auth-warning SAVE RDB tugra_backup"); // reply captured + checked
+      expect(s).not.toContain("redis-cli -e"); // the Dragonfly build can exit 0 with -e → don't rely on it
+      expect(s).toContain('[ "$r" = OK ]'); // snapshot read ONLY when SAVE replied OK
       expect(s).toContain("cat /data/tugra_backup.rdb");
       expect(s).toContain("REDISCLI_AUTH=pw");
       expect(s).not.toContain("redis-cli -a"); // password never on redis-cli's own argv
@@ -94,13 +96,18 @@ describe("backup-script", () => {
       expect(s).not.toContain(`${String.fromCharCode(96)}appdb${String.fromCharCode(96)}`); // no raw `appdb`
       expect(s).toContain("/var/lib/clickhouse/backups/tugra_backup.zip"); // default backups.allowed_path
       expect(s).not.toContain("Disk("); // File backend, not the config-dependent Disk backend
+      // connect explicitly as the managed user (default-user has no grant) + wait for the server to accept
+      expect(s).toContain('--user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD"');
+      expect(s).toContain('--query "SELECT 1"'); // readiness poll before the BACKUP
     });
 
-    it("dumps MySQL/MariaDB with consistent-snapshot flags (no table locks)", () => {
+    it("dumps MySQL/MariaDB with consistent-snapshot flags (no table locks) over forced TCP", () => {
       const my = buildBackupScript(spec("MYSQL"), "t", s3Dest);
       expect(my).toContain("mysqldump --single-transaction --quick --no-tablespaces");
+      expect(my).toContain("--protocol=TCP -h127.0.0.1"); // default unix-socket path is unreliable across images
       const maria = buildBackupScript(spec("MARIADB"), "t", s3Dest);
       expect(maria).toContain("mariadb-dump --single-transaction --quick");
+      expect(maria).toContain("--protocol=TCP -h127.0.0.1");
     });
   });
 
@@ -128,18 +135,26 @@ describe("backup-script", () => {
       expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
     });
 
-    it("Redis restore replaces the rdb file and restarts", () => {
+    it("Redis restore kills (no shutdown-save) before swapping the rdb, then waits for PONG", () => {
       const s = buildRestoreScript(spec("REDIS"), "t.rdb.gz", LOCAL_DEST);
+      expect(s).toContain("head -c5 /tmp/tugra_db_db1.rdb | grep -q REDIS"); // signature guard before the swap
+      expect(s).toContain("docker kill tugra_db_db1"); // SIGKILL → no graceful SAVE clobbering our file
       expect(s).toContain("docker cp /tmp/tugra_db_db1.rdb tugra_db_db1:/data/dump.rdb");
-      expect(s).toContain("docker restart tugra_db_db1");
+      expect(s).toContain("docker start tugra_db_db1");
+      expect(s).toContain("grep -q PONG"); // readiness: a failed boot surfaces instead of looking like success
+      expect(s).not.toContain("docker restart"); // restart would SAVE the wiped DB over the restored file
+      // kill must precede the copy (so the file isn't overwritten on shutdown)
+      expect(s.indexOf("docker kill")).toBeLessThan(s.indexOf("docker cp"));
     });
 
-    it("Dragonfly restore validates the RDB signature BEFORE DFLY LOAD (no wipe on a bad file) + -e honest fail", () => {
+    it("Dragonfly restore validates the RDB signature BEFORE DFLY LOAD (no wipe on a bad file) + reply must be OK", () => {
       const s = buildRestoreScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST);
       expect(s).toContain("gunzip");
       expect(s).toContain("cat > /data/tugra_restore.rdb");
       expect(s).toContain("head -c5 /data/tugra_restore.rdb | grep -q REDIS"); // signature check before the destructive load
-      expect(s).toContain("redis-cli -e --no-auth-warning DFLY LOAD /data/tugra_restore.rdb");
+      expect(s).toContain("redis-cli --no-auth-warning DFLY LOAD /data/tugra_restore.rdb");
+      expect(s).not.toContain("redis-cli -e"); // the Dragonfly build can exit 0 with -e → don't rely on it
+      expect(s).toContain('[ "$r" = OK ]'); // success requires the load reply to be exactly OK
       // the signature gate must precede DFLY LOAD (which flushes-then-loads)
       expect(s.indexOf("grep -q REDIS")).toBeLessThan(s.indexOf("DFLY LOAD"));
       expect(s).not.toContain("docker restart");
@@ -276,7 +291,7 @@ describe("backup-script", () => {
   describe("extra engines (Dilim 17)", () => {
     it("MariaDB dumps via mariadb-dump and restores via mariadb client", () => {
       expect(buildBackupScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb-dump --single-transaction --quick -u'tugra'");
-      expect(buildRestoreScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb -u'tugra' 'appdb'");
+      expect(buildRestoreScript(spec("MARIADB"), "t.sql.gz", LOCAL_DEST)).toContain("mariadb -u'tugra' --protocol=TCP -h127.0.0.1 'appdb'");
     });
 
     it("KeyDB dumps via keydb-cli SAVE + rdb", () => {
