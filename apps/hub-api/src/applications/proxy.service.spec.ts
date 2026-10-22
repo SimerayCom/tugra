@@ -4,12 +4,12 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { CryptoService } from "../crypto/crypto.service";
 import type { AgentWsServer } from "../agent-gateway/agent-ws.server";
 
-function make(serverRow: Record<string, unknown>) {
+function make(serverRow: Record<string, unknown>, result: { exitCode: number; output: string } = { exitCode: 0, output: "" }) {
   const sent: string[] = [];
   const agentWs = {
     sendCommand: jest.fn((_id: string, script: string) => {
       sent.push(script);
-      return Promise.resolve({ output: "" });
+      return Promise.resolve(result);
     }),
   } as unknown as AgentWsServer;
   const prisma = {
@@ -43,5 +43,13 @@ describe("ProxyService.ensureProxy — proxy bind", () => {
     await svc.ensureProxy("s1");
     expect(sent[0]).toContain("-p 127.0.0.1:80:80 -p 127.0.0.1:443:443");
     expect(sent[0]).not.toContain("-p 80:80 -p 443:443");
+  });
+
+  it("throws (with the agent output) on a non-zero exit instead of reporting a successful deploy", async () => {
+    const { svc } = make(
+      { certMode: "http", proxyBind: "public" },
+      { exitCode: 125, output: "docker: port is already allocated" },
+    );
+    await expect(svc.ensureProxy("s1")).rejects.toThrow(/port is already allocated/);
   });
 });

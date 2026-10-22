@@ -57,6 +57,18 @@ export interface SwarmProxyDns {
   secretName: string; // tugra-swarm-dns-<clusterId>-<confighash>
 }
 
+/** Idempotent per-node prep of the node-local ACME store the swarm Traefik bind-mounts at /letsencrypt:
+ *  the dir plus acme.json (and acme-dns.json when DNS-01 is on), chmod 600. A bind mount whose source is
+ *  missing makes swarm tasks fail to start on that node, so this MUST run on EVERY ingress pool node before
+ *  `docker service create` — the manager gets it inside buildSwarmProxyEnsureScript, the other pool nodes
+ *  via a per-node command. */
+export function buildSwarmProxyCertDirScript(withDns: boolean): string {
+  return [
+    `mkdir -p ${SWARM_PROXY_CERT_DIR} && touch ${SWARM_PROXY_CERT_DIR}/acme.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme.json`,
+    ...(withDns ? [`touch ${SWARM_PROXY_CERT_DIR}/acme-dns.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme-dns.json`] : []),
+  ].join("\n");
+}
+
 /** Ensure the overlay + node-labels + swarm-Traefik service across the ingress pool, reconciled against
  *  `confighash`. `nodeIds` are the docker swarm node ids to label + host ingress tasks (pool, manager first);
  *  `replicas` is the desired task count (routing mesh). Empty `nodeIds` → falls back to `node.role==manager`
@@ -127,8 +139,7 @@ export function buildSwarmProxyEnsureScript(opts: {
   return [
     "set -e",
     buildOverlayEnsureScript(SWARM_OVERLAY),
-    `mkdir -p ${SWARM_PROXY_CERT_DIR} && touch ${SWARM_PROXY_CERT_DIR}/acme.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme.json`,
-    ...(dns ? [`touch ${SWARM_PROXY_CERT_DIR}/acme-dns.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme-dns.json`] : []),
+    buildSwarmProxyCertDirScript(!!dns),
     // Strip the label from nodes that left the pool FIRST (best-effort), then (re)add it to every current pool
     // node — so after a scale-down the constraint only matches the intended nodes.
     ...unlabel.map((nid) => `docker node update --label-rm ${SWARM_PROXY_NODE_LABEL} ${shq(nid)} >/dev/null 2>&1 || true`),
