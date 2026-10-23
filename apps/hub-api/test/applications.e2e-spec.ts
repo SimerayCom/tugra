@@ -66,11 +66,15 @@ describe("Applications / deploy (e2e)", () => {
         } else if (msg.type === "enrolled") {
           resolve();
         } else if (msg.type === "command") {
-          // capture + simulate a successful docker deploy, streaming a live log
-          // chunk before the final result (exercises command_log → SSE).
+          // capture + simulate a docker deploy, streaming a live log chunk before the final result
+          // (exercises command_log → SSE). `nextExit` models the DEPLOY health gate, so only the
+          // health-gated deploy command (it carries the TUGRA_ROLLOUT marker) honours it; infra
+          // commands (proxy setup — which now fails loud — cleanup, image prep) always succeed, so a
+          // failed-gate test exercises the rollback path instead of tripping on proxy setup.
           commands.push(msg.command);
           agent.send(JSON.stringify({ type: "command_log", reqId: msg.reqId, chunk: "live-build-line\n" }));
-          agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: nextExit, output: "Up 2 seconds" }));
+          const exitCode = nextExit !== 0 && !msg.command.includes("TUGRA_ROLLOUT") ? 0 : nextExit;
+          agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode, output: "Up 2 seconds" }));
         } else if (msg.type === "log_start") {
           // Simulate `docker logs`: stream one line then exit (exercises the full
           // log_start → log_chunk → log_exit → SSE round-trip).
@@ -168,7 +172,7 @@ describe("Applications / deploy (e2e)", () => {
     await sleep(300);
 
     // proxy setup + run-with-labels were sent to the agent
-    expect(commands.some((c) => c.includes("traefik:v3.1"))).toBe(true);
+    expect(commands.some((c) => c.includes("traefik:v3."))).toBe(true);
     expect(commands.some((c) => c.includes("Host(`site.example.com`)"))).toBe(true);
     expect(commands.some((c) => c.includes("--network tugra-proxy"))).toBe(true);
   });

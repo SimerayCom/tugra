@@ -61,10 +61,18 @@ describe("Monitors + Channels (e2e)", () => {
   });
 
   it("creates a METRIC (disk threshold) monitor and checks it", async () => {
+    // A METRIC monitor must target a server that belongs to the team (authz, assertTeamOwnsTargets),
+    // so create a real one first instead of a made-up id.
+    const srv = await request(app.getHttpServer())
+      .post("/servers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "metric-box", teamId })
+      .expect(201);
+    const serverId = srv.body.server.id;
     const res = await request(app.getHttpServer())
       .post("/monitors")
       .set("Authorization", `Bearer ${token}`)
-      .send({ name: "disk-watch", type: "METRIC", serverId: "any-server", metric: "DISK", thresholdPct: 80, teamId })
+      .send({ name: "disk-watch", type: "METRIC", serverId, metric: "DISK", thresholdPct: 80, teamId })
       .expect(201);
     expect(res.body.type).toBe("METRIC");
     expect(res.body.metric).toBe("DISK");
