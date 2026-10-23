@@ -14,6 +14,9 @@ function harness(opts: {
   dbGetError?: boolean;
   permissionThrows?: boolean;
   setEnvFailIds?: string[]; // appIds whose setEnv rejects (to exercise partial-write / undo-retry paths)
+  appRows?: Record<string, { serverId?: string; clusterId?: string | null; source?: string; dockerOptions?: string | null; dbNetwork?: boolean }>; // per-app eligibility overrides
+  serverDbEngines?: string[]; // engines of the DBs on the server (exposure disclosure); default one POSTGRES
+  setDbNetworkFailIds?: string[]; // appIds whose setDbNetwork rejects (link-failure path)
 } = {}) {
   const appList = opts.apps ?? [{ id: "app-1", itemRef: `app:_:${APPUUID}`, name: "web", env: opts.env ?? { DATABASE_URL: `postgres://appuser:S3cr3t@${UUID}:5432/appdb` } }];
   const op = {
@@ -62,6 +65,24 @@ function harness(opts: {
       }),
     },
     server: { findUnique: jest.fn().mockResolvedValue({ id: "srv-1", teamId: "team-1" }) },
+    // S4d-4 link eligibility: app rows (default co-located classic + unlinked) and the server's DB set.
+    application: {
+      findMany: jest.fn().mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(
+          where.id.in.map((id) => ({
+            id,
+            serverId: opts.appRows?.[id]?.serverId ?? "srv-1",
+            clusterId: opts.appRows?.[id]?.clusterId ?? null,
+            source: opts.appRows?.[id]?.source ?? "IMAGE",
+            dockerOptions: opts.appRows?.[id]?.dockerOptions ?? null,
+            dbNetwork: opts.appRows?.[id]?.dbNetwork ?? false,
+          })),
+        ),
+      ),
+    },
+    database: {
+      findMany: jest.fn().mockResolvedValue((opts.serverDbEngines ?? ["POSTGRES"]).map((engine) => ({ engine }))),
+    },
   };
   const access = {
     requirePermission: opts.permissionThrows
@@ -76,6 +97,9 @@ function harness(opts: {
       envById.set(id, { ...env });
       return Promise.resolve(undefined);
     }),
+    setDbNetwork: jest.fn().mockImplementation((_u: string, id: string) =>
+      opts.setDbNetworkFailIds?.includes(id) ? Promise.reject(new Error("link failed")) : Promise.resolve(undefined),
+    ),
   };
   const dbs = { get: opts.dbGetError ? jest.fn().mockRejectedValue(new Error("deleted")) : jest.fn().mockResolvedValue(dbView) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
@@ -298,5 +322,87 @@ describe("ImportExecutorService.remapEnvApply + remapEnvUndo (S4d-3 — the firs
     const res = await svc.remapEnvUndo("user-1", "op-1");
     expect(res.undone).toBe(true); // a gone app has nothing to restore → record consumed, not stranded
     expect(res.failed).toContainEqual(expect.objectContaining({ appId: "app-1" }));
+  });
+});
+
+describe("ImportExecutorService — DB-network link (S4d-4 part B)", () => {
+  it("preview: an eligible co-located classic app WILL link, and discloses the server's DB exposure set", async () => {
+    const { svc } = harness();
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    const dbn = plan.apps[0].dbNetwork!;
+    expect(dbn).toMatchObject({ willLink: true, serverDbCount: 1, hasUnauthEngine: false });
+    expect(dbn.databases).toContain(`database:_:${UUID}`);
+    expect(dbn.reason).toBeUndefined();
+  });
+
+  it("preview: a swarm app will NOT link (reason=swarm) and is flagged needs-manual, env still rewritten", async () => {
+    const { svc } = harness({ appRows: { "app-1": { clusterId: "c1" } } });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    expect(plan.apps[0].dbNetwork).toMatchObject({ willLink: false, reason: "swarm" });
+    expect(plan.apps[0].needsManual).toContainEqual(expect.objectContaining({ reason: "dbnet-unsupported-topology" }));
+    expect(plan.apps[0].changes.find((c) => c.key === "DATABASE_URL")).toBeDefined(); // env is still rewritten
+  });
+
+  it("preview: a libSQL DB on the server raises the unauthenticated-engine exposure flag", async () => {
+    const { svc } = harness({ serverDbEngines: ["POSTGRES", "LIBSQL"] });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    expect(plan.apps[0].dbNetwork).toMatchObject({ serverDbCount: 2, hasUnauthEngine: true });
+  });
+
+  it("apply: links an eligible app via setDbNetwork(true) and reports linked=true", async () => {
+    const { svc, apps } = harness();
+    const { planHash } = await svc.remapEnvPlan("user-1", "op-1");
+    const res = await svc.remapEnvApply("user-1", "op-1", planHash);
+    expect(apps.setDbNetwork).toHaveBeenCalledWith("user-1", "app-1", true);
+    expect(res.apps[0].linked).toBe(true);
+    expect(res.applied).toBe(true);
+  });
+
+  it("apply: a swarm app's env is written but it is NOT linked (setDbNetwork never called)", async () => {
+    const { svc, apps } = harness({ appRows: { "app-1": { clusterId: "c1" } } });
+    const { planHash } = await svc.remapEnvPlan("user-1", "op-1");
+    const res = await svc.remapEnvApply("user-1", "op-1", planHash);
+    expect(apps.setEnv).toHaveBeenCalled();
+    expect(apps.setDbNetwork).not.toHaveBeenCalled();
+    expect(res.apps[0].linked).toBe(false);
+  });
+
+  it("apply: a link failure is reported (linkFailed) but never discards the successful env write", async () => {
+    const { svc, apps } = harness({ setDbNetworkFailIds: ["app-1"] });
+    const { planHash } = await svc.remapEnvPlan("user-1", "op-1");
+    const res = await svc.remapEnvApply("user-1", "op-1", planHash);
+    expect(apps.setEnv).toHaveBeenCalled(); // env written
+    expect(res.linkFailed).toContainEqual(expect.objectContaining({ appId: "app-1" }));
+    expect(res.applied).toBe(false);
+    expect(res.apps[0].linked).toBe(false);
+  });
+
+  it("apply then undo reverses the link (restores the prior dbNetwork flag)", async () => {
+    const { svc, apps } = harness(); // prior dbNetwork=false
+    const { planHash } = await svc.remapEnvPlan("user-1", "op-1");
+    await svc.remapEnvApply("user-1", "op-1", planHash);
+    await svc.remapEnvUndo("user-1", "op-1");
+    expect(apps.setDbNetwork).toHaveBeenCalledWith("user-1", "app-1", false); // restored to prior
+  });
+
+  it("planHash covers the link set: a change in the server's DB count yields a different hash (drift → 409 on apply)", async () => {
+    const h1 = (await harness({ serverDbEngines: ["POSTGRES"] }).svc.remapEnvPlan("user-1", "op-1")).planHash;
+    const h2 = (await harness({ serverDbEngines: ["POSTGRES", "REDIS"] }).svc.remapEnvPlan("user-1", "op-1")).planHash;
+    expect(h1).not.toBe(h2);
+  });
+
+  it("planHash reflects the unauthenticated-engine exposure even at the SAME DB count (a libSQL appearing changes it)", async () => {
+    const h1 = (await harness({ serverDbEngines: ["POSTGRES", "MYSQL"] }).svc.remapEnvPlan("user-1", "op-1")).planHash;
+    const h2 = (await harness({ serverDbEngines: ["POSTGRES", "LIBSQL"] }).svc.remapEnvPlan("user-1", "op-1")).planHash;
+    expect(h1).not.toBe(h2);
+  });
+
+  it("an app ALREADY linked before the apply is never reversed by undo (apply didn't change its flag)", async () => {
+    const { svc, apps } = harness({ appRows: { "app-1": { dbNetwork: true } } });
+    const { planHash } = await svc.remapEnvPlan("user-1", "op-1");
+    await svc.remapEnvApply("user-1", "op-1", planHash); // setDbNetwork(true) is a no-op here
+    await svc.remapEnvUndo("user-1", "op-1");
+    // undo only ever UNLINKS what the apply linked; a pre-existing link is left intact → no false call.
+    expect(apps.setDbNetwork).not.toHaveBeenCalledWith("user-1", "app-1", false);
   });
 });
