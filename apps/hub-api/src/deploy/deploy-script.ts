@@ -4,6 +4,8 @@
  * (clone + Nixpacks/Dockerfile build) sources, optional domain (Traefik + SSL).
  */
 
+import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
+
 export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
 
@@ -75,6 +77,9 @@ export interface AppSpec {
   registryPull?: { auth?: RegistryAuth | null; ref: string } | null;
   hostPort: number | null;
   containerPort: number | null;
+  /** Opt-in: also attach the container to the node-local managed-DB network (tugra-net) so it resolves
+   *  tugra_db_<id> by name. Co-located classic apps only (masked off for swarm in toSpec). */
+  dbNetwork?: boolean | null;
   domain?: string | null;
   domainRedirect?: "www" | "root" | null;
   securityHeaders?: boolean;
@@ -608,6 +613,12 @@ function envPreludeFor(app: AppSpec): string[] {
   ];
 }
 
+/** Ensure the managed-DB network exists before a dbNetwork app's container joins it (idempotent; tolerates
+ *  a pruned or never-created network). No-op for a default app, so default deploy scripts stay byte-identical. */
+function dbNetPreludeFor(app: AppSpec): string[] {
+  return app.dbNetwork ? [`docker network create ${DB_NET} 2>/dev/null || true`] : [];
+}
+
 /** The `docker run -d --name <name> ...` line shared by every deploy strategy —
  *  identical flags (net/labels/env/limits/volumes/image) regardless of the container
  *  name, so a rolling container gets the exact same routing as the canonical one. */
@@ -618,11 +629,16 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
 
   let netExpose: string;
   if (app.domain) {
-    netExpose =
-      `--network ${PROXY_NETWORK} ` +
-      traefikLabels(app)
-        .map((l) => `--label ${shq(l)}`)
-        .join(" ");
+    const labels = [...traefikLabels(app)];
+    // A dbNetwork app is on BOTH tugra-proxy and tugra-net; pin Traefik to the proxy network or it may
+    // pick the (proxy-unreachable) tugra-net IP and 502. Only added when the app opts in, so default
+    // apps keep byte-identical labels.
+    if (app.dbNetwork) labels.push(`traefik.docker.network=${PROXY_NETWORK}`);
+    netExpose = `--network ${PROXY_NETWORK} ` + labels.map((l) => `--label ${shq(l)}`).join(" ");
+  } else if (app.dbNetwork) {
+    // No ingress → run ON the DB network as the sole network (single --network works on any engine), so the
+    // app resolves tugra_db_<id> by name. Keep the optional host-port publish.
+    netExpose = `--network ${DB_NET}` + (app.hostPort ? ` -p ${app.hostPort}:${app.containerPort ?? 80}` : "");
   } else {
     netExpose = app.hostPort ? `-p ${app.hostPort}:${app.containerPort ?? 80}` : "";
   }
@@ -652,7 +668,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     .map((v) => `-v ${appVolumeName(app, v.name)}:${v.path}`)
     .join(" ");
 
-  return [
+  const run = [
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
@@ -667,6 +683,19 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   ]
     .filter(Boolean)
     .join(" ");
+
+  // A DOMAIN dbNetwork app ran on tugra-proxy (for ingress); attach tugra-net too — AFTER create, which
+  // works on any Docker engine (multiple --network at `docker run` needs Engine 25+). A no-domain dbNetwork
+  // app already runs ON tugra-net as its sole network, so it needs no connect.
+  //
+  // The chain is `run && connect || { rm; false }`: in a `&&` list only the FINAL command triggers `set -e`,
+  // so a bare `run && connect` would let a FAILED `docker run` slip past errexit. The trailing `|| { … false }`
+  // makes ANY failure (run or connect) remove the half-created container and end non-zero — so set -e aborts
+  // a bare use (buildRunScript), and an `if <this>; then` gate (rolling/recreate/relabel/rollback) takes its
+  // failure branch with no labelled-but-unreachable container left in rotation.
+  return app.dbNetwork && app.domain
+    ? `${run} && docker network connect ${DB_NET} ${name} || { docker rm -f ${name} 2>/dev/null; false; }`
+    : run;
 }
 
 /**
@@ -680,6 +709,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     "set -e",
     ...(build ? prepSteps(app, version, noCache) : []),
     ...envPreludeFor(app),
+    ...dbNetPreludeFor(app),
     `docker rm -f ${name} 2>/dev/null || true`,
     runContainerArgs(app, version, name),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
@@ -802,6 +832,7 @@ export function buildRollingDeployScript(
     "set -e",
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
+    ...dbNetPreludeFor(app),
     `docker rm -f ${rollout} 2>/dev/null || true`, // clear any stale rollout
     runContainerArgs(rApp, version, rollout),
     "set +e", // the health gate must not abort the script on a failed probe
@@ -848,6 +879,7 @@ export function buildRecreateDeployScript(
     "set -e",
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
+    ...dbNetPreludeFor(app),
     `docker rm -f ${canonical} 2>/dev/null || true`, // stop old (brief downtime begins)
     "set +e", // from here a start/health failure must reach the rollback branch, not abort
     // Guard the start itself: a `docker run` rejected by the daemon (port clash, bad mount,
