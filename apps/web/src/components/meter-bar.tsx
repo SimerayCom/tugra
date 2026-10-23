@@ -14,6 +14,7 @@ export function MeterBar({
   stale = false,
   label,
   width = 64,
+  grow = false,
 }: {
   value: number | null;
   tone?: MetricTone;
@@ -21,6 +22,8 @@ export function MeterBar({
   stale?: boolean;
   label?: string;
   width?: number | string;
+  /** Let the bar flex to fill its container (used by the overview gauges) instead of a fixed width. */
+  grow?: boolean;
 }) {
   const w = value === null ? 0 : Math.max(0, Math.min(100, value));
   const fill = stale ? "var(--c-tx3)" : FILL[tone];
@@ -33,7 +36,7 @@ export function MeterBar({
         aria-valuenow={value ?? undefined}
         aria-valuemin={0}
         aria-valuemax={100}
-        style={{ flex: "none", width, height: 6, borderRadius: 4, background: "var(--c-sur)", overflow: "hidden" }}
+        style={{ flex: grow ? "1 1 0" : "none", width: grow ? undefined : width, minWidth: grow ? 0 : undefined, height: 6, borderRadius: 4, background: "var(--c-sur)", overflow: "hidden" }}
       >
         {value !== null && <div style={{ width: `${w}%`, height: "100%", background: fill, transition: "width .4s" }} />}
       </div>

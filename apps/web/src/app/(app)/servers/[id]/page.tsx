@@ -17,6 +17,7 @@ import type { MetricsRange, ServerStatus, ServerView } from "../../../../lib/typ
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
+import { LiveGauges } from "../../../../components/live-gauges";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
 import { TerminalModal } from "../../../../components/terminal-modal";
@@ -64,9 +65,11 @@ export default function ServerDetailPage() {
     { key: "maintenance", label: t("servers.tabMaintenance") },
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
-  // Push live samples into the metrics cache while the monitoring tab is open in live mode only
-  // (appending SSE to a historical range would corrupt it). Matches the live queryKey ["metrics", id].
-  useMetricsStream(id, tab === "monitoring" && live);
+  // Push live samples into the metrics cache while the overview gauges or the live monitoring charts
+  // are on screen (both read ["metrics", id]). The overview gauges are always live, so the stream runs
+  // there regardless of the monitoring range; on the monitoring tab it only runs in live mode, since
+  // appending SSE to a historical range would corrupt it.
+  useMetricsStream(id, tab === "overview" || (tab === "monitoring" && live));
 
   // Celebrate the PENDING → ONLINE moment with a forward CTA (no dead-end).
   const prevStatus = useRef<ServerStatus | null>(null);
@@ -128,6 +131,7 @@ export default function ServerDetailPage() {
 
       {tab === "overview" && (
         <>
+          <LiveGauges id={id} nowMs={Date.now()} />
           <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
             <Info label={t("servers.status")} value={server.status} />
             <Info label={t("servers.ipAddress")} value={server.publicIp ?? server.publicIpv6 ?? "—"} />
