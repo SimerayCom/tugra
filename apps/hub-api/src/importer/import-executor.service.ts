@@ -19,6 +19,7 @@ import { cleanupOpStaging } from "./migration-staging";
 import type { ForeignApp, ForeignDb } from "./foreign-fleet";
 import { createHash } from "node:crypto";
 import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget } from "./env-rewrite";
+import { tokenizeDockerOptions } from "../deploy/deploy-script";
 import type { DatabaseView } from "../databases/databases.service";
 
 /** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
@@ -563,7 +564,8 @@ export class ImportExecutorService {
 
     // Raw per-app rewrites ({key,newValue}) the apply writer sets — NEVER returned to a client (secret values).
     const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }> }> = [];
-    const apps = appEnvs.map((a) => {
+    // Pass 1 (sync): run the pure engine per app; collect the public diff + the DBs each app references.
+    const prepped = appEnvs.map((a) => {
       const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef) });
       writes.push({ appId: a.appId, name: a.name, itemRef: a.itemRef, entries: res.changes.map((c) => ({ key: c.key, newValue: c.newValue })) });
       const needsManual = res.needsManual.map((n) => ({ key: n.key, reason: n.reason, targetItemRef: n.target }));
@@ -579,6 +581,8 @@ export class ImportExecutorService {
           }
         }
       }
+      // The migrated DBs this app's automatic rewrites point at — the apps that may need the DB network.
+      const refDbs = [...new Set(res.changes.filter((c) => c.target.kind === "database").map((c) => c.target.itemRef))].sort();
       return {
         itemRef: a.itemRef,
         appId: a.appId,
@@ -595,13 +599,64 @@ export class ImportExecutorService {
         })),
         unchangedCount,
         needsManual,
+        refDbs,
       };
     });
 
-    // A canonical, SECRET-FREE planHash — the confirmToken input the apply step will re-compute + require.
+    // S4d-4 link eligibility (best-effort preview; setDbNetwork re-validates authoritatively at apply). An app
+    // whose rewrites point at a migrated DB may also need to join the node-local DB network (tugra-net) so it
+    // resolves tugra_db_<id>. Eligible only for a co-located classic topology; an ineligible app still gets its
+    // env rewritten but is flagged needs-manual (it won't connect until networking is wired by hand).
+    const candidateIds = prepped.filter((p) => p.refDbs.length > 0).map((p) => p.appId);
+    const rows = candidateIds.length
+      ? await this.prisma.application.findMany({
+          where: { id: { in: candidateIds } },
+          select: { id: true, serverId: true, clusterId: true, source: true, dockerOptions: true, dbNetwork: true },
+        })
+      : [];
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    // Exposure disclosure: a linked app can reach EVERY managed DB on the server (tugra-net is shared), and
+    // libSQL has no auth — count/flag them so the operator confirms an informed blast radius. Only queried
+    // when there IS a candidate app (nothing references a DB otherwise).
+    const serverDbs = candidateIds.length
+      ? await this.prisma.database.findMany({ where: { serverId: server.id, teamId: server.teamId }, select: { engine: true } })
+      : [];
+    const serverDbCount = serverDbs.length;
+    const hasUnauthEngine = serverDbs.some((d) => d.engine === "LIBSQL");
+
+    const links: Array<{ appId: string; eligible: boolean; dbNetworkPrior: boolean }> = [];
+    const apps = prepped.map((p) => {
+      const { refDbs, ...pubApp } = p;
+      let dbNetwork: { willLink: boolean; reason?: string; databases: string[]; serverDbCount: number; hasUnauthEngine: boolean } | null = null;
+      if (refDbs.length > 0) {
+        const row = rowById.get(p.appId);
+        let reason: string | undefined;
+        if (!row) reason = "app-unavailable";
+        else if (row.clusterId) reason = "swarm";
+        else if (row.source === "COMPOSE") reason = "compose";
+        else if (row.serverId !== server.id) reason = "cross-host";
+        else if (tokenizeDockerOptions(row.dockerOptions).some((t) => /^(--network|--net)(=|$)/.test(t))) reason = "dockerOptions-network";
+        else if (serverDbCount === 0) reason = "no-database"; // mirror setDbNetwork's guard so preview + gate agree
+        const eligible = reason === undefined;
+        links.push({ appId: p.appId, eligible, dbNetworkPrior: !!row?.dbNetwork });
+        dbNetwork = { willLink: eligible, reason, databases: refDbs, serverDbCount, hasUnauthEngine };
+        if (!eligible) pubApp.needsManual.push({ key: "(db-network)", reason: "dbnet-unsupported-topology", targetItemRef: undefined });
+      }
+      return { ...pubApp, dbNetwork };
+    });
+
+    // A canonical, SECRET-FREE planHash — the confirmToken the apply step re-computes + requires. It covers the
+    // diff AND the link decision (willLink + referenced DBs + the server's DB count), so a drift in the network
+    // link set — not just the env diff — forces the operator to re-review (apply returns 409).
     const canonical = JSON.stringify({
       opId,
-      apps: apps.map((a) => ({ id: a.appId, c: a.changes.map((c) => [c.key, c.rule, c.targetItemRef, c.newMasked]).sort() })).sort((x, y) => x.id.localeCompare(y.id)),
+      apps: apps
+        .map((a) => ({
+          id: a.appId,
+          c: a.changes.map((c) => [c.key, c.rule, c.targetItemRef, c.newMasked]).sort(),
+          l: a.dbNetwork ? [a.dbNetwork.willLink, a.dbNetwork.databases, a.dbNetwork.serverDbCount, a.dbNetwork.hasUnauthEngine] : null,
+        }))
+        .sort((x, y) => x.id.localeCompare(y.id)),
     });
     const planHash = createHash("sha256").update(canonical).digest("hex");
 
@@ -613,7 +668,7 @@ export class ImportExecutorService {
       apps,
       note: "read-only preview — nothing has been changed; review the diff, then apply (a confirm-gated step) to write it",
     };
-    return { op, pub, writes };
+    return { op, pub, writes, links };
   }
 
   /**
@@ -630,7 +685,7 @@ export class ImportExecutorService {
    * are both refused. Env changes take effect on an app's NEXT deploy — the response says so per app.
    */
   async remapEnvApply(userId: string, opId: string, confirmToken: string) {
-    const { op, pub, writes } = await this.computeRemapPlan(userId, opId);
+    const { op, pub, writes, links } = await this.computeRemapPlan(userId, opId);
     if (pub.planHash !== confirmToken) {
       throw new ConflictException("the plan has changed since you reviewed it — re-open the preview and confirm the new plan");
     }
@@ -641,10 +696,12 @@ export class ImportExecutorService {
     if (toWrite.length === 0) {
       throw new ConflictException("nothing to apply — the preview proposed no automatic rewrites");
     }
+    // Apps the preview judged eligible to ALSO join the DB network → appId -> its prior dbNetwork flag (for undo).
+    const linkPrior = new Map(links.filter((l) => l.eligible).map((l) => [l.appId, l.dbNetworkPrior]));
 
     // 1) Snapshot each target's CURRENT env first (fresh, writer-gated). An app we cannot read now (deleted or
     //    no longer writable since the plan) is skipped+reported — never written, never half-snapshotted.
-    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[] }> = [];
+    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[]; dbNetworkPrior?: boolean }> = [];
     const targets: Array<{ appId: string; name: string; prior: Record<string, string>; entries: Array<{ key: string; newValue: string }> }> = [];
     const unprepared: Array<{ appId: string; name: string }> = [];
     for (const w of toWrite) {
@@ -655,7 +712,12 @@ export class ImportExecutorService {
         unprepared.push({ appId: w.appId, name: w.name });
         continue;
       }
-      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key) });
+      // Record a link-reversal in the undo snapshot ONLY when the apply actually flips the flag (prior false →
+      // true). If the app was ALREADY linked (prior true), the apply is a no-op on the flag, so undo must not
+      // touch it — and recording only the false case means undo only ever calls setDbNetwork(false), the
+      // guard-free direction that cannot throw a topology error and strand the record. Committed before any write.
+      const linkEntry = linkPrior.get(w.appId) === false ? { dbNetworkPrior: false } : {};
+      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key), ...linkEntry });
       targets.push({ appId: w.appId, name: w.name, prior, entries: w.entries });
     }
     if (targets.length === 0) {
@@ -673,27 +735,40 @@ export class ImportExecutorService {
 
     // 3) Write. The undo record already covers every target, so a per-app failure here stays reversible. Each
     //    write MERGES onto a FRESH read of the app's env, so an edit landing since the snapshot is preserved.
-    const appliedApps: Array<{ appId: string; name: string; written: number; keys: string[]; needsRedeploy: boolean }> = [];
+    //    For an eligible app we then ALSO link the DB network — setDbNetwork re-validates (the authoritative
+    //    gate); a link failure is reported but never discards the successful env write.
+    const appliedApps: Array<{ appId: string; name: string; written: number; keys: string[]; needsRedeploy: boolean; linked: boolean }> = [];
     const failed: Array<{ appId: string; name: string }> = [...unprepared];
+    const linkFailed: Array<{ appId: string; name: string }> = [];
     for (const t of targets) {
       try {
         const current = await this.apps.getEnv(userId, t.appId); // fresh — unrelated edits since the snapshot kept
         const next = { ...current };
         for (const e of t.entries) next[e.key] = e.newValue;
         await this.apps.setEnv(userId, t.appId, next); // writer-gated + audited + encrypted at rest
-        appliedApps.push({ appId: t.appId, name: t.name, written: t.entries.length, keys: t.entries.map((e) => e.key), needsRedeploy: true });
+        let linked = false;
+        if (linkPrior.has(t.appId)) {
+          try {
+            await this.apps.setDbNetwork(userId, t.appId, true); // re-validates topology; takes effect next deploy
+            linked = true;
+          } catch {
+            linkFailed.push({ appId: t.appId, name: t.name }); // env is written; only the network link failed
+          }
+        }
+        appliedApps.push({ appId: t.appId, name: t.name, written: t.entries.length, keys: t.entries.map((e) => e.key), needsRedeploy: true, linked });
       } catch {
         failed.push({ appId: t.appId, name: t.name }); // reversible via undo — the snapshot was committed above
       }
     }
-    await this.audit.log({ actor: userId, action: "import.remap_env.apply", target: opId, meta: { applied: appliedApps.map((a) => ({ appId: a.appId, keys: a.keys })), failed: failed.map((f) => f.appId) } });
+    await this.audit.log({ actor: userId, action: "import.remap_env.apply", target: opId, meta: { applied: appliedApps.map((a) => ({ appId: a.appId, keys: a.keys, linked: a.linked })), failed: failed.map((f) => f.appId), linkFailed: linkFailed.map((f) => f.appId) } });
     return {
       opId,
-      applied: failed.length === 0,
+      applied: failed.length === 0 && linkFailed.length === 0,
       planHash: pub.planHash,
       apps: appliedApps,
       failed,
-      note: "env rewritten to point at the new Tugra databases — redeploy each app for the change to take effect; an undo is available",
+      linkFailed,
+      note: "env rewritten to point at the new Tugra databases (eligible apps also joined the DB network) — redeploy each app for the changes to take effect; an undo is available",
     };
   }
 
@@ -733,6 +808,8 @@ export class ImportExecutorService {
           else delete next[k]; // the remap had ADDED this key — reverting means removing it
         }
         await this.apps.setEnv(userId, a.appId, next); // key-scoped revert — post-apply edits to other keys kept
+        // Reverse the DB-network link too (only for an app the apply linked) — restore its prior flag.
+        if (a.dbNetworkPrior !== undefined) await this.apps.setDbNetwork(userId, a.appId, a.dbNetworkPrior);
         restored.push({ appId: a.appId, name: a.name });
       } catch (e) {
         if (e instanceof NotFoundException) terminal.push({ appId: a.appId, name: a.name, reason: "app-deleted" });
@@ -868,7 +945,7 @@ interface RemapUndoRecord {
   undoneAt?: string;
   partialUndoAt?: string;
   planHash?: string;
-  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[] }>;
+  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[]; dbNetworkPrior?: boolean }>;
 }
 
 /** A Prisma Json value as a fresh mutable object ({} when null/absent), safe to merge onto. */
