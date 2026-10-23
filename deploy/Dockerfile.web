@@ -28,6 +28,8 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # (incl. the no-reverse-proxy quick-start). Override at build for a differently-named hub service.
 ARG HUB_INTERNAL_URL=http://hub-api:3000
 ENV HUB_INTERNAL_URL=$HUB_INTERNAL_URL
+# No phone-home: Next.js collects anonymous telemetry during `next build` unless this is set.
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @tugra/shared build \
  && pnpm --filter @tugra/web build
 

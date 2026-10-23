@@ -30,6 +30,10 @@ ENV TUGRA_VERSION=$TUGRA_VERSION \
     TUGRA_CHANNEL=$TUGRA_CHANNEL \
     GIT_SHA=$GIT_SHA \
     TUGRA_EDITION=$TUGRA_EDITION
+# No phone-home: the Prisma CLI (run at every boot for `migrate deploy`) pings checkpoint.prisma.io for a
+# version check unless this is set. Disable it so a fresh install makes zero outbound calls of its own.
+ENV CHECKPOINT_DISABLE=1 \
+    PRISMA_HIDE_UPDATE_MESSAGE=1
 
 WORKDIR /app/apps/hub-api
 EXPOSE 3000

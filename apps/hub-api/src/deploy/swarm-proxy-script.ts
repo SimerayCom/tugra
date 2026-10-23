@@ -99,6 +99,9 @@ export function buildSwarmProxyEnsureScript(opts: {
 
   // Flags passed to Traefik as argv (after `traefik` in the wrapper) — static ones bare, user values shq'd.
   const traefikFlags = [
+    // Trust-wedge: no phone-home — disable Traefik's upstream version check + anonymous usage report.
+    `--global.checknewversion=false`,
+    `--global.sendanonymoususage=false`,
     `--providers.swarm=true`,
     `--providers.swarm.exposedByDefault=false`,
     `--providers.swarm.network=${shq(SWARM_OVERLAY)}`,

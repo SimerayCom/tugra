@@ -59,6 +59,10 @@ services:
       DATABASE_URL: "${DATABASE_URL}"
       REDIS_URL: "${REDIS_URL}"
       NODE_ENV: "production"
+      # No phone-home: stop the Prisma CLI (run at boot for `migrate deploy`) pinging checkpoint.prisma.io.
+      # Set here (not via .env) so it holds even on an already-pulled image and a user .env can't re-enable it.
+      CHECKPOINT_DISABLE: "1"
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
       HUB_PUBLIC_URL: "${HUB_PUBLIC_URL}"
       WEB_PUBLIC_URL: "${WEB_PUBLIC_URL}"
       COOKIE_SECURE: "${COOKIE_SECURE}"

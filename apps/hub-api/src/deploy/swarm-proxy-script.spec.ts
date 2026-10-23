@@ -30,6 +30,9 @@ describe("swarm-proxy-script builders", () => {
     expect(s).toContain("--publish mode=ingress,target=443,published=443");
     expect(s).toContain("--providers.swarm=true");
     expect(s).toContain("--providers.swarm.network='tugra-swarm'");
+    // no phone-home: Traefik upstream version check + anonymous usage off
+    expect(s).toContain("--global.checknewversion=false");
+    expect(s).toContain("--global.sendanonymoususage=false");
     expect(s).toContain("--certificatesresolvers.le.acme.email='ops@acme.io'");
     expect(s).toContain("--certificatesresolvers.le.acme.httpchallenge=true");
   });
@@ -42,7 +45,8 @@ describe("swarm-proxy-script builders", () => {
     expect(s).toContain('export "$k=$v"');
     expect(s).not.toContain(". /run/secrets");
     // the traefik flags come after `traefik` as argv words, not embedded in the wrapper's single-quoted string
-    expect(s).toContain("traefik --providers.swarm=true");
+    expect(s).toContain("traefik --global.checknewversion=false");
+    expect(s).toContain("--providers.swarm=true");
   });
 
   it("ensure: reconciles on the confighash label — skip if unchanged, rm+recreate if changed", () => {
