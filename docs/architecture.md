@@ -36,10 +36,15 @@ shared/client packages, deployed as a Docker Compose stack.
 ## Networking & routing
 
 The REST API is served under the versioned prefix **`/api/v1`**, with a few bare, unversioned routes
-(`/health`, `/version`, `/install/agent.sh`, `/webhooks/*`, `/auth/oauth/*`) that external systems call at
-fixed paths. Two raw WebSocket endpoints are unprefixed: **`/agent`** (agent enrollment + commands) and
-**`/terminal`** (the web terminal). For a TLS deployment's reverse-proxy path routing, see
-[install](install.md#production-tls--a-domain).
+(`/health`, `/version`, `/install/agent.sh`, `/install/migrator.sh`, `/webhooks/*`, `/auth/oauth/*`) that
+external systems call at fixed paths. Two raw WebSocket endpoints are unprefixed: **`/agent`** (agent
+enrollment + commands) and **`/terminal`** (the web terminal). For a TLS deployment's reverse-proxy path
+routing, see [install](install.md#production-tls--a-domain).
+
+The one-click [Coolify data migrator](coolify-migration.md) is a **separate one-shot container** that runs on
+the untrusted *source* host (not the agent): it talks to the hub over the REST ingest API under
+`/api/v1/import/migration/*` with a one-time token — never the agent WebSocket — and streams each database
+dump to hub staging, from where the target agent restores it.
 
 ## Hub ↔ agent protocol
 

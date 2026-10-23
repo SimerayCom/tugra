@@ -30,6 +30,20 @@ before queueing anything. The sidecar's docker-socket surface is documented in
 [SECURITY.md](../SECURITY.md); the publisher/signing side (how the signed manifest is produced) is in
 [Releasing](RELEASING.md).
 
+## One-click migrator security
+
+The [one-click Coolify data migrator](coolify-migration.md) treats the source host as **untrusted**. It is
+authenticated by a **one-time token** (256-bit, 1-hour TTL, SHA-256-hashed at rest, scoped to a single
+import operation, revoked on cancel/rollback). The token rides the shell environment and a bare
+`-e TUGRA_MIGRATION_TOKEN` — **never a command-line argument** — and every migration destination is resolved
+server-side from the operation, so the host never names a target. The migrator itself runs as a **one-shot
+`--cap-drop ALL --read-only` container** with no inbound ports and the Docker socket as its only mount;
+database passwords are read locally and used only inside the source container, so **no credential reaches the
+hub**. The hub independently computes each artifact's sha256 + size, re-authorizes the actor on every request,
+and serves the staged dump to the target agent only over a signed, sha256-bound, short-lived URL on a trusted
+origin. The honest caveats (a `curl | sh` bootstrap, a root-equivalent socket mount on the source host) are
+spelled out in the [migration runbook](coolify-migration.md#security-model).
+
 ## Editions & licensing boundary
 
 The proprietary Pro/Cloud layer lives outside this repository; the edition is a build-time signal, not a

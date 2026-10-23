@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- One-click Coolify database migration: after importing a Coolify fleet, mint a one-time migration
+  token for the import operation and paste the printed one-liner on the Coolify host. It dumps each
+  Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly database and restores it into the matching
+  Tugra database — cross-host, with the token only ever in the environment and no database password
+  ever reaching the hub. MongoDB, ClickHouse, LibSQL, app volumes and the `DATABASE_URL` rewrite stay
+  on the manual runbook. See [docs/coolify-migration.md](docs/coolify-migration.md).
+
 ## [0.1.3] - 2026-10-20
 
 - Database live logs: stream and download a database container's logs from a new Logs

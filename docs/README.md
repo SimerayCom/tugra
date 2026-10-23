@@ -13,6 +13,7 @@ control plane for your servers. New here? Start with the [project overview](../R
 
 - [CLI](cli.md) — the `tugra` command-line client (full reference in the [package README](../packages/cli/README.md)).
 - [API](api.md) — the REST API, interactive docs, authentication and scopes.
+- [Migrating from Coolify](coolify-migration.md) — one-command database-data migration (Postgres/MySQL/MariaDB/Redis/KeyDB/Dragonfly) plus the manual runbook for apps, volumes and the other engines.
 
 ## Understanding Tugra
 

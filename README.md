@@ -94,7 +94,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + terms⁴ | MIT |
 
-<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. ⁹ Imports Coolify apps + their config/env, and adopts already-running containers in place (keeping their named volumes). Database/volume **data** moves via a guided dump-and-restore (import-from-url) or same-host adopt — there is no fully-automated cross-host data copy yet. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
+<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. ⁹ Imports Coolify apps + their config/env as new Tugra resources (copy-mode); a separate local-Docker adopter takes over same-host containers in place (keeping their named volumes). Database **data** for Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly moves cross-host with a one-command migrator you paste on the Coolify host; MongoDB data moves by a guided dump-and-restore (import-from-url), LibSQL and app **volume** data by `tar`/`rsync`, and ClickHouse has no migration tool yet ([docs/coolify-migration.md](docs/coolify-migration.md)). Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
 
 ## Quick start
 
@@ -184,12 +184,13 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Public API (OpenAPI) + CLI (`tugra`)
 - [x] Server patching (OS package updates)
 - [x] Self-update (signed releases) + guided onboarding
-- [x] Migrator — adopt local Docker containers + import from Coolify (connect · plan · apply · rollback)
+- [x] Migrator — adopt local Docker containers + import from Coolify (connect · plan · apply · rollback) + one-command cross-host DB-data migration (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
 
 **Next**
 
 - [ ] MCP OAuth for third-party clients (dynamic client registration, PKCE)
 - [ ] File manager — write support (upload / rename / delete)
+- [ ] One-click migration for ClickHouse + MongoDB data, and app volume data
 - [ ] More migration sources (Dokploy, CapRover)
 - [ ] Mobile app
 
