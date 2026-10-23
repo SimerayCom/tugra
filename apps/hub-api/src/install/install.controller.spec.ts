@@ -73,4 +73,59 @@ describe("InstallController", () => {
     await ctrl.agentScript();
     expect(verify).toHaveBeenCalledTimes(1);
   });
+
+  describe("migratorScript (the one-click data migrator bootstrap, same image)", () => {
+    it("serves a hardened `migrate` script pinned to the hub version (bare tag when no manifest)", async () => {
+      process.env.TUGRA_VERSION = "0.4.2";
+      const out = await make().ctrl.migratorScript();
+      expect(out).toContain("#!/bin/sh");
+      expect(out).toContain('IMAGE="ghcr.io/simeraycom/tugra-agent:0.4.2"');
+      expect(out).toContain('"$IMAGE" migrate "--hub=$HUB"');
+      expect(out).toContain("--cap-drop ALL");
+      expect(out).toContain("-e TUGRA_MIGRATION_TOKEN"); // token forwarded by env name only
+      expect(out).not.toContain("@sha256:");
+    });
+
+    it("honours AGENT_IMAGE for the migrator too and never fetches the manifest", async () => {
+      const { ctrl, update } = make({ AGENT_IMAGE: "registry.internal/tugra-agent:pinned" });
+      const out = await ctrl.migratorScript();
+      expect(out).toContain('IMAGE="registry.internal/tugra-agent:pinned"');
+      expect(out).not.toContain("ghcr.io/simeraycom");
+      expect(update.verifyLatestEntry).not.toHaveBeenCalled();
+    });
+
+    it("pins the migrator to the per-arch digest when the manifest matches this hub's version", async () => {
+      process.env.TUGRA_VERSION = "0.4.2";
+      const A = "a".repeat(64);
+      const B = "b".repeat(64);
+      const verify = jest.fn().mockResolvedValue({ status: "ok", channel: "stable", entry: { version: "0.4.2", agentSha256: { amd64: A, arm64: B } } });
+      const out = await make({}, verify).ctrl.migratorScript();
+      expect(out).toContain(`x86_64|amd64) IMAGE="ghcr.io/simeraycom/tugra-agent:0.4.2@sha256:${A}"`);
+    });
+
+    it("degrades to the bare tag (no throw/500) on a malformed manifest digest", async () => {
+      process.env.TUGRA_VERSION = "0.4.2";
+      const verify = jest.fn().mockResolvedValue({ status: "ok", channel: "stable", entry: { version: "0.4.2", agentSha256: { amd64: "A".repeat(64), arm64: "b".repeat(64) } } });
+      const out = await make({}, verify).ctrl.migratorScript();
+      expect(out).not.toContain("@sha256:");
+      expect(out).toContain('IMAGE="ghcr.io/simeraycom/tugra-agent:0.4.2"');
+    });
+
+    it("stays resolved (bare tag) when the manifest lookup throws", async () => {
+      process.env.TUGRA_VERSION = "0.4.2";
+      const verify = jest.fn().mockRejectedValue(new Error("boom"));
+      const out = await make({}, verify).ctrl.migratorScript();
+      expect(out).toContain('IMAGE="ghcr.io/simeraycom/tugra-agent:0.4.2"');
+    });
+  });
+
+  it("shares ONE manifest fetch across the agent + migrator endpoints (shared memo)", async () => {
+    process.env.TUGRA_VERSION = "0.4.2";
+    const verify = jest.fn().mockResolvedValue({ status: "unconfigured" });
+    const { ctrl } = make({}, verify);
+    await ctrl.agentScript();
+    await ctrl.migratorScript();
+    await ctrl.migratorScript();
+    expect(verify).toHaveBeenCalledTimes(1);
+  });
 });

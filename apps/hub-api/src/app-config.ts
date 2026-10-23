@@ -8,7 +8,8 @@ import { INestApplication, RequestMethod } from "@nestjs/common";
  *  - `webhooks/*`            — external git providers POST to `HUB_PUBLIC_URL/webhooks/...`.
  *  - `auth/oauth/github(/callback)` — the redirect URI is registered in the GitHub OAuth app.
  *  - `health`, `version`     — infra/monitoring probes.
- *  - `install/agent.sh`      — the `curl | sh` agent bootstrap runs against a fixed, un-versioned URL.
+ *  - `install/agent.sh`, `install/migrator.sh` — the `curl | sh` agent + one-click-migrator bootstraps run
+ *    against fixed, un-versioned URLs (migrator.sh's URL is minted into the paste-command, so it cannot move).
  *
  * The agent/terminal WebSocket upgrades (`/agent`, `/terminal`) are raw `ws` servers, NOT Nest routes, so
  * the global prefix does not touch them (no exclusion needed or possible).
@@ -19,6 +20,7 @@ export function configureApp(app: INestApplication): void {
       { path: "health", method: RequestMethod.GET },
       { path: "version", method: RequestMethod.GET },
       { path: "install/agent.sh", method: RequestMethod.GET },
+      { path: "install/migrator.sh", method: RequestMethod.GET },
       { path: "webhooks/deploy/:token", method: RequestMethod.POST },
       { path: "webhooks/github/:sourceId", method: RequestMethod.POST },
       { path: "auth/oauth/github", method: RequestMethod.GET }, // OAuth start

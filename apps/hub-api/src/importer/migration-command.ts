@@ -14,17 +14,19 @@ export function assertSafeBase(base: string): void {
   }
 }
 
-/** The one-line migrator bootstrap, mirroring the agent installer (servers.service.ts buildInstallCommand).
- *  `--hub` is the HTTP base (the migrator streams artifacts over the REST ingest API, not the agent ws). */
+/** The one-line migrator bootstrap. The token rides the ENVIRONMENT of the receiving `sh` (the `VAR=val cmd`
+ *  prefix binds to `sh` only, so curl never sees it and it is never on any argv — migrator.sh forwards it with
+ *  a bare `-e TUGRA_MIGRATION_TOKEN`). `--hub` is the HTTP base (artifacts stream over the REST ingest API,
+ *  not the agent ws). The token charset [A-Za-z0-9_-] is shell-safe, so it needs no quoting. */
 export function buildMigrationCommand(token: string, base: string): string {
   if (!isMigrationToken(token)) throw new BadRequestException("invalid migration token");
   assertSafeBase(base);
-  return `curl -fsSL ${base}/install/migrator.sh | sh -s -- --hub ${base} --token ${token}`;
+  return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${token} sh -s -- --hub ${base}`;
 }
 
 /** The same command with a literal <TOKEN> placeholder — for the read-only GET (the raw token is hashed at
  *  rest and unrecoverable after mint, so the live command can only be shown once, from the mint response). */
 export function buildMigrationCommandTemplate(base: string): string {
   assertSafeBase(base);
-  return `curl -fsSL ${base}/install/migrator.sh | sh -s -- --hub ${base} --token <TOKEN>`;
+  return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<TOKEN> sh -s -- --hub ${base}`;
 }

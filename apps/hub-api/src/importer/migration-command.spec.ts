@@ -5,10 +5,14 @@ import { generateMigrationToken } from "./migration-token";
 const TOK = generateMigrationToken();
 
 describe("migration-command", () => {
-  it("builds the one-line bootstrap mirroring the agent installer (flags after `sh -s --`)", () => {
-    expect(buildMigrationCommand(TOK, "https://hub.example.com")).toBe(
-      `curl -fsSL https://hub.example.com/install/migrator.sh | sh -s -- --hub https://hub.example.com --token ${TOK}`,
+  it("builds the one-line bootstrap with the token in the sh ENVIRONMENT, never on an argv", () => {
+    const cmd = buildMigrationCommand(TOK, "https://hub.example.com");
+    expect(cmd).toBe(
+      `curl -fsSL https://hub.example.com/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${TOK} sh -s -- --hub https://hub.example.com`,
     );
+    // the token must NOT appear as a --token flag value (the whole point of the env-form)
+    expect(cmd).not.toContain("--token");
+    expect(cmd).toMatch(/\| TUGRA_MIGRATION_TOKEN=tugra_mig_[A-Za-z0-9_-]{43} sh -s -- --hub /);
   });
 
   it("rejects a non-migration token (never embeds a PAT/garbage)", () => {
@@ -37,9 +41,10 @@ describe("migration-command", () => {
     }
   });
 
-  it("templates with a literal <TOKEN> and never a real token", () => {
+  it("templates with a literal <TOKEN> in the env slot and never a real token", () => {
     const tpl = buildMigrationCommandTemplate("https://hub.example.com");
-    expect(tpl).toContain("--token <TOKEN>");
+    expect(tpl).toContain("TUGRA_MIGRATION_TOKEN=<TOKEN>");
+    expect(tpl).not.toContain("--token");
     expect(tpl).not.toContain("tugra_mig_");
   });
 });
