@@ -23,6 +23,7 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv } from "../../../../lib/dotenv";
+import { collapseCarriageReturns } from "../../../../lib/log-lines";
 import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
@@ -431,7 +432,7 @@ export default function AppDetailPage() {
                     </details>
                   )}
                   {d.logs && (
-                    <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{d.logs}</pre>
+                    <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{collapseCarriageReturns(d.logs)}</pre>
                   )}
                 </div>
               );
@@ -451,7 +452,7 @@ export default function AppDetailPage() {
           ) : deployments[0]?.logs ? (
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{deployments[0].logs}</pre>
+              <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{collapseCarriageReturns(deployments[0].logs)}</pre>
             </Card>
           ) : (
             !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
@@ -609,7 +610,7 @@ function LiveLogCard({ lines }: { lines: string }) {
         className="mono"
         style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}
       >
-        {lines || <span style={{ color: "var(--c-tx3)" }}>{t("apps.waitingForBuild")}</span>}
+        {collapseCarriageReturns(lines) || <span style={{ color: "var(--c-tx3)" }}>{t("apps.waitingForBuild")}</span>}
       </pre>
     </Card>
   );
