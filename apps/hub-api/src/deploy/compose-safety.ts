@@ -27,6 +27,11 @@ export const SAFE_CAPS = new Set([
 // (borrow another container's mounts/network), secrets/configs (file: binds a host file — see below),
 // uts (`uts: host` shares the host UTS namespace).
 const FORBIDDEN_SERVICE_KEYS = ["build", "extends", "volumes_from", "external_links", "secrets", "configs"];
+// Tugra's own containers are named `tugra-<infra>` (tugra-proxy/agent/patch/cfd) and `tugra_<id>`
+// (managed apps/DBs). A tenant compose that sets `container_name` to one of these could collide with — or
+// impersonate — a Tugra-managed container (e.g. DoS the one-shot `tugra-patch` host-patch helper, or get a
+// name-based lookup to resolve to the tenant's container). The prefix is reserved.
+const RESERVED_CONTAINER_NAME = /^tugra[-_]/i;
 
 // Host path prefixes whose bind-mount exposes the host filesystem / runtime to the container.
 const SENSITIVE_PREFIXES = [
@@ -103,6 +108,9 @@ function checkVolume(v: unknown): void {
 
 function checkService(svc: Record<string, unknown>): void {
   if (isTrue(svc.privileged)) throw disallowed("privileged: true");
+  if (typeof svc.container_name === "string" && RESERVED_CONTAINER_NAME.test(svc.container_name)) {
+    throw disallowed(`container_name "${svc.container_name}" (the tugra-/tugra_ prefix is reserved for Tugra-managed containers)`);
+  }
   if (isDangerousNamespace(svc.network_mode)) throw disallowed("network_mode host/container");
   if (isDangerousNamespace(svc.pid)) throw disallowed("pid host/container");
   if (isDangerousNamespace(svc.ipc)) throw disallowed("ipc host/container");

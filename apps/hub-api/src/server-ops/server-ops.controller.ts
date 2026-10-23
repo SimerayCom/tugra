@@ -178,7 +178,10 @@ export class ServerOpsController {
     return { ok: true };
   }
 
+  // deploy-tier: the check now runs a PRIVILEGED host `apt-get update` (host-exec), so it must not be
+  // reachable by a read-only PAT — it is a host mutation surface, not a plain read.
   @Get("updates")
+  @RequireScopes("deploy")
   checkUpdates(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.patch.checkUpdates(user.userId, id);
   }
