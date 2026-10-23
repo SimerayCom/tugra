@@ -111,4 +111,14 @@ export class ImporterController {
   migrateCommand(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
     return this.executor.migrateCommand(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
   }
+
+  /** READ-ONLY preview of the env rewrites that would point each migrated app at its new Tugra database.
+   *  Writes nothing; returns a secret-MASKED diff + a planHash to confirm the (separate) apply against. It
+   *  decrypts env + DB credentials server-side, so it needs `read:secrets` (like plan); the service also
+   *  re-checks apps:config + databases on the target team. */
+  @Get("operations/:opId/remap-env/plan")
+  @RequireScopes("read:secrets")
+  remapEnvPlan(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
+    return this.executor.remapEnvPlan(user.userId, opId);
+  }
 }

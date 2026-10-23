@@ -174,6 +174,32 @@ function credKind(key: string): CredKind | null {
   return null;
 }
 
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** Recover the (user, password, database) a connection URL carries FOR a given host. Used by the preview to
+ *  decide whether a Tugra DB's current credentials already match the app's old ones (→ preserve, host-swap
+ *  only) or differ (→ rotate). Returns null when the value is not a single-host URL pointing at `host`. */
+export function credsFromUrlForHost(value: string, host: string): { user?: string; password?: string; database?: string } | null {
+  const a = parseAuthorityUrl(value);
+  if (!a || a.host !== host) return null;
+  let user: string | undefined;
+  let password: string | undefined;
+  if (a.hasUserinfo) {
+    const c = a.userinfo.indexOf(":");
+    user = safeDecode(c >= 0 ? a.userinfo.slice(0, c) : a.userinfo);
+    if (c >= 0) password = safeDecode(a.userinfo.slice(c + 1));
+  }
+  const pathDb = /^\/([^/?#]+)/.exec(a.rest);
+  const database = pathDb ? safeDecode(pathDb[1]) : undefined;
+  return { user, password, database };
+}
+
 /** The pure remapper. See the module comment for the safety contract. */
 export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapResult {
   const changes: RemapChange[] = [];
@@ -275,10 +301,16 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
       const newField = kind === "user" ? "newUser" : "newDatabase";
       const matched = refDbs.filter((d) => d[field] !== undefined && value === d[field]);
       if (matched.length === 0) {
-        // unrelated — unless there is exactly one rotate DB whose old value is UNKNOWN (then we can't be sure).
-        const rotateUnknown = refDbs.length === 1 && refDbs[0].mode === "rotate" && refDbs[0][field] === undefined;
-        if (rotateUnknown) needsManual.push({ key, reason: RM_UNCONFIRMED_CRED, target: refDbs[0].itemRef });
-        else unchanged.push(key);
+        // Unrelated — unless there is exactly one rotate DB whose old value is UNKNOWN AND the engine actually
+        // HAS this field (so a stale split var would really break it). Redis-family has no user/db-name, and
+        // only pg/mysql/mariadb carry a db-NAME, so a REDIS_DB / REDIS_USER is left unchanged, not flagged.
+        const only = refDbs.length === 1 ? refDbs[0] : undefined;
+        const engineHasField = only ? (kind === "user" ? !REDIS_FAMILY.has(only.engine) : HAS_DB_PATH(only.engine)) : false;
+        if (only && only.mode === "rotate" && only[field] === undefined && engineHasField) {
+          needsManual.push({ key, reason: RM_UNCONFIRMED_CRED, target: only.itemRef });
+        } else {
+          unchanged.push(key);
+        }
         continue;
       }
       const outcomes = new Set(matched.map((d) => (d.mode === "rotate" ? d[newField] : "\x00keep")));
