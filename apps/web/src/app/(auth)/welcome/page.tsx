@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
+import { copyText } from "../../../lib/clipboard";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
@@ -344,12 +345,11 @@ function WaitForServer({ t, serverId, onNext, onSkip }: { t: Tr; serverId: strin
 
   const copy = async () => {
     if (!command) return;
-    try {
-      await navigator.clipboard.writeText(command);
+    // copyText falls back to execCommand on an insecure http origin (this command shows on a bare-IP
+    // page), so Copy actually works there instead of silently failing; stay quiet if it couldn't.
+    if (await copyText(command)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard blocked — the command is still visible to copy manually */
     }
   };
 

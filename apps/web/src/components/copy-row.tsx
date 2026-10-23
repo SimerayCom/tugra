@@ -4,9 +4,12 @@ import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { useT } from "../i18n/provider";
 import { useToast } from "./toast";
+import { copyText } from "../lib/clipboard";
 import { Btn } from "./ui";
 
-/** Copy-to-clipboard button with visible feedback (toast). */
+/** Copy-to-clipboard button with visible feedback (toast). Reports the TRUE result — on an insecure
+ *  http origin (the bare-IP quick-start) the async Clipboard API is unavailable, so it falls back and
+ *  only toasts success when the copy actually happened. */
 export function CopyBtn({ text, label }: { text: string; label?: string }) {
   const t = useT();
   const toast = useToast();
@@ -15,9 +18,9 @@ export function CopyBtn({ text, label }: { text: string; label?: string }) {
     <Btn
       variant="ghost"
       aria-label={text_}
-      onClick={() => {
-        navigator.clipboard?.writeText(text);
-        toast(t("common.copied"), "success");
+      onClick={async () => {
+        const ok = await copyText(text);
+        toast(ok ? t("common.copied") : t("common.copyFailed"), ok ? "success" : "error");
       }}
     >
       {text_}

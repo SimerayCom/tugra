@@ -9,6 +9,7 @@ afterEach(cleanup);
 const writeText = vi.fn();
 beforeEach(() => {
   writeText.mockReset();
+  writeText.mockResolvedValue(undefined); // the Clipboard API resolves a promise; copyText awaits it
   Object.assign(navigator, { clipboard: { writeText } });
 });
 
@@ -16,11 +17,30 @@ const wrap = (node: React.ReactNode) =>
   render(<I18nProvider><ToastProvider>{node}</ToastProvider></I18nProvider>);
 
 describe("CopyBtn", () => {
-  it("copies the text and shows a confirmation toast", () => {
+  it("copies the text and shows a confirmation toast", async () => {
     wrap(<CopyBtn text="secret-token" />);
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledWith("secret-token");
-    expect(screen.getByText("Copied ✓")).toBeTruthy();
+    expect(await screen.findByText("Copied ✓")).toBeTruthy(); // toast fires after the awaited write
+  });
+
+  it("falls back to execCommand on an insecure origin (no navigator.clipboard) and still reports success", async () => {
+    Object.assign(navigator, { clipboard: undefined }); // http://<ip>:<port> has no async Clipboard API
+    const exec = vi.fn().mockReturnValue(true);
+    Object.assign(document, { execCommand: exec });
+    wrap(<CopyBtn text="tok" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(await screen.findByText("Copied ✓")).toBeTruthy();
+    expect(exec).toHaveBeenCalledWith("copy");
+  });
+
+  it("tells the truth when the copy actually fails (no API, execCommand returns false)", async () => {
+    Object.assign(navigator, { clipboard: undefined });
+    Object.assign(document, { execCommand: vi.fn().mockReturnValue(false) });
+    wrap(<CopyBtn text="tok" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(await screen.findByText(/Couldn't copy/)).toBeTruthy(); // no false "Copied ✓"
+    expect(screen.queryByText("Copied ✓")).toBeNull();
   });
 });
 
