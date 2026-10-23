@@ -31,3 +31,11 @@ export const ImportApplySchema = z.discriminatedUnion("sourceKind", [
   }),
 ]);
 export type ImportApplyInput = z.infer<typeof ImportApplySchema>;
+
+/** Confirm body for the env-remap apply. `confirmToken` is the planHash the operator reviewed in the
+ *  preview (a sha256 hex digest, 64 chars — distinct from the 32-char import planHash); the apply re-plans
+ *  and refuses (409) if it no longer matches, so a stale diff is never written. */
+export const ImportRemapEnvSchema = z.object({
+  confirmToken: z.string().regex(/^[a-f0-9]{64}$/, "invalid confirmToken"),
+});
+export type ImportRemapEnvInput = z.infer<typeof ImportRemapEnvSchema>;

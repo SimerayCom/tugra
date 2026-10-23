@@ -17,6 +17,8 @@ import {
   type ImportPlanRequestInput,
   ImportApplySchema,
   type ImportApplyInput,
+  ImportRemapEnvSchema,
+  type ImportRemapEnvInput,
 } from "./dto";
 
 @ApiTags("import")
@@ -120,5 +122,28 @@ export class ImporterController {
   @RequireScopes("read:secrets")
   remapEnvPlan(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
     return this.executor.remapEnvPlan(user.userId, opId);
+  }
+
+  /** Apply the previewed env-remap: the first WRITE of the remap flow, confirm-gated. `confirmToken` must
+   *  equal the preview's planHash or the apply is refused (409) — a stale diff is never written. It reads
+   *  env + DB credentials (read:secrets) and takes over the migrated workloads' wiring (deploy). The prior
+   *  env is snapshotted for a one-call undo; the response is secret-free (counts + keys only). */
+  @Post("operations/:opId/remap-env")
+  @RequireScopes("deploy", "read:secrets")
+  @ApiZodBody(ImportRemapEnvSchema)
+  remapEnvApply(
+    @CurrentUser() user: AuthUser,
+    @Param("opId") opId: string,
+    @Body(new ZodValidationPipe(ImportRemapEnvSchema)) body: ImportRemapEnvInput,
+  ) {
+    return this.executor.remapEnvApply(user.userId, opId, body.confirmToken);
+  }
+
+  /** Reverse the env-remap: restore each app's env to the snapshot taken before it was applied. Deploy-tier
+   *  (it rewrites app config). Refuses (409) if no remap has been applied. */
+  @Post("operations/:opId/remap-env/undo")
+  @RequireScopes("deploy")
+  remapEnvUndo(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
+    return this.executor.remapEnvUndo(user.userId, opId);
   }
 }

@@ -65,6 +65,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
     apps as never,
     dbs as never,
     migrationTokens as never,
+    {} as never, // crypto (unused on this path)
   );
   return { svc, prisma, source, apps, dbs, created };
 }
@@ -132,7 +133,7 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const dbs = { remove: jest.fn().mockResolvedValue(undefined), create: jest.fn() };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never);
   return { svc, prisma, dbs, migrationTokens };
 }
 
