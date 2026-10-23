@@ -36,7 +36,7 @@ export function MeterBar({
         aria-valuenow={value ?? undefined}
         aria-valuemin={0}
         aria-valuemax={100}
-        style={{ flex: grow ? "1 1 0" : "none", width: grow ? undefined : width, minWidth: grow ? 0 : undefined, height: 6, borderRadius: 4, background: "var(--c-sur)", overflow: "hidden" }}
+        style={{ flex: grow ? "1 1 0" : "none", width: grow ? undefined : width, minWidth: grow ? 0 : undefined, height: 6, borderRadius: 4, background: "var(--c-bd)", overflow: "hidden" }}
       >
         {value !== null && <div style={{ width: `${w}%`, height: "100%", background: fill, transition: "width .4s" }} />}
       </div>
