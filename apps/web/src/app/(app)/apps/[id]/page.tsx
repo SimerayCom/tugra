@@ -448,7 +448,11 @@ export default function AppDetailPage() {
                 </div>
               );
             })}
-            {deployments.length === 0 && <EmptyState>{t("apps.noDeployments")}</EmptyState>}
+            {deployments.length === 0 && (
+              <EmptyState action={appData.canWrite ? <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>{t("apps.deploy")}</Btn> : undefined}>
+                {t("apps.noDeployments")}
+              </EmptyState>
+            )}
           </div>
         </Card>
       )}
@@ -457,17 +461,18 @@ export default function AppDetailPage() {
 
       {tab === "logs" && (
         <>
+          {/* During a deploy the BUILD log belongs up top; runtime container logs sit below it. */}
+          {streamActive && <LiveLogCard lines={live.lines} />}
           {appData.canWrite && <LiveContainerLogsCard id={id} isCompose={appData.source === "COMPOSE"} />}
-          {streamActive ? (
-            <LiveLogCard lines={live.lines} />
-          ) : deployments[0]?.logs ? (
-            <Card style={{ padding: 16 }}>
-              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{collapseCarriageReturns(deployments[0].logs)}</pre>
-            </Card>
-          ) : (
-            !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
-          )}
+          {!streamActive &&
+            (deployments[0]?.logs ? (
+              <Card style={{ padding: 16 }}>
+                <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
+                <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{collapseCarriageReturns(deployments[0].logs)}</pre>
+              </Card>
+            ) : (
+              !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
+            ))}
         </>
       )}
 
