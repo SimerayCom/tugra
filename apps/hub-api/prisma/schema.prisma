@@ -695,6 +695,13 @@ model BulkOperation {
   // Cooperative cancel: set by a cancel request; the in-flight fan-out reads it before starting each
   // remaining task and stops launching new ones (a task already RUNNING is left to finish).
   cancelRequestedAt DateTime?
+  // One-time importer MIGRATION token (S2). Source-agnostic: an untrusted source host presents it
+  // (Authorization: Bearer tugra_mig_…) to stream migration artifacts to the hub; the guard resolves the
+  // opId from the token alone (the host never names the destination). Only the SHA-256 is stored (mirrors
+  // ApiToken.tokenHash — the enroll token's plaintext storage is deliberately NOT copied). NULL = no live
+  // token; revoke = null both columns, so the unique-hash lookup simply stops matching.
+  migrationTokenHash      String?   @unique
+  migrationTokenExpiresAt DateTime?
   tasks     BulkTask[]
   createdAt DateTime   @default(now())
 }

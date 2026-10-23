@@ -55,6 +55,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
   const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }) };
   const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }) };
+  const migrationTokens = { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn().mockResolvedValue(false), validate: jest.fn() };
   const svc = new ImportExecutorService(
     prisma as never,
     {} as never, // migrator (unused in coolify path)
@@ -63,6 +64,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
     importer as never,
     apps as never,
     dbs as never,
+    migrationTokens as never,
   );
   return { svc, prisma, source, apps, dbs, created };
 }
@@ -120,7 +122,7 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const op = { id: "op-1", kind: "import", actorId: "user-1", planId: "h", meta: { sourceKind: "coolify", serverId: "srv-tugra" }, cancelRequestedAt: null, createdAt: new Date(), tasks: [dbTask] };
   const prisma = {
     bulkTask: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), update: jest.fn().mockResolvedValue({}) },
-    bulkOperation: { findUnique: jest.fn().mockResolvedValue(op) },
+    bulkOperation: { findUnique: jest.fn().mockResolvedValue(op), update: jest.fn().mockResolvedValue({}) },
     server: { findUnique: jest.fn().mockResolvedValue({ id: "srv-tugra", teamId: "team-1" }) },
     database: { findUnique: jest.fn().mockResolvedValue({ id: "db-1", status: opts.dbStatus ?? "NEW" }) },
     restore: { count: jest.fn().mockResolvedValue(opts.restores ?? 0) },
@@ -129,16 +131,20 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const dbs = { remove: jest.fn().mockResolvedValue(undefined), create: jest.fn() };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never);
-  return { svc, prisma, dbs };
+  const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never);
+  return { svc, prisma, dbs, migrationTokens };
 }
 
 describe("ImportExecutorService.rollback — database teardown guard (S1)", () => {
-  it("tears down a still-EMPTY provisioned database (status NEW, no restores/backups)", async () => {
-    const { svc, dbs, prisma } = rollbackHarness();
+  it("tears down a still-EMPTY provisioned database (status NEW, no restores/backups) and revokes the migration token", async () => {
+    const { svc, dbs, prisma, migrationTokens } = rollbackHarness();
     await svc.rollback("user-1", "op-1");
     expect(dbs.remove).toHaveBeenCalledWith("user-1", "db-1");
     expect(prisma.bulkTask.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ROLLED_BACK" }) }));
+    expect(migrationTokens.revoke).toHaveBeenCalledWith("op-1", "user-1"); // revoked under the acting user (visible in their audit log)
+    // Persistent terminal marker so a token can never be minted/validated for a rolled-back op (even if revoke was missed).
+    expect(prisma.bulkOperation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ meta: expect.objectContaining({ rolledBackAt: expect.any(String) }) }) }));
   });
 
   it("NEVER tears down a database that has been started since import (status != NEW)", async () => {

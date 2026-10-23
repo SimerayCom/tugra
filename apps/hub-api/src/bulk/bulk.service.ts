@@ -125,6 +125,8 @@ export class BulkService {
     });
     if (!op) throw new NotFoundException("operation not found");
     if (op.actorId !== userId) throw new ForbiddenException("not your operation");
-    return op;
+    // Never expose the importer migration-token columns (even the hash + expiry reveal token liveness).
+    const { migrationTokenHash: _h, migrationTokenExpiresAt: _e, ...safe } = op;
+    return safe;
   }
 }

@@ -16,10 +16,7 @@ import {
 import { from, interval, map, merge, mergeMap, type Observable } from "rxjs";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
-
-interface ReqLike {
-  headers: Record<string, string | string[] | undefined>;
-}
+import { publicUrlFrom, type ReqLike } from "../common/hub-url";
 import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { Paginated } from "../common/pagination.decorator";
@@ -42,16 +39,6 @@ import {
   SetCapabilitiesInput,
   SetCapabilitiesSchema,
 } from "./dto/servers.schemas";
-
-/** Best-effort public base URL of this hub from the request (proxy-aware). */
-function publicUrlFrom(req: ReqLike): string | undefined {
-  const fwdHost = req.headers["x-forwarded-host"];
-  const host = (Array.isArray(fwdHost) ? fwdHost[0] : fwdHost) ?? req.headers.host;
-  if (!host) return undefined;
-  const fwdProto = req.headers["x-forwarded-proto"];
-  const proto = (Array.isArray(fwdProto) ? fwdProto[0] : fwdProto)?.split(",")[0] ?? "http";
-  return `${proto}://${host}`;
-}
 
 @ApiTags("servers")
 @ApiSecurity("pat")
