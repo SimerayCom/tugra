@@ -50,10 +50,14 @@ export function buildCheckScript(): string {
   ].join("\n");
 }
 
+// apt hardening for an unattended host upgrade: keep the running config on conffile conflicts
+// (--force-confold) and don't let needrestart stop for input (NEEDRESTART_SUSPEND).
+const APT_UP = "DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o Dpkg::Options::=--force-confold";
+
 /** Upgrade every package, for whichever manager the server has. */
 export function buildUpgradeAllScript(): string {
   return [
-    "if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get upgrade -y;",
+    `if command -v apt-get >/dev/null 2>&1; then ${APT_UP} upgrade -y;`,
     "elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade;",
     "elif command -v yum >/dev/null 2>&1; then yum -y update;",
     "elif command -v apk >/dev/null 2>&1; then apk upgrade;",
@@ -65,12 +69,77 @@ export function buildUpgradeAllScript(): string {
 export function buildUpgradeOneScript(pkg: string): string {
   if (!PKG_RE.test(pkg)) throw new Error("invalid package name");
   return [
-    `if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y ${pkg};`,
+    `if command -v apt-get >/dev/null 2>&1; then ${APT_UP} install --only-upgrade -y ${pkg};`,
     `elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade ${pkg};`,
     `elif command -v yum >/dev/null 2>&1; then yum -y update ${pkg};`,
     `elif command -v apk >/dev/null 2>&1; then apk upgrade ${pkg};`,
     "else echo TUGRA_UNSUPPORTED; exit 1; fi",
   ].join("\n");
+}
+
+/**
+ * Wrap a package-manager script so it runs ON THE HOST, not inside the agent's own container.
+ *
+ * Why: the agent is a debian:bookworm-slim container; running the inner `apt-get upgrade` in the agent's
+ * shell patches the AGENT, never the host — a silent "looks patched but isn't" lie on every managed server.
+ * Here the agent (which already has docker.sock + root) launches ONE ephemeral `--rm` helper FROM ITS OWN
+ * image and `nsenter`s into PID 1, so the command runs in the host's real namespaces (host apt/dpkg, host
+ * /var/run/reboot-required, host networking). The agent process itself gains NO privilege — only the
+ * short-lived helper is `--privileged`, which is unavoidable for host patching (and no stronger than the
+ * docker.sock the agent already holds).
+ *
+ * The inner script travels as base64 in an env var, so its own quoting (e.g. `apk version -l '<'`), newlines
+ * and `$?` survive untouched; it is decoded + run by the host's `/bin/sh`. Every unmet precondition prints a
+ * `TUGRA_HOST_UNAVAILABLE reason=…` marker and exits non-zero — there is NEVER a fallback to patching the
+ * container (which would re-create the original lie). `--pull never` keeps it offline/air-gap safe, and the
+ * fixed `--name tugra-patch` is a per-host mutex.
+ *
+ * The helper image is the agent's OWN image, taken ONLY from the `$TUGRA_AGENT_IMAGE` env the agent learned
+ * at install/self-update (never from the hub, never tenant-settable) — the SAME trusted source the `fsd`
+ * file-ops helper uses. We deliberately do NOT resolve it via `docker inspect $(hostname)`: a tenant compose
+ * app may set `container_name` to the agent's short id (compose-safety does not block container_name), so a
+ * name match would run the tenant's image `--privileged --pid=host` as host root. Empty env ⇒ fail-closed.
+ */
+export function wrapHostExec(inner: string, opts: { deadlineSec: number; killSec: number }): string {
+  const prelude = "echo TUGRA_HOST_ENTERED; export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; ";
+  const b64 = Buffer.from(prelude + inner, "utf8").toString("base64");
+  // The payload must be pure base64 so it cannot break out of the single-quoted `-e` value on the agent shell.
+  if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw new Error("non-base64 host-exec payload");
+  const d = Math.trunc(opts.deadlineSec);
+  const k = Math.trunc(opts.killSec);
+  return [
+    // The image is the agent's OWN image from the trusted $TUGRA_AGENT_IMAGE env ONLY — never resolved by
+    // container name/hostname (a tenant could name a container the agent's short id and get their image run
+    // as host root). Empty ⇒ fail-closed. Same trusted source + fail-closed posture as the fsd file helper.
+    `IMG="$TUGRA_AGENT_IMAGE"`,
+    `[ -n "$IMG" ] || { echo "TUGRA_HOST_UNAVAILABLE reason=no-image"; exit 1; }`,
+    `docker run --rm --pull never --name tugra-patch --label tugra.role=patch-helper \\`,
+    `  --privileged --pid=host --userns=host --network none \\`,
+    `  -e TUGRA_PATCH_B64='${b64}' --entrypoint sh "$IMG" -c '`,
+    `[ "$(readlink /proc/1/ns/mnt)" != "$(readlink /proc/self/ns/mnt)" ] || { echo "TUGRA_HOST_UNAVAILABLE reason=not-host-pid"; exit 1; }`,
+    `grep -Eq "^ *0 +0 +4294967295$" /proc/self/uid_map || { echo "TUGRA_HOST_UNAVAILABLE reason=userns"; exit 1; }`,
+    `command -v nsenter >/dev/null 2>&1 || { echo "TUGRA_HOST_UNAVAILABLE reason=no-nsenter"; exit 1; }`,
+    `exec timeout -k ${k} ${d} nsenter -t 1 -m -u -i -n -p -- /bin/sh -c "$(printf %s "$TUGRA_PATCH_B64" | base64 -d)"`,
+    `'`,
+    `rc=$?; [ $rc -ne 0 ] && echo "TUGRA_HOST_EXEC_RC=$rc"; exit $rc`,
+  ].join("\n");
+}
+
+export interface HostExecStatus {
+  entered: boolean; // the inner script actually ran on the host (TUGRA_HOST_ENTERED seen)
+  unavailableReason?: string; // no-image | not-host-pid | userns | no-nsenter — host could NOT be entered
+  busy: boolean; // a prior patch helper still holds the tugra-patch name
+}
+
+/** Did the host-exec wrapper actually reach the host? Used so a wrapper failure surfaces as a clear error
+ *  instead of being mis-parsed as "unsupported OS" (which would be a second lie). */
+export function parseHostExec(output: string): HostExecStatus {
+  const m = /TUGRA_HOST_UNAVAILABLE reason=(\S+)/.exec(output);
+  return {
+    entered: output.includes("TUGRA_HOST_ENTERED"),
+    unavailableReason: m ? m[1] : undefined,
+    busy: /is already in use/.test(output),
+  };
 }
 
 export interface UpgradablePackage {

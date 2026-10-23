@@ -2,6 +2,8 @@ import {
   buildCheckScript,
   buildUpgradeAllScript,
   buildUpgradeOneScript,
+  wrapHostExec,
+  parseHostExec,
   parseUpgradable,
 } from "./patch-script";
 
@@ -33,7 +35,7 @@ describe("patch-script", () => {
 
   it("builds upgrade-all with every manager branch", () => {
     const s = buildUpgradeAllScript();
-    expect(s).toContain("apt-get upgrade -y");
+    expect(s).toContain("apt-get -o Dpkg::Options::=--force-confold upgrade -y");
     expect(s).toContain("dnf -y upgrade");
     expect(s).toContain("yum -y update");
     expect(s).toContain("apk upgrade");
@@ -157,6 +159,90 @@ describe("patch-script", () => {
       const r = parseUpgradable("TUGRA_MGR=dnf\nTUGRA_UPGRADABLE\nkernel.x86_64  5.14.0-427  @System\ncurl.x86_64  7.76.1  baseos\n");
       expect(r.count).toBe(1);
       expect(r.packages[0].name).toBe("curl.x86_64");
+    });
+  });
+
+  describe("apt hardening", () => {
+    it("the apt upgrade lines suspend needrestart and keep the running config on conffile conflicts", () => {
+      for (const s of [buildUpgradeAllScript(), buildUpgradeOneScript("openssl")]) {
+        expect(s).toContain("NEEDRESTART_SUSPEND=1");
+        expect(s).toContain("Dpkg::Options::=--force-confold");
+      }
+    });
+  });
+
+  describe("wrapHostExec (run the patch on the HOST, not the agent container)", () => {
+    const CHECK = { deadlineSec: 100, killSec: 5 };
+
+    it("builds a one-shot privileged helper that nsenters PID 1 — with NO host-root mount or docker.sock", () => {
+      const w = wrapHostExec(buildCheckScript(), CHECK);
+      for (const flag of ["docker run", "--rm", "--pull never", "--name tugra-patch", "--privileged", "--pid=host", "--userns=host", "--network none", "tugra.role=patch-helper"]) {
+        expect(w).toContain(flag);
+      }
+      expect(w).toContain("nsenter -t 1 -m -u -i -n -p");
+      // host-root-equivalent via nsenter, NOT a standing host-root bind:
+      expect(w).not.toContain("-v /:/host");
+      expect(w).not.toContain("/var/run/docker.sock");
+      expect(w).not.toContain("chroot");
+      expect(w).not.toContain("nsenter -C"); // cgroup-ns omitted (fails on older kernels)
+      expect(w).toContain("timeout -k 5 100");
+    });
+
+    it("takes the helper image ONLY from the trusted $TUGRA_AGENT_IMAGE env — never name/hostname (anti-spoof), no pull", () => {
+      const w = wrapHostExec(buildCheckScript(), CHECK);
+      expect(w).toContain('IMG="$TUGRA_AGENT_IMAGE"');
+      // the name-spoofable path is GONE: a tenant could set container_name to the agent's id and hijack it.
+      expect(w).not.toContain("docker inspect");
+      expect(w).not.toContain("$(hostname)");
+      // empty env fails closed, never patches the container
+      expect(w).toContain('[ -n "$IMG" ] || { echo "TUGRA_HOST_UNAVAILABLE reason=no-image"; exit 1; }');
+      expect(w).toContain("--pull never");
+      expect(w).not.toContain("docker pull");
+    });
+
+    it("fails CLOSED on every unmet precondition — never silently patches the container", () => {
+      const w = wrapHostExec(buildCheckScript(), CHECK);
+      for (const reason of ["no-image", "not-host-pid", "userns", "no-nsenter"]) {
+        expect(w).toContain(`TUGRA_HOST_UNAVAILABLE reason=${reason}`);
+      }
+      // the guards gate the payload: nsenter appears before the decoded payload is ever run
+      expect(w.indexOf("command -v nsenter")).toBeLessThan(w.indexOf("base64 -d"));
+    });
+
+    it("carries the inner script ONLY as base64 — decodes byte-for-byte, so quoting/newlines survive", () => {
+      const inner = buildCheckScript();
+      const w = wrapHostExec(inner, CHECK);
+      const m = /TUGRA_PATCH_B64='([A-Za-z0-9+/=]+)'/.exec(w);
+      expect(m).not.toBeNull();
+      const decoded = Buffer.from(m![1], "base64").toString("utf8");
+      expect(decoded).toContain("TUGRA_HOST_ENTERED");
+      expect(decoded.endsWith(inner)).toBe(true); // the exact inner script, incl. `apk version -l '<'` + newlines
+      expect(decoded).toContain("apk version -l '<'");
+    });
+
+    it("a dangerous package name is still rejected UPSTREAM and never reaches the outer argv", () => {
+      expect(() => wrapHostExec(buildUpgradeOneScript("x; rm -rf /"), CHECK)).toThrow(/invalid/);
+      const w = wrapHostExec(buildUpgradeOneScript("openssl"), CHECK);
+      // the only occurrence of the pkg is inside the base64 payload, not the outer shell
+      const outer = w.replace(/TUGRA_PATCH_B64='[A-Za-z0-9+/=]+'/, "");
+      expect(outer).not.toContain("openssl");
+    });
+  });
+
+  describe("parseHostExec", () => {
+    it("entered when the host marker is present", () => {
+      expect(parseHostExec("TUGRA_HOST_ENTERED\nTUGRA_MGR=apt\n")).toMatchObject({ entered: true });
+    });
+    it("surfaces the unavailable reason (never parses as entered)", () => {
+      const s = parseHostExec("TUGRA_HOST_UNAVAILABLE reason=userns\n");
+      expect(s.entered).toBe(false);
+      expect(s.unavailableReason).toBe("userns");
+    });
+    it("detects the name-mutex conflict as busy", () => {
+      expect(parseHostExec('docker: Error response: Conflict. The container name "/tugra-patch" is already in use').busy).toBe(true);
+    });
+    it("no marker at all → not entered", () => {
+      expect(parseHostExec("some unrelated output")).toMatchObject({ entered: false, busy: false });
     });
   });
 });

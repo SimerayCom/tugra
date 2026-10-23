@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -9,13 +9,29 @@ import {
   buildCheckScript,
   buildUpgradeAllScript,
   buildUpgradeOneScript,
+  wrapHostExec,
+  parseHostExec,
   parseUpgradable,
   type PatchInfo,
+  type HostExecStatus,
 } from "./patch-script";
 
 const CHECK_TIMEOUT_MS = 120_000;
 const UPGRADE_ALL_TIMEOUT_MS = 600_000;
 const UPGRADE_ONE_TIMEOUT_MS = 300_000;
+// In-container `timeout` backstops for the host-exec helper. CHECK is BELOW the hub timeout so a slow check
+// is killed cleanly in-container (clean marker, not a hub-side timeout). APPLY backstops are ABOVE the hub
+// timeout: a long apt/dpkg must finish rather than be killed mid-run; the backstop only frees a truly hung
+// helper (the tugra-patch name mutex) eventually.
+const CHECK_HOST = { deadlineSec: 100, killSec: 5 };
+const UPGRADE_ALL_HOST = { deadlineSec: 1800, killSec: 30 };
+const UPGRADE_ONE_HOST = { deadlineSec: 900, killSec: 30 };
+
+/** A host-exec patch that could not enter the host → a clear message, never a silent mis-parse. */
+function hostFailMessage(host: HostExecStatus): string {
+  if (host.busy) return "a patch is already running on this server — wait for it to finish";
+  return `host patching unavailable: ${host.unavailableReason ?? "the agent could not run the patch on the host"}`;
+}
 // Fan-out caps for fleet ops: checks are cheap (parallel more), applies are heavy (fewer at once).
 const FLEET_CHECK_CONCURRENCY = 8;
 const FLEET_APPLY_CONCURRENCY = 3;
@@ -62,21 +78,24 @@ export class PatchService {
 
   async checkUpdates(userId: string, serverId: string): Promise<PatchInfo> {
     await this.requireWrite(userId, serverId);
-    const r = await this.agentWs.sendCommand(serverId, buildCheckScript(), "patch", CHECK_TIMEOUT_MS);
+    const r = await this.agentWs.sendCommand(serverId, wrapHostExec(buildCheckScript(), CHECK_HOST), "patch", CHECK_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.patch.check", target: serverId });
+    // If the wrapper could not reach the host, surface that clearly — NOT a mis-parsed "unsupported OS".
+    const host = parseHostExec(r.output);
+    if (!host.entered) throw new ServiceUnavailableException(hostFailMessage(host));
     return parseUpgradable(r.output);
   }
 
   async upgradeAll(userId: string, serverId: string): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
-    const r = await this.runStreamed(serverId, buildUpgradeAllScript(), UPGRADE_ALL_TIMEOUT_MS);
+    const r = await this.runStreamed(serverId, wrapHostExec(buildUpgradeAllScript(), UPGRADE_ALL_HOST), UPGRADE_ALL_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId });
     return r;
   }
 
   async upgradeOne(userId: string, serverId: string, pkg: string): Promise<{ output: string; exitCode: number }> {
     await this.requireWrite(userId, serverId);
-    const r = await this.runStreamed(serverId, buildUpgradeOneScript(pkg), UPGRADE_ONE_TIMEOUT_MS);
+    const r = await this.runStreamed(serverId, wrapHostExec(buildUpgradeOneScript(pkg), UPGRADE_ONE_HOST), UPGRADE_ONE_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.patch.apply", target: serverId, meta: { pkg } });
     return r;
   }
@@ -98,7 +117,9 @@ export class PatchService {
     const results = await mapPool(targets, FLEET_CHECK_CONCURRENCY, async (serverId): Promise<FleetPatchCheck> => {
       if (!this.agentWs.isOnline(serverId)) return { serverId, online: false };
       try {
-        const r = await this.agentWs.sendCommand(serverId, buildCheckScript(), "patch", CHECK_TIMEOUT_MS);
+        const r = await this.agentWs.sendCommand(serverId, wrapHostExec(buildCheckScript(), CHECK_HOST), "patch", CHECK_TIMEOUT_MS);
+        const host = parseHostExec(r.output);
+        if (!host.entered) return { serverId, online: true, error: hostFailMessage(host) };
         return { serverId, online: true, updates: parseUpgradable(r.output) };
       } catch (e) {
         return { serverId, online: true, error: e instanceof Error ? e.message : String(e) };
@@ -120,7 +141,9 @@ export class PatchService {
     const results = await mapPool(targets, FLEET_APPLY_CONCURRENCY, async (serverId): Promise<FleetPatchApply> => {
       if (!this.agentWs.isOnline(serverId)) return { serverId, online: false };
       try {
-        const r = await this.agentWs.sendCommand(serverId, buildUpgradeAllScript(), "patch", UPGRADE_ALL_TIMEOUT_MS);
+        const r = await this.agentWs.sendCommand(serverId, wrapHostExec(buildUpgradeAllScript(), UPGRADE_ALL_HOST), "patch", UPGRADE_ALL_TIMEOUT_MS);
+        const host = parseHostExec(r.output);
+        if (!host.entered) return { serverId, online: true, error: hostFailMessage(host) }; // host not reached — not a real apply
         return { serverId, online: true, exitCode: r.exitCode };
       } catch (e) {
         return { serverId, online: true, error: e instanceof Error ? e.message : String(e) };
@@ -150,11 +173,15 @@ export class PatchService {
       const r = await this.agentWs.sendCommand(serverId, script, "patch", timeoutMs, (c) =>
         this.deployLogs.push(serverId, c),
       );
+      // A host-exec that never entered the host is NOT a successful patch, even on exit 0 (e.g. a missing
+      // `base64` would make the inner `$(…)` empty and `sh -c ""` exit 0). Treat it as FAILED and surface it.
+      const host = parseHostExec(r.output);
       this.deployLogs.finish(serverId, {
-        status: r.exitCode === 0 ? "SUCCESS" : "FAILED",
+        status: r.exitCode === 0 && host.entered ? "SUCCESS" : "FAILED",
         exitCode: r.exitCode,
         deploymentId: serverId,
       });
+      if (!host.entered) throw new ServiceUnavailableException(hostFailMessage(host));
       return { output: r.output.slice(0, 65536), exitCode: r.exitCode };
     } catch (e) {
       this.deployLogs.finish(serverId, { status: "FAILED", exitCode: -1, deploymentId: serverId });

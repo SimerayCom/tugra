@@ -16,6 +16,14 @@ describe("assertSafeCompose", () => {
     }
   });
 
+  it("rejects a container_name on the reserved tugra-/tugra_ prefix (can't squat/impersonate a managed container)", () => {
+    for (const name of ["tugra-patch", "tugra-proxy", "tugra_db_abc", "TUGRA-agent", "tugra_myapp"]) {
+      expect(() => assertSafeCompose(wrap(`    container_name: ${name}`))).toThrow(/reserved/);
+    }
+    // an ordinary container_name is still fine
+    expect(() => assertSafeCompose(wrap("    container_name: my-app"))).not.toThrow();
+  });
+
   it("rejects a RELATIVE bind into the Tugra-managed compose dir (the dir itself, .env, mounts, compose files)", () => {
     for (const src of ["./:/host", ".:/host", "./.env:/x", "./mounts:/x", "./mounts/0:/x", "./docker-compose.yml:/x", "./docker-compose.tugra.yml:/x"]) {
       expect(() => assertSafeCompose(wrap(`    volumes:\n      - "${src}"`))).toThrow(/sensitive host path/);
