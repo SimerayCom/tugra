@@ -118,7 +118,41 @@ describe("Importer migration DATA ingest (e2e)", () => {
   it("lists DB targets without exposing any resource id or credential", async () => {
     const res = await request(api()).get("/api/v1/import/migration/targets").set(H()).expect(200);
     expect(res.body.targets).toEqual([expect.objectContaining({ itemRef: ITEM, kind: "database", engine: "POSTGRES" })]);
+    expect(res.body.targets[0].dataPlane).toBeUndefined(); // POSTGRES is streamable → no unsupported marker
     expect(JSON.stringify(res.body)).not.toContain(dbId);
+  });
+
+  it("serves the per-engine dump recipes (secret-free) and the explicit unsupported set", async () => {
+    const res = await request(api()).get("/api/v1/import/migration/recipes").set(H()).expect(200);
+    expect(res.body.v).toBe(1);
+    expect(Object.keys(res.body.recipes).sort()).toEqual(["DRAGONFLY", "KEYDB", "MARIADB", "MYSQL", "POSTGRES", "REDIS"]);
+    for (const r of Object.values<{ command: string }>(res.body.recipes)) {
+      expect(r.command.startsWith("docker exec ")).toBe(true);
+      expect(r.command).not.toContain("TUGRA_SENT_"); // no sentinel leaked
+      expect(r.command).not.toContain("TUGRA_SRC_PW"); // password never a host-expanded ref
+    }
+    expect(res.body.recipes.POSTGRES).toMatchObject({ format: "pg_custom", pgFormat: "custom", env: [{ name: "PGPASSWORD", from: "pw" }] });
+    // ClickHouse + Mongo are explicitly flagged, not silently absent
+    expect(res.body.unsupported).toMatchObject({ CLICKHOUSE: "requires-S4b", MONGO: "requires-S4b", LIBSQL: "no-logical-dump" });
+    expect(res.body.recipes.MONGO).toBeUndefined();
+  });
+
+  it("marks an unstreamable engine's target dataPlane=unsupported so the source skips it explicitly", async () => {
+    const mdb = (await request(api()).post("/api/v1/databases").set("Authorization", `Bearer ${tokenA}`).send({ name: "mongo-src", serverId, engine: "MONGO" }).expect(201)).body.id;
+    const mop = await prisma.bulkOperation.create({ data: { actorId: userAId, command: "", kind: "import", planId: "h", meta: { sourceKind: "coolify", serverId } } });
+    await prisma.bulkTask.create({ data: { opId: mop.id, serverId, kind: "database", itemRef: "database:_:mongo-src", status: "DONE", resourceType: "database", resourceId: mdb } });
+    const mtok = (await request(api()).post(`/api/v1/import/operations/${mop.id}/migration-token`).set("Authorization", `Bearer ${tokenA}`).expect(201)).body.token;
+    const res = await request(api()).get("/api/v1/import/migration/targets").set("Authorization", `Bearer ${mtok}`).expect(200);
+    expect(res.body.targets).toEqual([expect.objectContaining({ kind: "database", engine: "MONGO", dataPlane: "unsupported", reason: "requires-S4b" })]);
+    // the contract is SERVER-ENFORCED, not just advertised: a non-conforming client cannot stage an unsupported engine
+    await request(api())
+      .put(`/api/v1/import/migration/artifacts/${encodeURIComponent("database:_:mongo-src")}?gzip=0&format=custom`)
+      .set("Authorization", `Bearer ${mtok}`)
+      .set("Content-Type", "application/octet-stream")
+      .send(Buffer.from("x"))
+      .expect(400);
+    await prisma.bulkOperation.deleteMany({ where: { id: mop.id } }).catch(() => undefined);
+    await prisma.database.deleteMany({ where: { id: mdb } }).catch(() => undefined);
   });
 
   it("stages an artifact with the HUB-computed byte count + sha256 (never a host-claimed hash)", async () => {
@@ -226,6 +260,8 @@ describe("Importer migration DATA ingest (e2e)", () => {
   it("enforces token auth, ownership, and resolves the op from the token alone", async () => {
     await request(api()).get("/api/v1/import/migration/targets").expect(401); // no token
     await request(api()).get("/api/v1/import/migration/targets").set("Authorization", `Bearer ${tokenA}`).expect(401); // a JWT is not a migration token
+    await request(api()).get("/api/v1/import/migration/recipes").expect(401); // recipes are token-guarded too
+    await request(api()).get("/api/v1/import/migration/recipes").set("Authorization", `Bearer ${tokenA}`).expect(401);
     // A different op owned by A, with its own token, cannot reach THIS op's item (dest resolved from the token's op).
     const otherDb = (await request(api()).post("/api/v1/databases").set("Authorization", `Bearer ${tokenA}`).send({ name: "other", serverId, engine: "POSTGRES" }).expect(201)).body.id;
     const otherOp = await prisma.bulkOperation.create({ data: { actorId: userAId, command: "", kind: "import", planId: "h", meta: { sourceKind: "coolify", serverId } } });

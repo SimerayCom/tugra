@@ -40,6 +40,13 @@ export class MigrationIngestController {
     return this.ingest.listTargets(op);
   }
 
+  /** The per-engine dump recipes the source host runs, and the engines it cannot stream (skip explicitly).
+   *  Token-guarded (controller guard), op-independent, and secret-free — the commands carry no credential. */
+  @Get("recipes")
+  recipes() {
+    return this.ingest.recipes();
+  }
+
   /** Stream a DB dump (octet-stream body) to hub staging; the hub returns its OWN byte count + sha256. */
   @Put("artifacts/:itemRef")
   @HttpCode(201)
