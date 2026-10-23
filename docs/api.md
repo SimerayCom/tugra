@@ -9,8 +9,14 @@ can drive directly from scripts or your own tools.
   build version).
 - ~250 endpoints covering servers, applications (incl. one-click domain DNS setup), databases, backups,
   deployments, monitors, notification channels, registries, Git sources, cloud & DNS credentials, teams,
-  the audit log, saved views, projects, the app-store template catalog and instance settings.
+  the audit log, saved views, projects, the Coolify import (connect · plan · apply · migration token),
+  the app-store template catalog and instance settings.
 - The committed contract lives at [`apps/hub-api/openapi.json`](../apps/hub-api/openapi.json).
+- The one-click data migrator's **ingest** routes (`/api/v1/import/migration/*`) are authenticated by a
+  one-time token, not a PAT (the agent's artifact-download route `import/migration/dl/*` by a signed,
+  short-lived URL instead), and are intentionally excluded from the OpenAPI contract. Minting that token
+  (`POST /import/operations/{opId}/migration-token`) needs the `deploy` + `read:secrets` scopes — see
+  [Migrating from Coolify](coolify-migration.md#one-click-data-migration).
 
 ## Interactive docs & spec
 
