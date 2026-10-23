@@ -1,5 +1,5 @@
 import { buildMigratorRecipe, buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, RECIPE_VARS } from "./migrator-recipe";
-import type { DbEngine } from "../databases/database-script";
+import { ENGINES, type DbEngine } from "../databases/database-script";
 
 describe("migrator-recipe", () => {
   describe("universal invariants (every engine)", () => {
@@ -98,5 +98,17 @@ describe("migrator-recipe", () => {
     expect(Object.keys(all)).toHaveLength(6);
     expect(all.CLICKHOUSE).toBeUndefined();
     expect(all.MONGO).toBeUndefined();
+  });
+
+  it("every DbEngine is classified in EXACTLY one of streamable / unsupported (adding one forces a choice)", () => {
+    const allEngines = Object.keys(ENGINES);
+    const supported = new Set<string>(MIGRATOR_ENGINES);
+    const unsupported = new Set<string>(Object.keys(MIGRATOR_UNSUPPORTED));
+    for (const e of allEngines) {
+      // XOR: in one set, never both, never neither (no silent fall-through to the "unsupported" default)
+      expect(supported.has(e) !== unsupported.has(e)).toBe(true);
+    }
+    // neither set names an engine that is not a real DbEngine
+    for (const e of [...supported, ...unsupported]) expect(allEngines).toContain(e);
   });
 });

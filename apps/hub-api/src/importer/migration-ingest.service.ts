@@ -17,6 +17,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { BackupsService } from "../backups/backups.service";
 import { DatabasesService } from "../databases/databases.service";
 import { assertSafeBase } from "./migration-command";
+import { buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, type MigratorRecipe } from "./migrator-recipe";
 import { ImportExecutorService } from "./import-executor.service";
 import type { MigrationTokenContext } from "./migration-token.service";
 import { mintArtifactUrl, verifyArtifactSig } from "./migration-artifact";
@@ -113,13 +114,29 @@ export class MigrationIngestService {
       if (t.status !== "DONE" || !t.resourceId) continue;
       if (t.resourceType === "database") {
         const db = await this.prisma.database.findUnique({ where: { id: t.resourceId }, select: { engine: true } });
-        if (!db || db.engine === "LIBSQL") continue;
-        targets.push({ itemRef: t.itemRef, kind: "database", engine: db.engine });
+        if (!db) continue;
+        const entry: Record<string, unknown> = { itemRef: t.itemRef, kind: "database", engine: db.engine };
+        // Mark an engine the migrator cannot stream (ClickHouse/Mongo = S4b, LibSQL = no logical dump) so the
+        // source skips it EXPLICITLY rather than treating a missing recipe as an empty, silently-OK dump.
+        if (!MIGRATOR_ENGINES.includes(db.engine)) {
+          entry.dataPlane = "unsupported";
+          entry.reason = MIGRATOR_UNSUPPORTED[db.engine] ?? "unsupported";
+        }
+        targets.push(entry);
       } else if (t.resourceType === "application") {
         targets.push({ itemRef: t.itemRef, kind: "application", volumeIngest: "requires-S7" });
       }
     }
     return { opId: op.opId, targets, maxArtifactBytes: this.maxBytes() };
+  }
+
+  /**
+   * The per-engine dump recipes the migrator runs on the source host, plus the engines it cannot stream yet
+   * (so the source skips them explicitly). Pure and SECRET-FREE — the commands carry only `$TUGRA_SRC_*`
+   * references and `-e NAME` passthroughs, never a credential. Token-guarded by the controller; op-independent.
+   */
+  recipes(): { v: number; recipes: Record<string, MigratorRecipe>; unsupported: Record<string, string> } {
+    return { v: 1, recipes: buildAllMigratorRecipes(), unsupported: MIGRATOR_UNSUPPORTED };
   }
 
   /**
@@ -141,7 +158,12 @@ export class MigrationIngestService {
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
     if (db.serverId !== meta.serverId || db.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
-    if (db.engine === "LIBSQL") throw new BadRequestException("engine does not support data import");
+    // Server-ENFORCE the streamable-engine contract (not just advertise it in /targets): an engine the migrator
+    // defers (ClickHouse/Mongo → S4b, LibSQL → no logical dump) is refused here too, so a non-conforming client
+    // can never stage/restore a dump the restore path was never validated for.
+    if (!MIGRATOR_ENGINES.includes(db.engine)) {
+      throw new BadRequestException(`the migrator cannot stream ${db.engine} data yet (${MIGRATOR_UNSUPPORTED[db.engine] ?? "unsupported"})`);
+    }
     // Re-authz EVERY request (not just at mint): a creator who lost the role cannot keep restoring.
     await this.access.requirePermission(op.actorId, server.teamId, "apps:config");
     await this.access.requirePermission(op.actorId, server.teamId, "databases");
