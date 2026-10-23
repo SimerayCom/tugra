@@ -26,7 +26,7 @@ function harness(opts: {
   };
   const prisma = {
     bulkTask: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) }, // loadOwnedOp stale reaper
-    bulkOperation: { findUnique: jest.fn().mockResolvedValue(op) },
+    bulkOperation: { findUnique: jest.fn().mockResolvedValue(op), update: jest.fn().mockResolvedValue({}) },
     server: { findUnique: jest.fn().mockResolvedValue(opts.serverMissing ? null : { id: "srv-1", teamId: opts.serverTeamId ?? "team-1" }) },
   };
   const access = {
@@ -55,9 +55,11 @@ function harness(opts: {
 
 describe("ImportExecutorService.mintMigrationToken", () => {
   it("mints for the owner, audits, and returns a command embedding the token + migrator.sh", async () => {
-    const { svc, audit, migrationTokens } = harness();
+    const { svc, audit, migrationTokens, prisma } = harness();
     const res = await svc.mintMigrationToken("user-1", "op-1", BASE);
     expect(migrationTokens.issue).toHaveBeenCalledWith("op-1");
+    // Capture the trusted hub base (the actor's request) so the untrusted ingest path never derives it from a header.
+    expect(prisma.bulkOperation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ meta: expect.objectContaining({ hubBase: BASE }) }) }));
     expect(res.opId).toBe("op-1");
     expect(isMigrationToken(res.token)).toBe(true);
     expect(res.command).toBe(`curl -fsSL ${BASE}/install/migrator.sh | sh -s -- --hub ${BASE} --token ${res.token}`);

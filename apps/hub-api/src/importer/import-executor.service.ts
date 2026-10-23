@@ -13,6 +13,7 @@ import { foreignAppToCreateInput } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
+import { cleanupOpStaging } from "./migration-staging";
 import type { ForeignApp, ForeignDb } from "./foreign-fleet";
 
 /** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
@@ -298,6 +299,7 @@ export class ImportExecutorService {
     await this.audit.log({ actor: userId, action: "import.cancel", target: opId });
     // A cancelled import is abandoned → kill any live migration token so a copied command stops working.
     await this.migrationTokens.revoke(opId, userId).catch((e) => this.logger.warn(`migration-token revoke failed for ${opId}: ${msg(e)}`));
+    await cleanupOpStaging(opId).catch(() => undefined); // reclaim any staged migration artifacts
     return this.status(userId, opId);
   }
 
@@ -384,6 +386,7 @@ export class ImportExecutorService {
       }
     }
     await this.audit.log({ actor: userId, action: "import.rollback", target: opId, meta: { serverId, count: done.length + doneDbs.length } });
+    await cleanupOpStaging(opId).catch(() => undefined); // the imported resources are gone → drop any staged artifacts
     return this.status(userId, opId);
   }
 
@@ -397,6 +400,7 @@ export class ImportExecutorService {
     const op = await this.loadOwnedOp(userId, opId);
     await this.assertCanMigrate(userId, op);
     assertSafeBase(base); // fail fast on an unsafe hub URL BEFORE a token is minted (none left behind on 400)
+    await this.captureHubBase(opId, op.meta, base); // trusted capture (actor's request) for the agent download later
     const { token, expiresAt } = await this.migrationTokens.issue(opId);
     await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.mint", expiresAt);
     return { opId, token, expiresAt, command: buildMigrationCommand(token, base) };
@@ -407,9 +411,17 @@ export class ImportExecutorService {
     const op = await this.loadOwnedOp(userId, opId);
     await this.assertCanMigrate(userId, op);
     assertSafeBase(base);
+    await this.captureHubBase(opId, op.meta, base);
     const { token, expiresAt } = await this.migrationTokens.reissue(opId);
     await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.reissue", expiresAt);
     return { opId, token, expiresAt, command: buildMigrationCommand(token, base) };
+  }
+
+  /** Persist the hub origin the AUTHENTICATED actor reached us on, so the (untrusted) ingest path can later
+   *  hand the agent a download URL on a trusted host instead of trusting the ingest request's Host header. */
+  private async captureHubBase(opId: string, meta: unknown, base: string): Promise<void> {
+    const m = typeof meta === "object" && meta ? (meta as Record<string, unknown>) : {};
+    await this.prisma.bulkOperation.update({ where: { id: opId }, data: { meta: { ...m, hubBase: base } } });
   }
 
   /** The hash is committed before this runs, so if the audit write fails we must not leave an orphan live
@@ -459,6 +471,37 @@ export class ImportExecutorService {
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
     await this.access.requirePermission(userId, server.teamId, "apps:config");
+  }
+
+  /**
+   * Load an op for the migration INGEST path (authenticated by the migration token, not a user session, so it
+   * takes actorId instead of userId and does NO permission call — the ingest service re-authorizes per item).
+   * Same reaper + ownership + copy-mode eligibility as the mint gate, but tolerant of in-flight `data` tasks
+   * (the restore we are driving): it blocks only while the APPLY provisioning (app/db tasks) is still running.
+   */
+  async loadIngestOp(opId: string, actorId: string) {
+    // Reap stale APPLY tasks only — never a `data` task: this runs on every ingest request (incl. status
+    // polls), and a legit long restore must not be killed mid-flight (the restore claim handles its own
+    // stale-takeover, and S6 adds a heartbeat/longer threshold for data tasks).
+    await this.prisma.bulkTask.updateMany({
+      where: { opId, kind: { not: "data" }, status: "RUNNING", startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
+      data: { status: "FAILED", output: "stale: no completion signal (the worker stopped before finishing)", finishedAt: new Date() },
+    });
+    const op = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, include: { tasks: { orderBy: { itemRef: "asc" } } } });
+    if (!op || op.kind !== "import") throw new NotFoundException("import operation not found");
+    if (op.actorId !== actorId) throw new ForbiddenException("not your operation");
+    const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; rolledBackAt?: string }) : {};
+    if (meta.sourceKind !== "coolify") throw new ConflictException("only a copy-mode (coolify) import can migrate data");
+    if (op.cancelRequestedAt) throw new ConflictException("operation was cancelled");
+    if (meta.rolledBackAt) throw new ConflictException("operation was rolled back");
+    if (!meta.serverId) throw new ConflictException("operation has no target server");
+    // Only the provisioning tasks gate readiness; a RUNNING `data` task is the ingest in progress, not the apply.
+    const provisioning = op.tasks.filter((t) => t.kind !== "data").map((t) => t.status as TaskStatus);
+    if (deriveOpStatus(provisioning) === "RUNNING") throw new ConflictException("the import is still running — wait for it to finish before migrating data");
+    if (!op.tasks.some((t) => t.status === "DONE" && (t.resourceType === "application" || t.resourceType === "database") && !!t.resourceId)) {
+      throw new ConflictException("the import provisioned no resources to migrate data into");
+    }
+    return op;
   }
 
   private async loadOwnedOp(userId: string, opId: string) {
