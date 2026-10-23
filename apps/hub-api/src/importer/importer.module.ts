@@ -4,8 +4,11 @@ import { CryptoModule } from "../crypto/crypto.module";
 import { ApplicationsModule } from "../applications/applications.module";
 import { DatabasesModule } from "../databases/databases.module";
 import { ImporterController } from "./importer.controller";
+import { MigrationIngestController } from "./migration-ingest.controller";
 import { ImporterService } from "./importer.service";
 import { ImportExecutorService } from "./import-executor.service";
+import { MigrationTokenService } from "./migration-token.service";
+import { MigrationTokenGuard } from "./migration-token.guard";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 
 // Reuses MigratorService (MigratorModule) for local-docker adopt/unadopt, ApplicationsService
@@ -14,8 +17,8 @@ import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 // rest. PrismaService, TeamAccessService and AuditService are provided by @Global modules.
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule],
-  controllers: [ImporterController],
-  providers: [ImporterService, ImportExecutorService, CoolifyClientFactory],
+  controllers: [ImporterController, MigrationIngestController],
+  providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, CoolifyClientFactory],
   exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}

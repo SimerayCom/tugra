@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { hubBaseUrl, publicUrlFrom, type ReqLike } from "../common/hub-url";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
@@ -86,5 +87,28 @@ export class ImporterController {
   @RequireScopes("admin")
   rollback(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
     return this.executor.rollback(user.userId, opId);
+  }
+
+  /** Mint a one-time migration token + the one-line command the untrusted SOURCE host runs to stream its
+   *  volume/DB data to this hub. Deploy-tier (authorizes writes into the dest) AND read:secrets (the
+   *  response carries a credential). Shown ONCE — the token is hashed at rest. */
+  @Post("operations/:opId/migration-token")
+  @RequireScopes("deploy", "read:secrets")
+  mintMigrationToken(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
+    return this.executor.mintMigrationToken(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
+  }
+
+  /** Rotate the migration token (revoke the old + mint a new one). Same scope as mint. */
+  @Post("operations/:opId/migration-token/reissue")
+  @RequireScopes("deploy", "read:secrets")
+  reissueMigrationToken(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
+    return this.executor.reissueMigrationToken(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
+  }
+
+  /** Read-only migration state + a command TEMPLATE (never the live token). Read scope: it cannot return a
+   *  credential (the token is unrecoverable after mint). */
+  @Get("operations/:opId/migrate-command")
+  migrateCommand(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
+    return this.executor.migrateCommand(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
   }
 }

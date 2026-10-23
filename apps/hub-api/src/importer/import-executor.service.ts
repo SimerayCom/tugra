@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -11,6 +11,8 @@ import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
 import { foreignAppToCreateInput } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
+import { MigrationTokenService } from "./migration-token.service";
+import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
 import type { ForeignApp, ForeignDb } from "./foreign-fleet";
 
 /** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
@@ -34,6 +36,8 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
  */
 @Injectable()
 export class ImportExecutorService {
+  private readonly logger = new Logger(ImportExecutorService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly migrator: MigratorService,
@@ -42,6 +46,7 @@ export class ImportExecutorService {
     private readonly importer: ImporterService,
     private readonly apps: ApplicationsService,
     private readonly dbs: DatabasesService,
+    private readonly migrationTokens: MigrationTokenService,
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
@@ -291,6 +296,8 @@ export class ImportExecutorService {
       data: { status: "CANCELLED", finishedAt: new Date() },
     });
     await this.audit.log({ actor: userId, action: "import.cancel", target: opId });
+    // A cancelled import is abandoned → kill any live migration token so a copied command stops working.
+    await this.migrationTokens.revoke(opId, userId).catch((e) => this.logger.warn(`migration-token revoke failed for ${opId}: ${msg(e)}`));
     return this.status(userId, opId);
   }
 
@@ -312,6 +319,12 @@ export class ImportExecutorService {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "apps:config");
+
+    // Mark the op rolled-back BEFORE teardown so minting/validation is blocked for the whole window (a
+    // best-effort revoke alone is not enough — this persistent marker is what assertCanMigrate + the token
+    // guard's validate() honour, so even a missed revoke cannot resurrect a usable token).
+    await this.prisma.bulkOperation.update({ where: { id: opId }, data: { meta: { ...meta, rolledBackAt: new Date().toISOString() } } });
+    await this.migrationTokens.revoke(opId, userId).catch((e) => this.logger.warn(`migration-token revoke failed for ${opId}: ${msg(e)}`));
 
     const done = op.tasks.filter((t) => t.status === "DONE" && t.resourceType === "application" && t.resourceId);
     for (const t of done) {
@@ -372,6 +385,80 @@ export class ImportExecutorService {
     }
     await this.audit.log({ actor: userId, action: "import.rollback", target: opId, meta: { serverId, count: done.length + doneDbs.length } });
     return this.status(userId, opId);
+  }
+
+  /**
+   * Mint a one-time migration token for this op so the untrusted SOURCE host can stream its volume/DB data
+   * to the hub. Refuses (409) if a token is already live — use {@link reissueMigrationToken} to rotate — so
+   * an accidental double-click never invalidates a command the host may already hold. The returned command
+   * is shown ONCE: the token is hashed at rest and unrecoverable afterwards.
+   */
+  async mintMigrationToken(userId: string, opId: string, base: string) {
+    const op = await this.loadOwnedOp(userId, opId);
+    await this.assertCanMigrate(userId, op);
+    assertSafeBase(base); // fail fast on an unsafe hub URL BEFORE a token is minted (none left behind on 400)
+    const { token, expiresAt } = await this.migrationTokens.issue(opId);
+    await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.mint", expiresAt);
+    return { opId, token, expiresAt, command: buildMigrationCommand(token, base) };
+  }
+
+  /** Rotate the migration token: revoke the old and mint a new one atomically (works with or without a prior token). */
+  async reissueMigrationToken(userId: string, opId: string, base: string) {
+    const op = await this.loadOwnedOp(userId, opId);
+    await this.assertCanMigrate(userId, op);
+    assertSafeBase(base);
+    const { token, expiresAt } = await this.migrationTokens.reissue(opId);
+    await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.reissue", expiresAt);
+    return { opId, token, expiresAt, command: buildMigrationCommand(token, base) };
+  }
+
+  /** The hash is committed before this runs, so if the audit write fails we must not leave an orphan live
+   *  credential the caller never received — best-effort revoke it and surface the error so a retry works. */
+  private async auditTokenOrElseRevoke(userId: string, opId: string, action: string, expiresAt: Date): Promise<void> {
+    try {
+      await this.audit.log({ actor: userId, action, target: opId, meta: { expiresAt } });
+    } catch (e) {
+      await this.migrationTokens.revoke(opId, userId).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  /** Read-only migration state + a command TEMPLATE. Never returns the live token (hashed at rest): the UI
+   *  captures the real command from the mint/reissue response once, then shows active/expiresAt + Reissue. */
+  async migrateCommand(userId: string, opId: string, base: string) {
+    const op = await this.loadOwnedOp(userId, opId);
+    const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string }) : {};
+    const expiresAt = op.migrationTokenExpiresAt;
+    const active = !!op.migrationTokenHash && !!expiresAt && expiresAt.getTime() > Date.now() && !op.cancelRequestedAt && !meta.rolledBackAt;
+    return { opId, active, expiresAt: active ? expiresAt : null, commandTemplate: buildMigrationCommandTemplate(base) };
+  }
+
+  /**
+   * A migration token authorizes an untrusted host to stream DATA into the op's provisioned resources, so
+   * minting is gated to the one state where that is meaningful AND safe: a COPY-mode (coolify) import whose
+   * apply has settled with at least one real destination (a DONE app/db resource), that has not been
+   * cancelled or rolled back, and whose creator still holds apps:config on the target team. local-docker
+   * adopts live containers in place (no empty dest to restore into), a still-running apply has no dest yet,
+   * and a rolled-back op's resources are gone — none may mint. (Removing the spec's backwards "finished →
+   * 409" gate was right; this replaces it with the correct positive condition.)
+   */
+  private async assertCanMigrate(
+    userId: string,
+    op: { meta: unknown; cancelRequestedAt: Date | null; tasks: Array<{ status: string; resourceType: string | null; resourceId: string | null }> },
+  ): Promise<void> {
+    const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; rolledBackAt?: string }) : {};
+    if (meta.sourceKind !== "coolify") throw new ConflictException("only a copy-mode (coolify) import can migrate data");
+    if (op.cancelRequestedAt) throw new ConflictException("operation was cancelled");
+    if (meta.rolledBackAt) throw new ConflictException("operation was rolled back");
+    if (!meta.serverId) throw new ConflictException("operation has no target server");
+    if (deriveOpStatus(op.tasks.map((t) => t.status as TaskStatus)) === "RUNNING") {
+      throw new ConflictException("the import is still running — wait for it to finish before migrating data");
+    }
+    const hasDest = op.tasks.some((t) => t.status === "DONE" && (t.resourceType === "application" || t.resourceType === "database") && !!t.resourceId);
+    if (!hasDest) throw new ConflictException("the import provisioned no resources to migrate data into");
+    const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
+    if (!server) throw new ConflictException("target server not found");
+    await this.access.requirePermission(userId, server.teamId, "apps:config");
   }
 
   private async loadOwnedOp(userId: string, opId: string) {

@@ -31,6 +31,7 @@ import {
   verifyEd25519,
 } from "./agent-auth";
 import { normalizeTags } from "../common/tags";
+import { hubBaseUrl, agentWsUrl } from "../common/hub-url";
 import { isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
@@ -155,7 +156,7 @@ export class ServersService {
    *  agent image and runs it as a Docker container). The hub enforces every capability grant afresh before
    *  signing a command, so the agent needs no local allowlist snapshot (the hub is the sole gate). */
   private buildInstallCommand(token: string, publicUrl?: string): string {
-    return `curl -fsSL ${this.hubBaseUrl(publicUrl)}/install/agent.sh | sh -s -- --hub ${this.agentWsUrl(publicUrl)} --token ${token}`;
+    return `curl -fsSL ${hubBaseUrl(publicUrl)}/install/agent.sh | sh -s -- --hub ${agentWsUrl(publicUrl)} --token ${token}`;
   }
 
   /**
@@ -204,23 +205,6 @@ export class ServersService {
     });
     await this.audit.log({ actor: userId, action: "server.enroll.reissue", target: id });
     return { installCommand: this.buildInstallCommand(enrollToken, publicUrl), expiresAt };
-  }
-
-  /**
-   * The hub's public HTTP(S) base URL (no trailing slash). Prefers the configured HUB_PUBLIC_URL,
-   * else the request's public host, else localhost. The curl bootstrap fetches the installer from here.
-   */
-  private hubBaseUrl(publicUrl?: string): string {
-    const port = process.env.HUB_PORT ?? "3000";
-    const base = process.env.HUB_PUBLIC_URL ?? publicUrl ?? `http://localhost:${port}`;
-    return base.replace(/\/+$/, "");
-  }
-
-  /**
-   * The ws(s) URL the agent should dial — the HTTP base mapped http→ws/https→wss, plus `/agent`.
-   */
-  private agentWsUrl(publicUrl?: string): string {
-    return `${this.hubBaseUrl(publicUrl).replace(/^http/i, "ws")}/agent`;
   }
 
   /** The teams the user belongs to (for team pickers, command-center scoping). */
