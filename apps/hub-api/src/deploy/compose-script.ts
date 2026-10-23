@@ -240,7 +240,9 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
   const overrideArg = writeOverride ? `-f ${overridePath} ` : "";
   lines.push(
-    `docker compose -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
+    // `--progress plain`: emit clean, append-only pull/build status (no TTY `\r`-animated "Downloading
+    // [===>] MB" bars) so the deploy log reads like a tidy build log, not hundreds of progress frames.
+    `docker compose --progress plain -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
     `docker compose -p ${proj} -f ${file} ${overrideArg}ps`,
   );

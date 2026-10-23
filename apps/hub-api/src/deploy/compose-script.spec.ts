@@ -32,7 +32,7 @@ describe("compose-script", () => {
     const s = buildComposeUpScript(base);
     expect(s).toContain("mkdir -p /etc/tugra/compose/abc");
     expect(s).toContain("base64 -d > /etc/tugra/compose/abc/docker-compose.yml");
-    expect(s).toContain("docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml up -d --remove-orphans");
+    expect(s).toContain("docker compose --progress plain -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml up -d --remove-orphans");
     expect(s).toContain("docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml ps");
     // the base64 decodes back to the compose YAML
     const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.yml/);
@@ -66,7 +66,7 @@ describe("compose-script", () => {
     // override file is written and layered with a second -f, before the user file's -f
     expect(s).toContain("base64 -d > /etc/tugra/compose/abc/docker-compose.tugra.yml");
     expect(s).toContain(
-      "docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml -f /etc/tugra/compose/abc/docker-compose.tugra.yml up -d --remove-orphans",
+      "docker compose --progress plain -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml -f /etc/tugra/compose/abc/docker-compose.tugra.yml up -d --remove-orphans",
     );
     // the override YAML targets the web service with the proxy network + Traefik labels
     const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
