@@ -35,7 +35,7 @@ describe("ServerContainersCard", () => {
     wrap(<ServerContainersCard id="s1" />);
     await waitFor(() => expect(screen.getByText("tugra_app1")).toBeTruthy());
     expect(screen.getByText("postgres")).toBeTruthy();
-    expect(screen.getByText("12.5%")).toBeTruthy(); // cpu badge
+    expect(screen.getByText("13%")).toBeTruthy(); // cpu bar (rounded %)
     expect(spy).toHaveBeenCalledWith("s1");
   });
 

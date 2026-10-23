@@ -7,6 +7,7 @@ import { metricTone, tempTone, batteryTone, type FleetRow, type FleetSortKey, ty
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, StatusDot } from "./ui";
 import { MeterBar } from "./meter-bar";
+import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, Thermometer, Gpu, BatteryMedium, Clock, type LucideIcon } from "lucide-react";
 
 const TONE_COLOR: Record<string, string> = { ok: "var(--c-tx)", warn: "var(--c-am)", crit: "var(--c-r)" };
 const enc = encodeURIComponent;
@@ -57,15 +58,15 @@ export function FleetTable({
               <caption className="sr-only">{t("fleet.title")}</caption>
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--c-tx3)", borderBottom: "1px solid var(--c-bd)" }}>
-                  <SortTh k="name" label={t("fleet.colServer")} {...sortProps} />
-                  <SortTh k="cpu" label={t("fleet.colCpu")} num {...sortProps} />
-                  <SortTh k="mem" label={t("fleet.colMem")} num {...sortProps} />
-                  <SortTh k="disk" label={t("fleet.colDisk")} num {...sortProps} />
-                  <SortTh k="net" label={t("fleet.colNet")} num {...sortProps} />
-                  <SortTh k="temp" label={t("fleet.colTemp")} num {...sortProps} />
-                  <SortTh k="gpu" label={t("fleet.colGpu")} num {...sortProps} />
-                  <SortTh k="battery" label={t("fleet.colBattery")} num {...sortProps} />
-                  <SortTh k="uptime" label={t("fleet.colUptime")} num {...sortProps} />
+                  <SortTh k="name" label={t("fleet.colServer")} icon={Server} {...sortProps} />
+                  <SortTh k="cpu" label={t("fleet.colCpu")} icon={Cpu} num {...sortProps} />
+                  <SortTh k="mem" label={t("fleet.colMem")} icon={MemoryStick} num {...sortProps} />
+                  <SortTh k="disk" label={t("fleet.colDisk")} icon={HardDrive} num {...sortProps} />
+                  <SortTh k="net" label={t("fleet.colNet")} icon={ArrowDownUp} num {...sortProps} />
+                  <SortTh k="temp" label={t("fleet.colTemp")} icon={Thermometer} num {...sortProps} />
+                  <SortTh k="gpu" label={t("fleet.colGpu")} icon={Gpu} num {...sortProps} />
+                  <SortTh k="battery" label={t("fleet.colBattery")} icon={BatteryMedium} num {...sortProps} />
+                  <SortTh k="uptime" label={t("fleet.colUptime")} icon={Clock} num {...sortProps} />
                   <Th>{t("fleet.colAgent")}</Th>
                   <Th>{t("fleet.colCluster")}</Th>
                 </tr>
@@ -209,8 +210,8 @@ function Gauge({ label, value, stale }: { label: string; value: number | null; s
   );
 }
 
-function SortTh({ k, label, num, sortKey, sortDir, onSort }: {
-  k: FleetSortKey; label: string; num?: boolean; sortKey: FleetSortKey; sortDir: SortDir; onSort: (key: FleetSortKey) => void;
+function SortTh({ k, label, num, icon: Icon, sortKey, sortDir, onSort }: {
+  k: FleetSortKey; label: string; num?: boolean; icon?: LucideIcon; sortKey: FleetSortKey; sortDir: SortDir; onSort: (key: FleetSortKey) => void;
 }) {
   const active = sortKey === k;
   return (
@@ -224,11 +225,12 @@ function SortTh({ k, label, num, sortKey, sortDir, onSort }: {
         className="fleet-sort"
         onClick={() => onSort(k)}
         style={{
-          all: "unset", cursor: "pointer", display: "inline-flex", gap: 4, alignItems: "center",
+          all: "unset", cursor: "pointer", display: "inline-flex", gap: 5, alignItems: "center",
           padding: "10px 14px", width: "100%", boxSizing: "border-box", justifyContent: num ? "flex-end" : "flex-start",
           fontWeight: 500, color: active ? "var(--c-tx)" : "var(--c-tx3)", fontSize: 11.5,
         }}
       >
+        {Icon && <Icon size={13} aria-hidden strokeWidth={2} style={{ flexShrink: 0, opacity: active ? 0.9 : 0.5 }} />}
         {label}
         <span aria-hidden="true" style={{ opacity: active ? 1 : 0.25, fontSize: 9 }}>{active && sortDir === "asc" ? "▲" : "▼"}</span>
       </button>

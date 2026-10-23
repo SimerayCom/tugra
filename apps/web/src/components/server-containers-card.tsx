@@ -5,9 +5,12 @@ import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { fmtBytes } from "../lib/fleet";
+import { metricTone } from "../lib/fleet-view";
 import type { ContainerInventoryRow } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, Spinner, Badge, Btn } from "./ui";
+import { MeterBar } from "./meter-bar";
+import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, type LucideIcon } from "lucide-react";
 import { Modal } from "./modal";
 import { LiveLogsCard } from "./live-logs-card";
 import { useToast } from "./toast";
@@ -49,11 +52,11 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ textAlign: "left", color: "var(--c-tx3)", borderBottom: "1px solid var(--c-bd)" }}>
-              <Th>{t("servers.containerName")}</Th>
-              <Th>{t("servers.cpu")}</Th>
-              <Th>{t("servers.ram")}</Th>
-              <Th>{t("servers.net")}</Th>
-              <Th>{t("servers.disk")}</Th>
+              <Th icon={Server}>{t("servers.containerName")}</Th>
+              <Th icon={Cpu}>{t("servers.cpu")}</Th>
+              <Th icon={MemoryStick}>{t("servers.ram")}</Th>
+              <Th icon={ArrowDownUp}>{t("servers.net")}</Th>
+              <Th icon={HardDrive}>{t("servers.disk")}</Th>
               {canWrite && <Th>{""}</Th>}
             </tr>
           </thead>
@@ -142,10 +145,10 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
         </div>
         <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>
-      <Td><Stat value={row.cpu} unit="%" warn={row.cpu >= 80} /></Td>
+      <Td><MeterBar value={row.cpu} tone={metricTone(row.cpu)} text={`${row.cpu.toFixed(0)}%`} label={t("servers.cpu")} /></Td>
       <Td>
-        <Stat value={row.memPct} unit="%" warn={row.memPct >= 85} />
-        <span style={{ color: "var(--c-tx3)", marginLeft: 6 }}>{fmtBytes(row.memUsed)} / {fmtBytes(row.memTotal)}</span>
+        <MeterBar value={row.memPct} tone={metricTone(row.memPct)} text={`${row.memPct.toFixed(0)}%`} label={t("servers.ram")} />
+        <span style={{ display: "block", color: "var(--c-tx3)", fontSize: 10.5, marginTop: 3 }}>{fmtBytes(row.memUsed)} / {fmtBytes(row.memTotal)}</span>
       </Td>
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>↓{fmtBytes(row.netRx)}/s ↑{fmtBytes(row.netTx)}/s</Td>
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>r{fmtBytes(row.blkRead)}/s w{fmtBytes(row.blkWrite)}/s</Td>
@@ -165,17 +168,15 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
   );
 }
 
-function Stat({ value, unit, warn }: { value: number; unit: string; warn?: boolean }) {
+function Th({ children, icon: Icon }: { children: ReactNode; icon?: LucideIcon }) {
   return (
-    <span className="mono" style={{ fontWeight: 600, color: warn ? "var(--c-am)" : "var(--c-tx)" }}>
-      {value.toFixed(1)}
-      {unit}
-    </span>
+    <th style={{ padding: "10px 14px", fontWeight: 500, whiteSpace: "nowrap" }}>
+      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+        {Icon && <Icon size={13} aria-hidden strokeWidth={2} style={{ flexShrink: 0, opacity: 0.6 }} />}
+        {children}
+      </span>
+    </th>
   );
-}
-
-function Th({ children }: { children: ReactNode }) {
-  return <th style={{ padding: "10px 14px", fontWeight: 500, whiteSpace: "nowrap" }}>{children}</th>;
 }
 function Td({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   return <td className={className} style={{ padding: "10px 14px", whiteSpace: "nowrap", ...style }}>{children}</td>;
