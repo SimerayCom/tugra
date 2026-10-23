@@ -634,6 +634,9 @@ describe("deploy-script", () => {
     expect(s).toContain(PROXY_IMAGE);
     expect(s).toContain("acme.email='me@x.com'");
     expect(s).toContain("certificatesresolvers.le.acme.httpchallenge=true");
+    // no phone-home: Traefik's upstream version check + anonymous usage report are off
+    expect(s).toContain("--global.checknewversion=false");
+    expect(s).toContain("--global.sendanonymoususage=false");
     // no DNS-01 resolver / creds when the server has none
     expect(s).not.toContain("le-dns");
     expect(s).not.toContain("--env-file");

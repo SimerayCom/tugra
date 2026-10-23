@@ -31,6 +31,11 @@ WEB_URL=""
 FORCE_BUILD=0
 FORCE_PULL=0
 DRY_RUN=0
+# Trust-wedge: a fresh install makes ZERO outbound calls of its own — update checks and public-IP
+# detection are explicit opt-in (default off). env-var forms let the one-line curl|sh installer opt in too.
+ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}"
+DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
+MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
 HUB_PORT="${HUB_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3001}"
 
@@ -87,6 +92,9 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE="${2:-}"; shift 2 ;;
     --build)    FORCE_BUILD=1; shift ;;
     --pull)     FORCE_PULL=1; shift ;;
+    --enable-update-checks) ENABLE_UPDATE_CHECKS=1; shift ;;
+    --detect-public-ip)     DETECT_PUBLIC_IP=1; shift ;;
+    --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     -h|--help)  sed -n '2,19p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
@@ -211,21 +219,36 @@ ensure_env LOCAL_AGENT_ENROLL_TOKEN "$(rand_hex 24)"   # 48 hex chars
 # Best-effort-detect the host's real public IP so the hub pins it on "This machine". Without it, the first
 # agent report records the agent's in-container docker-bridge source IP (172.18.x) and every deployed app URL
 # dead-links. Left unset if detection fails or isn't a bare IPv4; the hub then falls back to its IP hygiene.
+# Public IP: OPT-IN only — no outbound by default (trust-wedge). `--public-ip <ipv4>` pins a given one;
+# `--detect-public-ip` (or TUGRA_DETECT_PUBLIC_IP=1) re-enables the best-effort probe below. Otherwise we
+# leave it unset: the hub falls back to its IP hygiene and the closing hint tells the operator how to set it.
 if ! env_has LOCAL_SERVER_PUBLIC_IP; then
-  # `|| PUB_IP=""` is REQUIRED: under `set -euo pipefail` a fully-offline probe (all curls fail) makes the
-  # substitution exit non-zero and would otherwise abort the whole installer. Best-effort means unset-on-failure.
-  PUB_IP="$( { curl -fsS -m 5 https://api.ipify.org || curl -fsS -m 5 https://ifconfig.me || curl -fsS -m 5 https://icanhazip.com; } 2>/dev/null | tr -d '[:space:]' )" || PUB_IP=""
-  case "$PUB_IP" in
-    "" | *[!0-9.]*) : ;;                              # empty / not a bare IPv4 (IPv6 or an HTML error page) → skip
-    *) ensure_env LOCAL_SERVER_PUBLIC_IP "$PUB_IP" ;; # hub re-validates it with isPublicIp before pinning
+  case "$MANUAL_PUBLIC_IP" in
+    "") : ;;
+    *[!0-9.]*) err "invalid --public-ip (expected a bare IPv4): $MANUAL_PUBLIC_IP"; exit 1 ;;
+    *) ensure_env LOCAL_SERVER_PUBLIC_IP "$MANUAL_PUBLIC_IP" ;; # hub re-validates with isPublicIp before pinning
   esac
+  if ! env_has LOCAL_SERVER_PUBLIC_IP && [ "$DETECT_PUBLIC_IP" = "1" ]; then
+    # `|| PUB_IP=""` is REQUIRED: under `set -euo pipefail` a fully-offline probe (all curls fail) makes the
+    # substitution exit non-zero and would otherwise abort the whole installer. Best-effort means unset-on-failure.
+    PUB_IP="$( { curl -fsS -m 5 https://api.ipify.org || curl -fsS -m 5 https://ifconfig.me || curl -fsS -m 5 https://icanhazip.com; } 2>/dev/null | tr -d '[:space:]' )" || PUB_IP=""
+    case "$PUB_IP" in
+      "" | *[!0-9.]*) : ;;                              # empty / not a bare IPv4 (IPv6 or an HTML error page) → skip
+      *) ensure_env LOCAL_SERVER_PUBLIC_IP "$PUB_IP" ;;
+    esac
+  fi
 fi
 # Agent image ref (the agent re-invokes itself as the sandboxed file helper; hub uses AGENT_IMAGE for installs).
 ensure_env TUGRA_AGENT_IMAGE "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
 ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
-# Official self-update channel; only-if-unset so an operator override survives re-runs.
-ensure_env UPDATE_MANIFEST_URL  "https://simeraycom.github.io/tugra/versions.json"
-ensure_env UPDATE_PUBLISHER_KEY "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE="
+# Signed self-update channel — OPT-IN (no phone-home by default). Enable with --enable-update-checks
+# (or TUGRA_ENABLE_UPDATE_CHECKS=1): the hub then fetches ONE ed25519-signed manifest (no identifiers, no
+# version, no payload). Left unset, the update scheduler + agent digest-pin stay inert (env.ts fail-closed)
+# and you update by pulling images on your own schedule. only-if-unset so an operator override survives re-runs.
+if [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
+  ensure_env UPDATE_MANIFEST_URL  "https://simeraycom.github.io/tugra/versions.json"
+  ensure_env UPDATE_PUBLISHER_KEY "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE="
+fi
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"
@@ -290,6 +313,13 @@ if [ -z "$DOMAIN" ]; then
   printf '  For TLS + a public domain, front the stack with a reverse proxy and re-run with --domain <host>.\n'
 fi
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'
+# Trust-wedge hints: both are opt-in, so say plainly what is OFF and how to turn it on.
+if ! env_has LOCAL_SERVER_PUBLIC_IP; then
+  printf '  \033[2mPublic IP not set (no outbound probe by default). Deployed app URLs on a bare IP may not resolve until you set it: re-run with --public-ip <ip>, or set LOCAL_SERVER_PUBLIC_IP in %s.\033[0m\n' "$ENV_FILE"
+fi
+if [ "$ENABLE_UPDATE_CHECKS" != "1" ] && ! env_has UPDATE_MANIFEST_URL; then
+  printf '  \033[2mUpdate checks are OFF (nothing phones home). Enable signed update checks: re-run with --enable-update-checks (see docs/upgrade.md). Watch GitHub releases for security advisories.\033[0m\n'
+fi
 if [ "$FRESH_SETUP_CODE" -eq 1 ]; then
   _code="$(env_get SETUP_CODE)"
   printf '\n  \033[1;33m══════════════════════════════════════════════════\033[0m\n'

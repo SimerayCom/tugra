@@ -949,6 +949,10 @@ export function buildProxySetupScript(
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
     ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
     PROXY_IMAGE,
+    // Trust-wedge: no phone-home. Traefik checks upstream for a new version + sends anonymous usage by
+    // default; both off so a fresh proxy makes zero outbound calls of its own.
+    "--global.checknewversion=false",
+    "--global.sendanonymoususage=false",
     "--providers.docker=true",
     "--providers.docker.exposedbydefault=false",
     "--entrypoints.web.address=:80",
