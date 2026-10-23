@@ -5,8 +5,14 @@ installer. Both paths preserve your data and secrets.
 
 ## How updates work
 
-Tugra checks a **publisher-signed release manifest** (`versions.json` + a detached ed25519 signature).
-Before any update is applied the hub:
+**Update checks are OFF by default** — a fresh install makes zero outbound calls, so it never pings for
+a new version on its own (Tugra's no-phone-home default). Turn them on explicitly, either at install
+(`install.sh --enable-update-checks`) or any time by setting `UPDATE_MANIFEST_URL` + `UPDATE_PUBLISHER_KEY`
+in `.env` and restarting hub-api. With checks off, upgrade manually by re-running the installer, and watch
+GitHub releases for security advisories.
+
+Once enabled, Tugra checks a **publisher-signed release manifest** (`versions.json` + a detached ed25519
+signature). Before any update is applied the hub:
 
 - verifies the manifest's **ed25519 signature** against the publisher key you configured;
 - refuses a **downgrade** and refuses to **skip a required intermediate version**;

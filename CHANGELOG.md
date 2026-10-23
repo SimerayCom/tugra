@@ -11,8 +11,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   token for the import operation and paste the printed one-liner on the Coolify host. It dumps each
   Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly database and restores it into the matching
   Tugra database — cross-host, with the token only ever in the environment and no database password
-  ever reaching the hub. MongoDB, ClickHouse, LibSQL, app volumes and the `DATABASE_URL` rewrite stay
-  on the manual runbook. See [docs/coolify-migration.md](docs/coolify-migration.md).
+  ever reaching the hub. MongoDB, ClickHouse, LibSQL and app volumes stay on the manual runbook.
+  See [docs/coolify-migration.md](docs/coolify-migration.md).
+- Coolify import env-remap: a read-only preview, then a confirm-gated apply, rewrites each migrated
+  app's environment to point at its new Tugra database (secret-masked diff, a `planHash` the apply must
+  match, and a one-call undo). Cross-host/swarm/compose apps are shown as needs-manual, never half-wired.
+- Managed-DB network link: an app can opt into the node-local `tugra-net` so a migrated (or native)
+  co-located app reaches its database by container name; the env-remap apply wires eligible apps in.
+- OS patching now patches the **host**, not the agent's own container. It runs the package manager in
+  the host namespaces via a one-shot privileged helper launched from the agent's image, and fails
+  closed (a clear error, never a silent container-only patch) if it cannot enter the host.
+- **Zero outbound by default.** A fresh install now makes no update ping, no public-IP probe, no Prisma
+  version check and no Traefik version check — it contacts only the registries it pulls images from.
+  Update checks are opt-in (`install.sh --enable-update-checks`, or `UPDATE_MANIFEST_URL`/`_PUBLISHER_KEY`
+  in `.env`); public-IP detection is opt-in (`--detect-public-ip`, or pin one with `--public-ip <ip>`).
+  **Existing installs:** your `.env` keeps `UPDATE_MANIFEST_URL`, `UPDATE_PUBLISHER_KEY` and
+  `LOCAL_SERVER_PUBLIC_IP` from the previous installer (values are written once). To go fully
+  zero-outbound, blank those three keys and restart hub-api; leave them to keep update checks on.
 
 ## [0.1.3] - 2026-10-20
 
