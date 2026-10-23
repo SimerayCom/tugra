@@ -81,9 +81,16 @@ export function dumpDbToStdout(engine: DbEngine, name: string, creds: DbCredenti
     case "MONGO":
       return `docker exec ${name} mongodump --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive`;
     case "REDIS":
-      return `docker exec ${name} sh -c ${shq(`redis-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
-    case "KEYDB":
-      return `docker exec ${name} sh -c ${shq(`keydb-cli -a ${shqInner(password)} --no-auth-warning SAVE >/dev/null 2>&1 && cat /data/dump.rdb`)}`;
+    case "KEYDB": {
+      // redis-cli/keydb-cli exit 0 even on NOAUTH / WRONGPASS, so the old `SAVE >/dev/null 2>&1 && cat`
+      // chain silently `cat`s a STALE /data/dump.rdb when the password is wrong — staging a bogus dump that
+      // looks successful. Capture SAVE's reply and read the file ONLY when it is exactly "OK" (the Dragonfly
+      // pattern). Password via the REDISCLI_AUTH env so it never lands on the cli's argv (visible in host `ps`).
+      const cli = engine === "KEYDB" ? "keydb-cli" : "redis-cli";
+      return `docker exec -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(
+        `r=$(${cli} --no-auth-warning SAVE 2>&1); if [ "$r" = OK ]; then cat /data/dump.rdb; else echo "${engine} SAVE failed: $r" >&2; exit 1; fi`,
+      )}`;
+    }
     case "DRAGONFLY":
       // Redis-wire compatible. `SAVE RDB <base>` forces a SINGLE-file RDB snapshot (default is the
       // multi-file DFS format). We do NOT use redis-cli's `-e` here: the version bundled in the Dragonfly
@@ -240,7 +247,7 @@ export function buildImportScript(
       /* not a parseable URL — leave sql-loose (psql fail-loud) */
     }
   }
-  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip, pgMode);
+  return restorePipeline(db, `curl -fsSL ${shq(url)}`, dest, opts.gzip, pgMode, { importMode: true });
 }
 
 // custom = pg_restore of a custom-format archive; sql-atomic = our own plain
@@ -248,8 +255,11 @@ export function buildImportScript(
 // transaction structure (fail-loud, but not forced-atomic).
 type PgMode = "custom" | "sql-atomic" | "sql-loose";
 
-/** Shared: pipe an arbitrary source command through optional gpg/gunzip into the engine's restore client. */
-function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, gzip: boolean, pgMode: PgMode = "sql-atomic"): string {
+/** Shared: pipe an arbitrary source command through optional gpg/gunzip into the engine's restore client.
+ *  `importMode` loads a FOREIGN dump (migrate-in / URL import) rather than one of Tugra's own backups, so it
+ *  hardens two engines against another installation's artifacts — see the per-engine notes below. It defaults
+ *  to false so Tugra's own backup/clone restores stay byte-identical. */
+function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, gzip: boolean, pgMode: PgMode = "sql-atomic", opts: { importMode?: boolean } = {}): string {
   const name = dbContainerName(db);
   const { username, password, database } = db.credentials;
 
@@ -285,12 +295,21 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       const prelude = readinessPrelude(db.engine, name, db.credentials);
       if (prelude) lines.push(prelude);
       const client = db.engine === "MARIADB" ? "mariadb" : "mysql";
-      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} ${client} -u${shq(username)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
+      // Importing a foreign dump: load as root (the target's ROOT password == creds.password, set at provision
+      // via credentialEnv) so DEFINER/SQL-SECURITY and privilege gaps in another installation's views, triggers
+      // and routines don't abort the restore. Tugra's own restores stay as the app user (byte-identical).
+      const restoreUser = opts.importMode ? "root" : username;
+      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} ${client} -u${shq(restoreUser)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
       break;
     }
-    case "MONGO":
-      lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop`);
+    case "MONGO": {
+      // Importing a foreign dump: a full-instance `mongodump --archive` carries admin.system.users /
+      // admin.system.version. Under `--drop` those would overwrite the target's own Tugra root user and lock
+      // out the stored credentials, so exclude the admin namespaces on import. Tugra's own clone keeps them.
+      const nsExclude = opts.importMode ? " --nsExclude 'admin.*'" : "";
+      lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop${nsExclude}`);
       break;
+    }
     case "REDIS":
     case "KEYDB": {
       // A graceful `docker restart` sends SIGTERM, which makes redis/keydb SAVE its CURRENT (just-wiped)

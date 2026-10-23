@@ -89,6 +89,18 @@ describe("backup-script", () => {
       expect(s).not.toContain("redis-cli -a"); // password never on redis-cli's own argv
     });
 
+    it("Redis/KeyDB: SAVE reply must be exactly OK before cat (no stale dump on bad auth), pw via REDISCLI_AUTH", () => {
+      for (const [engine, cli] of [["REDIS", "redis-cli"], ["KEYDB", "keydb-cli"]] as const) {
+        const s = buildBackupScript(spec(engine), "t.rdb.gz", LOCAL_DEST);
+        expect(s).toContain(`r=$(${cli} --no-auth-warning SAVE 2>&1)`); // reply captured…
+        expect(s).toContain('if [ "$r" = OK ]'); // …and the dump is read ONLY when SAVE replied OK
+        expect(s).toContain("cat /data/dump.rdb");
+        expect(s).toContain("REDISCLI_AUTH=pw"); // password via env
+        expect(s).not.toContain(`${cli} -a`); // never on the cli's own argv (host `ps`)
+        expect(s).not.toContain("SAVE >/dev/null 2>&1 && cat"); // the old silent-stale-dump chain is gone
+      }
+    });
+
     it("ClickHouse: BACKUP … TO File under allowed_path, double-quoted identifier (no backtick substitution)", () => {
       const s = buildBackupScript(spec("CLICKHOUSE"), "t", s3Dest);
       expect(s).toContain("BACKUP DATABASE");
@@ -254,8 +266,23 @@ describe("backup-script", () => {
 
     it("non-Postgres engines ignore the pg mode (mysql client regardless of .dump)", () => {
       const s = buildImportScript(spec("MYSQL"), "https://x/2026.dump.gz", { encrypted: false, key: "", gzip: true });
-      expect(s).toContain("mysql -u'tugra'");
+      expect(s).toContain("mysql -u'root'"); // import loads a foreign dump as root (DEFINER/privilege safety)
       expect(s).not.toContain("pg_restore");
+    });
+
+    it("import hardens the restore against a foreign installation's artifacts, clone does NOT", () => {
+      // MySQL/MariaDB: import restores as root (target root pw == creds.password); clone stays the app user.
+      const myImport = buildImportScript(spec("MYSQL"), "https://x/d.sql.gz", { encrypted: false, key: "", gzip: true });
+      expect(myImport).toContain("mysql -u'root'");
+      const myClone = buildRestoreScript(spec("MYSQL"), "t.sql.gz", LOCAL_DEST);
+      expect(myClone).toContain("mysql -u'tugra'");
+      expect(myClone).not.toContain("-u'root'");
+      // Mongo: import excludes admin.* so the source's root user never clobbers the target's; clone keeps them.
+      const mongoImport = buildImportScript(spec("MONGO"), "https://x/d.archive.gz", { encrypted: false, key: "", gzip: true });
+      expect(mongoImport).toContain("--archive --drop --nsExclude 'admin.*'");
+      const mongoClone = buildRestoreScript(spec("MONGO"), "t.archive.gz", LOCAL_DEST);
+      expect(mongoClone).toContain("--archive --drop");
+      expect(mongoClone).not.toContain("--nsExclude");
     });
   });
 
