@@ -19,6 +19,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/config"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
+	"github.com/SimerayCom/tugra/agent/internal/migrate"
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
 
@@ -31,6 +32,12 @@ func main() {
 	// connection, and exits with the helper's status code.
 	if len(os.Args) > 1 && os.Args[1] == "fsd" {
 		os.Exit(fsd.RunCLI(os.Args[2:]))
+	}
+
+	// The `migrate` subcommand is the one-click data migrator (S4-3). Like fsd it runs before
+	// flag.Parse, opens NO hub WebSocket, installs its own signals, and exits with its own code.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(migrate.RunCLI(os.Args[2:], Version, os.Stdout, os.Stderr))
 	}
 
 	hub := flag.String("hub", envOr("TUGRA_HUB", ""), "hub websocket URL, e.g. wss://hub.example.com/agent")
