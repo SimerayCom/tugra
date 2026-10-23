@@ -215,6 +215,14 @@ describe("remapEnv", () => {
     expect(r.needsManual).toContainEqual(expect.objectContaining({ key: "DB_PASSWORD" }));
   });
 
+  it("does NOT flag a redis *_DB index as a database companion (redis has no db-name)", () => {
+    const redis = pgTarget("rotate", { engine: "REDIS", newPort: 6379, oldUser: undefined, oldDatabase: undefined });
+    const r = remapEnv({ REDIS_URL: `redis://:p@${UUID}:6379`, REDIS_DB: "0" }, ctx([redis]));
+    expect(r.changes.find((c) => c.key === "REDIS_DB")).toBeUndefined();
+    expect(r.needsManual.find((n) => n.key === "REDIS_DB")).toBeUndefined();
+    expect(r.unchanged).toContain("REDIS_DB");
+  });
+
   it("rewrites a stale DB_PORT companion only when the new port differs", () => {
     const r = remapEnv({ DB_HOST: UUID, DB_PORT: "5432" }, ctx([pgTarget("rotate", { oldPort: 5432, newPort: 5433 })]));
     const port = r.changes.find((c) => c.key === "DB_PORT");

@@ -15,6 +15,9 @@ import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
 import type { ForeignApp, ForeignDb } from "./foreign-fleet";
+import { createHash } from "node:crypto";
+import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget } from "./env-rewrite";
+import type { DatabaseView } from "../databases/databases.service";
 
 /** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
  *  is skipped by a plan blocker, but we re-check here so a bad engine never reaches DatabasesService. */
@@ -446,6 +449,155 @@ export class ImportExecutorService {
   }
 
   /**
+   * READ-ONLY env-remap preview (S4d-2). For a settled Coolify copy-mode import, propose how each migrated
+   * app's env should be rewritten so it points at its new Tugra database instead of the old Coolify host.
+   * It writes NOTHING: it decrypts each app's env + each DB's connection facts server-side, runs the pure
+   * {@link remapEnv} engine, and returns a SECRET-MASKED diff + a planHash the apply (a later slice) will
+   * confirm against. The per-DB mode reflects REALITY: if the Tugra DB's current credentials already match
+   * the ones the app's own URL carries (a createForImport provision), only the host is swapped (preserve);
+   * otherwise the whole connection is rewritten to the fresh Tugra credentials (rotate) and a split
+   * credential var it cannot confirm is reported for manual review — never a half-rewrite.
+   */
+  async remapEnvPlan(userId: string, opId: string) {
+    const op = await this.loadOwnedOp(userId, opId, { reapData: false }); // never kill an in-flight restore
+    await this.assertCanMigrate(userId, op); // coolify copy-mode, settled, creator still holds apps:config
+    const meta = op.meta as { serverId: string };
+    const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
+    if (!server) throw new ConflictException("target server not found");
+    await this.access.requirePermission(userId, server.teamId, "databases"); // reading DB credentials
+
+    const skipped: Array<{ itemRef: string; kind: "database" | "application"; reason: string }> = [];
+    const skippedDbHosts = new Set<string>(); // old hosts whose DB we could NOT load — surfaced per app, not silently clean
+
+    // DONE app destinations → their decrypted env (writer-gated). Fetched first so a DB's mode can be
+    // decided from the app URLs that reference it.
+    const appEnvs: Array<{ itemRef: string; appId: string; name: string; env: Record<string, string> }> = [];
+    for (const t of op.tasks) {
+      if (t.status !== "DONE" || t.resourceType !== "application" || !t.resourceId || !t.itemRef) continue;
+      let env: Record<string, string>;
+      try {
+        env = await this.apps.getEnv(userId, t.resourceId);
+      } catch {
+        skipped.push({ itemRef: t.itemRef, kind: "application", reason: "not-accessible" });
+        continue;
+      }
+      const r = typeof t.result === "object" && t.result ? (t.result as { name?: string }) : {};
+      appEnvs.push({ itemRef: t.itemRef, appId: t.resourceId, name: r.name ?? t.itemRef, env });
+    }
+
+    // DONE database destinations → their Tugra connection facts (writer view decrypts the creds). A DB we
+    // cannot load (deleted / no creds visible) is SKIPPED but recorded, never aborts the whole preview.
+    const dbInfos: Array<{ itemRef: string; oldHost: string; dv: DatabaseView }> = [];
+    for (const t of op.tasks) {
+      if (t.status !== "DONE" || t.resourceType !== "database" || !t.resourceId || !t.itemRef) continue;
+      const oldHost = sourceRefOf(t.itemRef);
+      if (!oldHost) {
+        skipped.push({ itemRef: t.itemRef, kind: "database", reason: "bad-itemref" });
+        continue;
+      }
+      let dv: DatabaseView;
+      try {
+        dv = await this.dbs.get(userId, t.resourceId);
+      } catch {
+        skipped.push({ itemRef: t.itemRef, kind: "database", reason: "not-accessible" });
+        skippedDbHosts.add(oldHost);
+        continue;
+      }
+      if (!dv.canWrite || !dv.internalHost) {
+        skipped.push({ itemRef: t.itemRef, kind: "database", reason: "no-credentials" });
+        skippedDbHosts.add(oldHost);
+        continue;
+      }
+      dbInfos.push({ itemRef: t.itemRef, oldHost, dv });
+    }
+
+    // Decide each DB's mode from reality. Gather the old creds from EVERY app URL that points at it: preserve
+    // only when there is exactly ONE distinct credential set across all apps AND it matches the Tugra DB's
+    // current creds; a mismatch, or apps that disagree, falls to rotate (every URL rewritten to the one Tugra
+    // credential) and leaves the old identity ambiguous so split vars are reported, never half-rewritten.
+    const DB_NAME_ENGINES = new Set(["POSTGRES", "MYSQL", "MARIADB"]); // engines whose URL path is the db-name (not a redis index / mongo params)
+    const targets: DbRemapTarget[] = dbInfos.map(({ itemRef, oldHost, dv }) => {
+      const distinct = new Map<string, { user?: string; password?: string; database?: string }>();
+      for (const a of appEnvs) {
+        for (const v of Object.values(a.env)) {
+          const c = credsFromUrlForHost(v, oldHost);
+          if (c) distinct.set(`${c.user ?? ""}\u0000${c.password ?? ""}\u0000${c.database ?? ""}`, c);
+        }
+      }
+      const rec = distinct.size === 1 ? [...distinct.values()][0] : undefined; // >1 distinct → ambiguous → undefined
+      const preserve = !!rec && rec.user === dv.username && rec.password === dv.password && (rec.database === undefined || rec.database === dv.database);
+      return {
+        itemRef,
+        name: dv.name,
+        engine: dv.engine,
+        mode: preserve ? "preserve" : "rotate",
+        oldHost,
+        newHost: dv.internalHost!,
+        newPort: dv.port,
+        newUser: dv.username ?? "",
+        newPassword: dv.password ?? "",
+        newDatabase: dv.database ?? "",
+        oldUser: rec?.user,
+        // only pg/mysql/mariadb carry a db-NAME in the URL path; a redis /index or mongo params must not be
+        // treated as a db-name (else a REDIS_DB=0 split var would be rewritten to the Tugra slug).
+        oldDatabase: DB_NAME_ENGINES.has(dv.engine) ? rec?.database : undefined,
+        oldPassword: rec?.password,
+      };
+    });
+    const appTargets: AppRemapTarget[] = appEnvs.map((a) => ({ itemRef: a.itemRef, name: a.name, oldHost: sourceRefOf(a.itemRef) ?? "\u0000none", newHost: `tugra_${a.appId}` }));
+
+    const apps = appEnvs.map((a) => {
+      const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef) });
+      const needsManual = res.needsManual.map((n) => ({ key: n.key, reason: n.reason, targetItemRef: n.target }));
+      // A value that references a DB we could NOT load looks "unchanged" but actually needs this DB — surface
+      // it so an app is never shown as cleanly remapped while a referenced destination was skipped.
+      let unchangedCount = res.unchanged.length;
+      if (skippedDbHosts.size) {
+        for (const key of res.unchanged) {
+          const v = a.env[key];
+          if ([...skippedDbHosts].some((h) => v.includes(h))) {
+            needsManual.push({ key, reason: "target-unavailable", targetItemRef: undefined });
+            unchangedCount--;
+          }
+        }
+      }
+      return {
+        itemRef: a.itemRef,
+        appId: a.appId,
+        name: a.name,
+        changes: res.changes.map((c) => ({
+          key: c.key,
+          rule: c.rule,
+          targetItemRef: c.target.itemRef,
+          targetName: c.target.name,
+          targetKind: c.target.kind,
+          oldMasked: c.oldMasked,
+          newMasked: c.newMasked,
+          confidence: c.confidence,
+        })),
+        unchangedCount,
+        needsManual,
+      };
+    });
+
+    // A canonical, SECRET-FREE planHash — the confirmToken input the apply step will re-compute + require.
+    const canonical = JSON.stringify({
+      opId,
+      apps: apps.map((a) => ({ id: a.appId, c: a.changes.map((c) => [c.key, c.rule, c.targetItemRef, c.newMasked]).sort() })).sort((x, y) => x.id.localeCompare(y.id)),
+    });
+    const planHash = createHash("sha256").update(canonical).digest("hex");
+
+    return {
+      opId,
+      planHash,
+      databases: targets.map((t) => ({ itemRef: t.itemRef, name: t.name, engine: t.engine, mode: t.mode })),
+      skipped,
+      apps,
+      note: "read-only preview — nothing has been changed; review the diff, then apply (a confirm-gated step) to write it",
+    };
+  }
+
+  /**
    * A migration token authorizes an untrusted host to stream DATA into the op's provisioned resources, so
    * minting is gated to the one state where that is meaningful AND safe: a COPY-mode (coolify) import whose
    * apply has settled with at least one real destination (a DONE app/db resource), that has not been
@@ -504,12 +656,15 @@ export class ImportExecutorService {
     return op;
   }
 
-  private async loadOwnedOp(userId: string, opId: string) {
+  private async loadOwnedOp(userId: string, opId: string, opts: { reapData?: boolean } = {}) {
     // Lazily settle tasks stuck RUNNING past the stale threshold — a worker that died or a hub restart mid-
     // adopt would otherwise leave the operation reading RUNNING forever and block rollback. Bounded: only
-    // touches genuinely-stale rows (the adopt path's own timeouts are well under a minute).
+    // touches genuinely-stale rows (the adopt path's own timeouts are well under a minute). `reapData:false`
+    // (used by the read-only remap preview) leaves in-flight `data` restore tasks alone, so a preview can
+    // never kill a long migration the way a mutating caller's reaper would.
+    const reapData = opts.reapData !== false;
     await this.prisma.bulkTask.updateMany({
-      where: { opId, status: "RUNNING", startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
+      where: { opId, ...(reapData ? {} : { kind: { not: "data" } }), status: "RUNNING", startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
       data: { status: "FAILED", output: "stale: no completion signal (the worker stopped before finishing)", finishedAt: new Date() },
     });
     const op = await this.prisma.bulkOperation.findUnique({
@@ -520,6 +675,17 @@ export class ImportExecutorService {
     if (op.actorId !== userId) throw new ForbiddenException("not your operation");
     return op;
   }
+}
+
+/** The source-side reference (a Coolify resource uuid) from an itemRef `<kind>:<serverRef|_>:<sourceRef>`
+ *  (import-planner ns()). Everything after the 2nd ':' — kind-agnostic (database: / app:). */
+function sourceRefOf(itemRef: string): string | undefined {
+  const i1 = itemRef.indexOf(":");
+  if (i1 < 0) return undefined;
+  const i2 = itemRef.indexOf(":", i1 + 1);
+  if (i2 < 0) return undefined;
+  const ref = itemRef.slice(i2 + 1);
+  return ref.length ? ref : undefined;
 }
 
 /** Shape the owned operation into a secret-free status view (internal compensation is not exposed). Includes
