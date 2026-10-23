@@ -927,3 +927,53 @@ describe("placement expression builders", () => {
     expect(spreadPrefExpr("zone")).toBe("spread=node.labels.zone");
   });
 });
+
+describe("dbNetwork — managed-DB network attach (S4d-4)", () => {
+  const domained: AppSpec = { ...base, domain: "app.example.com" };
+
+  it("default app (dbNetwork off): the deploy script never mentions the DB network", () => {
+    const s = buildRunScript(domained, "v1");
+    expect(s).not.toContain("tugra-net");
+    expect(s).not.toContain("network connect");
+  });
+
+  it("byte-identical: dbNetwork false === undefined (no drift for default apps)", () => {
+    expect(buildRunScript({ ...domained, dbNetwork: false }, "v1")).toBe(buildRunScript(domained, "v1"));
+  });
+
+  it("no-domain opt-in: runs ON tugra-net as the sole network (+ host-port), no proxy/labels, no connect", () => {
+    const s = buildRunScript({ ...base, dbNetwork: true, hostPort: 8080 }, "v1");
+    expect(s).toContain("docker network create tugra-net");
+    expect(s).toMatch(/--network tugra-net/);
+    expect(s).toContain("-p 8080:80");
+    expect(s).not.toContain("tugra-proxy");
+    expect(s).not.toContain("network connect"); // single --network at run → no connect needed
+  });
+
+  it("domain opt-in: stays on tugra-proxy for ingress, pins Traefik to it, and ATTACHES tugra-net after create", () => {
+    const s = buildRunScript({ ...domained, dbNetwork: true }, "v1");
+    expect(s).toContain("--network tugra-proxy");
+    expect(s).toContain("traefik.docker.network=tugra-proxy");
+    expect(s).toMatch(/&& docker network connect tugra-net \S+/);
+    expect(s).toContain("docker network create tugra-net");
+  });
+
+  it("the run+connect chain cleans up and fails hard on any error (set -e cannot be bypassed by the && list)", () => {
+    const s = buildRunScript({ ...domained, dbNetwork: true }, "v1");
+    // `... || { docker rm -f <name> 2>/dev/null; false; }` — a failed run OR connect removes the container and
+    // ends non-zero, so a bare use aborts under set -e and an `if`-gate takes its failure branch.
+    expect(s).toMatch(/\|\| \{ docker rm -f \S+ 2>\/dev\/null; false; \}/);
+  });
+
+  it("creates the DB network BEFORE the container that joins it", () => {
+    const s = buildRunScript({ ...domained, dbNetwork: true }, "v1");
+    expect(s.indexOf("docker network create tugra-net")).toBeLessThan(s.indexOf("docker run -d"));
+  });
+
+  it("rolling deploy propagates dbNetwork to the rollout container (rApp spread) and still attaches tugra-net", () => {
+    const gate = { retries: 10, intervalSec: 3, startPeriodSec: 5 };
+    const s = buildRollingDeployScript({ ...domained, dbNetwork: true }, "v2", { probe: { kind: "stableWait" }, ...gate });
+    expect(s).toContain("docker network create tugra-net");
+    expect(s).toMatch(/&& docker network connect tugra-net \S+/);
+  });
+});

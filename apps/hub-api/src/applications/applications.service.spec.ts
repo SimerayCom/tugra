@@ -2875,3 +2875,73 @@ describe("ApplicationsService listFiles", () => {
     expect(agentWs.sendFsReq).not.toHaveBeenCalled();
   });
 });
+
+describe("setDbNetwork + guards (S4d-4 managed-DB network link)", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+
+  function prismaFor(appOverrides: Record<string, unknown>, dbCount = 1) {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, ...appOverrides }), update },
+      database: { count: jest.fn().mockResolvedValue(dbCount) },
+    } as unknown as PrismaService;
+    return { prisma, update };
+  }
+
+  it("turns ON for a classic app that has a DB on its server, and persists dbNetwork=true", async () => {
+    const { prisma, update } = prismaFor({ source: "IMAGE", clusterId: null, dockerOptions: null });
+    await make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", true);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "app1" }, data: { dbNetwork: true } }));
+  });
+
+  it("refuses ON for a swarm/cluster app", async () => {
+    const { prisma, update } = prismaFor({ clusterId: "c1" });
+    await expect(make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", true)).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses ON for a COMPOSE app", async () => {
+    const { prisma, update } = prismaFor({ source: "COMPOSE" });
+    await expect(make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", true)).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses ON when docker options already set a --network", async () => {
+    const { prisma, update } = prismaFor({ source: "IMAGE", dockerOptions: "--network host" });
+    await expect(make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", true)).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses ON for QUOTED/`=` network forms too (tokenized, not a raw-string regex)", async () => {
+    for (const opt of ['"--network" host', "'--net=host'", "--net=bridge"]) {
+      const { prisma, update } = prismaFor({ source: "IMAGE", dockerOptions: opt });
+      await expect(make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", true)).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses ON when no managed database sits on the app's server", async () => {
+    const { prisma, update } = prismaFor({ source: "IMAGE" }, 0);
+    await expect(make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", true)).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("turns OFF unconditionally (no DB-presence check) — unlinking is always safe", async () => {
+    const { prisma, update } = prismaFor({ source: "IMAGE", dbNetwork: true }, 0);
+    await make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", false);
+    expect(prisma.database.count).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { dbNetwork: false } }));
+  });
+
+  it("setDockerOptions refuses a --network while the app is DB-network-linked", async () => {
+    const { prisma, update } = prismaFor({ dbNetwork: true });
+    await expect(make(prisma, access, {} as AgentWsServer).setDockerOptions("u1", "app1", "--network host")).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setClusterConfig refuses a swarm move while the app is DB-network-linked", async () => {
+    const { prisma, update } = prismaFor({ dbNetwork: true, source: "IMAGE" });
+    await expect(make(prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+});

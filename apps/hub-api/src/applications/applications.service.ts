@@ -55,6 +55,7 @@ import {
   parseImageDigest,
   containerName,
   appVolumeName,
+  tokenizeDockerOptions,
   type AppSpec,
   type AppVolume,
   type AppConfigMount,
@@ -107,6 +108,12 @@ const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
 // -v/--volume/--mount: an adopted container carries its named volume this way; two containers writing
 // one volume during a rolling overlap would corrupt it, so such apps must hard-cutover.
 const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name|-v|--volume|--mount)(\s|=|$)/;
+// A user-supplied --network/--net in docker options would conflict with the DB-network attach (dbNetwork),
+// which manages the app's networks itself — the two must not both set a network. Tokenize first (quote-aware)
+// so a quoted form like `"--network" host` or `'--net=x'` can't slip past a raw-string regex.
+function hasNetworkOpt(dockerOptions: string | null | undefined): boolean {
+  return tokenizeDockerOptions(dockerOptions).some((t) => /^(--network|--net)(=|$)/.test(t));
+}
 
 export const AppViewSchema = z.object({
   id: z.string(),
@@ -1602,6 +1609,28 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.env.update", target: id });
   }
 
+  /**
+   * Opt an app into (or out of) the node-local managed-DB network (tugra-net) so its container resolves
+   * `tugra_db_<id>` by name. Turning it ON is refused unless the app can actually use that node-local bridge:
+   * a classic (non-swarm) app, not COMPOSE (those declare their own networks), with no conflicting --network
+   * in docker options, and at least one managed database on the SAME server. Takes effect on the NEXT deploy
+   * (no live reattach); turning it OFF is always allowed (the next deploy drops the network). Writer-gated.
+   */
+  async setDbNetwork(userId: string, id: string, on: boolean): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (on) {
+      if (app.clusterId) throw new BadRequestException("a swarm/cluster app deploys on the overlay — it can't join the node-local DB network");
+      if (app.source === "COMPOSE") throw new BadRequestException("a compose app manages its own networks — declare tugra-net in the compose file instead");
+      if (hasNetworkOpt(app.dockerOptions)) {
+        throw new BadRequestException("remove the --network flag from this app's docker options before linking the DB network");
+      }
+      const dbCount = await this.prisma.database.count({ where: { serverId: app.serverId, teamId: app.teamId } });
+      if (dbCount === 0) throw new BadRequestException("no managed database on this app's server to link to");
+    }
+    await this.prisma.application.update({ where: { id }, data: { dbNetwork: on } });
+    await this.audit.log({ actor: userId, action: "app.db_network.update", target: id, meta: { on } });
+  }
+
   /** Build-time variables (injected during image build, separate from runtime env). */
   async getBuildArgs(userId: string, id: string): Promise<Record<string, string>> {
     const app = await this.requireWrite(userId, id);
@@ -1624,11 +1653,15 @@ export class ApplicationsService {
   }
 
   async setDockerOptions(userId: string, id: string, dockerOptions: string | null): Promise<void> {
-    await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id);
     // Validate at set-time (clear 400 now, not a failed deploy later): reject an unterminated quote AND any
     // host-escaping flag (--privileged, docker.sock/host-path bind, host namespaces, host devices,
     // non-allowlisted --cap-add). Shell-injection itself is neutralized at deploy time by dockerOptionsArgs.
     assertSafeDockerOptions(dockerOptions);
+    // A DB-network-linked app manages its own --network; a conflicting one here would be ambiguous.
+    if (app.dbNetwork && hasNetworkOpt(dockerOptions)) {
+      throw new BadRequestException("this app is linked to the managed-DB network — remove --network here, or unlink the DB network first");
+    }
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
   }
@@ -1850,6 +1883,9 @@ export class ApplicationsService {
       let managerId: string | null = null;
       if (cfg.clusterId) {
         if (app.source === "COMPOSE") throw new BadRequestException("compose apps can't be deployed as swarm services yet");
+        // A DB-network link is a node-local bridge (tugra-net) — meaningless on a multi-node overlay. Unlink
+        // first so the operator explicitly re-decides DB connectivity for the swarm topology.
+        if (app.dbNetwork) throw new BadRequestException("this app is linked to the node-local DB network (tugra-net) — unlink it (dbNetwork off) before deploying to a swarm");
         // GPUs are node-local hardware — genuinely unsupportable on a multi-node cluster. (Named volumes used
         // to be refused here too; a stateful app is now hard-pinned to one node instead — see below.)
         if (app.gpus) throw new BadRequestException("GPU apps can't be deployed as swarm services");
@@ -2280,6 +2316,9 @@ export class ApplicationsService {
       placementConstraints: this.appPlacement(app).constraints,
       placementSpreadLabelKey: this.appPlacement(app).spreadLabelKey,
       dockerOptions: app.dockerOptions,
+      // Attach to the node-local managed-DB network only for a classic (non-swarm) deploy — a clustered app
+      // runs as a swarm service on the overlay, where a node-local bridge is meaningless.
+      dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       gitToken: this.appGitToken(app),
       registryAuth: this.appRegistryAuth(app),
