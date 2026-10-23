@@ -62,7 +62,8 @@ describe("ImportExecutorService.mintMigrationToken", () => {
     expect(prisma.bulkOperation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ meta: expect.objectContaining({ hubBase: BASE }) }) }));
     expect(res.opId).toBe("op-1");
     expect(isMigrationToken(res.token)).toBe(true);
-    expect(res.command).toBe(`curl -fsSL ${BASE}/install/migrator.sh | sh -s -- --hub ${BASE} --token ${res.token}`);
+    expect(res.command).toBe(`curl -fsSL ${BASE}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${res.token} sh -s -- --hub ${BASE}`);
+    expect(res.command).not.toContain("--token"); // token rides the env, never an argv
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "import.migration_token.mint", target: "op-1" }));
     expect(JSON.stringify(audit.log.mock.calls[0][0])).not.toContain(res.token); // never audit the secret
   });

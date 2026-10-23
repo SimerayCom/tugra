@@ -71,8 +71,9 @@ describe("Importer migration token (e2e)", () => {
     const res = await request(srv()).post(`/import/operations/${opA}/migration-token`).set("Authorization", `Bearer ${tokenA}`).expect(201);
     expect(res.body.opId).toBe(opA);
     expect(res.body.token).toMatch(TOKEN_RE);
-    expect(res.body.command).toMatch(/^curl -fsSL https?:\/\/\S+\/install\/migrator\.sh \| sh -s -- --hub \S+ --token tugra_mig_\S+$/);
-    expect(res.body.command.endsWith(res.body.token)).toBe(true);
+    expect(res.body.command).toMatch(/^curl -fsSL https?:\/\/\S+\/install\/migrator\.sh \| TUGRA_MIGRATION_TOKEN=tugra_mig_\S+ sh -s -- --hub \S+$/);
+    expect(res.body.command).toContain(`TUGRA_MIGRATION_TOKEN=${res.body.token}`); // token in the env slot, not an argv
+    expect(res.body.command).not.toContain("--token");
     expect(new Date(res.body.expiresAt).getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
 
     const row = await prisma.bulkOperation.findUnique({ where: { id: opA } });
@@ -138,7 +139,8 @@ describe("Importer migration token (e2e)", () => {
     await mintFresh(opA);
     const res = await request(srv()).get(`/import/operations/${opA}/migrate-command`).set("Authorization", `Bearer ${tokenA}`).expect(200);
     expect(res.body.active).toBe(true);
-    expect(res.body.commandTemplate).toContain("--token <TOKEN>");
+    expect(res.body.commandTemplate).toContain("TUGRA_MIGRATION_TOKEN=<TOKEN>");
+    expect(res.body.commandTemplate).not.toContain("--token");
     expect(res.body.commandTemplate).not.toContain("tugra_mig_");
     expect(res.body.opId).toBe(opA);
   });

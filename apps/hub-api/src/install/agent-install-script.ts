@@ -10,10 +10,7 @@
  * interpolate as JS. Only the image line concatenates the (validated) image ref.
  */
 
-/** A conservative image-ref charset (registry/repo:tag@digest). Defensive — the ref is operator config. */
-const IMAGE_RE = /^[A-Za-z0-9._/:@-]+$/;
-/** A docker image digest is exactly 64 lowercase hex chars. */
-const SHA256_RE = /^[a-f0-9]{64}$/;
+import { assertPinnable, archPinLines } from "./image-pin";
 
 /**
  * Renders the bootstrap installer. When `digests` is supplied (the release's per-arch agent image digests,
@@ -23,22 +20,9 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
  */
 export function renderAgentInstallScript(opts: { image: string; digests?: { amd64: string; arm64: string } }): string {
   const image = opts.image;
-  if (!IMAGE_RE.test(image)) {
-    throw new Error(`refusing to render install script for unsafe image ref: ${JSON.stringify(image)}`);
-  }
-  if (opts.digests && (!SHA256_RE.test(opts.digests.amd64) || !SHA256_RE.test(opts.digests.arm64))) {
-    throw new Error("refusing to render install script with an invalid agent image digest");
-  }
+  assertPinnable(image, opts.digests);
   // Arch-aware digest pin (only when digests are known + valid). Set as the default before arg parsing.
-  const pinLines = opts.digests
-    ? [
-        '_arch="$(uname -m 2>/dev/null || echo unknown)"',
-        'case "$_arch" in',
-        `  x86_64|amd64) IMAGE="${image}@sha256:${opts.digests.amd64}" ;;`,
-        `  aarch64|arm64) IMAGE="${image}@sha256:${opts.digests.arm64}" ;;`,
-        "esac",
-      ]
-    : [];
+  const pinLines = archPinLines(image, opts.digests);
   const lines = [
     "#!/bin/sh",
     "# Tugra agent installer — runs the tugra-agent as a Docker container.",

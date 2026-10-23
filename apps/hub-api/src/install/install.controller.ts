@@ -5,6 +5,9 @@ import { ConfigService } from "@nestjs/config";
 import { appVersion } from "@tugra/shared";
 import { UpdateService } from "../update/update.service";
 import { renderAgentInstallScript } from "./agent-install-script";
+import { renderMigratorInstallScript } from "./migrator-install-script";
+
+type ImageRef = { image: string; digests?: { amd64: string; arm64: string } };
 
 const DIGEST_MEMO_TTL_MS = 10 * 60 * 1000; // this endpoint is public + un-throttled → cache the manifest lookup
 const DIGEST_RE = /^[a-f0-9]{64}$/; // only well-formed digests are pinned (a malformed one degrades to bare tag)
@@ -32,15 +35,40 @@ export class InstallController {
   @Header("Content-Type", "text/x-shellscript; charset=utf-8")
   @Header("Cache-Control", "no-store")
   async agentScript(): Promise<string> {
-    // Version-matched agent image (keeps agent↔hub protocol aligned); AGENT_IMAGE overrides for
-    // custom registries / air-gapped mirrors. Published by the release pipeline (release-pipeline-ghcr).
+    return this.renderPinned(renderAgentInstallScript);
+  }
+
+  /**
+   * The one-click data-migrator bootstrap at the BARE path `/install/migrator.sh` (also excluded from the
+   * /api/v1 prefix). It runs the SAME tugra-agent image's `migrate` subcommand, so it reuses the exact
+   * image ref + signed-manifest digest pin (and the shared memo) as agent.sh — no separate image exists.
+   */
+  @Get("migrator.sh")
+  @ApiExcludeEndpoint()
+  @SkipThrottle()
+  @Header("Content-Type", "text/x-shellscript; charset=utf-8")
+  @Header("Cache-Control", "no-store")
+  async migratorScript(): Promise<string> {
+    return this.renderPinned(renderMigratorInstallScript);
+  }
+
+  /**
+   * The version-matched agent image + its per-arch digests (keeps agent↔hub protocol aligned). AGENT_IMAGE
+   * overrides for custom registries / air-gapped mirrors (then no ghcr digest is pinned). Published by the
+   * release pipeline (release-pipeline-ghcr).
+   */
+  private async agentImageRef(): Promise<ImageRef> {
     const image = this.config.get<string>("AGENT_IMAGE") ?? `ghcr.io/simeraycom/tugra-agent:${appVersion()}`;
-    const digests = (await this.agentDigests()) ?? undefined;
+    return { image, digests: (await this.agentDigests()) ?? undefined };
+  }
+
+  /** Render with the pinned ref; a bad digest must NEVER 500 these public endpoints — fall back to the bare tag. */
+  private async renderPinned(render: (ref: ImageRef) => string): Promise<string> {
+    const ref = await this.agentImageRef();
     try {
-      return renderAgentInstallScript({ image, digests });
+      return render(ref);
     } catch {
-      // Belt-and-suspenders: a bad digest must NEVER 500 this public endpoint — fall back to the bare tag.
-      return renderAgentInstallScript({ image });
+      return render({ image: ref.image });
     }
   }
 
