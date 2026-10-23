@@ -238,7 +238,9 @@ describe("Servers + Agent (e2e)", () => {
     expect(metrics.body.length).toBeGreaterThanOrEqual(1);
     expect(metrics.body[metrics.body.length - 1].cpu).toBe(42.5);
 
-    // server patching: reply to the patch command with a real apt-format output
+    // server patching: reply to the patch command with a real apt-format output. The hub now wraps the
+    // patch in a host-exec helper (runs on the HOST, not the agent container); a successful run prints
+    // TUGRA_HOST_ENTERED first, so the canned agent reply mirrors that or the hub rejects it as host-unavailable.
     ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString());
       if (msg.type === "command") {
@@ -247,7 +249,7 @@ describe("Servers + Agent (e2e)", () => {
             type: "command_result",
             reqId: msg.reqId,
             exitCode: 0,
-            output: "TUGRA_MGR=apt\nTUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\nTUGRA_REBOOT\n",
+            output: "TUGRA_HOST_ENTERED\nTUGRA_MGR=apt\nTUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\nTUGRA_REBOOT\n",
           }),
         );
       }
