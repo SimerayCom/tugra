@@ -191,6 +191,7 @@
   "kind_ROLLBACK": "rollback",
   "kind_AUTO_ROLLBACK": "auto-rollback",
   "streaming": "Streaming live build logs…",
+  "jumpToLatest": "Jump to latest",
   "openShell": "Open shell",
   "limits": "Resources",
   "limitsDesc": "Optional CPU/memory limits and deploy timeout. Applied on next deploy.",

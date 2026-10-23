@@ -595,23 +595,47 @@ function LiveContainerLogsCard({ id, isCompose }: { id: string; isCompose: boole
 function LiveLogCard({ lines }: { lines: string }) {
   const t = useT();
   const ref = useRef<HTMLPreElement>(null);
+  // Follow the newest output, but STOP snapping to the bottom once the operator scrolls up to read — and
+  // offer a "Jump to latest" pill to resume. (Previously it force-scrolled on every chunk, fighting the user.)
+  const [following, setFollowing] = useState(true);
   useEffect(() => {
     const el = ref.current;
+    if (el && following) el.scrollTop = el.scrollHeight;
+  }, [lines, following]);
+  const onScroll = () => {
+    const el = ref.current;
+    if (el) setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 24); // near the bottom ⇒ keep following
+  };
+  const jump = () => {
+    const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lines]);
+    setFollowing(true);
+  };
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <Spinner />
         <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.streaming")}</span>
       </div>
-      <pre
-        ref={ref}
-        className="mono"
-        style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}
-      >
-        {collapseCarriageReturns(lines) || <span style={{ color: "var(--c-tx3)" }}>{t("apps.waitingForBuild")}</span>}
-      </pre>
+      <div style={{ position: "relative" }}>
+        <pre
+          ref={ref}
+          onScroll={onScroll}
+          className="mono"
+          style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}
+        >
+          {collapseCarriageReturns(lines) || <span style={{ color: "var(--c-tx3)" }}>{t("apps.waitingForBuild")}</span>}
+        </pre>
+        {!following && (
+          <Btn
+            variant="ghost"
+            onClick={jump}
+            style={{ position: "absolute", right: 10, bottom: 10, fontSize: 11, padding: "2px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 1px 6px rgba(0,0,0,.25)" }}
+          >
+            ↓ {t("apps.jumpToLatest")}
+          </Btn>
+        )}
+      </div>
     </Card>
   );
 }
