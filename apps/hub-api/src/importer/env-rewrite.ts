@@ -60,6 +60,9 @@ export interface RemapChange {
   target: { itemRef: string; kind: "database" | "app"; name: string };
   oldMasked: string;
   newMasked: string;
+  /** The RAW new value the apply writer sets. The MASKED pair above is for display; this is secret and MUST
+   *  NOT be surfaced in a preview response — the hub projects only the masked fields (see remapEnvPlan). */
+  newValue: string;
   confidence: "exact" | "derived";
 }
 
@@ -234,12 +237,14 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
           // rotating the userinfo but leaving an old password/user in the query is a half-rewrite → report.
           needsManual.push({ key, reason: RM_QUERY_CREDS, target: db.itemRef });
         } else {
+          const rebuilt = rebuildDbUrl(auth, db);
           changes.push({
             key,
             rule: "url",
             target: dbRef(db),
             oldMasked: maskConnString(value),
-            newMasked: maskConnString(rebuildDbUrl(auth, db)),
+            newMasked: maskConnString(rebuilt),
+            newValue: rebuilt,
             confidence: "exact",
           });
           referencedDbs.add(db);
@@ -263,6 +268,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
           target: isDb ? dbRef(hostOnly as DbRemapTarget) : { itemRef: hostOnly.itemRef, kind: "app", name: hostOnly.name },
           oldMasked: value,
           newMasked: hostOnly.newHost,
+          newValue: hostOnly.newHost,
           confidence: "exact",
         });
         if (isDb) referencedDbs.add(hostOnly as DbRemapTarget);
@@ -271,7 +277,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
       const hp = /^([a-z0-9]{16,40})(?::(\d+))?$/i.exec(value);
       if (hp && hp[2] && dbByHost.has(hp[1])) {
         const db = dbByHost.get(hp[1])!;
-        changes.push({ key, rule: "host-port", target: dbRef(db), oldMasked: value, newMasked: `${db.newHost}:${db.newPort}`, confidence: "exact" });
+        changes.push({ key, rule: "host-port", target: dbRef(db), oldMasked: value, newMasked: `${db.newHost}:${db.newPort}`, newValue: `${db.newHost}:${db.newPort}`, confidence: "exact" });
         referencedDbs.add(db);
         continue;
       }
@@ -319,7 +325,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         continue;
       }
       const d = matched[0];
-      if (d.mode === "rotate") changes.push({ key, rule: kind, target: dbRef(d), oldMasked: value, newMasked: d[newField]!, confidence: "derived" });
+      if (d.mode === "rotate") changes.push({ key, rule: kind, target: dbRef(d), oldMasked: value, newMasked: d[newField]!, newValue: d[newField]!, confidence: "derived" });
       else unchanged.push(key);
       continue;
     }
@@ -331,7 +337,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
       }
       const confirmed = refDbs.filter((d) => d.mode === "rotate" && d.oldPassword !== undefined && value === d.oldPassword);
       if (confirmed.length === 1) {
-        changes.push({ key, rule: "password", target: dbRef(confirmed[0]), oldMasked: "***", newMasked: "***", confidence: "derived" });
+        changes.push({ key, rule: "password", target: dbRef(confirmed[0]), oldMasked: "***", newMasked: "***", newValue: confirmed[0].newPassword, confidence: "derived" });
       } else {
         // a rotate DB is referenced but we can't confirm which password this is → never guess.
         const rotate = refDbs.find((d) => d.mode === "rotate")!;
@@ -343,7 +349,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
     // kind === "port": rewrite only when the value is a known old port AND the new port differs.
     const portMatched = refDbs.filter((d) => d.oldPort !== undefined && value === String(d.oldPort) && d.newPort !== d.oldPort);
     if (portMatched.length === 1) {
-      changes.push({ key, rule: "port", target: dbRef(portMatched[0]), oldMasked: value, newMasked: String(portMatched[0].newPort), confidence: "derived" });
+      changes.push({ key, rule: "port", target: dbRef(portMatched[0]), oldMasked: value, newMasked: String(portMatched[0].newPort), newValue: String(portMatched[0].newPort), confidence: "derived" });
     } else {
       unchanged.push(key);
     }

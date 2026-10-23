@@ -41,9 +41,11 @@ describe("remapEnv", () => {
     const c = r.changes[0];
     expect(c.rule).toBe("url");
     expect(c.newMasked).toBe("postgres://tugra:***@tugra_db_abc123:5432/appdb");
-    // never leak the real password in the masked output
-    expect(JSON.stringify(r)).not.toContain("S3cr3t");
-    expect(JSON.stringify(r)).not.toContain("NEWpw");
+    // the DISPLAY fields never leak a password (old or new) — the preview surfaces only these.
+    expect(c.oldMasked).not.toContain("S3cr3t");
+    expect(c.newMasked).not.toContain("NEWpw");
+    // the RAW write value carries the fresh creds (consumed by the apply; the preview strips newValue).
+    expect(c.newValue).toBe("postgres://tugra:NEWpw@tugra_db_abc123:5432/appdb");
   });
 
   it("R1 preserve: swaps ONLY the host, keeps the original userinfo + db-name", () => {
@@ -153,16 +155,21 @@ describe("remapEnv", () => {
 
   // ---- review-fix regressions ----
 
-  it("masks a password carried in the QUERY string (preserve) — never leaks it", () => {
+  it("masks a password carried in the QUERY string (preserve) — the DISPLAY never leaks it", () => {
     const r = remapEnv({ DATABASE_URL: `postgres://u:p@${UUID}:5432/db?password=S3cr3tQ&sslmode=require` }, ctx([pgTarget("preserve")]));
-    expect(JSON.stringify(r)).not.toContain("S3cr3tQ");
-    expect(r.changes[0].newMasked).toContain("password=***");
-    expect(r.changes[0].newMasked).toContain("sslmode=require"); // non-secret query kept
+    const c = r.changes[0];
+    expect(c.oldMasked).not.toContain("S3cr3tQ");
+    expect(c.newMasked).not.toContain("S3cr3tQ");
+    expect(c.newMasked).toContain("password=***");
+    expect(c.newMasked).toContain("sslmode=require"); // non-secret query kept
+    // preserve keeps the app's OWN query creds verbatim in the RAW write value (that is the point of preserve).
+    expect(c.newValue).toContain("password=S3cr3tQ");
   });
 
-  it("masks a userinfo-LESS URL's query password too", () => {
+  it("masks a userinfo-LESS URL's query password too (DISPLAY only)", () => {
     const r = remapEnv({ DATABASE_URL: `postgres://${UUID}:5432/db?password=S3cr3tQ` }, ctx([pgTarget("preserve")]));
-    expect(JSON.stringify(r)).not.toContain("S3cr3tQ");
+    expect(r.changes[0].oldMasked).not.toContain("S3cr3tQ");
+    expect(r.changes[0].newMasked).not.toContain("S3cr3tQ");
   });
 
   it("rotate + credentials in the query → needsManual, never a half-rewrite", () => {

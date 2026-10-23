@@ -1,10 +1,12 @@
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { MigratorService } from "../migrator/migrator.service";
 import { ApplicationsService } from "../applications/applications.service";
 import { DatabasesService } from "../databases/databases.service";
+import { CryptoService } from "../crypto/crypto.service";
 import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
@@ -51,6 +53,7 @@ export class ImportExecutorService {
     private readonly apps: ApplicationsService,
     private readonly dbs: DatabasesService,
     private readonly migrationTokens: MigrationTokenService,
+    private readonly crypto: CryptoService,
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
@@ -459,6 +462,18 @@ export class ImportExecutorService {
    * credential var it cannot confirm is reported for manual review — never a half-rewrite.
    */
   async remapEnvPlan(userId: string, opId: string) {
+    const { pub } = await this.computeRemapPlan(userId, opId);
+    return pub;
+  }
+
+  /**
+   * The shared remap computation behind BOTH the preview and the apply. It returns the exact secret-free
+   * public plan (incl. the planHash) the preview surfaces AND an internal `writes` list carrying the RAW new
+   * values — which is NEVER returned to a client. Computing both from one pass guarantees the diff the
+   * operator confirmed and the bytes the apply writes can never diverge, and that the planHash the apply
+   * re-derives is identical to the one the preview showed.
+   */
+  private async computeRemapPlan(userId: string, opId: string) {
     const op = await this.loadOwnedOp(userId, opId, { reapData: false }); // never kill an in-flight restore
     await this.assertCanMigrate(userId, op); // coolify copy-mode, settled, creator still holds apps:config
     const meta = op.meta as { serverId: string };
@@ -546,8 +561,11 @@ export class ImportExecutorService {
     });
     const appTargets: AppRemapTarget[] = appEnvs.map((a) => ({ itemRef: a.itemRef, name: a.name, oldHost: sourceRefOf(a.itemRef) ?? "\u0000none", newHost: `tugra_${a.appId}` }));
 
+    // Raw per-app rewrites ({key,newValue}) the apply writer sets — NEVER returned to a client (secret values).
+    const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }> }> = [];
     const apps = appEnvs.map((a) => {
       const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef) });
+      writes.push({ appId: a.appId, name: a.name, itemRef: a.itemRef, entries: res.changes.map((c) => ({ key: c.key, newValue: c.newValue })) });
       const needsManual = res.needsManual.map((n) => ({ key: n.key, reason: n.reason, targetItemRef: n.target }));
       // A value that references a DB we could NOT load looks "unchanged" but actually needs this DB — surface
       // it so an app is never shown as cleanly remapped while a referenced destination was skipped.
@@ -587,7 +605,7 @@ export class ImportExecutorService {
     });
     const planHash = createHash("sha256").update(canonical).digest("hex");
 
-    return {
+    const pub = {
       opId,
       planHash,
       databases: targets.map((t) => ({ itemRef: t.itemRef, name: t.name, engine: t.engine, mode: t.mode })),
@@ -595,6 +613,173 @@ export class ImportExecutorService {
       apps,
       note: "read-only preview — nothing has been changed; review the diff, then apply (a confirm-gated step) to write it",
     };
+    return { op, pub, writes };
+  }
+
+  /**
+   * Apply the previewed env-remap (S4d-3) — the FIRST write of the remap flow, fully confirm-gated. It
+   * re-computes the SAME plan the preview showed and REFUSES (409) unless `confirmToken` equals that fresh
+   * planHash, so any change to the source or the apps' env since the operator reviewed it aborts the write
+   * rather than applying a stale diff. For a RELIABLE one-call undo it snapshots every app's prior env
+   * (encrypted at rest, same key as everything else — no new exposure) and PERSISTS that undo record BEFORE
+   * the first write, as an atomic compare-and-set on op.meta (so two overlapping applies can never both
+   * commit and clobber the baseline, and sibling meta keys are never lost to a stale overwrite). Each app's
+   * rewrites are then MERGED into a FRESH read of its env (unrelated keys preserved) via the writer-gated
+   * {@link ApplicationsService.setEnv}; because the undo record is already committed, even a mid-loop write
+   * failure stays fully reversible. Guards: a prior un-undone apply, and a plan with no automatic rewrites,
+   * are both refused. Env changes take effect on an app's NEXT deploy — the response says so per app.
+   */
+  async remapEnvApply(userId: string, opId: string, confirmToken: string) {
+    const { op, pub, writes } = await this.computeRemapPlan(userId, opId);
+    if (pub.planHash !== confirmToken) {
+      throw new ConflictException("the plan has changed since you reviewed it — re-open the preview and confirm the new plan");
+    }
+    if (hasPendingRemap(op.meta)) {
+      throw new ConflictException("an env-remap has already been applied for this import — undo it first to re-apply");
+    }
+    const toWrite = writes.filter((w) => w.entries.length > 0);
+    if (toWrite.length === 0) {
+      throw new ConflictException("nothing to apply — the preview proposed no automatic rewrites");
+    }
+
+    // 1) Snapshot each target's CURRENT env first (fresh, writer-gated). An app we cannot read now (deleted or
+    //    no longer writable since the plan) is skipped+reported — never written, never half-snapshotted.
+    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[] }> = [];
+    const targets: Array<{ appId: string; name: string; prior: Record<string, string>; entries: Array<{ key: string; newValue: string }> }> = [];
+    const unprepared: Array<{ appId: string; name: string }> = [];
+    for (const w of toWrite) {
+      let prior: Record<string, string>;
+      try {
+        prior = await this.apps.getEnv(userId, w.appId);
+      } catch {
+        unprepared.push({ appId: w.appId, name: w.name });
+        continue;
+      }
+      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key) });
+      targets.push({ appId: w.appId, name: w.name, prior, entries: w.entries });
+    }
+    if (targets.length === 0) {
+      throw new ConflictException("no apps could be prepared for the remap (deleted or no longer writable)");
+    }
+
+    // 2) COMMIT the undo record BEFORE any write, as an atomic compare-and-set on op.meta (see casMeta): it
+    //    applies only if meta is still what the guard just saw, so two overlapping applies can never both
+    //    commit an undo record, and sibling meta keys (hubBase/rolledBackAt) are never lost to a stale write.
+    const before = await this.freshMeta(opId);
+    if (hasPendingRemap(before)) {
+      throw new ConflictException("another env-remap apply is in progress or already applied — re-open the preview");
+    }
+    await this.casMeta(opId, before, { ...before, remapUndo: { appliedAt: new Date().toISOString(), planHash: pub.planHash, apps: undoApps } });
+
+    // 3) Write. The undo record already covers every target, so a per-app failure here stays reversible. Each
+    //    write MERGES onto a FRESH read of the app's env, so an edit landing since the snapshot is preserved.
+    const appliedApps: Array<{ appId: string; name: string; written: number; keys: string[]; needsRedeploy: boolean }> = [];
+    const failed: Array<{ appId: string; name: string }> = [...unprepared];
+    for (const t of targets) {
+      try {
+        const current = await this.apps.getEnv(userId, t.appId); // fresh — unrelated edits since the snapshot kept
+        const next = { ...current };
+        for (const e of t.entries) next[e.key] = e.newValue;
+        await this.apps.setEnv(userId, t.appId, next); // writer-gated + audited + encrypted at rest
+        appliedApps.push({ appId: t.appId, name: t.name, written: t.entries.length, keys: t.entries.map((e) => e.key), needsRedeploy: true });
+      } catch {
+        failed.push({ appId: t.appId, name: t.name }); // reversible via undo — the snapshot was committed above
+      }
+    }
+    await this.audit.log({ actor: userId, action: "import.remap_env.apply", target: opId, meta: { applied: appliedApps.map((a) => ({ appId: a.appId, keys: a.keys })), failed: failed.map((f) => f.appId) } });
+    return {
+      opId,
+      applied: failed.length === 0,
+      planHash: pub.planHash,
+      apps: appliedApps,
+      failed,
+      note: "env rewritten to point at the new Tugra databases — redeploy each app for the change to take effect; an undo is available",
+    };
+  }
+
+  /**
+   * Reverse a {@link remapEnvApply} (S4d-3): revert the keys the remap rewrote back to the snapshot taken
+   * before it wrote them. For each app it fresh-reads the CURRENT env and reverts ONLY the remapped keys
+   * (restoring a key's prior value, or deleting it if it was absent before), so env edits made after the
+   * apply are kept — never a blind whole-env replace. The record is marked consumed ONLY when every app
+   * restored: an app that no longer exists is dropped (nothing to restore), while a transient per-app
+   * failure keeps that app in the record (un-undone) so undo can be retried and a re-apply stays blocked.
+   * Reuses the preview/apply gate (assertCanMigrate → apps:config); refuses (409) when nothing is applied.
+   */
+  async remapEnvUndo(userId: string, opId: string) {
+    const op = await this.loadOwnedOp(userId, opId, { reapData: false });
+    await this.assertCanMigrate(userId, op);
+    const before = metaObj(op.meta); // the meta `undo` is read from — also the compare-and-set precondition below
+    const undo = readRemapUndo(before);
+    if (!undo || undo.undoneAt || !undo.apps?.length) {
+      throw new ConflictException("nothing to undo — no env-remap has been applied for this import");
+    }
+    const restored: Array<{ appId: string; name: string }> = [];
+    const terminal: Array<{ appId: string; name: string; reason: string }> = []; // can never be restored → dropped, not retried forever
+    const stillFailed: typeof undo.apps = []; // a TRANSIENT failure — kept so undo can be retried
+    for (const a of undo.apps) {
+      let prior: Record<string, string>;
+      try {
+        prior = JSON.parse(this.crypto.decrypt(a.priorEnc)) as Record<string, string>;
+      } catch {
+        terminal.push({ appId: a.appId, name: a.name, reason: "snapshot-unreadable" }); // corrupt ciphertext — retrying can't help
+        continue;
+      }
+      try {
+        const current = await this.apps.getEnv(userId, a.appId);
+        const next = { ...current };
+        for (const k of a.keys ?? Object.keys(prior)) {
+          if (Object.prototype.hasOwnProperty.call(prior, k)) next[k] = prior[k];
+          else delete next[k]; // the remap had ADDED this key — reverting means removing it
+        }
+        await this.apps.setEnv(userId, a.appId, next); // key-scoped revert — post-apply edits to other keys kept
+        restored.push({ appId: a.appId, name: a.name });
+      } catch (e) {
+        if (e instanceof NotFoundException) terminal.push({ appId: a.appId, name: a.name, reason: "app-deleted" });
+        else if (e instanceof ForbiddenException) terminal.push({ appId: a.appId, name: a.name, reason: "not-writable" });
+        else stillFailed.push(a); // transient (e.g. a DB blip) — keep for a retry
+      }
+    }
+    // Consume the record ONLY when nothing transient remains: a terminal app (deleted/unwritable/corrupt) is
+    // dropped so a re-apply is never blocked forever; a transient app is kept (un-undone) so undo can retry.
+    // On full consumption the encrypted priorEnc snapshots are dropped from meta (hygiene — no secret lingers).
+    const after = {
+      ...before,
+      remapUndo: stillFailed.length
+        ? { ...undo, apps: stillFailed, partialUndoAt: new Date().toISOString() }
+        : { appliedAt: undo.appliedAt, planHash: undo.planHash, undoneAt: new Date().toISOString(), apps: [] },
+    };
+    await this.casMeta(opId, before, after);
+    await this.audit.log({ actor: userId, action: "import.remap_env.undo", target: opId, meta: { restored: restored.map((r) => r.appId), terminal: terminal.map((t) => ({ appId: t.appId, reason: t.reason })), failed: stillFailed.map((f) => f.appId) } });
+    return {
+      opId,
+      undone: stillFailed.length === 0,
+      apps: restored,
+      failed: [...terminal.map((t) => ({ appId: t.appId, name: t.name })), ...stillFailed.map((f) => ({ appId: f.appId, name: f.name }))],
+      note: stillFailed.length
+        ? "reverted the remapped keys for the apps that could be written; some remain pending (a transient failure) — retry undo"
+        : "reverted the remapped keys to the pre-remap snapshot (other env edits kept); redeploy to apply the reverted env",
+    };
+  }
+
+  /** Re-read op.meta from the DB as a fresh mutable object, so a remap commit merges onto the CURRENT meta
+   *  (never a stale copy that would lose a sibling key like hubBase/rolledBackAt). */
+  private async freshMeta(opId: string): Promise<Record<string, unknown>> {
+    const row = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } });
+    return metaObj(row?.meta);
+  }
+
+  /** Compare-and-set op.meta: write `after` ONLY while the row's meta still equals `before` (Postgres jsonb
+   *  value equality — order-independent). A concurrent writer that changed meta first makes this match no row
+   *  (count 0) → 409, so two overlapping remap applies/undos can never both commit and clobber the baseline. */
+  private async casMeta(opId: string, before: Record<string, unknown>, after: Record<string, unknown>): Promise<void> {
+    const claim = await this.prisma.bulkOperation.updateMany({
+      where: { id: opId, meta: { equals: before as Prisma.InputJsonValue } },
+      data: { meta: after as Prisma.InputJsonValue },
+    });
+    if (claim.count !== 1) {
+      throw new ConflictException("the operation was modified concurrently — re-open the preview and confirm again");
+    }
   }
 
   /**
@@ -675,6 +860,32 @@ export class ImportExecutorService {
     if (op.actorId !== userId) throw new ForbiddenException("not your operation");
     return op;
   }
+}
+
+/** The encrypted env-remap undo record stashed on op.meta by {@link ImportExecutorService.remapEnvApply}. */
+interface RemapUndoRecord {
+  appliedAt?: string;
+  undoneAt?: string;
+  partialUndoAt?: string;
+  planHash?: string;
+  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[] }>;
+}
+
+/** A Prisma Json value as a fresh mutable object ({} when null/absent), safe to merge onto. */
+function metaObj(meta: unknown): Record<string, unknown> {
+  return typeof meta === "object" && meta ? { ...(meta as Record<string, unknown>) } : {};
+}
+
+/** The op's remap undo record, or undefined. */
+function readRemapUndo(meta: unknown): RemapUndoRecord | undefined {
+  const m = typeof meta === "object" && meta ? (meta as { remapUndo?: RemapUndoRecord }) : {};
+  return m.remapUndo;
+}
+
+/** True when a remap has been applied and not yet fully undone — the re-apply guard. */
+function hasPendingRemap(meta: unknown): boolean {
+  const undo = readRemapUndo(meta);
+  return !!undo && !undo.undoneAt;
 }
 
 /** The source-side reference (a Coolify resource uuid) from an itemRef `<kind>:<serverRef|_>:<sourceRef>`
