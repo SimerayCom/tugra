@@ -112,6 +112,17 @@ export default function AppDetailPage() {
   }, [optimisticDeploy, deployActive, deploy.isPending]);
   const streamActive = deployActive || deploy.isPending || optimisticDeploy;
   const live = useDeployLogStream(id, streamActive);
+  // The stream reports a final SUCCESS/FAILED + exit code the UI used to ignore — toast it once so a deploy's
+  // outcome is visible even if the operator looked away. The ref makes it fire once per completion.
+  const deployDone = useRef(false);
+  useEffect(() => {
+    if (!live.done) { deployDone.current = false; return; }
+    if (live.status && !deployDone.current) {
+      deployDone.current = true;
+      if (live.status === "SUCCESS") toast(t("apps.deploySucceeded"), "success");
+      else toast(t("apps.deployFailed", { code: live.exitCode ?? "?" }), "error");
+    }
+  }, [live.done, live.status, live.exitCode, toast, t]);
   const [shell, setShell] = useState<TerminalTarget | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [exposeOpen, setExposeOpen] = useState(false);
