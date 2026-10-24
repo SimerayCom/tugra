@@ -173,14 +173,17 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 # --- resolve the public URLs + cookie/proxy mode ----------------------------------------------------
-COOKIE_SECURE="false"
-HUB_TRUSTED_PROXY="false"   # default: no proxy → trust the raw TCP peer IP (agents can't spoof it)
+# Flag-less re-run on an existing install = the documented upgrade path (README / docs/upgrade.md): it
+# must PRESERVE the configured origin, not silently revert a --domain deployment back to the http quick
+# start. Explicit flags still override; a deliberate downgrade passes --hub-url/--web-url (http://…).
+if [ -z "$DOMAIN" ] && [ -z "$HUB_URL" ] && [ -z "$WEB_URL" ] && env_has HUB_PUBLIC_URL && env_has WEB_PUBLIC_URL; then
+  HUB_URL="$(env_get HUB_PUBLIC_URL)"
+  WEB_URL="$(env_get WEB_PUBLIC_URL)"
+fi
 if [ -n "$DOMAIN" ]; then
   # Single public origin behind the user's TLS reverse proxy (see README for the path-routing rules).
   HUB_URL="${HUB_URL:-https://$DOMAIN}"
   WEB_URL="${WEB_URL:-https://$DOMAIN}"
-  COOKIE_SECURE="true"
-  HUB_TRUSTED_PROXY="true"
 elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
   # Quick start: plain http on this host's first IP (agents must be able to reach the hub port).
   # Detect the IP PORTABLY — `hostname -I` is GNU/net-tools-only and ERRORS on macOS/BSD and on
@@ -196,7 +199,23 @@ elif [ -z "$HUB_URL" ] || [ -z "$WEB_URL" ]; then
   fi
   HUB_URL="${HUB_URL:-http://$HOST_IP:$HUB_PORT}"
   WEB_URL="${WEB_URL:-http://$HOST_IP:$WEB_PORT}"
-  COOKIE_SECURE="false"   # http cannot carry Secure cookies; NODE_ENV=production would default it on
+fi
+# Cookie + proxy mode follow the RESOLVED hub origin's scheme: https => a TLS reverse proxy fronts the
+# hub, so set Secure cookies and trust exactly ONE proxy hop for X-Forwarded-For; plain http => no proxy,
+# trust only the un-spoofable raw TCP peer IP. Deriving from the scheme (not just the --domain flag) is
+# what lets a flag-less upgrade preserve the mode while an explicit http downgrade clears a stale proxy.
+case "$HUB_URL" in
+  https://*) COOKIE_SECURE="true";  HUB_TRUSTED_PROXY="true" ;;
+  *)         COOKIE_SECURE="false"; HUB_TRUSTED_PROXY="false" ;;
+esac
+# Host bind for the published hub/web ports. A trusted-proxy (https) hub honors X-Forwarded-For, so its raw
+# port must not be internet-exposed. A FRESH --domain install binds to loopback (same-host proxy). The http
+# quick start and existing installs keep 0.0.0.0 (agents dial host:3000; and an upgrade must not silently
+# break a working cross-host proxy). Override anytime with HUB_BIND/WEB_BIND (e.g. a private-interface IP).
+if [ "$HUB_TRUSTED_PROXY" = "true" ] && ! env_has HUB_PUBLIC_URL; then
+  PORT_BIND_DEFAULT="127.0.0.1"
+else
+  PORT_BIND_DEFAULT="0.0.0.0"
 fi
 
 # --- write the .env (create with 0600, preserve secrets on re-run) ----------------------------------
@@ -256,6 +275,9 @@ set_env DATABASE_URL   "postgresql://tugra:${PG_PWD}@postgres:5432/tugra?schema=
 set_env REDIS_URL      "redis://redis:6379"          # unauthenticated: BullMQ workers only use host/port
 set_env HUB_PORT       "$HUB_PORT"
 set_env WEB_PORT       "$WEB_PORT"
+# Preserve on re-run (ensure_env, not set_env): never clobber an operator's deliberate bind lock-down.
+ensure_env HUB_BIND    "${HUB_BIND:-$PORT_BIND_DEFAULT}"
+ensure_env WEB_BIND    "${WEB_BIND:-$PORT_BIND_DEFAULT}"
 set_env HUB_PUBLIC_URL "$HUB_URL"
 set_env WEB_PUBLIC_URL "$WEB_URL"
 set_env COOKIE_SECURE  "$COOKIE_SECURE"
@@ -292,12 +314,15 @@ else
 fi
 
 # --- wait for health + print next steps -------------------------------------------------------------
+# HEALTHY: 1 = passed, 0 = still failing after the timeout, 2 = could not check (no curl). The final exit
+# code reflects it so automation (and `curl … | sh`) can tell a failed install from a good one.
+HEALTHY=2
 if command -v curl >/dev/null 2>&1; then
   step "Waiting for the hub to become healthy…"
-  i=0
+  HEALTHY=1; i=0
   until curl -fsS "http://localhost:${HUB_PORT}/health" >/dev/null 2>&1; do
     i=$((i + 1))
-    [ "$i" -ge 120 ] && { printf '\r\033[K'; warn "hub not healthy yet — check: docker compose -f deploy/docker-compose.yml logs hub-api"; break; }
+    [ "$i" -ge 120 ] && { printf '\r\033[K'; HEALTHY=0; warn "hub not healthy after ~4 min — check: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs hub-api"; break; }
     case $((i % 4)) in 0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\' ;; esac
     printf '\r  \033[38;5;179m%s\033[0m still starting… (%ss)' "$c" "$((i * 2))"
     sleep 2
@@ -306,12 +331,22 @@ if command -v curl >/dev/null 2>&1; then
 fi
 
 printf '\n'
-log "Tugra is up."
+if [ "$HEALTHY" = "0" ]; then
+  warn "Tugra started, but the hub did not pass its health check yet (see the log hint above)."
+else
+  log "Tugra is up."
+fi
 printf '  Web UI:  %s\n' "$WEB_URL"
 printf '  Hub API: %s\n' "$HUB_URL"
 if [ -z "$DOMAIN" ]; then
   printf '  For TLS + a public domain, front the stack with a reverse proxy and re-run with --domain <host>.\n'
+else
+  _hb="$(env_get HUB_BIND)"
+  printf '  Ports bound to %s. With a trusted proxy the hub honors X-Forwarded-For, so the raw ports must\n' "${_hb:-127.0.0.1}"
+  printf '  reach ONLY the proxy. Same-host proxy: the 127.0.0.1 default is correct. Proxy on another host:\n'
+  printf '  set HUB_BIND/WEB_BIND to this box private IP and firewall 3000/3001 (Docker-published ports bypass ufw).\n'
 fi
+printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub database (see docs/disaster-recovery.md).\n' "$ENV_FILE"
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'
 # Trust-wedge hints: both are opt-in, so say plainly what is OFF and how to turn it on.
 if ! env_has LOCAL_SERVER_PUBLIC_IP; then
@@ -329,3 +364,7 @@ if [ "$FRESH_SETUP_CODE" -eq 1 ]; then
   printf '  You must enter it to create the owner account (step 1 in the Web UI).\n'
   printf '  Closed the terminal? Recover it anytime with:  grep SETUP_CODE %s\n\n' "$ENV_FILE"
 fi
+
+# Exit non-zero if the hub never became healthy, so `curl … | sh` and CI can detect a failed install.
+[ "$HEALTHY" = "0" ] && exit 1
+exit 0

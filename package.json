@@ -47,7 +47,7 @@
       "baseline-browser-mapping": "^2.11.0",
       "ajv": "^8.18.0",
       "deepmerge-ts": "^8.0.0",
-      "nodemailer": "^10.0.6",
+      "nodemailer": "^10.2.1",
       "lodash": "^4.17.23"
     }
   }

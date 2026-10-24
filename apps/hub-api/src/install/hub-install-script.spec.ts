@@ -107,6 +107,33 @@ describe("scripts/install.sh", () => {
       expect(env.HUB_TRUSTED_PROXY).toBe("false"); // stale true must not linger over plain http
       expect(env.COOKIE_SECURE).toBe("false");
     });
+
+    it("a flag-less re-run (the documented upgrade path) PRESERVES the configured --domain origin", () => {
+      const envPath = join(dir, "upgrade.env");
+      run(["--domain", "tugra.example.com"], envPath);
+      run([], envPath); // `git pull && ./scripts/install.sh` with no flags — must not revert to http quick-start
+      const env = parseEnv(readFileSync(envPath, "utf8"));
+      expect(env.HUB_PUBLIC_URL).toBe("https://tugra.example.com");
+      expect(env.WEB_PUBLIC_URL).toBe("https://tugra.example.com");
+      expect(env.COOKIE_SECURE).toBe("true");
+      expect(env.HUB_TRUSTED_PROXY).toBe("true");
+    });
+
+    it("the http quick-start binds the published ports to 0.0.0.0 (agents dial host:3000)", () => {
+      const envPath = join(dir, "bind-quick.env");
+      run([], envPath);
+      const env = parseEnv(readFileSync(envPath, "utf8"));
+      expect(env.HUB_BIND).toBe("0.0.0.0");
+      expect(env.WEB_BIND).toBe("0.0.0.0");
+    });
+
+    it("a fresh --domain install binds the published ports to loopback (proxy-only reachability)", () => {
+      const envPath = join(dir, "bind-domain.env");
+      run(["--domain", "tugra.example.com"], envPath);
+      const env = parseEnv(readFileSync(envPath, "utf8"));
+      expect(env.HUB_BIND).toBe("127.0.0.1");
+      expect(env.WEB_BIND).toBe("127.0.0.1");
+    });
   });
 
   describe("deploy/docker-compose.yml", () => {
