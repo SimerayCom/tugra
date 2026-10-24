@@ -14,6 +14,7 @@ function facts(over: Partial<ConfigGatingFacts> = {}): ConfigGatingFacts {
     source: "GIT",
     isPreview: false,
     canWrite: true,
+    clusterId: null,
     webhookToken: "tok",
     domain: "app.example.com",
     domainKind: "custom",
@@ -110,5 +111,12 @@ describe("visibleConfigGroups", () => {
   it("domain card needs a custom domainKind", () => {
     expect(group(facts(), "domains")!.cardIds).toContain("domain");
     expect(group(facts({ domainKind: "auto" }), "domains")!.cardIds).not.toContain("domain");
+  });
+
+  it("databaseLinks shows for a classic app and hides for compose / swarm / preview", () => {
+    expect(group(facts(), "environment")!.cardIds).toEqual(["env", "databaseLinks"]);
+    expect(group(facts({ source: "COMPOSE" }), "environment")!.cardIds).toEqual(["env"]);
+    expect(group(facts({ clusterId: "c1" }), "environment")!.cardIds).toEqual(["env"]);
+    expect(group(facts({ isPreview: true }), "environment")!.cardIds).toEqual(["env"]);
   });
 });

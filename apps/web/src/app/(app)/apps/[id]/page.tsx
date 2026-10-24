@@ -12,6 +12,7 @@ import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { AppFilesCard } from "../../../../components/app-files-card";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
+import { DatabaseLinksCard } from "../../../../components/database-links-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
@@ -177,6 +178,7 @@ export default function AppDetailPage() {
       <CredentialsCard id={id} source={appData.source} hasGitToken={appData.hasGitToken} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
     ),
     env: () => <EnvCard id={id} clusterId={appData.clusterId} />,
+    databaseLinks: () => <DatabaseLinksCard id={id} serverId={appData.serverId} canWrite={appData.canWrite} />,
     expose: () => (
       <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200 }}>
