@@ -131,6 +131,7 @@ export const AppViewSchema = z.object({
   gpus: z.string().nullable(),
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
+  dbNetwork: z.boolean(), // attached to the node-local managed-DB network (tugra-net) — set by DB links
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   // Named volumes a COMPOSE app declares (empty for non-compose). Surfaced so the Files tab can show
   // them; `browsable` is false for external / custom-named volumes (not Tugra-owned → not browsable).
@@ -2455,6 +2456,7 @@ export class ApplicationsService {
       gpus: app.gpus,
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,
+      dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       composeVolumes: this.composeVolumesView(app),
       hasGitToken: !!app.gitTokenEnc,

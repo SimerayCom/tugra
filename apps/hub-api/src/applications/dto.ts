@@ -59,6 +59,18 @@ export const SetEnvSchema = z.object({
 });
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
+// Attach a managed database to this app (auto-inject its connection URI into the app's env at deploy).
+export const LinkDatabaseSchema = z
+  .object({
+    databaseId: z.string().min(1),
+    // Optional override; defaults to the engine's conventional name (DATABASE_URL / REDIS_URL / …).
+    envVar: z.string().min(1).max(128).optional(),
+    // When the chosen key already exists as a literal in the app env, remove it so the link isn't shadowed.
+    adoptEnv: z.boolean().optional(),
+  })
+  .strict();
+export type LinkDatabaseInput = z.infer<typeof LinkDatabaseSchema>;
+
 export const SetBuildArgsSchema = z.object({
   buildArgs: z.record(z.string()),
 });
