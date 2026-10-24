@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { AuditService } from "../audit/audit.service";
 import { scopeSatisfies } from "../api-tokens/scopes";
 import { ApplicationsService } from "../applications/applications.service";
+import { AppDatabaseLinksService } from "../applications/app-database-links.service";
 import { ServersService } from "../servers/servers.service";
 import { ClustersService } from "../clusters/clusters.service";
 import { SwarmService } from "../clusters/swarm.service";
@@ -46,6 +47,7 @@ export class McpService {
 
   constructor(
     apps: ApplicationsService,
+    dbLinks: AppDatabaseLinksService,
     servers: ServersService,
     clusters: ClustersService,
     swarm: SwarmService,
@@ -57,7 +59,7 @@ export class McpService {
     license: LicenseService,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, servers, clusters, swarm, databases, backups, monitors, importer, executor, license };
+    this.deps = { apps, dbLinks, servers, clusters, swarm, databases, backups, monitors, importer, executor, license };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */
