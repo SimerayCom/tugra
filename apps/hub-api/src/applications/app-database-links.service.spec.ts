@@ -5,6 +5,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { TeamAccessService } from "../common/team-access.service";
 import type { AuditService } from "../audit/audit.service";
 import type { DatabasesService } from "../databases/databases.service";
+import type { CryptoService } from "../crypto/crypto.service";
 
 const app = {
   id: "app1",
@@ -32,6 +33,7 @@ function make(links: unknown[], uri: string | (() => string) = "postgresql://u:p
     {} as TeamAccessService,
     {} as AuditService,
     databases,
+    { encrypt: (s: string) => s, decrypt: (s: string) => s } as unknown as CryptoService,
   );
   return { svc, prisma, databases };
 }

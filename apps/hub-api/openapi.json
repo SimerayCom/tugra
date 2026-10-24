@@ -6644,6 +6644,9 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "dbNetwork": {
+                        "type": "boolean"
+                      },
                       "volumes": {
                         "type": "array",
                         "items": {
@@ -7047,6 +7050,7 @@
                       "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
+                      "dbNetwork",
                       "volumes",
                       "composeVolumes",
                       "hasConfigMounts",
@@ -7385,6 +7389,9 @@
                     "dockerOptions": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "dbNetwork": {
+                      "type": "boolean"
                     },
                     "volumes": {
                       "type": "array",
@@ -7789,6 +7796,7 @@
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
+                    "dbNetwork",
                     "volumes",
                     "composeVolumes",
                     "hasConfigMounts",
@@ -8211,6 +8219,9 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dbNetwork": {
+                      "type": "boolean"
+                    },
                     "volumes": {
                       "type": "array",
                       "items": {
@@ -8614,6 +8625,7 @@
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
+                    "dbNetwork",
                     "volumes",
                     "composeVolumes",
                     "hasConfigMounts",
@@ -9040,6 +9052,9 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dbNetwork": {
+                      "type": "boolean"
+                    },
                     "volumes": {
                       "type": "array",
                       "items": {
@@ -9443,6 +9458,7 @@
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
+                    "dbNetwork",
                     "volumes",
                     "composeVolumes",
                     "hasConfigMounts",
@@ -10935,6 +10951,284 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/database-links": {
+      "get": {
+        "operationId": "ApplicationsController_listDatabaseLinks",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "post": {
+        "operationId": "ApplicationsController_linkDatabase",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "databaseId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "envVar": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "adoptEnv": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "databaseId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/database-links/{linkId}": {
+      "delete": {
+        "operationId": "ApplicationsController_unlinkDatabase",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "linkId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
           },
           "401": {
             "description": "Missing or invalid authentication.",
@@ -13599,6 +13893,9 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dbNetwork": {
+                      "type": "boolean"
+                    },
                     "volumes": {
                       "type": "array",
                       "items": {
@@ -14002,6 +14299,7 @@
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
+                    "dbNetwork",
                     "volumes",
                     "composeVolumes",
                     "hasConfigMounts",
@@ -14356,6 +14654,9 @@
                       "dockerOptions": {
                         "type": "string",
                         "nullable": true
+                      },
+                      "dbNetwork": {
+                        "type": "boolean"
                       },
                       "volumes": {
                         "type": "array",
@@ -14760,6 +15061,7 @@
                       "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
+                      "dbNetwork",
                       "volumes",
                       "composeVolumes",
                       "hasConfigMounts",
@@ -15185,6 +15487,9 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dbNetwork": {
+                      "type": "boolean"
+                    },
                     "volumes": {
                       "type": "array",
                       "items": {
@@ -15588,6 +15893,7 @@
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
+                    "dbNetwork",
                     "volumes",
                     "composeVolumes",
                     "hasConfigMounts",
@@ -16808,6 +17114,9 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dbNetwork": {
+                      "type": "boolean"
+                    },
                     "volumes": {
                       "type": "array",
                       "items": {
@@ -17211,6 +17520,7 @@
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
+                    "dbNetwork",
                     "volumes",
                     "composeVolumes",
                     "hasConfigMounts",

@@ -64,3 +64,18 @@ const DEFAULT_ENV_VAR: Record<DbEngine, string> = {
 export function defaultEnvVar(engine: DbEngine): string {
   return DEFAULT_ENV_VAR[engine] ?? "DATABASE_URL";
 }
+
+/** An env-var-safe prefix derived from a database name (UPPER_SNAKE, never leading with a digit). */
+export function envSlug(name: string): string {
+  const s = name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!s) return "DB";
+  return /^[0-9]/.test(s) ? `DB_${s}` : s;
+}
+
+/** The fallback env var for a second link whose engine default is already taken: `<SLUG>_<DEFAULT>`. */
+export function derivedEnvVar(name: string, engine: DbEngine): string {
+  return `${envSlug(name)}_${defaultEnvVar(engine)}`;
+}

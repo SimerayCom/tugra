@@ -28,10 +28,13 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ApplicationsService, AppViewSchema, DomainViewSchema } from "./applications.service";
+import { AppDatabaseLinksService } from "./app-database-links.service";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
 import {
   CreateAppInput,
   CreateAppSchema,
+  LinkDatabaseInput,
+  LinkDatabaseSchema,
   DeployInput,
   DeploySchema,
   FromTemplateInput,
@@ -84,7 +87,10 @@ import {
 @UseGuards(ApiAuthGuard, ScopesGuard)
 @UseInterceptors(new RedactSecretsInterceptor(["webhookSecret"]))
 export class ApplicationsController {
-  constructor(private readonly apps: ApplicationsService) {}
+  constructor(
+    private readonly apps: ApplicationsService,
+    private readonly dbLinks: AppDatabaseLinksService,
+  ) {}
 
   @Get()
   @ApiZodResponse(AppViewSchema, { isArray: true })
@@ -298,6 +304,31 @@ export class ApplicationsController {
   @RequireScopes("read:secrets")
   getBuildArgs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.getBuildArgs(user.userId, id);
+  }
+
+  // Database links: attach a managed DB so its connection URI is auto-injected into the app's env at
+  // deploy. The list carries NO secrets (never the URI/host/password), so it needs no read:secrets scope.
+  @Get(":id/database-links")
+  listDatabaseLinks(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.dbLinks.list(user.userId, id);
+  }
+
+  @Post(":id/database-links")
+  @HttpCode(201)
+  @ApiZodBody(LinkDatabaseSchema)
+  linkDatabase(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(LinkDatabaseSchema)) body: LinkDatabaseInput,
+  ) {
+    return this.dbLinks.create(user.userId, id, body);
+  }
+
+  @Delete(":id/database-links/:linkId")
+  @HttpCode(200)
+  async unlinkDatabase(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("linkId") linkId: string) {
+    await this.dbLinks.remove(user.userId, id, linkId);
+    return { ok: true };
   }
 
   @Put(":id/name")

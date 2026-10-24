@@ -167,6 +167,19 @@ before it is saved, stored encrypted, and never returned by any response.
 
 The same flow is available from the CLI (`tugra apps domain`) and from the `setup_app_domain` / `verify_app_domain` MCP tools.
 
+## Database links
+
+Attach a managed database to an app so its connection URI is injected into the app's runtime env
+automatically, recomputed on every deploy (a changed DB host/credential propagates without re-saving env).
+
+| Endpoint | Perm | Notes |
+| --- | --- | --- |
+| `GET /apps/:id/database-links` | read | The app's links — **never** the URI/host/password, only each link's `envVar`, DB name/engine, `route`, `shadowedBy` and status. A DB the caller can't access is a `restricted` placeholder. |
+| `POST /apps/:id/database-links` | `apps:config` + `databases` | Link a database. Body: `databaseId`, optional `envVar` (defaults to the engine's `DATABASE_URL`/`REDIS_URL`/…; a collision derives `<SLUG>_<DEFAULT>`), optional `adoptEnv` (remove a literal app-env key so the link isn't shadowed). The DB must be in the app's team (a miss is `404`, not `403`). Auto-joins the managed-DB network. v1 is **same-server, classic (non-swarm/non-compose) apps only** — an ineligible topology is refused with a reason. |
+| `DELETE /apps/:id/database-links/:linkId` | `apps:config` | Unlink. Deleting a database that still has links is refused (`409`, naming the apps). |
+
+Takes effect on the next deploy; unlinking or rotating a DB password does not revoke access until you redeploy.
+
 ## App store (template catalog)
 
 Browse the built-in template catalog and deploy from it over the API. The catalog is public, non-secret
