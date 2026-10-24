@@ -38,9 +38,16 @@ fi
 # --- fetch (clone fresh, or fast-forward an existing checkout) ---
 if [ -d "$DIR/.git" ]; then
   say "Updating existing checkout in ./$DIR …"
-  git -C "$DIR" fetch --depth 1 origin "$REPO_REF" >/dev/null 2>&1 || true
-  git -C "$DIR" checkout -q "$REPO_REF" 2>/dev/null || true
-  git -C "$DIR" reset --hard "origin/$REPO_REF" >/dev/null 2>&1 || true
+  # Fail loud: refuse to install a STALE checkout when the fetch fails (network / bad TUGRA_REF), instead
+  # of swallowing it with `|| true` and silently installing old code.
+  git -C "$DIR" fetch --depth 1 origin "$REPO_REF" >/dev/null 2>&1 \
+    || die "could not fetch origin/$REPO_REF — check your network or TUGRA_REF; refusing to install a stale checkout"
+  # Don't silently discard an operator's local edits (the old `reset --hard` did).
+  if ! git -C "$DIR" diff --quiet HEAD 2>/dev/null; then
+    die "./$DIR has uncommitted local changes — commit/stash them, or set TUGRA_DIR to a fresh path, then re-run"
+  fi
+  git -C "$DIR" checkout -q -B "$REPO_REF" FETCH_HEAD >/dev/null 2>&1 \
+    || die "could not check out origin/$REPO_REF in ./$DIR"
 else
   say "Cloning $REPO_URL …"
   git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$DIR" >/dev/null 2>&1 || git clone "$REPO_URL" "$DIR"
