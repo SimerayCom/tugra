@@ -269,7 +269,7 @@ export default function AppDetailPage() {
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
                     <Btn variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name })) del.mutate(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>

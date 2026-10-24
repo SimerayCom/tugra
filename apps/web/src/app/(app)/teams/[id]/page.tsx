@@ -89,7 +89,7 @@ export default function TeamDetailPage() {
         breadcrumb={[{ label: t("nav.teams"), href: "/teams" }, { label: team.name }]}
         title={team.name}
         badge={<Badge tone={isOwner ? "gold" : "muted"}>{team.role}</Badge>}
-        actions={isOwner ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn> : undefined}
+        actions={isOwner ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true, confirmText: team.name })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn> : undefined}
       />
       {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 12 }}>{(del.error as Error).message}</div>}
 

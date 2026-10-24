@@ -142,7 +142,7 @@ export default function ClusterDetailPage() {
               variant="danger"
               disabled={del.isPending}
               onClick={async () => {
-                if (await confirm({ body: t("clusters.deleteConfirm"), danger: true })) del.mutate();
+                if (await confirm({ body: t("clusters.deleteConfirm"), danger: true, confirmText: cluster.name })) del.mutate();
               }}
             >
               {t("clusters.delete")}
@@ -217,7 +217,7 @@ export default function ClusterDetailPage() {
                 variant="danger"
                 disabled={dissolve.isPending}
                 onClick={async () => {
-                  if (await confirm({ body: t("clusters.dissolveConfirm"), danger: true })) dissolve.mutate();
+                  if (await confirm({ body: t("clusters.dissolveConfirm"), danger: true, confirmText: cluster.name })) dissolve.mutate();
                 }}
               >
                 {t("clusters.dissolveSwarm")}
