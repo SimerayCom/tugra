@@ -16,5 +16,6 @@
   "hide": "Hide value",
   "delete": "Delete",
   "remove": "Remove",
-  "deleteConfirm": "This can't be undone."
+  "deleteConfirm": "This can't be undone.",
+  "typeToConfirm": "Type {text} to confirm."
 }

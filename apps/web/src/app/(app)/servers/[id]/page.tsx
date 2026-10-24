@@ -20,6 +20,7 @@ import { ServerContainersCard } from "../../../../components/server-containers-c
 import { LiveGauges } from "../../../../components/live-gauges";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
+import { fieldStyle } from "../../../../components/form";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
@@ -511,15 +512,17 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [destroyVm, setDestroyVm] = useState(true);
+  const [confirmName, setConfirmName] = useState("");
   const del = useMutation({
     mutationFn: () => api.deleteServer(id, { destroyVm: !!server.provider && destroyVm }),
     onSuccess: () => router.replace("/servers"),
   });
+  const canDelete = !del.isPending && confirmName === server.name;
   return (
     <Card style={{ padding: 16, marginTop: 20, borderColor: "var(--c-r)" }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("servers.deleteServer")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.deleteServerDesc")}</p>
-      <Btn variant="danger" onClick={() => { setDestroyVm(true); setOpen(true); }}>{t("servers.deleteServer")}</Btn>
+      <Btn variant="danger" onClick={() => { setDestroyVm(true); setConfirmName(""); setOpen(true); }}>{t("servers.deleteServer")}</Btn>
       {open && (
         <Modal onClose={() => setOpen(false)} labelledBy="del-srv-title">
           <h3 id="del-srv-title" style={{ margin: "0 0 8px", fontSize: 15 }}>{t("servers.deleteServer")}</h3>
@@ -533,9 +536,23 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
               </span>
             </label>
           )}
+          <label style={{ display: "block", marginBottom: 14 }}>
+            <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6, lineHeight: 1.5 }}>{t("common.typeToConfirm", { text: server.name })}</span>
+            <input
+              autoFocus
+              value={confirmName}
+              onChange={(e) => setConfirmName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && canDelete) del.mutate(); }}
+              aria-label={t("common.typeToConfirm", { text: server.name })}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              style={fieldStyle}
+            />
+          </label>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={() => setOpen(false)} disabled={del.isPending}>{t("common.cancel")}</Btn>
-            <Btn variant="danger" onClick={() => del.mutate()} disabled={del.isPending}>{del.isPending ? "…" : t("servers.deleteServer")}</Btn>
+            <Btn variant="danger" onClick={() => del.mutate()} disabled={!canDelete}>{del.isPending ? "…" : t("servers.deleteServer")}</Btn>
           </div>
           {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(del.error as Error).message}</div>}
         </Modal>

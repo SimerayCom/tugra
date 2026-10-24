@@ -68,7 +68,7 @@ export default function ProjectDetailPage() {
             <div style={{ display: "flex", gap: 8 }}>
               <Btn variant="ghost" onClick={() => { setRname(project.name); setRenaming(true); }}>{t("projects.rename")}</Btn>
               {empty && (
-                <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true })) del.mutate(); }}>{t("projects.deleteProject")}</Btn>
+                <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("projects.deleteProject"), body: t("projects.deleteConfirm"), danger: true, confirmText: project.name })) del.mutate(); }}>{t("projects.deleteProject")}</Btn>
               )}
             </div>
           ) : undefined
