@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDotenv, toDotenv } from "./dotenv";
+import { parseDotenv, toDotenv, duplicateKeys, invalidKeys } from "./dotenv";
 
 describe("parseDotenv", () => {
   it("parses KEY=VALUE, export, and quoted values", () => {
@@ -36,5 +36,38 @@ describe("toDotenv", () => {
       { key: "FOO", value: "bar" },
       { key: "A", value: "1" },
     ]);
+  });
+});
+
+describe("duplicateKeys", () => {
+  it("returns keys that appear more than once (trimmed), first-seen order", () => {
+    expect(duplicateKeys([
+      { key: "A", value: "1" },
+      { key: " A ", value: "2" },
+      { key: "B", value: "3" },
+      { key: "C", value: "4" },
+      { key: "B", value: "5" },
+    ])).toEqual(["A", "B"]);
+  });
+
+  it("ignores empty keys and returns [] when all keys are unique", () => {
+    expect(duplicateKeys([{ key: "A", value: "1" }, { key: "", value: "x" }, { key: "", value: "y" }])).toEqual([]);
+  });
+});
+
+describe("invalidKeys", () => {
+  it("flags names that aren't valid env vars, de-duped", () => {
+    expect(invalidKeys([
+      { key: "GOOD_1", value: "" },
+      { key: "_ok", value: "" },
+      { key: "1BAD", value: "" },
+      { key: "has space", value: "" },
+      { key: "has space", value: "" },
+      { key: "WITH-DASH", value: "" },
+    ])).toEqual(["1BAD", "has space", "WITH-DASH"]);
+  });
+
+  it("returns [] when every key is a valid name", () => {
+    expect(invalidKeys([{ key: "FOO", value: "" }, { key: "BAR_BAZ2", value: "" }])).toEqual([]);
   });
 });

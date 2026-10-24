@@ -35,3 +35,36 @@ export function toDotenv(rows: EnvRow[]): string {
     .map((r) => `${r.key.trim()}=${r.value}`)
     .join("\n");
 }
+
+/** A valid env var name (mirrors the hub's ENV_KEY_RE): a letter/underscore, then word chars. */
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Keys that appear on more than one row (trimmed, non-empty), in first-seen order.
+ * Saving a map silently keeps only the last value for a duplicate key — the editor uses this to
+ * warn and block instead of losing data quietly.
+ */
+export function duplicateKeys(rows: EnvRow[]): string[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const k = r.key.trim();
+    if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const dups: string[] = [];
+  for (const [k, n] of counts) if (n > 1) dups.push(k);
+  return dups;
+}
+
+/** Non-empty keys that aren't valid env var names (the server would reject these). */
+export function invalidKeys(rows: EnvRow[]): string[] {
+  const seen = new Set<string>();
+  const bad: string[] = [];
+  for (const r of rows) {
+    const k = r.key.trim();
+    if (k && !ENV_KEY_RE.test(k) && !seen.has(k)) {
+      seen.add(k);
+      bad.push(k);
+    }
+  }
+  return bad;
+}

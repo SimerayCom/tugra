@@ -152,6 +152,8 @@
   "showValues": "Show values",
   "hideValues": "Hide values",
   "envRedeploy": "Saved — redeploy to apply the new values.",
+  "envDupWarning": "Duplicate keys: {keys}. Rename or remove — only one value per key can be saved.",
+  "envInvalidWarning": "Not valid env var names: {keys}. Use letters, digits and underscores (must not start with a digit).",
   "buildArgs": "Build arguments",
   "buildArgsDesc": "Injected at image build time (docker build --build-arg / buildpack --env). Visible in image history — don't store true secrets here. Applied on next deploy.",
   "buildArgsAdd": "+ Add argument",
