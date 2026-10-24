@@ -24,9 +24,15 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(46);
+    expect(MCP_TOOLS).toHaveLength(47);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
+  });
+
+  it("list_database_links is a read tool (the list carries no credentials, so no secret scope)", () => {
+    const t = MCP_TOOLS.find((x) => x.name === "list_database_links");
+    expect(t).toBeTruthy();
+    expect(t!.scope).toBe("read");
   });
 
   it("mutate tools carry the scope of their REST route: config=write, deploy-tier ops=deploy, destructive=admin; else read", () => {
@@ -605,6 +611,29 @@ describe("read: fleet aggregators", () => {
 
     it("is scoped read:secrets (a file listing can expose sensitive structure)", () => {
       expect(tool("list_files").scope).toBe("read:secrets");
+    });
+  });
+
+  describe("list_database_links", () => {
+    it("passes (userId, id) straight through to dbLinks.list and requires id", async () => {
+      const list = jest.fn().mockResolvedValue([{ linkId: "l1", envVar: "DATABASE_URL" }]);
+      const deps = { dbLinks: { list } } as unknown as McpDeps;
+      const r = (await tool("list_database_links").execute(deps, "u1", { id: "a1" })) as unknown[];
+      expect(list).toHaveBeenCalledWith("u1", "a1");
+      expect(r).toHaveLength(1);
+      await expect(Promise.resolve().then(() => tool("list_database_links").execute(deps, "u1", {}))).rejects.toThrow(/id/);
+    });
+
+    it("returns only non-secret link metadata (never a URI/host/username/password)", async () => {
+      // The view the service returns carries no credentials; assert the tool forwards it untouched and that
+      // the secret-bearing keys never appear, as a guard against a future field being added to the view.
+      const view = [{ linkId: "l1", envVar: "DATABASE_URL", databaseId: "d1", name: "orders", engine: "POSTGRES", route: "internal", shadowedBy: null }];
+      const deps = { dbLinks: { list: jest.fn().mockResolvedValue(view) } } as unknown as McpDeps;
+      const r = (await tool("list_database_links").execute(deps, "u1", { id: "a1" })) as Record<string, unknown>[];
+      const keys = new Set(r.flatMap((row) => Object.keys(row)));
+      for (const secret of ["uri", "connectionUri", "host", "internalHost", "username", "password"]) {
+        expect(keys.has(secret)).toBe(false);
+      }
     });
   });
 

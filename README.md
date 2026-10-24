@@ -40,7 +40,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, scopes and IP allowlist as the REST API underneath — no separate credential to manage, and no decrypted secret values are ever returned to the model. The catalog is **46 tools**: 25 read-only (including one-call fleet status / health / app-listing rollups and a sandboxed volume file browser), plus 21 PAT-scoped mutate/ops tools (deploy · restart · live-scale · roll back · set env · form/grow a swarm · fleet-wide actions across a cluster · one-click domain DNS setup). Every mutate tool reuses the REST API's exact team-permission checks and audit trail, and the irreversible ones (dissolve a swarm, remove an app) require an explicit name-confirmation. OAuth for third-party clients is still on the roadmap.
+It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, scopes and IP allowlist as the REST API underneath — no separate credential to manage, and no decrypted secret values are ever returned to the model. The catalog is **47 tools**: 26 read-only (including one-call fleet status / health / app-listing rollups and a sandboxed volume file browser), plus 21 PAT-scoped mutate/ops tools (deploy · restart · live-scale · roll back · set env · form/grow a swarm · fleet-wide actions across a cluster · one-click domain DNS setup). Every mutate tool reuses the REST API's exact team-permission checks and audit trail, and the irreversible ones (dissolve a swarm, remove an app) require an explicit name-confirmation. OAuth for third-party clients is still on the roadmap.
 
 ## What is Tugra?
 
@@ -49,7 +49,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 ## Why Tugra
 
 - **Fleet-first, not single-box** — group servers into clusters, form a real Docker Swarm across them, and run one command across your whole fleet in a single bulk-ops call instead of SSH-ing into each box.
-- **Agent-native too** — a built-in MCP server exposes 46 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
+- **Agent-native too** — a built-in MCP server exposes 47 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
 - **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered by the volume backups).
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
@@ -88,7 +88,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Teams / RBAC | ✅ | ~ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / agent control | ✅ 46 tools⁵ | ✅ | ✅ | — | — | ~² |
+| MCP / agent control | ✅ 47 tools⁵ | ✅ | ✅ | — | — | ~² |
 | **Trust & license** | | | | | | |
 | No phone-home (zero telemetry) | ✅ | — | — | ~ | — | ✅ |
 | Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
@@ -174,7 +174,7 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Live metrics, build logs & web terminal (WebSocket streams)
 - [x] Databases (9 engines) with backups & restore (local + S3/R2 off-site)
 - [x] Multi-server clusters + Docker Swarm formation, bulk ops across the fleet
-- [x] Native MCP server — 46 tools (read + PAT-scoped mutate/fleet ops) + guided prompts
+- [x] Native MCP server — 47 tools (read + PAT-scoped mutate/fleet ops) + guided prompts
 - [x] App store — one-click template catalog + Home-mode launcher
 - [x] Read-only file browser for app volumes (web UI + MCP `list_files`)
 - [x] Preview deployments (per pull request)

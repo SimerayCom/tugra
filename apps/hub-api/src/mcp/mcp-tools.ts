@@ -3,6 +3,7 @@ import { normalizeTags } from "../common/tags";
 import { ENV_KEY_RE, ENV_KEY_DENY } from "../common/env-key";
 import type { Scope } from "../api-tokens/scopes";
 import type { ApplicationsService } from "../applications/applications.service";
+import type { AppDatabaseLinksService } from "../applications/app-database-links.service";
 import type { ServersService } from "../servers/servers.service";
 import type { ClustersService } from "../clusters/clusters.service";
 import type { SwarmService } from "../clusters/swarm.service";
@@ -17,6 +18,7 @@ import type { LicenseService } from "../license/license.service";
  *  through — team scoping is resolved DB-side inside each service (never trusted from the client). */
 export interface McpDeps {
   apps: ApplicationsService;
+  dbLinks: AppDatabaseLinksService;
   servers: ServersService;
   clusters: ClustersService;
   swarm: SwarmService;
@@ -796,6 +798,20 @@ export const MCP_TOOLS: McpTool[] = [
       required: ["id", "volume"],
     },
     execute: (d, userId, a) => d.apps.listFiles(userId, reqStr(a, "id"), reqStr(a, "volume"), optStr(a, "path") ?? ""),
+  },
+
+  // ── read: an app's database links (agent sees what DBs feed an app, without any credential) ────────
+  {
+    name: "list_database_links",
+    description:
+      "List the managed databases linked to an application and the env var each one's connection URI is injected under at deploy. Metadata only — NEVER the connection string, host, username or password; a database the caller can't access is returned as a restricted placeholder. Args: id (application). Read-only.",
+    scope: "read",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+    execute: (d, userId, a) => d.dbLinks.list(userId, reqStr(a, "id")),
   },
 
   // ── read: instance edition / license status (agent-visible monetization state) ────────────────────
