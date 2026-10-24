@@ -719,6 +719,7 @@ export class ApplicationsService {
           source: parent.source,
           image: parent.image,
           gitUrl: parent.gitUrl,
+          gitSourceId: parent.gitSourceId, // keep the GitHub-App link so a private-repo preview can mint a clone token
           gitBranch: headRef,
           buildType: parent.buildType,
           dockerfilePath: parent.dockerfilePath,

@@ -108,6 +108,32 @@ export function hasSkipMarker(message: string | null | undefined): boolean {
   return /\[(skip ci|ci skip|skip cd|cd skip|skip deploy|no deploy)\]/i.test(message);
 }
 
+/**
+ * The `owner/repo` (lowercased) a git remote URL points at, or null — from an https, scheme or `git@`
+ * form, with any `user@` prefix, `.git` suffix and trailing slash stripped. Used to match a webhook's
+ * `repository.full_name` EXACTLY: a substring match would fire `acme/app` for a push to `acme/app-2`,
+ * `acme/application`, or even `evil/acme/app`.
+ */
+export function repoFullName(gitUrl: string | null | undefined): string | null {
+  if (!gitUrl) return null;
+  let s = gitUrl.trim().toLowerCase().replace(/\.git$/, "").replace(/\/+$/, "");
+  const ssh = s.match(/^[^/\s]+@[^:/]+:(.+)$/); // git@github.com:owner/repo
+  if (ssh) {
+    s = ssh[1];
+  } else {
+    const scheme = s.match(/^[a-z][a-z0-9+.-]*:\/\/(.+)$/); // https://[user@]host/owner/repo
+    if (scheme) {
+      const rest = scheme[1].replace(/^[^/@]*@/, ""); // drop a user@ (e.g. x-access-token@)
+      const slash = rest.indexOf("/");
+      if (slash < 0) return null;
+      s = rest.slice(slash + 1); // drop the host
+    }
+  }
+  const parts = s.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+}
+
 export function generateWebhookToken(): string {
   return `tugra_wh_${randomBytes(24).toString("base64url")}`;
 }

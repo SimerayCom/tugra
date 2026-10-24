@@ -7,6 +7,7 @@ import {
   parsePullRequest,
   parseRef,
   refMatchesBranch,
+  repoFullName,
   verifyGithubSignature,
   verifyGitlabToken,
 } from "./webhook-verify";
@@ -146,6 +147,29 @@ describe("webhook-verify", () => {
 
     it("produces a non-empty secret", () => {
       expect(generateWebhookSecret().length).toBeGreaterThan(20);
+    });
+  });
+
+  describe("repoFullName", () => {
+    it("extracts owner/repo from https, scheme-with-token, ssh and bare forms", () => {
+      expect(repoFullName("https://github.com/acme/app.git")).toBe("acme/app");
+      expect(repoFullName("https://github.com/acme/app")).toBe("acme/app");
+      expect(repoFullName("https://github.com/Acme/App/")).toBe("acme/app");
+      expect(repoFullName("https://x-access-token@github.com/acme/app.git")).toBe("acme/app");
+      expect(repoFullName("git@github.com:acme/app.git")).toBe("acme/app");
+      expect(repoFullName("acme/app")).toBe("acme/app");
+      expect(repoFullName(null)).toBeNull();
+      expect(repoFullName("")).toBeNull();
+      expect(repoFullName("https://github.com/acme")).toBeNull();
+    });
+
+    it("matches EXACTLY — the old substring bug (acme/app vs acme/app-2) is gone", () => {
+      const push = "acme/app";
+      // the buggy substring check matched all of these; exact match accepts only the first
+      expect(repoFullName("https://github.com/acme/app.git") === push).toBe(true);
+      expect(repoFullName("https://github.com/acme/app-2.git") === push).toBe(false);
+      expect(repoFullName("https://github.com/acme/application.git") === push).toBe(false);
+      expect(repoFullName("https://github.com/evil/acme-app.git") === push).toBe(false);
     });
   });
 });
