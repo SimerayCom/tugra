@@ -960,6 +960,22 @@ export type DbEngine =
   | "LIBSQL";
 export type DbStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
+/** One app<->database link as returned by GET /apps/:id/database-links — never carries a secret. */
+export interface DatabaseLinkView {
+  linkId: string;
+  envVar: string;
+  restricted?: boolean;
+  databaseId?: string;
+  name?: string;
+  engine?: DbEngine;
+  serverId?: string;
+  route?: "internal" | null;
+  reason?: string;
+  shadowedBy?: "app-env" | null;
+  dbStatus?: DbStatus;
+  createdAt?: string;
+}
+
 export interface Database {
   id: string;
   name: string;

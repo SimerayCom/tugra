@@ -32,6 +32,7 @@ export type ConfigCardId =
   | "dockerOptions"
   | "credentials"
   | "env"
+  | "databaseLinks"
   | "expose"
   | "domain"
   | "domainOptions"
@@ -49,6 +50,7 @@ export interface ConfigGatingFacts {
   source: string;
   isPreview: boolean;
   canWrite: boolean;
+  clusterId: string | null;
   webhookToken: string | null;
   domain: string | null;
   domainKind: string | null;
@@ -75,6 +77,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "credentials", group: "build", visible: () => true },
   // Environment
   { id: "env", group: "environment", visible: () => true },
+  // Database links inject a managed DB's connection URI into the app's env; v1 is classic (non-swarm,
+  // non-compose) apps only, so hide the card where linking can never work.
+  { id: "databaseLinks", group: "environment", visible: (a) => notCompose(a) && !a.isPreview && !a.clusterId },
   // Domains & Network
   { id: "expose", group: "domains", visible: (a) => a.canWrite && !a.isPreview },
   { id: "domain", group: "domains", visible: (a) => a.canWrite && !a.isPreview && a.domainKind === "custom" },

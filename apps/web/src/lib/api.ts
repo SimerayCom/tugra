@@ -26,6 +26,7 @@ import type {
   Channel,
   Delivery,
   Database,
+  DatabaseLinkView,
   GitSource,
   SourceRepo,
   Registry,
@@ -1021,6 +1022,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ env }),
     });
+  },
+  getAppDatabaseLinks(id: string) {
+    return apiFetch<DatabaseLinkView[]>(`/apps/${id}/database-links`);
+  },
+  linkAppDatabase(id: string, input: { databaseId: string; envVar?: string; adoptEnv?: boolean }) {
+    return apiFetch<DatabaseLinkView>(`/apps/${id}/database-links`, { method: "POST", body: JSON.stringify(input) });
+  },
+  unlinkAppDatabase(id: string, linkId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/database-links/${linkId}`, { method: "DELETE" });
   },
   getAppBuildArgs(id: string) {
     return apiFetch<Record<string, string>>(`/apps/${id}/build-args`);
