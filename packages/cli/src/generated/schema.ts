@@ -15207,6 +15207,8 @@ export interface operations {
                         hostPort: number | null;
                         connectionUri: string | null;
                         internalHost: string | null;
+                        publicHost: string | null;
+                        publicUri: string | null;
                         username: string | null;
                         password: string | null;
                         database: string | null;
@@ -15309,6 +15311,8 @@ export interface operations {
                         hostPort: number | null;
                         connectionUri: string | null;
                         internalHost: string | null;
+                        publicHost: string | null;
+                        publicUri: string | null;
                         username: string | null;
                         password: string | null;
                         database: string | null;
@@ -15410,6 +15414,8 @@ export interface operations {
                         hostPort: number | null;
                         connectionUri: string | null;
                         internalHost: string | null;
+                        publicHost: string | null;
+                        publicUri: string | null;
                         username: string | null;
                         password: string | null;
                         database: string | null;
@@ -15644,6 +15650,8 @@ export interface operations {
                         hostPort: number | null;
                         connectionUri: string | null;
                         internalHost: string | null;
+                        publicHost: string | null;
+                        publicUri: string | null;
                         username: string | null;
                         password: string | null;
                         database: string | null;

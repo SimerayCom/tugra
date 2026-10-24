@@ -2,6 +2,7 @@ import {
   buildDatabaseRunScript,
   buildDbRemoveScript,
   connectionInfo,
+  publicConnectionUri,
   credentialEnv,
   engineCommand,
   enginePort,
@@ -158,6 +159,20 @@ describe("database-script", () => {
       expect(connectionInfo(spec("REDIS")).uri).toBe("redis://:p%40ss@tugra_db_db1:6379");
       expect(connectionInfo(spec("MONGO")).uri).toBe("mongodb://tugra:p%40ss@tugra_db_db1:27017");
       expect(connectionInfo(spec("POSTGRES")).internalHost).toBe("tugra_db_db1");
+    });
+  });
+
+  describe("publicConnectionUri", () => {
+    it("swaps the host and port for the server's public address + mapped host port", () => {
+      // same encoding as the internal URI, but reachable from outside Tugra's network
+      expect(publicConnectionUri(spec("POSTGRES"), "203.0.113.5", 15432)).toBe("postgresql://tugra:p%40ss@203.0.113.5:15432/appdb");
+      expect(publicConnectionUri(spec("REDIS"), "203.0.113.5", 16379)).toBe("redis://:p%40ss@203.0.113.5:16379");
+      expect(publicConnectionUri(spec("MONGO"), "203.0.113.5", 17017)).toBe("mongodb://tugra:p%40ss@203.0.113.5:17017");
+      expect(publicConnectionUri(spec("LIBSQL"), "203.0.113.5", 18080)).toBe("http://203.0.113.5:18080");
+    });
+
+    it("brackets an IPv6 literal host", () => {
+      expect(publicConnectionUri(spec("POSTGRES"), "2001:db8::1", 15432)).toBe("postgresql://tugra:p%40ss@[2001:db8::1]:15432/appdb");
     });
   });
 

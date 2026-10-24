@@ -145,29 +145,44 @@ export interface ConnectionInfo {
   uri: string;
 }
 
+/**
+ * Build an engine-specific connection URI for a given host:port.
+ * URL-encode credentials so an imported password containing `@ : / # %` etc. yields a valid
+ * connection string (generated base64url creds are URL-safe, so this is a no-op for DBs created
+ * by Tugra). IPv6 literals in `host` are bracketed; container names (the internal host) never
+ * contain `:`, so that is a no-op for the internal URI.
+ */
+function buildUri(engine: DbEngine, host: string, port: number, creds: DbCredentials): string {
+  const { scheme } = ENGINES[engine];
+  const { username, password, database } = creds;
+  const e = encodeURIComponent;
+  const h = host.includes(":") ? `[${host}]` : host;
+  const auth = username ? `${e(username)}:${e(password)}@` : `:${e(password)}@`;
+  const redisFamily = engine === "REDIS" || engine === "KEYDB" || engine === "DRAGONFLY";
+  if (engine === "LIBSQL") {
+    // sqld speaks HTTP with no built-in auth in v1 — a plain host:port URL, no credentials.
+    return `${scheme}://${h}:${port}`;
+  }
+  if (redisFamily) return `${scheme}://:${e(password)}@${h}:${port}`;
+  if (engine === "MONGO") return `${scheme}://${auth}${h}:${port}`;
+  return `${scheme}://${auth}${h}:${port}/${e(database)}`;
+}
+
 /** Connection details for apps on the same docker network (host = container name). */
 export function connectionInfo(db: DbSpec): ConnectionInfo {
-  const { scheme } = ENGINES[db.engine];
   const host = dbContainerName(db);
   const { username, password, database } = db.credentials;
-  // URL-encode credentials in the URI so an imported password containing `@ : / # %` etc. yields a valid
-  // connection string (generated base64url creds are URL-safe, so this is a no-op for DBs created by Tugra).
   // The returned username/password/database fields stay RAW — only the `uri` is encoded.
-  const e = encodeURIComponent;
-  const auth = username ? `${e(username)}:${e(password)}@` : `:${e(password)}@`;
-  const redisFamily = db.engine === "REDIS" || db.engine === "KEYDB" || db.engine === "DRAGONFLY";
-  let uri: string;
-  if (db.engine === "LIBSQL") {
-    // sqld speaks HTTP with no built-in auth in v1 — a plain host:port URL, no credentials.
-    uri = `${scheme}://${host}:${db.port}`;
-  } else if (redisFamily) {
-    uri = `${scheme}://:${e(password)}@${host}:${db.port}`;
-  } else if (db.engine === "MONGO") {
-    uri = `${scheme}://${auth}${host}:${db.port}`;
-  } else {
-    uri = `${scheme}://${auth}${host}:${db.port}/${e(database)}`;
-  }
-  return { internalHost: host, port: db.port, username, password, database, uri };
+  return { internalHost: host, port: db.port, username, password, database, uri: buildUri(db.engine, host, db.port, db.credentials) };
+}
+
+/**
+ * Connection URI for reaching this DB from OUTSIDE Tugra's network — valid only when a public host
+ * port is mapped (`hostPort`) and the server's public address is known. host = server public IP,
+ * port = the mapped host port.
+ */
+export function publicConnectionUri(db: DbSpec, publicHost: string, hostPort: number): string {
+  return buildUri(db.engine, publicHost, hostPort, db.credentials);
 }
 
 export function buildDatabaseRunScript(db: DbSpec): string {

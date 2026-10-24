@@ -24,6 +24,7 @@ import {
   buildDbRemoveScript,
   buildDbStopScript,
   connectionInfo,
+  publicConnectionUri,
   dbContainerName,
   enginePort,
   ENGINES,
@@ -56,6 +57,10 @@ export const DatabaseViewSchema = z.object({
   // Connection details are decrypted only for members who can write.
   connectionUri: z.string().nullable(),
   internalHost: z.string().nullable(),
+  // Reach-from-outside details: set only when a public host port is mapped AND the server's public
+  // address is known. publicUri embeds the password, so it is gated like connectionUri (canWrite).
+  publicHost: z.string().nullable(),
+  publicUri: z.string().nullable(),
   username: z.string().nullable(),
   password: z.string().nullable(),
   database: z.string().nullable(),
@@ -264,7 +269,13 @@ export class DatabasesService {
     const role = (await this.access.teamRole(userId, db.teamId))!;
     const canWrite = await this.canWriteDatabases(userId, db.teamId);
     const ctx = await loadProjectCtx(this.prisma, db.environmentId);
-    return this.view(db, role, canWrite, ctx);
+    // Only the detail page surfaces connection details, so this is the one place we resolve the
+    // server's public address (for the reach-from-outside URI when a host port is mapped).
+    const server = db.hostPort
+      ? await this.prisma.server.findUnique({ where: { id: db.serverId }, select: { publicIp: true, publicIpv6: true } })
+      : null;
+    const serverPublicHost = server?.publicIp || server?.publicIpv6 || null;
+    return this.view(db, role, canWrite, ctx, serverPublicHost);
   }
 
   /** This database's audit history (every actor). Reuses require()'s membership + per-resource access check. */
@@ -471,8 +482,13 @@ export class DatabasesService {
     return resolvePermissions(m).has("databases");
   }
 
-  private view(db: Database, role: Role, canWrite: boolean, ctx?: ResourceProjectCtx): DatabaseView {
-    const conn = canWrite ? connectionInfo(this.toSpec(db)) : null;
+  private view(db: Database, role: Role, canWrite: boolean, ctx?: ResourceProjectCtx, serverPublicHost?: string | null): DatabaseView {
+    const spec = this.toSpec(db);
+    const conn = canWrite ? connectionInfo(spec) : null;
+    // A public URI only makes sense when a host port is mapped and the server has a known public
+    // address; it embeds the password, so it is gated behind canWrite like connectionUri.
+    const publicHost = canWrite && db.hostPort && serverPublicHost ? serverPublicHost : null;
+    const publicUri = publicHost && db.hostPort ? publicConnectionUri(spec, publicHost, db.hostPort) : null;
     return {
       id: db.id,
       name: db.name,
@@ -489,6 +505,8 @@ export class DatabasesService {
       hostPort: db.hostPort,
       connectionUri: conn?.uri ?? null,
       internalHost: conn?.internalHost ?? null,
+      publicHost,
+      publicUri,
       username: conn?.username ?? null,
       password: conn?.password ?? null,
       database: conn?.database ?? null,
