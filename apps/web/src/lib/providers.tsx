@@ -14,9 +14,15 @@ export function Providers({ children }: { children: ReactNode }) {
     () =>
       new QueryClient({
         defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
-        // No mutation error is silent: surface it as a toast (inline errors remain).
+        // No mutation error is silent: surface it as a toast (inline errors remain). A mutation can also
+        // OPT IN to a success toast by setting meta.successMessage — so a save gives feedback without each
+        // card wiring its own useToast (and without toasting every lifecycle mutation).
         mutationCache: new MutationCache({
           onError: (e) => emitToast(e instanceof Error ? e.message : "Something went wrong", "error"),
+          onSuccess: (_data, _vars, _ctx, mutation) => {
+            const msg = mutation.meta?.successMessage;
+            if (typeof msg === "string" && msg) emitToast(msg, "success");
+          },
         }),
       }),
   );

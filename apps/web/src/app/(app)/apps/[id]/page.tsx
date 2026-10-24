@@ -83,6 +83,7 @@ export default function AppDetailPage() {
   const regen = useMutation({
     mutationFn: () => api.regenerateWebhook(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
   const rollback = useMutation({
     mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
@@ -91,6 +92,7 @@ export default function AppDetailPage() {
   const tags = useMutation({
     mutationFn: (next: string[]) => api.setAppTags(id, next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
   const [aiResults, setAiResults] = useState<Record<string, string>>({});
   const analyze = useMutation({
@@ -821,6 +823,7 @@ function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, gpus, de
         deployTimeoutSec: timeout ? Number(timeout) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.limitsSaveFailed"), "error"),
   });
 
@@ -876,6 +879,7 @@ function HealthCheckCard({
         command: type === "CMD" ? cmd.trim() || null : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
 
   return (
@@ -914,6 +918,7 @@ function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure }: { id: str
   const save = useMutation({
     mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
 
   return (
@@ -953,6 +958,7 @@ function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId
   const save = useMutation({
     mutationFn: () => api.setAppBuildConfig(id, { registryId: reg || null, pushToRegistry: effectivePush, buildServerId: (buildServer && reg) ? buildServer : null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
 
   return (
@@ -994,6 +1000,7 @@ function DockerOptionsCard({ id, dockerOptions }: { id: string; dockerOptions: s
   const save = useMutation({
     mutationFn: () => api.setAppDockerOptions(id, val.trim() || null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
@@ -1024,6 +1031,7 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
         rows.filter((r) => r.name.trim() && r.path.trim()),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
   const setRow = (i: number, patch: Partial<AppVolume>) =>
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -1235,6 +1243,7 @@ function DomainOptionsCard({
         forwardAuth: fa.trim() || null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
 
   return (
@@ -1368,6 +1377,7 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
   const save = useMutation({
     mutationFn: () => api.setVolumeBackupConfig(id, { enabled: sched, intervalHours: Number(interval) || 24, retention: Number(ret) || 7, destinationId: dest || null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
   });
 
   // Migrator data-pull: import a volume's data from an external staged tar(.gz) URL (overwrites the volume).
