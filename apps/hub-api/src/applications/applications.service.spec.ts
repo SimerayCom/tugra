@@ -2164,13 +2164,14 @@ describe("ApplicationsService", () => {
       }),
     } as unknown as AgentWsServer;
     const svc = make(prisma, {} as TeamAccessService, agentWs);
-    await svc.upsertPreview(parentApp as never, 5, "feature-x");
+    await svc.upsertPreview({ ...parentApp, gitSourceId: "gs1" } as never, 5, "feature-x");
 
     const data = create.mock.calls[0][0].data;
     expect(data.isPreview).toBe(true);
     expect(data.parentAppId).toBe("parent1");
     expect(data.prNumber).toBe(5);
     expect(data.gitBranch).toBe("feature-x");
+    expect(data.gitSourceId).toBe("gs1"); // keeps the GitHub-App link so a private-repo preview can clone
     expect(data.domain).toBe("pr5.x.com");
     // A preview mirrors the parent's exposure so an HTTPS custom-domain app's
     // preview keeps certType le-http (stays on HTTPS) instead of the "http" default.

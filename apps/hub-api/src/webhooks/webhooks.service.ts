@@ -13,6 +13,7 @@ import {
   parsePullRequest,
   parseRef,
   refMatchesBranch,
+  repoFullName,
   verifyGithubSignature,
   verifyGitlabToken,
 } from "./webhook-verify";
@@ -78,7 +79,8 @@ export class WebhooksService {
     if (!fullName) return { deployed: false, reason: "no repository (ignored)" };
 
     const apps = await this.prisma.application.findMany({ where: { gitSourceId: sourceId } });
-    const matched = apps.filter((a) => (a.gitUrl ?? "").toLowerCase().includes(fullName));
+    // Exact owner/repo match — NOT a substring (a push to acme/app must not redeploy acme/app-2).
+    const matched = apps.filter((a) => repoFullName(a.gitUrl) === fullName);
     if (!matched.length) return { deployed: false, reason: "no matching app (ignored)" };
 
     const isPr = header(headers, "x-github-event") === "pull_request";
