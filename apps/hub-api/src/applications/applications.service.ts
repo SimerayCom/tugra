@@ -55,13 +55,14 @@ import {
   parseImageDigest,
   containerName,
   appVolumeName,
-  tokenizeDockerOptions,
+  hasNetworkOpt,
   type AppSpec,
   type AppVolume,
   type AppConfigMount,
   type RegistryAuth,
 } from "../deploy/deploy-script";
 import { assertSafeDockerOptions } from "../deploy/docker-options-safety";
+import { AppDatabaseLinksService } from "./app-database-links.service";
 import {
   buildConfigSnapshot,
   diffSnapshots,
@@ -108,13 +109,6 @@ const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
 // -v/--volume/--mount: an adopted container carries its named volume this way; two containers writing
 // one volume during a rolling overlap would corrupt it, so such apps must hard-cutover.
 const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name|-v|--volume|--mount)(\s|=|$)/;
-// A user-supplied --network/--net in docker options would conflict with the DB-network attach (dbNetwork),
-// which manages the app's networks itself — the two must not both set a network. Tokenize first (quote-aware)
-// so a quoted form like `"--network" host` or `'--net=x'` can't slip past a raw-string regex.
-function hasNetworkOpt(dockerOptions: string | null | undefined): boolean {
-  return tokenizeDockerOptions(dockerOptions).some((t) => /^(--network|--net)(=|$)/.test(t));
-}
-
 export const AppViewSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -257,6 +251,7 @@ export class ApplicationsService {
     private readonly swarmDeploy: SwarmDeployService,
     private readonly swarm: SwarmService,
     private readonly dns: DnsAutomationService,
+    private readonly dbLinks: AppDatabaseLinksService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -1626,6 +1621,11 @@ export class ApplicationsService {
       }
       const dbCount = await this.prisma.database.count({ where: { serverId: app.serverId, teamId: app.teamId } });
       if (dbCount === 0) throw new BadRequestException("no managed database on this app's server to link to");
+    } else {
+      // Turning it off would strip tugra-net from the next deploy, breaking every linked database's
+      // injected URI. Refuse until the links are removed first.
+      const linkCount = await this.prisma.appDatabaseLink.count({ where: { appId: id } });
+      if (linkCount > 0) throw new BadRequestException("unlink this app's databases before leaving the managed-DB network");
     }
     await this.prisma.application.update({ where: { id }, data: { dbNetwork: on } });
     await this.audit.log({ actor: userId, action: "app.db_network.update", target: id, meta: { on } });
@@ -2247,7 +2247,12 @@ export class ApplicationsService {
     }
   }
 
-  /** Env injected at deploy: team shared variables overlaid by app-specific ones. */
+  /**
+   * Env injected at deploy, lowest precedence first: team shared variables, then auto-injected database
+   * links (connection URIs), then app-specific vars. A link whose key the app sets explicitly is skipped
+   * (the explicit value wins); any other unresolvable link fails the deploy loudly. Computed fresh so a
+   * changed DB host/credential propagates on the next deploy without re-saving env.
+   */
   private async resolvedEnv(app: Application): Promise<Record<string, string>> {
     const shared = await this.prisma.sharedVariable.findMany({
       where: { teamId: app.teamId },
@@ -2260,7 +2265,9 @@ export class ApplicationsService {
         /* skip unreadable */
       }
     }
-    return { ...merged, ...this.appEnv(app) }; // app-specific wins
+    const appEnv = this.appEnv(app);
+    const linked = await this.dbLinks.resolveLinkedEnv(app, new Set(Object.keys(appEnv)));
+    return { ...merged, ...linked, ...appEnv }; // shared < linked DB < app-specific
   }
 
   /**

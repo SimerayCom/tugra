@@ -291,6 +291,15 @@ export function tokenizeDockerOptions(raw: string | null | undefined): string[] 
   return tokens;
 }
 
+/**
+ * Whether the docker options declare a custom network (`--network`/`--net`). Such an app manages its own
+ * networking and must not also be attached to the managed-DB bridge (tugra-net). Tokenize first (quote-aware)
+ * so a quoted form like `"--network" host` or `'--net=x'` can't slip past a raw-string regex.
+ */
+export function hasNetworkOpt(dockerOptions: string | null | undefined): boolean {
+  return tokenizeDockerOptions(dockerOptions).some((t) => /^(--network|--net)(=|$)/.test(t));
+}
+
 function b64(v: string): string {
   return Buffer.from(v, "utf8").toString("base64");
 }

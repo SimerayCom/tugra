@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { normalizeTags } from "../common/tags";
+import { ENV_KEY_RE, ENV_KEY_DENY } from "../common/env-key";
 import type { Scope } from "../api-tokens/scopes";
 import type { ApplicationsService } from "../applications/applications.service";
 import type { ServersService } from "../servers/servers.service";
@@ -62,11 +63,7 @@ function reqStrAllowEmpty(args: Record<string, unknown>, key: string): string {
 }
 /** Standard POSIX-ish env var name — validated because the agent supplies the key (an "A=B"-shaped key would
  *  corrupt the env map). */
-const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-// Names that would either poke at Object internals or read oddly in an env map — the regex admits them, so
-// reject explicitly (defence-in-depth; the merge/delete use own-property semantics so this isn't a live
-// pollution vector, but an env var literally named __proto__/constructor/prototype is never legitimate).
-const ENV_KEY_DENY = new Set(["__proto__", "constructor", "prototype"]);
+// ENV_KEY_RE + ENV_KEY_DENY live in common/env-key (single source, shared with database links).
 function reqEnvKey(args: Record<string, unknown>): string {
   const k = reqStr(args, "key");
   if (!ENV_KEY_RE.test(k) || ENV_KEY_DENY.has(k)) throw new Error(`invalid env var name: ${JSON.stringify(k)} (must match ${ENV_KEY_RE} and not be a reserved name)`);
