@@ -438,6 +438,15 @@ export class DatabasesService {
     return JSON.parse(this.crypto.decrypt(db.credentials)) as DbCredentials;
   }
 
+  /**
+   * The node-local (tugra-net) connection URI for this database — host is the container name, so it only
+   * resolves for apps attached to tugra-net on the SAME server. Used to auto-inject into a linked app's
+   * env at deploy time. The URI embeds the (decrypted) password, so callers must treat it as a secret.
+   */
+  internalConnectionUri(db: Database): string {
+    return connectionInfo(this.toSpec(db)).uri;
+  }
+
   private toSpec(db: Database): DbSpec {
     return {
       id: db.id,

@@ -88,6 +88,7 @@ function make(
   portAlloc: { allocate: jest.Mock; probeUsedPorts?: jest.Mock } = { allocate: jest.fn().mockResolvedValue([]) },
   swarm: { status?: jest.Mock } = { status: jest.fn().mockResolvedValue({ live: [] }) },
   dns: { previewRecords?: jest.Mock; applyRecords?: jest.Mock; verify?: jest.Mock; cleanup?: jest.Mock; purgeDomains?: jest.Mock; manualRecords?: jest.Mock } = {},
+  dbLinks: { resolveLinkedEnv?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -145,6 +146,9 @@ function make(
       purgeDomains: dns.purgeDomains ?? jest.fn().mockResolvedValue({ removed: 0 }),
       manualRecords: dns.manualRecords ?? jest.fn(),
     } as unknown as import("../dns/dns-automation.service").DnsAutomationService,
+    {
+      resolveLinkedEnv: dbLinks.resolveLinkedEnv ?? jest.fn().mockResolvedValue({}),
+    } as unknown as import("./app-database-links.service").AppDatabaseLinksService,
     {
       get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
     } as unknown as import("@nestjs/core").ModuleRef,
@@ -2879,11 +2883,12 @@ describe("ApplicationsService listFiles", () => {
 describe("setDbNetwork + guards (S4d-4 managed-DB network link)", () => {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
 
-  function prismaFor(appOverrides: Record<string, unknown>, dbCount = 1) {
+  function prismaFor(appOverrides: Record<string, unknown>, dbCount = 1, linkCount = 0) {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue({ ...app, ...appOverrides }), update },
       database: { count: jest.fn().mockResolvedValue(dbCount) },
+      appDatabaseLink: { count: jest.fn().mockResolvedValue(linkCount) },
     } as unknown as PrismaService;
     return { prisma, update };
   }
@@ -2926,11 +2931,17 @@ describe("setDbNetwork + guards (S4d-4 managed-DB network link)", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("turns OFF unconditionally (no DB-presence check) — unlinking is always safe", async () => {
-    const { prisma, update } = prismaFor({ source: "IMAGE", dbNetwork: true }, 0);
+  it("turns OFF when no databases are linked (no DB-presence check)", async () => {
+    const { prisma, update } = prismaFor({ source: "IMAGE", dbNetwork: true }, 0, 0);
     await make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", false);
     expect(prisma.database.count).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { dbNetwork: false } }));
+  });
+
+  it("refuses OFF while databases are still linked (would break their injected URIs)", async () => {
+    const { prisma, update } = prismaFor({ source: "IMAGE", dbNetwork: true }, 0, 2);
+    await expect(make(prisma, access, {} as AgentWsServer).setDbNetwork("u1", "app1", false)).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("setDockerOptions refuses a --network while the app is DB-network-linked", async () => {

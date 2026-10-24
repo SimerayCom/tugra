@@ -911,10 +911,31 @@ model Application {
   deployments   Deployment[]
   scheduledTasks ScheduledTask[]
   domains        Domain[]
+  databaseLinks AppDatabaseLink[]
   createdAt     DateTime     @default(now())
 
   @@index([environmentId])
   @@index([parentAppId])
+}
+
+// Attach a managed Database to an Application so its connection URI is auto-injected into the app's
+// runtime env at deploy time (recomputed fresh each deploy). v1 is node-local (tugra-net) internal
+// linking only — see src/applications/db-link.ts for eligibility. The databaseId FK is NoAction (not
+// Cascade): deleting a database that still has links is refused (409) rather than silently breaking the
+// app; a whole-team delete still cascades because NoAction is checked at end-of-statement.
+model AppDatabaseLink {
+  id         String      @id @default(cuid())
+  app        Application @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId      String
+  database   Database    @relation(fields: [databaseId], references: [id], onDelete: NoAction)
+  databaseId String
+  envVar     String // env var name the connection URI is injected under (e.g. DATABASE_URL)
+  createdBy  String? // user id who created the link (audit convenience)
+  createdAt  DateTime    @default(now())
+
+  @@unique([appId, databaseId])
+  @@unique([appId, envVar])
+  @@index([databaseId])
 }
 
 /**
@@ -1002,6 +1023,7 @@ model Database {
   tags        String[] @default([])
   backups     Backup[]
   restores    Restore[]
+  appLinks    AppDatabaseLink[]
   createdAt   DateTime @default(now())
 
   @@index([teamId])
