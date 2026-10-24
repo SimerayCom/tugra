@@ -163,11 +163,16 @@ describe("Databases (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ hostPort: 15432 })
       .expect(200);
+    // With a host port mapped AND a known server public address, the detail view carries a
+    // reach-from-outside URI (host = server IP, port = mapped host port).
+    await prisma.server.update({ where: { id: serverId }, data: { publicIp: "203.0.113.9" } });
     const detail = await request(app.getHttpServer())
       .get(`/databases/${dbId}`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(detail.body.hostPort).toBe(15432);
+    expect(detail.body.publicHost).toBe("203.0.113.9");
+    expect(detail.body.publicUri).toMatch(/^postgresql:\/\/.*@203\.0\.113\.9:15432\//);
 
     commands.length = 0;
     await request(app.getHttpServer()).post(`/databases/${dbId}/provision`).set("Authorization", `Bearer ${token}`).expect(200);
@@ -184,6 +189,14 @@ describe("Databases (e2e)", () => {
     await request(app.getHttpServer()).post(`/databases/${dbId}/provision`).set("Authorization", `Bearer ${token}`).expect(200);
     await sleep(100);
     expect(commands.join("\n")).not.toContain("-p 15432:");
+
+    // no host port → no external URI, even though the server still has a public IP
+    const gone = await request(app.getHttpServer())
+      .get(`/databases/${dbId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(gone.body.publicUri).toBeNull();
+    expect(gone.body.publicHost).toBeNull();
   });
 
   it("renames a database", async () => {

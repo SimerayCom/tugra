@@ -250,6 +250,17 @@ export default function DatabaseDetailPage() {
               {db.password && <CopyRow label={t("databases.password")} value={db.password} copy={t("databases.copy")} secret />}
               {db.database && <CopyRow label={t("databases.database")} value={db.database} copy={t("databases.copy")} />}
             </div>
+            {db.publicUri ? (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--c-bd)" }}>
+                <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.publicConnection")}</div>
+                <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.publicConnectionDesc")}</p>
+                <CopyRow label={t("databases.uriPublic")} value={db.publicUri} copy={t("databases.copy")} secret />
+              </div>
+            ) : db.hostPort ? (
+              <p style={{ margin: "16px 0 0", paddingTop: 16, borderTop: "1px solid var(--c-bd)", fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
+                {t("databases.publicPortNoIp", { port: db.hostPort })}
+              </p>
+            ) : null}
           </Card>
         ) : (
           <Card style={{ padding: 16 }}><EmptyState>{t("databases.connectionPending")}</EmptyState></Card>

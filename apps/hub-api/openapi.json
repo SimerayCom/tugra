@@ -19779,6 +19779,14 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "publicHost": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "publicUri": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "username": {
                         "type": "string",
                         "nullable": true
@@ -19858,6 +19866,8 @@
                       "hostPort",
                       "connectionUri",
                       "internalHost",
+                      "publicHost",
+                      "publicUri",
                       "username",
                       "password",
                       "database",
@@ -20063,6 +20073,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "publicHost": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "publicUri": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "username": {
                       "type": "string",
                       "nullable": true
@@ -20142,6 +20160,8 @@
                     "hostPort",
                     "connectionUri",
                     "internalHost",
+                    "publicHost",
+                    "publicUri",
                     "username",
                     "password",
                     "database",
@@ -20314,6 +20334,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "publicHost": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "publicUri": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "username": {
                       "type": "string",
                       "nullable": true
@@ -20393,6 +20421,8 @@
                     "hostPort",
                     "connectionUri",
                     "internalHost",
+                    "publicHost",
+                    "publicUri",
                     "username",
                     "password",
                     "database",
@@ -20751,6 +20781,14 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "publicHost": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "publicUri": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "username": {
                       "type": "string",
                       "nullable": true
@@ -20830,6 +20868,8 @@
                     "hostPort",
                     "connectionUri",
                     "internalHost",
+                    "publicHost",
+                    "publicUri",
                     "username",
                     "password",
                     "database",
