@@ -50,6 +50,22 @@ describe("InstanceSettingsService", () => {
   });
 });
 
+describe("InstanceSettingsService.acmeEmailFor", () => {
+  it("prefers the env value (ACME_EMAIL wins)", async () => {
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue({ ...ROW, acmeEmail: "db@x.io" }) });
+    expect(await svc.acmeEmailFor("env@x.io")).toBe("env@x.io");
+  });
+  it("falls back to the stored onboarding acmeEmail when env is unset/blank (the fix: the field now drives certs)", async () => {
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue({ ...ROW, acmeEmail: "db@x.io" }) });
+    expect(await svc.acmeEmailFor(undefined)).toBe("db@x.io");
+    expect(await svc.acmeEmailFor("   ")).toBe("db@x.io");
+  });
+  it("undefined when neither env nor stored email is set (proxy script uses its placeholder)", async () => {
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue({ ...ROW, acmeEmail: null }) });
+    expect(await svc.acmeEmailFor(undefined)).toBeUndefined();
+  });
+});
+
 describe("InstanceSettingsService.effectiveBranding (Pro paywall at read time)", () => {
   const ORIGINAL = process.env.TUGRA_EDITION;
   afterEach(() => {

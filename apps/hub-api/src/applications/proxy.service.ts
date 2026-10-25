@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { buildProxySetupScript } from "../deploy/deploy-script";
 
 /** Ensures the Traefik reverse-proxy is running on a server (idempotent). */
@@ -13,6 +14,7 @@ export class ProxyService {
     private readonly agentWs: AgentWsServer,
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
+    private readonly settings: InstanceSettingsService,
   ) {}
 
   async ensureProxy(serverId: string): Promise<void> {
@@ -27,7 +29,7 @@ export class ProxyService {
         "this server is a swarm manager (it runs the cluster's swarm ingress on :80/:443) — domain-routed single-server apps can't be deployed directly here",
       );
     }
-    const email = this.config.get<string>("ACME_EMAIL");
+    const email = await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"));
     // this runs on EVERY domained deploy and recreates the proxy (docker rm -f + run), so it
     // MUST honor the server's bind mode — otherwise a deploy would silently re-publish :80/:443 (reverting a
     // loopback/none server) or fail where another web server holds those ports. Default servers stay public.
