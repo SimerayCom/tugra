@@ -25,7 +25,7 @@
   "volumesSection": "Volumes",
   "none": "None",
   "target": "Target server",
-  "targetHint": "Where the imported apps are created in Tugra. Databases and volumes are not copied yet.",
+  "targetHint": "Where the imported apps and database records are created. Database DATA is moved by the separate migrator step; app volume data is copied manually.",
   "noTarget": "Add a server to this team first, then come back to import.",
   "apply": "Import to Tugra",
   "applying": "Starting…",
