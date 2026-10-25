@@ -6,6 +6,7 @@ import type {
   InstanceUpdateApply,
   InstanceUpdateStatus,
   TelemetryStatus,
+  Branding,
   OwnerInstanceSettings,
   OidcConfig,
   LicenseStatus,
@@ -311,6 +312,14 @@ export const api = {
   // Start the updater (owner). Throws ApiError 409 when an update is already in progress.
   applyInstanceUpdate() {
     return apiFetch<InstanceUpdateApply>("/instance/update", { method: "POST" });
+  },
+  // Public white-label branding (themes the login page pre-auth). No refresh-retry (unauthenticated).
+  getBranding() {
+    return apiFetch<Branding>("/instance/branding", {}, false);
+  },
+  // Owner-only white-label update (Pro; the hub 403s below Pro). "" clears a field back to the Tugra default.
+  updateBranding(patch: { name?: string | null; logoUrl?: string | null; faviconUrl?: string | null; accentColor?: string | null; hidePoweredBy?: boolean }) {
+    return apiFetch<Branding>("/instance/branding", { method: "PATCH", body: JSON.stringify(patch) });
   },
   // Owner-only anonymous usage stats (on by default, opt-out). Status includes a live payload preview.
   getTelemetry() {

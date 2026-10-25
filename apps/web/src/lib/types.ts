@@ -292,6 +292,16 @@ export interface TelemetryPayload {
   sentAt: string;
 }
 
+/** Public white-label branding (GET /instance/branding). All null + hidePoweredBy=false → the Tugra
+ *  defaults. Only applied while the instance is Pro+ (the server returns defaults below Pro). */
+export interface Branding {
+  name: string | null;
+  logoUrl: string | null;
+  faviconUrl: string | null;
+  accentColor: string | null;
+  hidePoweredBy: boolean;
+}
+
 /** Anonymous usage stats status (GET /instance/telemetry). Owner-only. On by default, opt-out. */
 export interface TelemetryStatus {
   /** Effective state: on AND not env-forced-off. */

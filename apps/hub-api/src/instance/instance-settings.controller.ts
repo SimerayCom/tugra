@@ -24,6 +24,8 @@ import {
   UpdateInstanceUpdateSchema,
   UpdateTelemetryInput,
   UpdateTelemetrySchema,
+  UpdateBrandingInput,
+  UpdateBrandingSchema,
 } from "./dto";
 import { UpdateService } from "../update/update.service";
 import { UpdaterService, isTerminalPhase } from "../update/updater.service";
@@ -304,5 +306,29 @@ export class InstanceSettingsController {
     await this.telemetry.resetInstanceId();
     await this.audit.log({ actor: user.userId, action: "instance.telemetry_reset", target: "singleton" });
     return this.telemetry.status();
+  }
+
+  /**
+   * White-label branding (Pro). Owner-only (class guards) AND edition-gated (@RequireEdition("pro") enforced
+   * by the class-level RequireEditionGuard) — Community gets a 403, so a brand can't be set below Pro. Each
+   * field is clearable: a falsy value maps to null (back to the Tugra default). Returns the effective
+   * branding (which the public GET /instance/branding also serves, gated the same way).
+   */
+  @Patch("branding")
+  @RequireEdition("pro")
+  @ApiZodBody(UpdateBrandingSchema)
+  async updateBranding(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(UpdateBrandingSchema)) body: UpdateBrandingInput,
+  ) {
+    const patch: { brandName?: string | null; brandLogoUrl?: string | null; brandFaviconUrl?: string | null; brandAccentColor?: string | null; brandHidePoweredBy?: boolean } = {};
+    if (body.name !== undefined) patch.brandName = body.name || null;
+    if (body.logoUrl !== undefined) patch.brandLogoUrl = body.logoUrl || null;
+    if (body.faviconUrl !== undefined) patch.brandFaviconUrl = body.faviconUrl || null;
+    if (body.accentColor !== undefined) patch.brandAccentColor = body.accentColor || null;
+    if (body.hidePoweredBy !== undefined) patch.brandHidePoweredBy = body.hidePoweredBy;
+    await this.settings.update(patch);
+    await this.audit.log({ actor: user.userId, action: "instance.branding", target: "singleton" });
+    return this.settings.effectiveBranding();
   }
 }

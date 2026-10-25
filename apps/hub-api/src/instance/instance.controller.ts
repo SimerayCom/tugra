@@ -18,6 +18,13 @@ export class InstanceController {
     private readonly config: ConfigService,
   ) {}
 
+  /** Public white-label branding so the login page (and the whole app) can theme before/without auth. Only
+   *  the non-secret brand fields, and only while the instance is Pro+ (else the Tugra defaults). */
+  @Get("branding")
+  branding() {
+    return this.instance.effectiveBranding();
+  }
+
   @Get("status")
   async status() {
     const s = await this.instance.get();

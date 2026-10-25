@@ -49,3 +49,38 @@ describe("InstanceSettingsService", () => {
     expect(out.allowRegistration).toBe(true);
   });
 });
+
+describe("InstanceSettingsService.effectiveBranding (Pro paywall at read time)", () => {
+  const ORIGINAL = process.env.TUGRA_EDITION;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.TUGRA_EDITION;
+    else process.env.TUGRA_EDITION = ORIGINAL;
+  });
+
+  const branded = {
+    ...ROW,
+    brandName: "Acme",
+    brandLogoUrl: "https://acme.test/logo.svg",
+    brandFaviconUrl: "https://acme.test/favicon.png",
+    brandAccentColor: "#112233",
+    brandHidePoweredBy: true,
+  };
+
+  it("returns the Tugra defaults on Community even when brand fields ARE set", async () => {
+    delete process.env.TUGRA_EDITION; // normalises to community
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue(branded) });
+    expect(await svc.effectiveBranding()).toEqual({ name: null, logoUrl: null, faviconUrl: null, accentColor: null, hidePoweredBy: false });
+  });
+
+  it("returns the stored branding on Pro", async () => {
+    process.env.TUGRA_EDITION = "pro";
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue(branded) });
+    expect(await svc.effectiveBranding()).toEqual({
+      name: "Acme",
+      logoUrl: "https://acme.test/logo.svg",
+      faviconUrl: "https://acme.test/favicon.png",
+      accentColor: "#112233",
+      hidePoweredBy: true,
+    });
+  });
+});
