@@ -54,6 +54,7 @@ export default function SettingsPage() {
   const t = useT();
   const { user } = useAuth();
   const isOwner = !!user?.isInstanceOwner;
+  const isHome = user?.uiMode === "home"; // Home mode hides fleet-only shortcuts (e.g. the notifications link)
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040, margin: "0 auto" }}>
@@ -68,7 +69,7 @@ export default function SettingsPage() {
         <PasswordCard />
         <TwoFactorCard />
         <SessionsCard />
-        <ChannelsCard />
+        {!isHome && <ChannelsCard />}
         <Wide><ApiTokensCard /></Wide>
       </SettingsSection>
 

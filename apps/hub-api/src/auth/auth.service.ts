@@ -98,6 +98,16 @@ export class AuthService {
     private readonly instanceSettings: InstanceSettingsService,
   ) {}
 
+  /**
+   * The UI mode a newly-created account starts in. `DEFAULT_UI_MODE=home` (set by `install.sh --home` on a
+   * turnkey/home box) starts accounts in the simple Home launcher; anything else falls back to the schema
+   * default ("fleet"). Applied uniformly to password, GitHub and OIDC account creation so the box's intent
+   * holds regardless of how the owner signs up. The owner can still switch during onboarding or in Settings.
+   */
+  private defaultUiMode(): "home" | "fleet" {
+    return this.config.get<string>("DEFAULT_UI_MODE") === "home" ? "home" : "fleet";
+  }
+
   // ---- registration / login ------------------------------------------------
 
   /**
@@ -200,9 +210,7 @@ export class AuthService {
       const firstUser =
         (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
       const created = await tx.user.create({
-        // DEFAULT_UI_MODE lets a turnkey single-box install start the owner in Home mode;
-        // unset falls back to the schema default ("fleet").
-        data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser, uiMode: this.config.get<string>("DEFAULT_UI_MODE") === "home" ? "home" : "fleet" },
+        data: { email, password: passwordHash, name: name ?? null, isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
       });
       const team = await tx.team.create({
         data: { name: name ? `${name}'s Team` : "My Team" },
@@ -242,7 +250,7 @@ export class AuthService {
           (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
         const created = await tx.user.create({
           // OAuth emails are provider-verified, so the account starts verified.
-          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser },
+          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
         });
         const team = await tx.team.create({
           data: { name: name ? `${name}'s Team` : "My Team" },
@@ -291,7 +299,7 @@ export class AuthService {
           (await tx.instanceSettings.updateMany({ where: { id: "singleton", initializedAt: null }, data: { initializedAt: new Date() } })).count === 1;
         const created = await tx.user.create({
           // OIDC identities are provider-verified, so the account starts verified.
-          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser },
+          data: { email, password: passwordHash, name: name ?? null, emailVerified: true, emailVerifiedAt: new Date(), isInstanceOwner: firstUser, uiMode: this.defaultUiMode() },
         });
         const team = await tx.team.create({
           data: { name: name ? `${name}'s Team` : "My Team" },

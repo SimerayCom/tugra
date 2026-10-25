@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { navForMode, uiMode } from "../lib/ui-mode";
+import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { Spinner, Btn } from "./ui";
@@ -365,6 +365,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const isMobile = useIsMobile();
+  const { user } = useAuth();
+  const isHome = uiMode(user?.uiMode) === "home";
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -391,7 +393,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <VerifyBanner />
         <main style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
-      {palette && <CommandPalette dests={DESTS} onClose={() => setPalette(false)} />}
+      {/* In Home mode, ⌘K only offers Home-allowed destinations (a fleet route would just bounce to /home). */}
+      {palette && <CommandPalette dests={isHome ? DESTS.filter((d) => isHomeAllowed(d.href)) : DESTS} onClose={() => setPalette(false)} />}
     </div>
   );
 }
