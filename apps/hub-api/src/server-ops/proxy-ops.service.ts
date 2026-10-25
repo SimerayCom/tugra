@@ -10,6 +10,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
 import {
   buildProxyLogsScript,
   buildProxyRestartScript,
@@ -39,6 +40,7 @@ export class ProxyOpsService {
     private readonly agentWs: AgentWsServer,
     private readonly config: ConfigService,
     private readonly crypto: CryptoService,
+    private readonly settings: InstanceSettingsService,
   ) {}
 
   async status(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {
@@ -49,7 +51,7 @@ export class ProxyOpsService {
 
   async start(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {
     await this.requireWrite(userId, serverId);
-    const email = this.config.get<string>("ACME_EMAIL");
+    const email = await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"));
     const dns = await this.dnsConfig(serverId);
     // The bind mode is applied here — `start` recreates the proxy container, so changing it
     // and re-starting the proxy publishes :80/:443 differently (public / loopback / tunnel-only).

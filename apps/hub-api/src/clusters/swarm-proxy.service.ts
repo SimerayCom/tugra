@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { envFileB64 } from "../deploy/deploy-script";
 import {
   buildClassicProxyRunningScript,
@@ -48,6 +49,7 @@ export class SwarmProxyService {
     private readonly agentWs: AgentWsServer,
     private readonly config: ConfigService,
     private readonly crypto: CryptoService,
+    private readonly settings: InstanceSettingsService,
   ) {}
 
   /** Resolve the cluster's PRIMARY manager (id + status + swarm node id + its cert/DNS config). Unlike the old
@@ -144,7 +146,7 @@ export class SwarmProxyService {
     // the first pool node. (Other pool members only need to be schedulable task hosts.)
     if (mgr.status !== "ONLINE") throw new ServiceUnavailableException("swarm manager is offline");
 
-    const email = this.config.get<string>("ACME_EMAIL") ?? null;
+    const email = (await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"))) ?? null;
     const secretPrefix = `tugra-swarm-dns-${clusterId}`;
     const dnsCfg = this.dnsConfig(mgr);
     // HA gate FIRST (before ANY docker/agent command): 2+ replicas each hold an INDEPENDENT node-local ACME

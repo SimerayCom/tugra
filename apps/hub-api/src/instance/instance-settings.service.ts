@@ -41,6 +41,18 @@ export class InstanceSettingsService {
   }
 
   /**
+   * The ACME account email for issuing TLS certs: the env (ACME_EMAIL) wins, else the owner's onboarding
+   * value (InstanceSettings.acmeEmail), else undefined (the proxy script then uses its placeholder). This
+   * is what makes the onboarding "Let's Encrypt email" field actually drive cert issuance instead of being
+   * silently ignored (so expiry notices reach a real inbox, not admin@example.com).
+   */
+  async acmeEmailFor(envEmail?: string): Promise<string | undefined> {
+    if (envEmail && envEmail.trim()) return envEmail.trim();
+    const s = await this.get();
+    return s.acmeEmail ?? undefined;
+  }
+
+  /**
    * The effective white-label branding, safe to expose publicly (login page themes pre-auth). Branding is a
    * PRO feature, so it is applied ONLY while the instance is Pro+ — a Community or lapsed-license instance
    * always gets the Tugra defaults, which is what enforces the paywall at read time (a stored brand can't

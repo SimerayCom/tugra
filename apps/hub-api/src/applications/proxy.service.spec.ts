@@ -18,7 +18,9 @@ function make(serverRow: Record<string, unknown>, result: { exitCode: number; ou
   } as unknown as PrismaService;
   const config = { get: jest.fn().mockReturnValue("me@x.com") } as unknown as ConfigService;
   const crypto = { decrypt: jest.fn() } as unknown as CryptoService;
-  const svc = new ProxyService(config, agentWs, prisma, crypto);
+  // acmeEmailFor passes the env value through (env wins), so the existing "email ends up in the script" assertions hold.
+  const settings = { acmeEmailFor: async (e?: string) => e } as unknown as import("../instance/instance-settings.service").InstanceSettingsService;
+  const svc = new ProxyService(config, agentWs, prisma, crypto, settings);
   return { svc, sent };
 }
 

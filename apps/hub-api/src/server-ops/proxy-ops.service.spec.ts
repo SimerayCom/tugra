@@ -42,7 +42,8 @@ function make(role: Role | null, send: jest.Mock) {
     ),
   } as unknown as TeamAccessService;
   const agentWs = { sendCommand: send } as unknown as AgentWsServer;
-  return new ProxyOpsService(prisma, access, audit, agentWs, config, crypto);
+  const settings = { acmeEmailFor: async (e?: string) => e } as unknown as import("../instance/instance-settings.service").InstanceSettingsService;
+  return new ProxyOpsService(prisma, access, audit, agentWs, config, crypto, settings);
 }
 
 describe("ProxyOpsService", () => {

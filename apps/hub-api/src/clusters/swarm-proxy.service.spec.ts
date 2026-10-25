@@ -84,7 +84,8 @@ function make(opts: {
       return opts.decrypt;
     }),
   } as unknown as import("../crypto/crypto.service").CryptoService;
-  return { svc: new SwarmProxyService(prisma, agent, config, crypto), send };
+  const settings = { acmeEmailFor: async (e?: string) => e } as unknown as import("../instance/instance-settings.service").InstanceSettingsService;
+  return { svc: new SwarmProxyService(prisma, agent, config, crypto, settings), send };
 }
 
 /** Extract the tugra.proxy.confighash value from the ensure script the service dispatched. */
