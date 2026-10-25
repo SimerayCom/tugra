@@ -826,6 +826,18 @@ export const api = {
     const qs = params.toString();
     return apiFetch<AuditPage>(`/audit${qs ? `?${qs}` : ""}`);
   },
+  // Pro-only full-trail export (server-side, all rows, CSV or JSON). Same cookie auth as apiFetch with one
+  // refresh retry; throws ApiError(403) on Community. Returns the Blob + whether the result was capped
+  // (X-Tugra-Audit-Truncated) so the caller can warn the user to narrow the date range.
+  async exportAudit(teamId: string | undefined, format: "csv" | "json"): Promise<{ blob: Blob; truncated: boolean }> {
+    const params = new URLSearchParams({ format });
+    if (teamId) params.set("teamId", teamId);
+    const url = `${API_BASE}/audit/export?${params.toString()}`;
+    let res = await fetch(url, { credentials: "include" });
+    if (res.status === 401 && (await tryRefresh())) res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new ApiError(res.status, res.status === 403 ? "pro-only" : `export failed (${res.status})`);
+    return { blob: await res.blob(), truncated: res.headers.get("X-Tugra-Audit-Truncated") === "1" };
+  },
   listGitSources() {
     return apiFetch<GitSource[]>("/git-sources");
   },

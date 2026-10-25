@@ -27,6 +27,7 @@ async function bootstrap() {
       "X-RateLimit-Remaining",
       "X-RateLimit-Reset",
       "Retry-After",
+      "X-Tugra-Audit-Truncated", // the Pro audit export flags a capped result here (readable cross-origin)
     ],
   });
   const port = process.env.HUB_PORT ? Number(process.env.HUB_PORT) : 3000;

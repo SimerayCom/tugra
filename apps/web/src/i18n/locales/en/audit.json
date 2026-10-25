@@ -11,5 +11,12 @@
   "exportCsv": "Export CSV",
   "noMatchTitle": "No matching entries",
   "noMatch": "No audit entries match your filter.",
-  "loadMore": "Load more"
+  "loadMore": "Load more",
+  "exportShown": "Export shown",
+  "exportFull": "Export full log",
+  "exportFullCsv": "Full log (CSV)",
+  "exportFullJson": "Full log (JSON)",
+  "exportProHint": "Full-trail export (all rows, CSV/JSON for SIEM) is a Pro feature. Activate a license in Settings.",
+  "exportFailed": "Export failed — please try again.",
+  "exportTruncated": "Export capped at the row/size limit — narrow the date range to get older entries."
 }
