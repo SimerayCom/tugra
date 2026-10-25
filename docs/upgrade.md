@@ -5,11 +5,13 @@ installer. Both paths preserve your data and secrets.
 
 ## How updates work
 
-**Update checks are OFF by default** — a fresh install makes zero outbound calls, so it never pings for
-a new version on its own (Tugra's no-phone-home default). Turn them on explicitly, either at install
+**Update checks are OFF by default** — Tugra never pings for
+a new version on its own. Turn them on explicitly, either at install
 (`install.sh --enable-update-checks`) or any time by setting `UPDATE_MANIFEST_URL` + `UPDATE_PUBLISHER_KEY`
 in `.env` and restarting hub-api. With checks off, upgrade manually by re-running the installer, and watch
 GitHub releases for security advisories.
+
+(Separate from update checks: anonymous usage stats are on by default — counts only, no names, IPs, domains or secrets — and you can turn them off anytime with `--no-telemetry`, `TUGRA_TELEMETRY=0`, or in Settings.)
 
 Once enabled, Tugra checks a **publisher-signed release manifest** (`versions.json` + a detached ed25519
 signature). Before any update is applied the hub:

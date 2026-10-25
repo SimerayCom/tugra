@@ -31,8 +31,8 @@ WEB_URL=""
 FORCE_BUILD=0
 FORCE_PULL=0
 DRY_RUN=0
-# Trust-wedge: a fresh install makes ZERO outbound calls of its own — update checks and public-IP
-# detection are explicit opt-in (default off). env-var forms let the one-line curl|sh installer opt in too.
+# Outbound policy: update checks and public-IP detection are explicit opt-in (default off); anonymous usage
+# stats are on by default (opt-out, see below). env-var forms let the one-line curl|sh installer opt in too.
 ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}"
 DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
@@ -285,7 +285,7 @@ fi
 # Agent image ref (the agent re-invokes itself as the sandboxed file helper; hub uses AGENT_IMAGE for installs).
 ensure_env TUGRA_AGENT_IMAGE "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
 ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
-# Signed self-update channel — OPT-IN (no phone-home by default). Enable with --enable-update-checks
+# Signed self-update channel — OPT-IN (off by default). Enable with --enable-update-checks
 # (or TUGRA_ENABLE_UPDATE_CHECKS=1): the hub then fetches ONE ed25519-signed manifest (no identifiers, no
 # version, no payload). Left unset, the update scheduler + agent digest-pin stay inert (env.ts fail-closed)
 # and you update by pulling images on your own schedule. only-if-unset so an operator override survives re-runs.
@@ -382,7 +382,7 @@ if ! env_has LOCAL_SERVER_PUBLIC_IP; then
   printf '  \033[2mPublic IP not set (no outbound probe by default). Deployed app URLs on a bare IP may not resolve until you set it: re-run with --public-ip <ip>, or set LOCAL_SERVER_PUBLIC_IP in %s.\033[0m\n' "$ENV_FILE"
 fi
 if [ "$ENABLE_UPDATE_CHECKS" != "1" ] && ! env_has UPDATE_MANIFEST_URL; then
-  printf '  \033[2mUpdate checks are OFF (nothing phones home). Enable signed update checks: re-run with --enable-update-checks (see docs/upgrade.md). Watch GitHub releases for security advisories.\033[0m\n'
+  printf '  \033[2mUpdate checks are OFF. Enable signed update checks: re-run with --enable-update-checks (see docs/upgrade.md). Watch GitHub releases for security advisories.\033[0m\n'
 fi
 if [ "$(env_get TUGRA_TELEMETRY)" = "0" ]; then
   printf '  \033[2mAnonymous usage stats are OFF.\033[0m\n'

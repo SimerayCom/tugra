@@ -53,7 +53,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 - **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered by the volume backups).
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
-- **Open-core, not open-washed** — everything above ships free under AGPL-3.0 in *this* repository. Pro/Cloud (SSO, audit-log export, whitelabel, multi-tenant billing) is a separately-licensed add-on — nothing here phones home, nags you to upgrade, or silently caps what you can do.
+- **Open-core, not open-washed** — everything above ships free under AGPL-3.0 in *this* repository. Pro/Cloud (SSO, audit-log export, whitelabel, multi-tenant billing) is a separately-licensed add-on — nothing here nags you to upgrade or silently caps what you can do. Tugra sends anonymous usage stats, on by default — counts only (servers, apps, databases, deploys; no names, IPs, domains or secrets) — and you can turn them off anytime with `--no-telemetry` / `TUGRA_TELEMETRY=0` or in Settings. Update checks and public-IP detection are opt-in and off by default.
 
 ## How Tugra compares
 
@@ -90,7 +90,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | MCP / agent control | ✅ 47 tools⁵ | ✅ | ✅ | — | — | ~² |
 | **Trust & license** | | | | | | |
-| No phone-home (zero telemetry) | ✅ | — | — | ~ | — | ✅ |
+| Telemetry | Anonymous, opt-out (counts only) | n/a | n/a | n/a | n/a | n/a |
 | Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + terms⁴ | MIT |
 
