@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -37,6 +38,7 @@ export class BulkService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
+    private readonly config: ConfigService,
   ) {}
 
   async run(
@@ -96,7 +98,7 @@ export class BulkService {
       data: { status: "RUNNING", startedAt: new Date() },
     });
     try {
-      const r = await this.agentWs.sendCommand(t.serverId, command, "bulk");
+      const r = await this.agentWs.sendCommand(t.serverId, command, "bulk", this.config.get<number>("BULK_COMMAND_TIMEOUT_MS") ?? 300_000);
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {

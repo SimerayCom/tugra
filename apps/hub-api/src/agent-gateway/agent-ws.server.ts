@@ -41,11 +41,17 @@ import { observedIp } from "../common/observed-ip";
 // otherwise the raw TCP peer address (which an agent cannot spoof) is used.
 const TRUST_PROXY = process.env.HUB_TRUSTED_PROXY === "true";
 
+// ws keepalive sweep period. Each tick pings every socket and terminates one that didn't pong since the
+// last tick — so a half-open TCP (a crashed/partitioned box that never sent a close) is detected within
+// ~one interval and the server flips OFFLINE, instead of sitting ONLINE forever.
+const PING_INTERVAL_MS = 30_000;
+
 interface ConnState {
   nonce: string;
   serverId?: string;
   authed: boolean;
   remoteIp?: string | null;
+  isAlive: boolean; // ws keepalive: pong flips it true; the ping sweep terminates a socket that missed one
 }
 
 interface Pending {
@@ -77,6 +83,7 @@ interface FsPending {
 export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(AgentWsServer.name);
   private wss?: WebSocketServer;
+  private pingTimer?: ReturnType<typeof setInterval>;
   private readonly state = new WeakMap<WebSocket, ConnState>();
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
@@ -122,6 +129,30 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     this.servers.setCapabilityPusher((serverId, capabilities) =>
       this.sendToAgent(serverId, { type: "capabilities", capabilities }),
     );
+
+    // ws keepalive: ping every socket each interval; terminate one that didn't pong since the last tick.
+    // terminate() fires `close`, which runs the same teardown as a graceful drop (markOffline + reject
+    // pending), so a half-open connection can no longer leave a server stuck ONLINE.
+    this.pingTimer = setInterval(() => this.keepaliveSweep(), PING_INTERVAL_MS);
+    this.pingTimer.unref?.();
+  }
+
+  /** One keepalive tick: terminate any socket that didn't pong since the last tick (dead / half-open),
+   *  otherwise mark it pending-pong and ping it. Extracted so it is unit-testable without a timer. */
+  keepaliveSweep(): void {
+    for (const socket of this.wss?.clients ?? []) {
+      const st = this.state.get(socket);
+      if (!st || st.isAlive === false) {
+        socket.terminate();
+        continue;
+      }
+      st.isAlive = false;
+      try {
+        socket.ping();
+      } catch {
+        socket.terminate();
+      }
+    }
   }
 
   private onConnection(socket: WebSocket, req?: import("node:http").IncomingMessage): void {
@@ -132,9 +163,14 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       Array.isArray(fwd) ? fwd[0] : fwd,
       TRUST_PROXY,
     );
-    this.state.set(socket, { nonce, authed: false, remoteIp });
+    this.state.set(socket, { nonce, authed: false, remoteIp, isAlive: true });
     this.send(socket, { type: "challenge", nonce });
 
+    // ws keepalive: a pong marks the socket alive again for the next sweep (see startKeepalive).
+    socket.on("pong", () => {
+      const s = this.state.get(socket);
+      if (s) s.isAlive = true;
+    });
     socket.on("message", (raw) => void this.onMessage(socket, raw.toString()));
     socket.on("close", () => {
       const st = this.state.get(socket);
@@ -561,6 +597,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.pingTimer) clearInterval(this.pingTimer);
     this.wss?.close();
   }
 }
