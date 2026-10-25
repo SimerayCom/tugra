@@ -6,19 +6,26 @@ install reference; the [project README](../README.md) has the short version.
 
 ## Prerequisites
 
-- A **Linux host** you control (a Raspberry Pi is fine).
-- **Docker** with the **Compose v2** plugin (`docker compose version`).
-- **git** (to clone the repository).
+- A **Linux host** you control (amd64; arm64 works but builds from source — see below).
+- **Docker** + the **Compose v2** plugin. The installer installs Docker for you if it's missing.
+- `curl` (present on virtually every host); `git` is fetched by the installer if needed.
 
 ## Quick start
 
-From the host:
+One line on the host:
 
 ```bash
-git clone https://github.com/SimerayCom/tugra.git
-cd tugra
-./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
 ```
+
+(or clone first, then run the installer directly — same result:)
+
+```bash
+git clone https://github.com/SimerayCom/tugra.git && cd tugra && ./scripts/install.sh
+```
+
+It prompts once to share anonymous usage stats (`[Y/n]`, default yes; opt out with `--no-telemetry`).
+Run `./scripts/install.sh --help` for all flags (`--domain`, `--home`, `--no-telemetry`, `--public-ip`, …).
 
 The installer:
 
@@ -33,8 +40,10 @@ In the two-port quick start the web UI is at `http://<host-ip>:3001` and the hub
 owner account (to recover it later: `grep SETUP_CODE .env`). Then follow the onboarding wizard to connect
 your first server.
 
-Published images (`ghcr.io/simeraycom/tugra-*`) are used when available; until the first tagged release
-the installer automatically builds from your checkout — the same command, no changes needed.
+Published images (`ghcr.io/simeraycom/tugra-*`) are public and pulled automatically, so a normal install
+is fast. If a pull can't be satisfied — an **arm64** host (the images are amd64-only) or an offline/mirror
+environment — the installer builds from your checkout instead (same command; it takes several minutes and
+wants ~2 GB RAM). Force either path with `--pull` or `--build`.
 
 ## Production: TLS + a domain
 

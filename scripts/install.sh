@@ -347,10 +347,14 @@ if [ "$FORCE_BUILD" -eq 1 ]; then
   log "Building images from source…"; compose up -d --build
 elif [ "$FORCE_PULL" -eq 1 ]; then
   compose pull; compose up -d --no-build
-elif compose pull >/dev/null 2>&1; then
+elif compose pull >/tmp/tugra-pull.log 2>&1; then
   log "Using published images."; compose up -d --no-build
 elif [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
-  log "Published images not available yet — building from source (this checkout)…"
+  # Pull failed (no image for this arch — the images are amd64-only — or an offline/registry hiccup; see
+  # /tmp/tugra-pull.log). Fall back to building from this checkout. This is a full pnpm + Next build and can
+  # take several minutes (and wants ~2 GB free RAM); it is NOT a hang.
+  note "Couldn't pull published images (see /tmp/tugra-pull.log) — building from source instead."
+  log "Building images from this checkout (several minutes; needs ~2 GB RAM)…"
   compose up -d --build
 else
   err "Could not pull published images, and no source is available to build from."

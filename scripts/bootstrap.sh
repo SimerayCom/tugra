@@ -54,7 +54,6 @@ else
 fi
 
 # --- run the installer (it installs Docker if missing + brings the stack up) ---
-# One-command context = the operator opted in, so don't re-prompt for the Docker install.
 cd "$DIR"
 say "Running the installer…"
-TUGRA_ASSUME_YES=1 exec ./scripts/install.sh "$@"
+exec ./scripts/install.sh "$@"
