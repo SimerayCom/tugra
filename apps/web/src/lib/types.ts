@@ -268,6 +268,50 @@ export interface InstanceUpdateApply {
   targetVersion: string | null;
 }
 
+/** The exact anonymous payload sent to the telemetry endpoint — mirrored to the UI so what is shown is
+ *  byte-for-byte what is sent. Only coarse aggregates + build metadata under a random id; no PII. */
+export interface TelemetryPayload {
+  instanceId: string;
+  version: string;
+  channel: string;
+  edition: string;
+  platform: string;
+  arch: string;
+  nodeMajor: number;
+  counts: {
+    servers: number;
+    applications: number;
+    databases: number;
+    deployments: number;
+    teams: number;
+    users: number;
+    clusters: number;
+    monitors: number;
+    containers: number;
+  };
+  sentAt: string;
+}
+
+/** Anonymous usage stats status (GET /instance/telemetry). Owner-only. On by default, opt-out. */
+export interface TelemetryStatus {
+  /** Effective state: on AND not env-forced-off. */
+  enabled: boolean;
+  /** TUGRA_TELEMETRY=0 — a deployment hard-off; the owner toggle is then inert. */
+  forcedOff: boolean;
+  /** The raw owner-UI toggle value (telemetryEnabled), shown even when forcedOff. */
+  dbEnabled: boolean;
+  /** The anonymous instance id; null until first minted. */
+  instanceId: string | null;
+  /** Last successful send (ISO), or null. */
+  lastSentAt: string | null;
+  /** Send cadence in minutes. */
+  intervalMin: number;
+  /** Where the stats are sent. */
+  endpoint: string;
+  /** A live preview of exactly what would be sent. */
+  payload: TelemetryPayload;
+}
+
 export interface ServerView {
   id: string;
   name: string;

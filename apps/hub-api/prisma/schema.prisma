@@ -1138,5 +1138,13 @@ model InstanceSettings {
   // edition. Safe to store: it is signature-protected, so a DB write can't forge an entitlement — the hub
   // verifies it against TUGRA_LICENSE_PUBLISHER_KEY on every load. Null = no license (env/community edition).
   licenseToken        String?
+  // Anonymous usage stats (ON by default, opt-out). `telemetryEnabled` is the owner-UI off-switch; the
+  // env var TUGRA_TELEMETRY=0 is a deployment-level HARD off that overrides it (install --no-telemetry /
+  // headless CI). `telemetryInstanceId` is a random, anonymous id minted once and kept stable across
+  // restarts — the ONLY identifier ever sent; no IP, hostname, domain, email, app name or user data leaves
+  // the box. `telemetryLastSentAt` is the last successful send (drives the UI + avoids double-sends).
+  telemetryEnabled    Boolean   @default(true)
+  telemetryInstanceId String?
+  telemetryLastSentAt DateTime?
   updatedAt           DateTime  @updatedAt
 }

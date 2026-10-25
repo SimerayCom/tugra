@@ -176,16 +176,19 @@ if [ "$DRY_RUN" -eq 0 ]; then
   preflight
 fi
 
-# Anonymous usage stats are ON by default, opt-out. COUNTS ONLY (servers, apps, databases, deploys) with a
-# random id — never names, IPs, domains or secrets — and changeable anytime in Settings. Turn it off with
-# --no-telemetry (or TUGRA_TELEMETRY=0). On a fresh install we decide once: an interactive run confirms with a
-# [Y/n] prompt (default yes); a headless run keeps it on and prints a notice. A prior choice in .env is kept.
-if ! env_has TUGRA_TELEMETRY; then
-  if [ "$NO_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "0" ]; then
-    TELEMETRY_DECISION="0"
-  elif [ "$ENABLE_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "1" ]; then
-    TELEMETRY_DECISION="1"
-  elif [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
+# Anonymous usage stats are ON by default, opt-out. COUNTS ONLY (servers, apps, databases, deploys) plus
+# version/edition/OS with a random id — never names, IPs, domains or secrets — changeable anytime in
+# Settings. An EXPLICIT choice on THIS run (--no-telemetry / --enable-telemetry, or TUGRA_TELEMETRY=0|1)
+# always wins and OVERRIDES a value already in .env — so `install.sh --no-telemetry` on an existing box
+# truly turns it off (TELEMETRY_OVERRIDE → set_env below). With no explicit choice we decide once on a
+# fresh install (interactive [Y/n], default yes; headless keeps it on with a notice) and KEEP a prior
+# choice already in .env (TELEMETRY_DECISION → ensure_env below).
+if [ "$NO_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "0" ]; then
+  TELEMETRY_OVERRIDE="0"
+elif [ "$ENABLE_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "1" ]; then
+  TELEMETRY_OVERRIDE="1"
+elif ! env_has TUGRA_TELEMETRY; then
+  if [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
     printf '\n  Help improve Tugra with anonymous usage stats? Counts only (servers, apps, deploys), no\n  names, IPs or secrets, and you can turn it off anytime in Settings.\n'
     printf '  Share stats? [Y/n] '
     IFS= read -r _tel_ans </dev/tty || _tel_ans=""
@@ -293,9 +296,11 @@ if [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
   ensure_env UPDATE_MANIFEST_URL  "https://simeraycom.github.io/tugra/versions.json"
   ensure_env UPDATE_PUBLISHER_KEY "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE="
 fi
-# Persist the telemetry choice decided above (default on; "0" if opted out). only-if-unset, so a re-run
-# keeps whatever is already in .env. The hub sends a once-a-day anonymous ping of COUNTS only (servers,
-# apps, databases, deploys) with a random instance id when TUGRA_TELEMETRY != "0".
+# Persist the telemetry choice decided above. The hub sends a once-a-day anonymous ping of COUNTS only
+# (servers, apps, databases, deploys) + version/edition/OS with a random instance id when
+# TUGRA_TELEMETRY != "0". An EXPLICIT choice on this run upserts (set_env) so it OVERRIDES a stored value;
+# the implicit fresh-install default is only-if-unset (ensure_env) so an unrelated re-run keeps it.
+[ -n "${TELEMETRY_OVERRIDE:-}" ] && set_env TUGRA_TELEMETRY "$TELEMETRY_OVERRIDE"
 [ -n "${TELEMETRY_DECISION:-}" ] && ensure_env TUGRA_TELEMETRY "$TELEMETRY_DECISION"
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"

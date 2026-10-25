@@ -143,6 +143,25 @@ describe("scripts/install.sh", () => {
       run(["--no-telemetry"], offPath);
       expect(parseEnv(readFileSync(offPath, "utf8")).TUGRA_TELEMETRY).toBe("0");
     });
+
+    it("an explicit --no-telemetry on a RE-RUN overrides a stored TUGRA_TELEMETRY=1 (the advertised anytime off-switch)", () => {
+      const p = join(dir, "tel-rerun.env");
+      run([], p); // first run leaves it ON
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("1");
+      run(["--no-telemetry"], p); // re-run with the explicit opt-out MUST flip it off
+      const after = parseEnv(readFileSync(p, "utf8"));
+      expect(after.TUGRA_TELEMETRY).toBe("0");
+      // and exactly one line survives (set_env upserts, never duplicates)
+      expect(readFileSync(p, "utf8").match(/^TUGRA_TELEMETRY=/gm)?.length).toBe(1);
+    });
+
+    it("a flag-less re-run PRESERVES a stored telemetry opt-out (does not silently re-enable)", () => {
+      const p = join(dir, "tel-keep.env");
+      run(["--no-telemetry"], p); // opted out
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("0");
+      run([], p); // plain re-run must keep the opt-out
+      expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("0");
+    });
   });
 
   describe("deploy/docker-compose.yml", () => {

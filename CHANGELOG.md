@@ -21,13 +21,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - OS patching now patches the **host**, not the agent's own container. It runs the package manager in
   the host namespaces via a one-shot privileged helper launched from the agent's image, and fails
   closed (a clear error, never a silent container-only patch) if it cannot enter the host.
-- **Zero outbound by default.** A fresh install now makes no update ping, no public-IP probe, no Prisma
-  version check and no Traefik version check — it contacts only the registries it pulls images from.
+- **Anonymous usage stats (on by default, opt-out).** The hub now sends a once-a-day anonymous ping:
+  aggregate counts (servers, apps, databases, deploys, teams, users, clusters, monitors, containers)
+  plus its version, edition and OS/arch, keyed by a random, stable instance id. The payload carries no
+  IP, hostname, domain, email, app or server name, and the receiver does not store the sender's IP. See
+  the exact payload — and opt out — in **Settings → Anonymous usage stats**, or set `TUGRA_TELEMETRY=0`
+  (a hard off that the installer's `--no-telemetry` writes). Every outbound connection Tugra can make is
+  inventoried in [docs/security.md](docs/security.md).
+  **⚠️ Upgrading from a pre-telemetry release (0.1.x):** earlier versions made no such call. This upgrade
+  turns the stats **on** — if you want to stay off, set `TUGRA_TELEMETRY=0` (or flip the Settings toggle)
+  after upgrading.
+- **No update ping, IP probe or version checks by default.** A fresh install makes no update ping, no
+  public-IP probe, no Prisma version check and no Traefik version check (anonymous usage stats above are
+  the one deliberate default-on call) — otherwise it contacts only the registries it pulls images from.
   Update checks are opt-in (`install.sh --enable-update-checks`, or `UPDATE_MANIFEST_URL`/`_PUBLISHER_KEY`
   in `.env`); public-IP detection is opt-in (`--detect-public-ip`, or pin one with `--public-ip <ip>`).
   **Existing installs:** your `.env` keeps `UPDATE_MANIFEST_URL`, `UPDATE_PUBLISHER_KEY` and
-  `LOCAL_SERVER_PUBLIC_IP` from the previous installer (values are written once). To go fully
-  zero-outbound, blank those three keys and restart hub-api; leave them to keep update checks on.
+  `LOCAL_SERVER_PUBLIC_IP` from the previous installer (values are written once). To stop update checks,
+  blank those three keys and restart hub-api; leave them to keep update checks on.
 
 ## [0.1.3] - 2026-10-20
 
