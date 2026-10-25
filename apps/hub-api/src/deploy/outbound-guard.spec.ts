@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// Guard for the "nothing phones home by default" trust-wedge. The infra files below (shell + docker + compose)
+// Guard for the "no update ping, IP probe or version checks by default" trust-wedge. The infra files below (shell + docker + compose)
 // are not otherwise exercised by jest, so a future edit could silently re-introduce a default-on outbound
 // call and quietly make the claim false again. These static assertions fail CI if that happens. The Traefik
 // proxy flags are covered separately by deploy-script.spec.ts + swarm-proxy-script.spec.ts.
 const ROOT = resolve(__dirname, "../../../.."); // apps/hub-api/src/deploy -> repo root
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
-describe("outbound guard — zero phone-home by default", () => {
+describe("outbound guard — no update ping, IP probe or version checks by default", () => {
   const install = read("scripts/install.sh");
   const dockerHub = read("deploy/Dockerfile.hub");
   const dockerWeb = read("deploy/Dockerfile.web");
@@ -23,7 +23,7 @@ describe("outbound guard — zero phone-home by default", () => {
   });
 
   // NB: anonymous usage stats (TUGRA_TELEMETRY) are intentionally ON by default (opt-out) — a product
-  // decision, so they are NOT part of this "nothing phones home by default" guard. Their off-switch
+  // decision, so they are NOT part of this opt-in outbound guard. Their off-switch
   // (--no-telemetry / TUGRA_TELEMETRY=0) is covered by hub-install-script.spec.
 
   it("install.sh runs the public-IP probe ONLY inside the --detect-public-ip opt-in", () => {
