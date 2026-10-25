@@ -369,3 +369,35 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
     void server.onModuleDestroy(); // close the WS server created by bootstrap (no lingering handle)
   });
 });
+
+describe("AgentWsServer keepalive sweep (half-open detection)", () => {
+  const makeServer = () =>
+    new AgentWsServer({} as any, { markOffline: jest.fn(), grantedCapabilities: jest.fn(), touch: jest.fn() } as any, {} as any, {} as any, hubSign);
+
+  it("terminates a socket that missed its pong (dead/half-open) and pings a live one", () => {
+    const server = makeServer();
+    const dead = { terminate: jest.fn(), ping: jest.fn() } as any;
+    const live = { terminate: jest.fn(), ping: jest.fn() } as any;
+    (server as any).state.set(dead, { nonce: "n", authed: true, serverId: "d", isAlive: false });
+    (server as any).state.set(live, { nonce: "n", authed: true, serverId: "l", isAlive: true });
+    (server as any).wss = { clients: new Set([dead, live]) };
+    (server as any).keepaliveSweep();
+    expect(dead.terminate).toHaveBeenCalled();
+    expect(dead.ping).not.toHaveBeenCalled();
+    expect(live.terminate).not.toHaveBeenCalled();
+    expect(live.ping).toHaveBeenCalled();
+    expect((server as any).state.get(live).isAlive).toBe(false); // now pending the next pong
+  });
+
+  it("a socket whose pong arrived between sweeps survives (never terminated)", () => {
+    const server = makeServer();
+    const s = { terminate: jest.fn(), ping: jest.fn() } as any;
+    (server as any).state.set(s, { nonce: "n", authed: true, serverId: "x", isAlive: true });
+    (server as any).wss = { clients: new Set([s]) };
+    (server as any).keepaliveSweep(); // isAlive→false, ping sent
+    (server as any).state.get(s).isAlive = true; // pong handler would set this
+    (server as any).keepaliveSweep(); // still alive → ping again, no terminate
+    expect(s.terminate).not.toHaveBeenCalled();
+    expect(s.ping).toHaveBeenCalledTimes(2);
+  });
+});

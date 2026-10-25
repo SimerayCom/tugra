@@ -94,6 +94,10 @@ export const envSchema = z
   // resendEvery are their authoritative throttle, and a time window would drop real re-alerts / a re-DOWN
   // after recovery); events without a unique entity id are never deduped.
   NOTIFY_DEDUPE_WINDOW_SEC: z.coerce.number().int().nonnegative().default(60),
+  // Timeout (ms) for a single bulk/fleet shell command run on a server. Bulk runs arbitrary operator
+  // commands across many servers, so the default is generous (5 min) — the old hard-coded 20s failed any
+  // real task (migrations, long installs). Raise it for very long maintenance commands.
+  BULK_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),
