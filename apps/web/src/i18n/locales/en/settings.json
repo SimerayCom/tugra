@@ -160,5 +160,19 @@
   "sectionAccount": "Account",
   "sectionSecurity": "Security & access",
   "sectionInstance": "Instance",
-  "sectionInstanceHint": "Instance-wide settings — visible to the instance owner only."
+  "sectionInstanceHint": "Instance-wide settings — visible to the instance owner only.",
+  "branding": "White-label branding",
+  "brandingDesc": "Replace the Tugra name, logo, favicon and accent color with your own, and hide the \"Powered by Tugra\" footer. Applies across the panel and the login page.",
+  "brandingProHint": "White-label is a Pro feature. Activate a license under Plan & license to brand this instance.",
+  "brandingName": "Product name",
+  "brandingLogo": "Logo URL",
+  "brandingFavicon": "Favicon URL",
+  "brandingAccent": "Accent color",
+  "brandingAccentInvalid": "Use a #rrggbb hex color (e.g. #d4af6a)",
+  "brandingHidePowered": "Hide \"Powered by Tugra\"",
+  "brandingHidePoweredHint": "Removes the Tugra attribution from the login page footer.",
+  "brandingPreview": "Preview",
+  "brandingSave": "Save branding",
+  "brandingSaved": "Branding saved",
+  "brandingSaveFailed": "Couldn't save branding"
 }

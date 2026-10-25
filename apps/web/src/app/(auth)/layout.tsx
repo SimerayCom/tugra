@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { BrandMark, PoweredBy } from "../../components/branding";
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -21,11 +22,10 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
             marginBottom: 24,
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/tugra-logo.svg" alt="Tugra" width={48} height={48} />
-          <span style={{ fontWeight: 700, fontSize: 28, letterSpacing: "-0.01em" }}>Tugra</span>
+          <BrandMark size={48} nameSize={28} />
         </div>
         {children}
+        <PoweredBy />
       </div>
     </div>
   );

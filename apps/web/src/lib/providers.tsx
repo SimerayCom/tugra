@@ -8,6 +8,7 @@ import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "../components/confirm";
 import { ToastProvider } from "../components/toast";
 import { TeamScopeProvider } from "../components/team-scope";
+import { BrandingProvider } from "../components/branding";
 
 export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
@@ -28,15 +29,17 @@ export function Providers({ children }: { children: ReactNode }) {
   );
   return (
     <QueryClientProvider client={client}>
-      <I18nProvider>
-        <ToastProvider>
-          <ConfirmProvider>
-            <AuthProvider>
-              <TeamScopeProvider>{children}</TeamScopeProvider>
-            </AuthProvider>
-          </ConfirmProvider>
-        </ToastProvider>
-      </I18nProvider>
+      <BrandingProvider>
+        <I18nProvider>
+          <ToastProvider>
+            <ConfirmProvider>
+              <AuthProvider>
+                <TeamScopeProvider>{children}</TeamScopeProvider>
+              </AuthProvider>
+            </ConfirmProvider>
+          </ToastProvider>
+        </I18nProvider>
+      </BrandingProvider>
     </QueryClientProvider>
   );
 }

@@ -76,3 +76,17 @@ export const UpdateTelemetrySchema = z.object({
   enabled: z.boolean(),
 });
 export type UpdateTelemetryInput = z.infer<typeof UpdateTelemetrySchema>;
+
+// White-label branding (Pro). All optional (partial patch) and clearable with "" → the controller maps a
+// falsy value to null (back to the Tugra default for that field). URLs are http(s) only and the accent is a
+// #rrggbb hex, so a crafted value can't inject a `javascript:` logo src or break out of the CSS variable.
+const brandUrl = z.string().max(2048).refine((u) => u === "" || /^https?:\/\//i.test(u), "must be an http(s) URL");
+const brandColor = z.string().refine((c) => c === "" || /^#[0-9a-fA-F]{6}$/.test(c), "must be a #rrggbb hex color");
+export const UpdateBrandingSchema = z.object({
+  name: z.string().trim().max(40).nullable().optional(),
+  logoUrl: brandUrl.nullable().optional(),
+  faviconUrl: brandUrl.nullable().optional(),
+  accentColor: brandColor.nullable().optional(),
+  hidePoweredBy: z.boolean().optional(),
+});
+export type UpdateBrandingInput = z.infer<typeof UpdateBrandingSchema>;

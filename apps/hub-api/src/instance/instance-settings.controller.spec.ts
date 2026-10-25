@@ -50,6 +50,7 @@ function make(current: CurrentSettings) {
   const settings = {
     get: jest.fn().mockResolvedValue(full),
     update: jest.fn().mockImplementation((patch) => Promise.resolve(Object.assign(updated, patch))),
+    effectiveBranding: jest.fn().mockResolvedValue({ name: "Acme", logoUrl: null, faviconUrl: null, accentColor: "#112233", hidePoweredBy: true }),
   } as unknown as InstanceSettingsService;
   const audit = { log: jest.fn() } as unknown as AuditService;
   const crypto = { encrypt: jest.fn((s: string) => `ENC(${s})`) } as unknown as CryptoService;
@@ -356,5 +357,23 @@ describe("InstanceSettingsController — telemetry", () => {
     // InstanceOwnerGuard — a non-owner or a PAT cannot reach GET/PATCH/POST /instance/telemetry.
     const guards = (Reflect.getMetadata("__guards__", InstanceSettingsController) ?? []).map((g: unknown) => (g as { name: string }).name);
     expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "InstanceOwnerGuard"]));
+  });
+});
+
+describe("InstanceSettingsController — branding (white-label)", () => {
+  it("is edition-gated to Pro (RequireEditionGuard is a class guard; Community → 403)", () => {
+    expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.updateBranding)).toBe("pro");
+  });
+
+  it("updateBranding maps a falsy field to null (clearable), passes real values, and audits", async () => {
+    const { ctrl, settings, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const out = await ctrl.updateBranding(OWNER, { name: "Acme", logoUrl: "", accentColor: "#112233", hidePoweredBy: true });
+    expect(settings.update).toHaveBeenCalledWith(
+      expect.objectContaining({ brandName: "Acme", brandLogoUrl: null, brandAccentColor: "#112233", brandHidePoweredBy: true }),
+    );
+    // untouched (undefined) fields must NOT appear in the patch
+    expect((settings.update as jest.Mock).mock.calls[0][0]).not.toHaveProperty("brandFaviconUrl");
+    expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance.branding", actor: "owner1" });
+    expect(out).toMatchObject({ name: "Acme" }); // returns the effective branding
   });
 });

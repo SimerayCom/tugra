@@ -13,6 +13,7 @@ import { Spinner, Btn } from "./ui";
 import { useToast } from "./toast";
 import { CommandPalette, type CommandDest } from "./command-palette";
 import { TeamScopeSelect } from "./team-scope";
+import { BrandMark } from "./branding";
 import {
   Activity,
   Bell,
@@ -169,9 +170,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
     >
       <div style={{ padding: col ? "16px 0" : "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, marginBottom: 12 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/tugra-logo.svg" alt="Tugra" width={36} height={36} />
-          {!col && <div style={{ fontWeight: 700, fontSize: 19, letterSpacing: "-0.01em" }}>Tugra</div>}
+          <BrandMark size={36} nameSize={19} showName={!col} />
         </div>
         <button
           onClick={openPalette}

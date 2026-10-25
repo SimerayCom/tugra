@@ -1147,5 +1147,14 @@ model InstanceSettings {
   telemetryEnabled    Boolean   @default(true)
   telemetryInstanceId String?
   telemetryLastSentAt DateTime?
+  // White-label (Pro edition). Owner-set branding that replaces the Tugra name/logo/favicon/accent and can
+  // hide the "Powered by Tugra" footer. Read publicly (the login page themes before auth) BUT only applied
+  // while the instance is Pro+ — a Community or lapsed-license instance always shows the Tugra defaults, so
+  // these can't become a free rebrand. URLs are http(s), accent is a #rrggbb hex (validated in the DTO).
+  brandName           String?
+  brandLogoUrl        String?
+  brandFaviconUrl     String?
+  brandAccentColor    String?
+  brandHidePoweredBy  Boolean   @default(false)
   updatedAt           DateTime  @updatedAt
 }
