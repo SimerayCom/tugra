@@ -492,6 +492,7 @@ model AuditLog {
 
   @@index([createdAt])
   @@index([target, createdAt]) // per-resource audit (GET /apps|servers|databases/:id/audit) filters by target
+  @@index([actor, createdAt]) // actor-scoped list + Pro export (WHERE actor IN (...) ORDER BY createdAt)
 }
 
 enum MonitorType {

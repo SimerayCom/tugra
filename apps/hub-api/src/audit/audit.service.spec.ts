@@ -153,3 +153,88 @@ describe("AuditService.list", () => {
     expect(page.nextCursor).toBe("l99"); // last id of the full page
   });
 });
+
+describe("AuditService.exportEntries", () => {
+  it("reads the first keyset batch with the actor scope + filters, no cursor, and sanitizes meta", async () => {
+    const auditFind = jest.fn().mockResolvedValue([
+      { id: "l1", actor: "u1", action: "instance.license", target: "singleton", meta: { resetUrl: "SECRET", via: "session" }, createdAt: new Date() },
+    ]);
+    const svc = make({
+      membership: { findMany: jest.fn().mockResolvedValue([{ teamId: "t1", userId: "u1", role: Role.VIEWER }]) },
+      auditLog: { findMany: auditFind },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: "u1", email: "me@x.io" }]) },
+    } as unknown as PrismaService);
+    const { entries, truncated } = await svc.exportEntries("u1", "t1", { action: "instance.license" });
+    const arg = auditFind.mock.calls[0][0];
+    expect(arg.where).toEqual({ actor: { in: ["u1"] }, action: "instance.license" }); // non-admin → self only
+    expect(arg.take).toBe(1_000); // EXPORT_BATCH
+    expect(arg.cursor).toBeUndefined(); // first batch has no cursor
+    expect(truncated).toBe(false); // a partial batch means the table is exhausted
+    expect(entries[0].meta).toEqual({ via: "session" }); // resetUrl stripped
+    expect(entries[0].actor).toBe("me@x.io");
+  });
+
+  it("team admins export every member's actions", async () => {
+    const membershipFind = jest
+      .fn()
+      .mockResolvedValueOnce([{ teamId: "t1", userId: "u1", role: Role.ADMIN }])
+      .mockResolvedValueOnce([{ userId: "u1" }, { userId: "u2" }]);
+    const auditFind = jest.fn().mockResolvedValue([]);
+    const svc = make({
+      membership: { findMany: membershipFind },
+      auditLog: { findMany: auditFind },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService);
+    await svc.exportEntries("u1", "t1");
+    expect(auditFind.mock.calls[0][0].where).toEqual({ actor: { in: ["u1", "u2"] } });
+  });
+
+  it("advances the keyset cursor across full batches until the table is exhausted", async () => {
+    const full = Array.from({ length: 1_000 }, (_, i) => ({ id: `a${i}`, actor: "u1", action: "x", target: null, meta: null, createdAt: new Date() }));
+    const auditFind = jest
+      .fn()
+      .mockResolvedValueOnce(full) // a full batch → there may be more
+      .mockResolvedValueOnce([]); // …then empty → done
+    const svc = make({
+      membership: { findMany: jest.fn().mockResolvedValue([{ teamId: "t1", userId: "u1", role: Role.VIEWER }]) },
+      auditLog: { findMany: auditFind },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: "u1", email: "me@x.io" }]) },
+    } as unknown as PrismaService);
+    const { entries, truncated } = await svc.exportEntries("u1");
+    expect(auditFind).toHaveBeenCalledTimes(2);
+    expect(auditFind.mock.calls[1][0]).toMatchObject({ cursor: { id: "a999" }, skip: 1 }); // keyset from last id
+    expect(entries).toHaveLength(1_000);
+    expect(truncated).toBe(false);
+  });
+
+  it("stops at the byte budget (not just the row cap) and flags truncated when rows carry large meta", async () => {
+    const big = "x".repeat(1_000_000); // ~1 MB each → the ~25 MB budget trips well before any row cap
+    const rows = Array.from({ length: 40 }, (_, i) => ({ id: `b${i}`, actor: "u1", action: "x", target: null, meta: { blob: big }, createdAt: new Date() }));
+    const svc = make({
+      membership: { findMany: jest.fn().mockResolvedValue([{ teamId: "t1", userId: "u1", role: Role.VIEWER }]) },
+      auditLog: { findMany: jest.fn().mockResolvedValue(rows) },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: "u1", email: "me@x.io" }]) },
+    } as unknown as PrismaService);
+    const { entries, truncated } = await svc.exportEntries("u1");
+    expect(truncated).toBe(true);
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.length).toBeLessThan(40); // budget stopped it before consuming all rows
+  });
+});
+
+describe("AuditService.log meta cap", () => {
+  it("truncates an oversized meta at write, keeping only the auth stamps + a marker", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const svc = make({ auditLog: { create } } as unknown as PrismaService);
+    const huge = "y".repeat(20_000); // > META_MAX_BYTES (16 KB)
+    await auditContext.run({ via: "pat", tokenId: "tok1" }, () => svc.log({ actor: "u1", action: "mcp.tools_call", meta: { args: huge } }));
+    expect(create.mock.calls[0][0].data.meta).toEqual({ _truncated: true, via: "pat", tokenId: "tok1" });
+  });
+
+  it("leaves a normal-sized meta untouched", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const svc = make({ auditLog: { create } } as unknown as PrismaService);
+    await svc.log({ actor: "u1", action: "app.deploy", meta: { n: 1 } });
+    expect(create.mock.calls[0][0].data.meta).toEqual({ n: 1 });
+  });
+});

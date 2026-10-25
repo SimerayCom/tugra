@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Download, ScrollText } from "lucide-react";
-import { api } from "../../../lib/api";
+import { api, ApiError } from "../../../lib/api";
 import { filterAudit, auditToCsv } from "../../../lib/audit";
 import { useT } from "../../../i18n/provider";
-import { Btn, Card, EmptyState } from "../../../components/ui";
+import { Badge, Btn, Card, EmptyState } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TextInput } from "../../../components/form";
 import { useTeamScope } from "../../../components/team-scope";
+import { useToast } from "../../../components/toast";
 import { Skeleton, SkeletonTable } from "../../../components/skeleton";
 
 function fmt(iso: string) {
@@ -23,6 +24,30 @@ export default function AuditPage() {
   // own actions; picking a team shows that team's activity (if you admin it).
   const { teamId } = useTeamScope();
   const [q, setQ] = useState("");
+  const toast = useToast();
+
+  // The full-trail export is a Pro feature; the edition comes from the public instance status.
+  const { data: status } = useQuery({ queryKey: ["instanceStatus"], queryFn: () => api.getInstanceStatus(), staleTime: 60_000 });
+  const isPro = !!status && status.edition !== "community";
+  const [exporting, setExporting] = useState<null | "csv" | "json">(null);
+
+  const exportFull = async (format: "csv" | "json") => {
+    setExporting(format);
+    try {
+      const { blob, truncated } = await api.exportAudit(teamId ?? undefined, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tugra-audit.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      if (truncated) toast(t("audit.exportTruncated"), "info");
+    } catch (e) {
+      toast(e instanceof ApiError && e.message === "pro-only" ? t("audit.exportProHint") : t("audit.exportFailed"), "error");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
     // Distinct from the dashboard's plain ["audit-recent"] useQuery: sharing one key fed this
@@ -78,8 +103,24 @@ export default function AuditPage() {
             </div>
             <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{shown.length}/{entries.length}</span>
             <Btn variant="ghost" onClick={exportCsv} disabled={shown.length === 0}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> {t("audit.exportCsv")}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> {t("audit.exportShown")}</span>
             </Btn>
+            {isPro ? (
+              <>
+                <Btn variant="ghost" onClick={() => exportFull("csv")} disabled={!!exporting}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> {exporting === "csv" ? "…" : t("audit.exportFullCsv")}</span>
+                </Btn>
+                <Btn variant="ghost" onClick={() => exportFull("json")} disabled={!!exporting}>
+                  {exporting === "json" ? "…" : t("audit.exportFullJson")}
+                </Btn>
+              </>
+            ) : (
+              <Btn variant="ghost" onClick={() => toast(t("audit.exportProHint"), "info")}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Download size={14} /> {t("audit.exportFull")} <Badge tone="gold">Pro</Badge>
+                </span>
+              </Btn>
+            )}
           </div>
           {shown.length === 0 ? (
             <EmptyState icon={ScrollText} title={t("audit.noMatchTitle")}>{t("audit.noMatch")}</EmptyState>
