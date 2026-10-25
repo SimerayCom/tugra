@@ -11,6 +11,7 @@ import { ApiTokensCard } from "./api-tokens-card";
 import { InstanceApiAccessCard } from "./instance-api-access-card";
 import { LicenseCard } from "./license-card";
 import { SsoConfigCard } from "./sso-config-card";
+import { TelemetryCard } from "./telemetry-card";
 import { UpdatesCard } from "./updates-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
@@ -38,6 +39,7 @@ export default function SettingsPage() {
       <InstanceApiAccessCard />
       <SsoConfigCard />
       <UpdatesCard />
+      <TelemetryCard />
 
       <Card style={{ padding: 18, marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>

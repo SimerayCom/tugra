@@ -22,6 +22,27 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
 - **Registration gating.** After the first owner is created, sign-ups are closed unless the owner enables
   them or issues an invite.
 
+## Outbound connections
+
+Every connection a Tugra hub can make, with its default state and off-switch. Nothing here carries app
+secrets, server names, IPs or personal data unless noted.
+
+| Connection | Default | Off-switch / opt-in | Where in code |
+| --- | --- | --- | --- |
+| Agent ↔ hub (WSS, signed commands) | On (core function) | n/a — the product | `agent-gateway/`, `scripts/agent-bootstrap` |
+| **Anonymous usage stats** → `TUGRA_TELEMETRY_URL` (default `telemetry.tugra.io`) | **On (opt-out)** | `TUGRA_TELEMETRY=0` / `install.sh --no-telemetry` / Settings toggle | `telemetry/telemetry.service.ts` |
+| Signed update-manifest check | **Off** — opt-in; when enabled, a scheduled daily fetch (not click-only) | `UPDATE_MANIFEST_URL` + `--enable-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts` |
+| ACME / Let's Encrypt (issue TLS certs) | Only when you enable SSL for a domain | per-app/domain | `dns/`, `deploy/` |
+| Remote template catalog | Off — opt-in, signature-verified | `CATALOG_SOURCE_URL` + `CATALOG_PUBLISHER_KEY` | `catalog/` |
+| AI deploy-log analysis → Anthropic | Off — opt-in | `ANTHROPIC_API_KEY` | `deploy/` |
+| Notifications / registries / git / monitors | Only what you configure; SSRF-guarded | per-resource; `NOTIFY_ALLOW_PRIVATE_TARGETS` for LAN | `notifications/`, `registries/`, `git-sources/`, `monitors/` |
+
+The telemetry payload is exactly: a random, stable instance id; the hub version, channel, edition and
+OS/arch; and aggregate counts (servers, apps, databases, deploys, teams, users, clusters, monitors,
+containers). No IP, hostname, domain, email, app or server name is included, and the receiver does not
+store the sender's IP. The owner can preview the exact payload, send on demand, rotate the id, or opt out
+in **Settings → Anonymous usage stats**.
+
 ## Self-update security
 
 The one-click / auto self-update runs through a deliberately minimal `tugra-updater` sidecar with a fixed

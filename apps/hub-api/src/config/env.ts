@@ -148,6 +148,18 @@ export const envSchema = z
     .refine(isBase64Ed25519Spki, "TUGRA_LICENSE_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
     .optional(),
   TUGRA_LICENSE: z.string().min(1).optional(),
+  // Anonymous usage stats (ON by default, opt-out — a product decision; the one default-on outbound call,
+  // deliberately exempt from the outbound guard). This env var is the DEPLOYMENT-level switch: "0" is a
+  // HARD off (install.sh --no-telemetry / headless CI writes it) that overrides the owner-UI toggle and
+  // stops the scheduler from ever starting; "1" or unset = on, with the owner-UI toggle (DB
+  // telemetryEnabled) then governing at runtime. Only "0"/"1" are accepted so a typo fails fast at boot.
+  TUGRA_TELEMETRY: z.enum(["0", "1"]).optional(),
+  // Where the anonymous stats are sent. Has a default so telemetry is genuinely on-by-default (requiring an
+  // operator to set it would make it opt-in). Override to self-host the receiver or to point at a mirror;
+  // an unreachable endpoint just skips the round (the sender never throws, never blocks a deploy).
+  TUGRA_TELEMETRY_URL: z.string().url().default("https://telemetry.tugra.io/v1/ingest"),
+  // How often (minutes) the anonymous stats are sent. Default daily. The first send runs ~1 min after boot.
+  TUGRA_TELEMETRY_INTERVAL_MIN: z.coerce.number().int().positive().default(1440),
   })
   // Fail closed: a stable command-signing identity is required anywhere that is
   // not EXPLICITLY development or test — including an unset NODE_ENV — so a live

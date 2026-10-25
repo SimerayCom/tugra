@@ -11,7 +11,7 @@ a new version on its own. Turn them on explicitly, either at install
 in `.env` and restarting hub-api. With checks off, upgrade manually by re-running the installer, and watch
 GitHub releases for security advisories.
 
-(Separate from update checks: anonymous usage stats are on by default — counts only, no names, IPs, domains or secrets — and you can turn them off anytime with `--no-telemetry`, `TUGRA_TELEMETRY=0`, or in Settings.)
+(Separate from update checks: anonymous usage stats are on by default — aggregate counts plus your version, edition and OS under a random id; no names, IPs, domains or secrets, and the receiver doesn't store your IP — and you can turn them off anytime with `--no-telemetry`, `TUGRA_TELEMETRY=0`, or in Settings. **Upgrading from a pre-telemetry release?** The stats turn on with this upgrade; opt out in Settings → Anonymous usage stats, or set `TUGRA_TELEMETRY=0`.)
 
 Once enabled, Tugra checks a **publisher-signed release manifest** (`versions.json` + a detached ed25519
 signature). Before any update is applied the hub:

@@ -22,10 +22,13 @@ import {
   UpdateInstanceSettingsSchema,
   UpdateInstanceUpdateInput,
   UpdateInstanceUpdateSchema,
+  UpdateTelemetryInput,
+  UpdateTelemetrySchema,
 } from "./dto";
 import { UpdateService } from "../update/update.service";
 import { UpdaterService, isTerminalPhase } from "../update/updater.service";
 import { UpdateApplyResultSchema, UpdateStatusViewSchema } from "../update/dto";
+import { TelemetryService } from "../telemetry/telemetry.service";
 
 /**
  * Owner-only instance settings, managed with the login SESSION (JwtAuthGuard, not ApiAuthGuard) — like API
@@ -44,6 +47,7 @@ export class InstanceSettingsController {
     private readonly updater: UpdaterService,
     private readonly crypto: CryptoService,
     private readonly license: LicenseService,
+    private readonly telemetry: TelemetryService,
   ) {}
 
   /**
@@ -259,5 +263,46 @@ export class InstanceSettingsController {
     await this.license.refresh(); // re-read + re-cache the effective edition (no restart needed)
     await this.audit.log({ actor: user.userId, action: "instance.license", target: "singleton", meta: { cleared: !token } }); // token never logged
     return this.license.status();
+  }
+
+  /**
+   * Anonymous usage stats (ON by default, opt-out). Owner-only (class guards). Returns the effective state,
+   * whether the env hard-off (TUGRA_TELEMETRY=0) is overriding the toggle, the anonymous instance id, the
+   * last send time, the endpoint/interval AND a LIVE preview of the exact payload that would be sent — so
+   * the owner can see, byte-for-byte, what leaves the box (there is no hidden field; no IP/host/domain/PII).
+   */
+  @Get("telemetry")
+  async getTelemetry() {
+    return this.telemetry.status();
+  }
+
+  /** Flip the owner-UI telemetry toggle. Has no effect while TUGRA_TELEMETRY=0 forces it off (env wins). */
+  @Patch("telemetry")
+  @ApiZodBody(UpdateTelemetrySchema)
+  async setTelemetry(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(UpdateTelemetrySchema)) body: UpdateTelemetryInput,
+  ) {
+    await this.telemetry.setEnabled(body.enabled);
+    await this.audit.log({ actor: user.userId, action: "instance.telemetry", target: "singleton", meta: { enabled: body.enabled } });
+    return this.telemetry.status();
+  }
+
+  /** Send an anonymous stats ping now (owner "send now"). Never throws; returns the send outcome. */
+  @Post("telemetry/send")
+  @HttpCode(200)
+  async sendTelemetry(@CurrentUser() user: AuthUser) {
+    const res = await this.telemetry.sendNow();
+    await this.audit.log({ actor: user.userId, action: "instance.telemetry_send", target: "singleton", meta: { result: res.status } });
+    return res;
+  }
+
+  /** Rotate the anonymous instance id (owner "reset identity"). Returns the refreshed status. */
+  @Post("telemetry/reset")
+  @HttpCode(200)
+  async resetTelemetry(@CurrentUser() user: AuthUser) {
+    await this.telemetry.resetInstanceId();
+    await this.audit.log({ actor: user.userId, action: "instance.telemetry_reset", target: "singleton" });
+    return this.telemetry.status();
   }
 }

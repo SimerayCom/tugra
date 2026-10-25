@@ -6,6 +6,7 @@ import type { UpdateService } from "../update/update.service";
 import type { UpdaterService } from "../update/updater.service";
 import type { CryptoService } from "../crypto/crypto.service";
 import type { LicenseService } from "../license/license.service";
+import type { TelemetryService } from "../telemetry/telemetry.service";
 import { REQUIRE_EDITION } from "../common/edition";
 
 // The SSRF guard does real DNS resolution (tested in safe-url's own spec); mock it here so the controller
@@ -72,7 +73,13 @@ function make(current: CurrentSettings) {
     verifyToken: jest.fn().mockResolvedValue({ edition: "pro", expiresAt: Date.now() + 3600_000 }),
     refresh: jest.fn().mockResolvedValue(undefined),
   } as unknown as LicenseService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license), settings, audit, update, updater, crypto, license };
+  const telemetry = {
+    status: jest.fn().mockResolvedValue({ enabled: true, forcedOff: false, dbEnabled: true, instanceId: "anon-id", lastSentAt: null, intervalMin: 1440, endpoint: "https://telemetry.tugra.io/v1/ingest", payload: {} }),
+    setEnabled: jest.fn().mockResolvedValue(undefined),
+    sendNow: jest.fn().mockResolvedValue({ status: "sent" }),
+    resetInstanceId: jest.fn().mockResolvedValue("anon-id-2"),
+  } as unknown as TelemetryService;
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry), settings, audit, update, updater, crypto, license, telemetry };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -310,5 +317,44 @@ describe("InstanceSettingsController — license", () => {
   it("license endpoints are NOT edition-gated (a Community instance can upgrade)", () => {
     expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.getLicense)).toBeUndefined();
     expect(Reflect.getMetadata(REQUIRE_EDITION, InstanceSettingsController.prototype.updateLicense)).toBeUndefined();
+  });
+});
+
+describe("InstanceSettingsController — telemetry", () => {
+  it("getTelemetry returns the TelemetryService status", async () => {
+    const { ctrl, telemetry } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const st = await ctrl.getTelemetry();
+    expect(telemetry.status).toHaveBeenCalled();
+    expect(st).toMatchObject({ enabled: true, forcedOff: false });
+  });
+
+  it("setTelemetry flips the owner toggle + audits the new value", async () => {
+    const { ctrl, telemetry, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.setTelemetry(OWNER, { enabled: false });
+    expect(telemetry.setEnabled).toHaveBeenCalledWith(false);
+    const auditArg = (audit.log as jest.Mock).mock.calls[0][0];
+    expect(auditArg).toMatchObject({ action: "instance.telemetry", actor: "owner1", meta: { enabled: false } });
+  });
+
+  it("sendTelemetry triggers a send and audits the outcome", async () => {
+    const { ctrl, telemetry, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const res = await ctrl.sendTelemetry(OWNER);
+    expect(telemetry.sendNow).toHaveBeenCalled();
+    expect(res).toEqual({ status: "sent" });
+    expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance.telemetry_send" });
+  });
+
+  it("resetTelemetry rotates the anonymous id", async () => {
+    const { ctrl, telemetry, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.resetTelemetry(OWNER);
+    expect(telemetry.resetInstanceId).toHaveBeenCalled();
+    expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance.telemetry_reset" });
+  });
+
+  it("the telemetry endpoints are owner-guarded by the class guards (session + InstanceOwnerGuard, not a PAT)", () => {
+    // Guards are declared at class level, so every telemetry handler inherits JwtAuthGuard +
+    // InstanceOwnerGuard — a non-owner or a PAT cannot reach GET/PATCH/POST /instance/telemetry.
+    const guards = (Reflect.getMetadata("__guards__", InstanceSettingsController) ?? []).map((g: unknown) => (g as { name: string }).name);
+    expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "InstanceOwnerGuard"]));
   });
 });

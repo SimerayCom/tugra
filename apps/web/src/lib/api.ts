@@ -5,6 +5,7 @@ import type {
   InstanceStatus,
   InstanceUpdateApply,
   InstanceUpdateStatus,
+  TelemetryStatus,
   OwnerInstanceSettings,
   OidcConfig,
   LicenseStatus,
@@ -310,6 +311,19 @@ export const api = {
   // Start the updater (owner). Throws ApiError 409 when an update is already in progress.
   applyInstanceUpdate() {
     return apiFetch<InstanceUpdateApply>("/instance/update", { method: "POST" });
+  },
+  // Owner-only anonymous usage stats (on by default, opt-out). Status includes a live payload preview.
+  getTelemetry() {
+    return apiFetch<TelemetryStatus>("/instance/telemetry");
+  },
+  updateTelemetry(enabled: boolean) {
+    return apiFetch<TelemetryStatus>("/instance/telemetry", { method: "PATCH", body: JSON.stringify({ enabled }) });
+  },
+  sendTelemetryNow() {
+    return apiFetch<{ status: "sent" | "disabled" | "error" }>("/instance/telemetry/send", { method: "POST" });
+  },
+  resetTelemetryId() {
+    return apiFetch<TelemetryStatus>("/instance/telemetry/reset", { method: "POST" });
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current
