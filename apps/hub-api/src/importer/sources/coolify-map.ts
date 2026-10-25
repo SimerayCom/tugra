@@ -128,6 +128,20 @@ export function coolifyEngine(db: CoolifyDatabase): TugraDbEngine | "UNKNOWN" {
 /** Coolify sets this fake repo (branch "main") on dockerimage + inline-dockerfile apps that have no real git. */
 const PLACEHOLDER_REPO = "coollabsio/coolify";
 
+/**
+ * Coolify stores a GitHub-App source's repo as a bare `owner/repo`, which is NOT a cloneable URL — it fails
+ * Tugra's gitUrl validation and the clone step (the importer calls ApplicationsService.create directly, so
+ * the Zod regex never runs). Normalize that shorthand to a full https GitHub URL. Values that already look
+ * like a URL/scp form (https/ssh/git@) pass through unchanged; an unrecognized form is left as-is (the
+ * planner surfaces it as needs-manual rather than silently rewriting an unknown provider).
+ */
+export function normalizeGitUrl(repo: string): string {
+  const r = repo.trim();
+  if (/^(https?:\/\/|git@|ssh:\/\/)/i.test(r)) return r; // already a clone URL / scp-like form
+  if (/^[\w.-]+\/[\w.-]+$/.test(r)) return `https://github.com/${r.replace(/\.git$/i, "")}.git`; // owner/repo (GitHub App)
+  return r;
+}
+
 /** Whether the app actually builds from a real git repository (filters out Coolify's dockerimage placeholder). */
 export function hasRealGit(app: CoolifyApp): boolean {
   const r = app.git_repository;
@@ -251,7 +265,7 @@ export function mapApplication(
     // credentials, which would break the secret-free contract. Only set git for a real repo.
     git: realGit
       ? {
-          url: app.git_repository!,
+          url: normalizeGitUrl(app.git_repository!),
           branch: app.git_branch ?? undefined,
           dockerfilePath: app.dockerfile_location ?? undefined,
           baseDirectory: app.base_directory ?? undefined,
