@@ -7,8 +7,28 @@ import {
   mapApplication,
   mapDatabase,
   buildCoolifyFleet,
+  normalizeGitUrl,
   type CoolifyFleetInput,
 } from "./coolify-map";
+
+describe("normalizeGitUrl", () => {
+  it("normalizes a bare owner/repo (Coolify GitHub-App form) to a clone URL", () => {
+    expect(normalizeGitUrl("o/r")).toBe("https://github.com/o/r.git");
+    expect(normalizeGitUrl("acme/my-app.git")).toBe("https://github.com/acme/my-app.git"); // no double .git
+    expect(normalizeGitUrl("  acme/my-app  ")).toBe("https://github.com/acme/my-app.git"); // trimmed
+  });
+  it("passes real URLs / scp forms through unchanged", () => {
+    expect(normalizeGitUrl("https://github.com/o/r.git")).toBe("https://github.com/o/r.git");
+    expect(normalizeGitUrl("git@github.com:o/r.git")).toBe("git@github.com:o/r.git");
+    expect(normalizeGitUrl("ssh://git@host/o/r.git")).toBe("ssh://git@host/o/r.git");
+  });
+  it("leaves an unrecognized form as-is (planner flags it, no silent rewrite)", () => {
+    expect(normalizeGitUrl("some-weird-value")).toBe("some-weird-value");
+  });
+  it("the normalized owner/repo URL satisfies CreateAppSchema's gitUrl regex", () => {
+    expect(/^(https:\/\/|git@|ssh:\/\/)/.test(normalizeGitUrl("o/r"))).toBe(true);
+  });
+});
 
 describe("mapCoolifyBuildPack", () => {
   it("maps each Coolify build pack to a Tugra kind + build pack", () => {
@@ -98,7 +118,8 @@ describe("mapApplication", () => {
       kind: "git",
       buildPack: "nixpacks",
       imageOrigin: "built-from-git",
-      git: { url: "o/r", branch: "main" },
+      git: { url: "https://github.com/o/r.git", branch: "main" }, // owner/repo (GitHub App) normalized to a clone URL
+
       ports: [3000],
       serverRef: "srv-a",
       internalHost: "app-1",
