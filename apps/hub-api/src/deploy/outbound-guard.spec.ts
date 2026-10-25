@@ -22,6 +22,10 @@ describe("outbound guard — zero phone-home by default", () => {
     expect(install.match(/ensure_env UPDATE_PUBLISHER_KEY/g)).toHaveLength(1);
   });
 
+  // NB: anonymous usage stats (TUGRA_TELEMETRY) are intentionally ON by default (opt-out) — a product
+  // decision, so they are NOT part of this "nothing phones home by default" guard. Their off-switch
+  // (--no-telemetry / TUGRA_TELEMETRY=0) is covered by hub-install-script.spec.
+
   it("install.sh runs the public-IP probe ONLY inside the --detect-public-ip opt-in", () => {
     // the ipify/ifconfig/icanhazip chain must appear AFTER (inside) the detect guard
     expect(install).toMatch(/\[ "\$DETECT_PUBLIC_IP" = "1" \][\s\S]*api\.ipify\.org/);

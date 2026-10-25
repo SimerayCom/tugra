@@ -134,6 +134,15 @@ describe("scripts/install.sh", () => {
       expect(env.HUB_BIND).toBe("127.0.0.1");
       expect(env.WEB_BIND).toBe("127.0.0.1");
     });
+
+    it("anonymous telemetry is ON by default and turns off with --no-telemetry", () => {
+      const onPath = join(dir, "tel-on.env");
+      run([], onPath); // headless (no TTY): keeps the default on
+      expect(parseEnv(readFileSync(onPath, "utf8")).TUGRA_TELEMETRY).toBe("1");
+      const offPath = join(dir, "tel-off.env");
+      run(["--no-telemetry"], offPath);
+      expect(parseEnv(readFileSync(offPath, "utf8")).TUGRA_TELEMETRY).toBe("0");
+    });
   });
 
   describe("deploy/docker-compose.yml", () => {

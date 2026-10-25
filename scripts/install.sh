@@ -36,6 +36,8 @@ DRY_RUN=0
 ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}"
 DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
+ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
+NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
 HUB_PORT="${HUB_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3001}"
 
@@ -93,6 +95,8 @@ while [ $# -gt 0 ]; do
     --build)    FORCE_BUILD=1; shift ;;
     --pull)     FORCE_PULL=1; shift ;;
     --enable-update-checks) ENABLE_UPDATE_CHECKS=1; shift ;;
+    --enable-telemetry)     ENABLE_TELEMETRY=1; shift ;;
+    --no-telemetry)         NO_TELEMETRY=1; shift ;;
     --detect-public-ip)     DETECT_PUBLIC_IP=1; shift ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
@@ -170,6 +174,27 @@ preflight() {
 if [ "$DRY_RUN" -eq 0 ]; then
   banner
   preflight
+fi
+
+# Anonymous usage stats are ON by default, opt-out. COUNTS ONLY (servers, apps, databases, deploys) with a
+# random id — never names, IPs, domains or secrets — and changeable anytime in Settings. Turn it off with
+# --no-telemetry (or TUGRA_TELEMETRY=0). On a fresh install we decide once: an interactive run confirms with a
+# [Y/n] prompt (default yes); a headless run keeps it on and prints a notice. A prior choice in .env is kept.
+if ! env_has TUGRA_TELEMETRY; then
+  if [ "$NO_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "0" ]; then
+    TELEMETRY_DECISION="0"
+  elif [ "$ENABLE_TELEMETRY" = "1" ] || [ "${TUGRA_TELEMETRY:-}" = "1" ]; then
+    TELEMETRY_DECISION="1"
+  elif [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
+    printf '\n  Help improve Tugra with anonymous usage stats? Counts only (servers, apps, deploys), no\n  names, IPs or secrets, and you can turn it off anytime in Settings.\n'
+    printf '  Share stats? [Y/n] '
+    IFS= read -r _tel_ans </dev/tty || _tel_ans=""
+    case "$_tel_ans" in [Nn] | [Nn][Oo]) TELEMETRY_DECISION="0" ;; *) TELEMETRY_DECISION="1" ;; esac
+    printf '\n'
+  else
+    TELEMETRY_DECISION="1"
+    [ "$DRY_RUN" -eq 0 ] && note "Anonymous usage stats are ON by default (counts only, no identifiers). Turn off with --no-telemetry or TUGRA_TELEMETRY=0, or in Settings."
+  fi
 fi
 
 # --- resolve the public URLs + cookie/proxy mode ----------------------------------------------------
@@ -268,6 +293,10 @@ if [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
   ensure_env UPDATE_MANIFEST_URL  "https://simeraycom.github.io/tugra/versions.json"
   ensure_env UPDATE_PUBLISHER_KEY "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE="
 fi
+# Persist the telemetry choice decided above (default on; "0" if opted out). only-if-unset, so a re-run
+# keeps whatever is already in .env. The hub sends a once-a-day anonymous ping of COUNTS only (servers,
+# apps, databases, deploys) with a random instance id when TUGRA_TELEMETRY != "0".
+[ -n "${TELEMETRY_DECISION:-}" ] && ensure_env TUGRA_TELEMETRY "$TELEMETRY_DECISION"
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"
@@ -354,6 +383,11 @@ if ! env_has LOCAL_SERVER_PUBLIC_IP; then
 fi
 if [ "$ENABLE_UPDATE_CHECKS" != "1" ] && ! env_has UPDATE_MANIFEST_URL; then
   printf '  \033[2mUpdate checks are OFF (nothing phones home). Enable signed update checks: re-run with --enable-update-checks (see docs/upgrade.md). Watch GitHub releases for security advisories.\033[0m\n'
+fi
+if [ "$(env_get TUGRA_TELEMETRY)" = "0" ]; then
+  printf '  \033[2mAnonymous usage stats are OFF.\033[0m\n'
+else
+  printf '  \033[2mAnonymous usage stats are ON (counts only: servers, apps, deploys — no names, IPs or secrets). Turn off anytime with --no-telemetry or in Settings.\033[0m\n'
 fi
 if [ "$FRESH_SETUP_CODE" -eq 1 ]; then
   _code="$(env_get SETUP_CODE)"
