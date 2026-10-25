@@ -156,5 +156,9 @@
   "telemetryResetDone": "A fresh anonymous ID was generated",
   "telemetryThanks": "Thanks — you're helping Tugra get better",
   "telemetryOffToast": "Anonymous stats turned off",
-  "telemetrySaveFailed": "Couldn't save the setting"
+  "telemetrySaveFailed": "Couldn't save the setting",
+  "sectionAccount": "Account",
+  "sectionSecurity": "Security & access",
+  "sectionInstance": "Instance",
+  "sectionInstanceHint": "Instance-wide settings — visible to the instance owner only."
 }

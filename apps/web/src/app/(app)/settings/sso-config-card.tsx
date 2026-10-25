@@ -80,7 +80,7 @@ export function SsoConfigCard() {
   };
 
   return (
-    <Card style={{ padding: 18, marginTop: 16 }}>
+    <Card style={{ padding: 18 }}>
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("settings.sso")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 14px" }}>{t("settings.ssoDesc")}</p>
 

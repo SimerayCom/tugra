@@ -58,7 +58,7 @@ export function TelemetryCard() {
   const lastSent = data?.lastSentAt ? new Date(data.lastSentAt).toLocaleString() : t("settings.telemetryNever");
 
   return (
-    <Card style={{ padding: 18, marginTop: 16 }}>
+    <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600 }}>{t("settings.telemetry")}</div>
         {data && (
