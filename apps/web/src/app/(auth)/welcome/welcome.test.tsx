@@ -61,7 +61,7 @@ describe("WelcomePage wizard", () => {
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
   });
 
-  it("create-admin: registers the owner then advances to instance-basics", async () => {
+  it("create-admin: registers the owner then advances to choose-mode", async () => {
     h.auth = { user: null, loading: false, initialized: false, reload: vi.fn() };
     h.search = "step=create-admin";
     vi.spyOn(api, "getInstanceStatus").mockResolvedValue({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: false });
@@ -72,8 +72,19 @@ describe("WelcomePage wizard", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "supersecret1" } });
     fireEvent.click(screen.getByRole("button", { name: "Create account & continue" }));
     await waitFor(() => expect(reg).toHaveBeenCalledWith("owner@x.co", "supersecret1", undefined, undefined));
-    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=instance-basics"));
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=choose-mode"));
     expect(h.auth.reload).toHaveBeenCalled();
+  });
+
+  it("choose-mode: picking Home persists uiMode and advances to instance-basics", async () => {
+    h.auth = { user: { ...owner, uiMode: "fleet" } as PublicUser, loading: false, initialized: true, reload: vi.fn() };
+    h.search = "step=choose-mode";
+    const upd = vi.spyOn(api, "updateProfile").mockResolvedValue({ ...owner, uiMode: "home" } as PublicUser);
+    wrap();
+    expect(screen.getByText("How will you use Tugra?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Home — simple launcher/ }));
+    await waitFor(() => expect(upd).toHaveBeenCalledWith({ uiMode: "home" }));
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/welcome?step=instance-basics"));
   });
 
   it("create-admin: shows the Setup code field when required and passes the code to register", async () => {
@@ -102,12 +113,11 @@ describe("WelcomePage wizard", () => {
     expect(nav.replace).toHaveBeenCalledWith("/dashboard");
   });
 
-  it("a logged-in owner with no ?step resumes at instance-basics", () => {
+  it("a logged-in owner with no ?step resumes at choose-mode (the new first post-bootstrap step)", () => {
     h.auth = { user: owner, loading: false, initialized: true, reload: vi.fn() };
-    vi.spyOn(api, "getInstanceSettings").mockResolvedValue({ apiEnabled: true, apiAllowedIps: [], publicUrl: null, acmeEmail: null });
     wrap();
-    expect(screen.getByText("Instance basics")).toBeTruthy();
-    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("2");
+    expect(screen.getByText("How will you use Tugra?")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull(); // choose-mode is an uncounted interstitial
   });
 
   it("instance-basics: Save is disabled until the current settings load (no clobber-before-prefill)", async () => {

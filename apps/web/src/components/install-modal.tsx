@@ -115,9 +115,11 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
         // Keep the modal open and switch to a live progress view so the user watches it come up.
         setCreated(app);
       } else {
-        // Draft: go straight to the app's Configuration to review env/ports/volumes before deploying.
+        // Draft (not deployed). This modal is the HOME launcher's install flow, and /apps/:id is a fleet
+        // route the Home layout would bounce — so land on the launcher, where the new (stopped) tile shows
+        // and can be started/managed from its tile menu. No dead-end redirect.
         onClose();
-        router.push(`/apps/${app.id}?tab=configuration`);
+        router.push("/home");
       }
     },
   });
@@ -144,7 +146,8 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
       {online.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--c-tx3)", lineHeight: 1.5 }}>
           {t("home.noServer")}{" "}
-          <Link href="/servers/new" style={{ color: "var(--c-lapis)" }}>{t("home.connectServer")}</Link>
+          {/* Home-allowed path to add a server: the onboarding add-server step (fleet /servers/new would bounce). */}
+          <Link href="/welcome?step=add-first-server" style={{ color: "var(--c-lapis)" }}>{t("home.connectServer")}</Link>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

@@ -25,5 +25,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }, [loading, user, pathname, router]);
 
   if (loading || !user) return <CenteredSpinner />;
+  // Don't MOUNT a fleet page (and fire its queries) for a Home user who landed off-route — the effect above
+  // is redirecting to /home; show the spinner until it does, instead of flashing fleet content.
+  if (uiMode(user.uiMode) === "home" && !isHomeAllowed(pathname)) return <CenteredSpinner />;
   return <AppShell>{children}</AppShell>;
 }

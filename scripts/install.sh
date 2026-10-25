@@ -16,6 +16,12 @@
 #   --build             Force build-from-source (skip pulling published images).
 #   --pull              Force pulling published images (no source fallback).
 #   --env-file <path>   Write the env file here (default: <repo>/.env). Used by tests.
+#   --home              Start the owner account in the simple Home launcher (CasaOS-style) instead of the
+#                       full Fleet control plane. Owner can still choose/switch in onboarding or Settings.
+#   --no-telemetry      Opt OUT of the on-by-default anonymous usage stats (also: TUGRA_TELEMETRY=0).
+#   --enable-update-checks  Opt IN to the signed self-update version check (off by default).
+#   --detect-public-ip  Best-effort auto-detect this host's public IP (off by default, for privacy).
+#   --public-ip <ip>    Pin the host's public IP (so deployed-app magic URLs are reachable from outside).
 #   --dry-run           Generate the .env and exit — do not touch Docker.
 set -euo pipefail
 
@@ -38,6 +44,7 @@ DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
 ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
 NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
+HOME_MODE="${TUGRA_HOME_MODE:-0}"               # --home: start the owner in the simple Home launcher (CasaOS-style)
 HUB_PORT="${HUB_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3001}"
 
@@ -98,9 +105,10 @@ while [ $# -gt 0 ]; do
     --enable-telemetry)     ENABLE_TELEMETRY=1; shift ;;
     --no-telemetry)         NO_TELEMETRY=1; shift ;;
     --detect-public-ip)     DETECT_PUBLIC_IP=1; shift ;;
+    --home)                 HOME_MODE=1; shift ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
-    -h|--help)  sed -n '2,19p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,25p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
   esac
 done
@@ -302,6 +310,9 @@ fi
 # the implicit fresh-install default is only-if-unset (ensure_env) so an unrelated re-run keeps it.
 [ -n "${TELEMETRY_OVERRIDE:-}" ] && set_env TUGRA_TELEMETRY "$TELEMETRY_OVERRIDE"
 [ -n "${TELEMETRY_DECISION:-}" ] && ensure_env TUGRA_TELEMETRY "$TELEMETRY_DECISION"
+# --home: start the owner account in the simple Home launcher instead of the full Fleet control plane. The
+# owner can still pick/switch during onboarding (the welcome wizard) or later in Settings. only-if-unset.
+[ "$HOME_MODE" = "1" ] && ensure_env DEFAULT_UI_MODE home
 
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"

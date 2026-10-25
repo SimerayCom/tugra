@@ -162,6 +162,15 @@ describe("scripts/install.sh", () => {
       run([], p); // plain re-run must keep the opt-out
       expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("0");
     });
+
+    it("--home presets DEFAULT_UI_MODE=home (owner starts in the Home launcher); default install leaves it unset", () => {
+      const home = join(dir, "home.env");
+      run(["--home"], home);
+      expect(parseEnv(readFileSync(home, "utf8")).DEFAULT_UI_MODE).toBe("home");
+      const fleet = join(dir, "fleet.env");
+      run([], fleet); // no flag → unset (schema default "fleet")
+      expect(parseEnv(readFileSync(fleet, "utf8")).DEFAULT_UI_MODE).toBeUndefined();
+    });
   });
 
   describe("deploy/docker-compose.yml", () => {

@@ -12,11 +12,11 @@
  * `loggedIn === true` implies `initialized === true` always. The clamp therefore keys only on `loggedIn`.
  */
 
-export const STEPS = ["welcome", "create-admin", "instance-basics", "add-first-server", "first-workload", "done"] as const;
+export const STEPS = ["welcome", "create-admin", "choose-mode", "instance-basics", "add-first-server", "first-workload", "done"] as const;
 export type Step = (typeof STEPS)[number];
 
 /** Steps that require being logged in as the owner (everything after bootstrap). */
-const POST_BOOTSTRAP: readonly Step[] = ["instance-basics", "add-first-server", "first-workload", "done"];
+const POST_BOOTSTRAP: readonly Step[] = ["choose-mode", "instance-basics", "add-first-server", "first-workload", "done"];
 
 /** Non-bootstrap steps the owner may skip straight to the end. welcome/create-admin are NOT skippable. */
 const SKIPPABLE: readonly Step[] = ["instance-basics", "add-first-server", "first-workload"];
@@ -29,8 +29,8 @@ function isStep(v: string | null): v is Step {
  * Resolve the effective wizard step from the URL `?step=` and the auth state, clamping illegal jumps.
  * - Not logged in: only welcome/create-admin are reachable; any post-bootstrap request clamps BACK to
  *   create-admin (you must register the owner first). Unknown → welcome.
- * - Logged in (⟹ bootstrap done): welcome/create-admin clamp FORWARD to instance-basics (re-registering
- *   is closed/would 409). Post-bootstrap steps pass through. Unknown/absent → instance-basics (resume point).
+ * - Logged in (⟹ bootstrap done): welcome/create-admin clamp FORWARD to choose-mode (re-registering
+ *   is closed/would 409). Post-bootstrap steps pass through. Unknown/absent → choose-mode (resume point).
  */
 export function resolveStep(requested: string | null, ctx: { loggedIn: boolean }): Step {
   const step = isStep(requested) ? requested : null;
@@ -40,7 +40,7 @@ export function resolveStep(requested: string | null, ctx: { loggedIn: boolean }
     return "welcome";
   }
   // logged in → bootstrap already complete
-  if (step === null || step === "welcome" || step === "create-admin") return "instance-basics";
+  if (step === null || step === "welcome" || step === "create-admin") return "choose-mode";
   return step; // a valid post-bootstrap step
 }
 

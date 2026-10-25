@@ -8,11 +8,9 @@
   "goToDashboard": "Go to dashboard",
   "goToLauncher": "Go to your apps",
   "createFailed": "Something went wrong. Please try again.",
-
   "welcomeHeading": "Welcome to Tugra",
   "welcomeBody": "Let's get your instance ready in a few steps: create your owner account, set the basics, connect a server, and launch your first workload.",
   "welcomeStart": "Get started",
-
   "adminHeading": "Create the owner account",
   "adminBody": "The first account on this instance becomes the owner.",
   "setupCode": "Setup code",
@@ -21,7 +19,6 @@
   "password": "Password",
   "name": "Name",
   "createOwner": "Create account & continue",
-
   "basicsHeading": "Instance basics",
   "basicsBody": "Optional, but recommended. You can change these later in Settings.",
   "publicUrl": "Public URL",
@@ -29,7 +26,6 @@
   "acmeEmail": "Let's Encrypt email",
   "acmeEmailHint": "Used to issue SSL certificates for your apps' domains.",
   "saveContinue": "Save & continue",
-
   "serverHeading": "Connect your first server",
   "serverBody": "Give it a name — you'll get a one-line command to run on the machine.",
   "localServerBody": "This machine is being connected automatically — no command to run.",
@@ -46,13 +42,18 @@
   "serverConnected": "Server connected.",
   "reissueHint": "The enroll command expired before the server connected.",
   "reissueCta": "Get a new command",
-
   "workloadHeading": "Launch your first workload",
   "workloadBody": "Deploy an app from a Git repository, or install one in a click from the app store.",
   "deployGit": "Deploy from Git",
   "browseAppStore": "Browse the app store",
-
   "doneHeading": "You're all set",
   "doneBody": "Your instance is ready. Manage everything from the dashboard.",
-  "progressLabel": "Onboarding progress"
+  "progressLabel": "Onboarding progress",
+  "modeHeading": "How will you use Tugra?",
+  "modeBody": "Pick the experience that fits. You can switch anytime in Settings.",
+  "modeFleet": "Fleet — full control plane",
+  "modeFleetDesc": "Servers, teams, deploys, clusters and monitoring. Best for managing one or many servers.",
+  "modeHome": "Home — simple launcher",
+  "modeHomeDesc": "A clean app launcher (CasaOS-style) for running self-hosted apps on this box. The fleet tools stay out of the way.",
+  "modeSwitchHint": "Not sure? Pick Fleet — you can switch to Home anytime in Settings."
 }

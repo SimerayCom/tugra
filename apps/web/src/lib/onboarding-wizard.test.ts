@@ -12,7 +12,7 @@ describe("resolveStep — clamp table", () => {
       expect(resolveStep("create-admin", ctx)).toBe("create-admin");
     });
     it("any post-bootstrap step clamps BACK to create-admin (cannot skip bootstrap)", () => {
-      for (const s of ["instance-basics", "add-first-server", "first-workload", "done"]) {
+      for (const s of ["choose-mode", "instance-basics", "add-first-server", "first-workload", "done"]) {
         expect(resolveStep(s, ctx)).toBe("create-admin");
       }
     });
@@ -24,20 +24,20 @@ describe("resolveStep — clamp table", () => {
 
   describe("logged in (bootstrap done — implies initialized)", () => {
     const ctx = { loggedIn: true };
-    it("null → instance-basics (resume point)", () => {
-      expect(resolveStep(null, ctx)).toBe("instance-basics");
+    it("null → choose-mode (resume point)", () => {
+      expect(resolveStep(null, ctx)).toBe("choose-mode");
     });
-    it("welcome / create-admin clamp FORWARD to instance-basics (re-register is closed)", () => {
-      expect(resolveStep("welcome", ctx)).toBe("instance-basics");
-      expect(resolveStep("create-admin", ctx)).toBe("instance-basics");
+    it("welcome / create-admin clamp FORWARD to choose-mode (re-register is closed)", () => {
+      expect(resolveStep("welcome", ctx)).toBe("choose-mode");
+      expect(resolveStep("create-admin", ctx)).toBe("choose-mode");
     });
     it("valid post-bootstrap steps pass through", () => {
-      for (const s of ["instance-basics", "add-first-server", "first-workload", "done"] as const) {
+      for (const s of ["choose-mode", "instance-basics", "add-first-server", "first-workload", "done"] as const) {
         expect(resolveStep(s, ctx)).toBe(s);
       }
     });
-    it("garbage / unknown → instance-basics", () => {
-      expect(resolveStep("nope", ctx)).toBe("instance-basics");
+    it("garbage / unknown → choose-mode", () => {
+      expect(resolveStep("nope", ctx)).toBe("choose-mode");
     });
   });
 
@@ -60,7 +60,8 @@ describe("resolveStep — clamp table", () => {
 describe("nextStep — linear flow", () => {
   it("advances one step; done is terminal", () => {
     expect(nextStep("welcome")).toBe("create-admin");
-    expect(nextStep("create-admin")).toBe("instance-basics");
+    expect(nextStep("create-admin")).toBe("choose-mode");
+    expect(nextStep("choose-mode")).toBe("instance-basics");
     expect(nextStep("instance-basics")).toBe("add-first-server");
     expect(nextStep("add-first-server")).toBe("first-workload");
     expect(nextStep("first-workload")).toBe("done");
@@ -72,6 +73,7 @@ describe("isSkippable", () => {
   it("only the non-bootstrap steps are skippable", () => {
     expect(isSkippable("welcome")).toBe(false);
     expect(isSkippable("create-admin")).toBe(false);
+    expect(isSkippable("choose-mode")).toBe(false);
     expect(isSkippable("instance-basics")).toBe(true);
     expect(isSkippable("add-first-server")).toBe(true);
     expect(isSkippable("first-workload")).toBe(true);
@@ -80,9 +82,10 @@ describe("isSkippable", () => {
 });
 
 describe("stepNumber / TOTAL_STEPS", () => {
-  it("numbers the four real steps 1..4 and 0 for welcome/done", () => {
+  it("numbers the four real steps 1..4 and 0 for welcome/choose-mode/done", () => {
     expect(TOTAL_STEPS).toBe(4);
     expect(stepNumber("welcome")).toBe(0);
+    expect(stepNumber("choose-mode")).toBe(0); // uncounted interstitial, like welcome
     expect(stepNumber("create-admin")).toBe(1);
     expect(stepNumber("instance-basics")).toBe(2);
     expect(stepNumber("add-first-server")).toBe(3);

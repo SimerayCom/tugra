@@ -74,7 +74,7 @@ describe("InstallModal", () => {
     );
   });
 
-  it("'Create & configure' creates a draft (no deploy) and routes to its Configuration", async () => {
+  it("'Create & configure' creates a draft (no deploy) and returns to the Home launcher (no fleet-route bounce)", async () => {
     const spy = vi.spyOn(api, "createFromTemplate").mockResolvedValue({ id: "app1" } as never);
     const onClose = vi.fn();
     wrap(<InstallModal template={TEMPLATE} onClose={onClose} />);
@@ -82,7 +82,9 @@ describe("InstallModal", () => {
     fireEvent.click(await screen.findByText("Create & configure"));
     await waitFor(() => expect(spy).toHaveBeenCalledWith("ghost", expect.objectContaining({ deploy: false })));
     expect(onClose).toHaveBeenCalled();
-    expect(pushMock).toHaveBeenCalledWith("/apps/app1?tab=configuration");
+    // This is the Home launcher's install flow; /apps/:id is a fleet route the Home layout would bounce,
+    // so a draft now lands on /home where the new (stopped) tile appears.
+    expect(pushMock).toHaveBeenCalledWith("/home");
   });
 
   it("shows the server error message when the install fails", async () => {

@@ -89,7 +89,8 @@ function Wizard() {
       </h1>
 
       {step === "welcome" && <WelcomeStep t={t} onStart={() => go("create-admin")} />}
-      {step === "create-admin" && <CreateAdminStep t={t} onDone={() => go("instance-basics")} />}
+      {step === "create-admin" && <CreateAdminStep t={t} onDone={() => go("choose-mode")} />}
+      {step === "choose-mode" && <ChooseModeStep t={t} onDone={() => go("instance-basics")} />}
       {step === "instance-basics" && <InstanceBasicsStep t={t} onNext={() => go("add-first-server")} onSkip={() => go("done")} />}
       {step === "add-first-server" && (
         <AddServerStep t={t} serverId={serverId} onServer={(id) => go("add-first-server", id)} onNext={(srv) => go("first-workload", srv)} onSkip={() => go("done")} />
@@ -97,8 +98,14 @@ function Wizard() {
       {step === "first-workload" && (
         <FirstWorkloadStep
           t={t}
+          isHome={user?.uiMode === "home"}
           onGit={() => router.push(`/resources/new?kind=git${serverId ? `&server=${serverId}` : ""}`)}
-          onAppStore={() => router.push(`/resources/new?kind=app${serverId ? `&server=${serverId}` : ""}`)}
+          // Home mode's only allowed app route is /app-store (see HOME_ROUTES); /resources/new would bounce.
+          onAppStore={() =>
+            user?.uiMode === "home"
+              ? router.push("/app-store")
+              : router.push(`/resources/new?kind=app${serverId ? `&server=${serverId}` : ""}`)
+          }
           onSkip={() => go("done")}
         />
       )}
@@ -118,6 +125,7 @@ function headingKey(step: Step): string {
   return {
     welcome: "welcomeHeading",
     "create-admin": "adminHeading",
+    "choose-mode": "modeHeading",
     "instance-basics": "basicsHeading",
     "add-first-server": "serverHeading",
     "first-workload": "workloadHeading",
@@ -182,6 +190,67 @@ function CreateAdminStep({ t, onDone }: { t: Tr; onDone: () => void }) {
         {err && <div style={errStyle}>{err}</div>}
         <Btn type="submit" disabled={busy} style={{ width: "100%" }}>{busy ? "…" : t("onboarding.createOwner")}</Btn>
       </form>
+    </>
+  );
+}
+
+/** Pick the UI persona: Fleet (full control plane) vs Home (simple launcher). Persists to the owner's
+ *  profile so the rest of onboarding and the app land in the right surface. Defaults to whatever the
+ *  installer preset (DEFAULT_UI_MODE); the owner can still change it later in Settings. */
+function ChooseModeStep({ t, onDone }: { t: Tr; onDone: () => void }) {
+  const { user, reload } = useAuth();
+  const [busy, setBusy] = useState<"fleet" | "home" | null>(null);
+  const [err, setErr] = useState("");
+  const current = user?.uiMode === "home" ? "home" : "fleet";
+
+  const pick = async (mode: "fleet" | "home") => {
+    setErr("");
+    setBusy(mode);
+    try {
+      if (mode !== current) {
+        await api.updateProfile({ uiMode: mode });
+        await reload(); // downstream steps + final routing read user.uiMode
+      }
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("onboarding.createFailed"));
+      setBusy(null);
+    }
+  };
+
+  const opts: { mode: "fleet" | "home"; label: string; desc: string }[] = [
+    { mode: "fleet", label: t("onboarding.modeFleet"), desc: t("onboarding.modeFleetDesc") },
+    { mode: "home", label: t("onboarding.modeHome"), desc: t("onboarding.modeHomeDesc") },
+  ];
+
+  return (
+    <>
+      <p style={{ fontSize: 14, color: "var(--c-tx2)", margin: "0 0 16px" }}>{t("onboarding.modeBody")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {opts.map((o) => {
+          const active = current === o.mode;
+          return (
+            <button
+              key={o.mode}
+              type="button"
+              onClick={() => pick(o.mode)}
+              disabled={busy !== null}
+              aria-pressed={active}
+              style={{
+                textAlign: "left", cursor: busy ? "default" : "pointer", padding: 14,
+                background: active ? "var(--c-ad)" : "var(--c-el)",
+                border: `1px solid ${active ? "var(--c-a)" : "var(--c-bd)"}`,
+                borderRadius: "var(--r1)", color: "var(--c-tx)", fontFamily: "inherit",
+              }}
+            >
+              <span style={{ display: "block", fontWeight: 700, fontSize: 14 }}>{o.label}{busy === o.mode ? " …" : ""}</span>
+              <span style={{ display: "block", fontSize: 12, color: "var(--c-tx3)", marginTop: 3 }}>{o.desc}</span>
+            </button>
+          );
+        })}
+      </div>
+      {err && <div style={errStyle}>{err}</div>}
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 12, textAlign: "center" }}>{t("onboarding.modeSwitchHint")}</div>
     </>
   );
 }
@@ -398,13 +467,14 @@ function WaitForServer({ t, serverId, onNext, onSkip }: { t: Tr; serverId: strin
   );
 }
 
-function FirstWorkloadStep({ t, onGit, onAppStore, onSkip }: { t: Tr; onGit: () => void; onAppStore: () => void; onSkip: () => void }) {
+function FirstWorkloadStep({ t, isHome, onGit, onAppStore, onSkip }: { t: Tr; isHome?: boolean; onGit: () => void; onAppStore: () => void; onSkip: () => void }) {
   return (
     <>
       <p style={{ fontSize: 14, color: "var(--c-tx2)", margin: "0 0 16px" }}>{t("onboarding.workloadBody")}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <Btn onClick={onGit} style={{ width: "100%" }}>{t("onboarding.deployGit")}</Btn>
-        <Btn variant="ghost" onClick={onAppStore} style={{ width: "100%" }}>{t("onboarding.browseAppStore")}</Btn>
+        {/* Home mode is app-store first; Git deploy is a fleet concept (and its route would bounce in Home). */}
+        {!isHome && <Btn onClick={onGit} style={{ width: "100%" }}>{t("onboarding.deployGit")}</Btn>}
+        <Btn variant={isHome ? "primary" : "ghost"} onClick={onAppStore} style={{ width: "100%" }}>{t("onboarding.browseAppStore")}</Btn>
       </div>
       <div style={{ marginTop: 12, textAlign: "center" }}>
         <button type="button" onClick={onSkip} style={linkBtn}>{t("onboarding.skip")}</button>
