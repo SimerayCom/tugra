@@ -21,34 +21,80 @@ import { useConfirm } from "../../../components/confirm";
 import { useToast } from "../../../components/toast";
 import { Modal } from "../../../components/modal";
 
+/** A labelled settings section: an uppercase heading + an optional hint + a responsive card grid. The grid
+ *  is 1 column on phones and flows to 2+ columns on wider screens (min(100%,…) keeps a card from overflowing
+ *  a narrow viewport); `align-items:start` stops a tall card from stretching its shorter row-mate. */
+function SettingsSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section style={{ marginTop: 28 }}>
+      <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--c-tx3)", margin: "0 0 4px" }}>{title}</h2>
+      {hint && <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", maxWidth: 560 }}>{hint}</p>}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))",
+          gap: 16,
+          alignItems: "start",
+          marginTop: hint ? 0 : 12,
+        }}
+      >
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** A card that should span the whole section width (tables / long forms read badly in a narrow column). */
+function Wide({ children }: { children: React.ReactNode }) {
+  return <div style={{ gridColumn: "1 / -1" }}>{children}</div>;
+}
+
 export default function SettingsPage() {
   const t = useT();
+  const { user } = useAuth();
+  const isOwner = !!user?.isInstanceOwner;
 
   return (
-    <div style={{ padding: "var(--page-pad)", maxWidth: 520 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 18px" }}>{t("settings.title")}</h1>
+    <div style={{ padding: "var(--page-pad)", maxWidth: 1040, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 4px" }}>{t("settings.title")}</h1>
 
-      <AccountCard />
-      <UiModeCard />
-      <PasswordCard />
-      <SessionsCard />
-      <TwoFactorCard />
+      <SettingsSection title={t("settings.sectionAccount")}>
+        <AccountCard />
+        <UiModeCard />
+      </SettingsSection>
 
-      <ApiTokensCard />
-      <LicenseCard />
-      <InstanceApiAccessCard />
-      <SsoConfigCard />
-      <UpdatesCard />
-      <TelemetryCard />
+      <SettingsSection title={t("settings.sectionSecurity")}>
+        <PasswordCard />
+        <TwoFactorCard />
+        <SessionsCard />
+        <ChannelsCard />
+        <Wide><ApiTokensCard /></Wide>
+      </SettingsSection>
 
-      <Card style={{ padding: 18, marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600 }}>{t("settings.channels")}</div>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.channelsDesc")}</div>
-        </div>
-        <Link href="/notifications"><Btn variant="ghost">{t("settings.channelsManage")}</Btn></Link>
-      </Card>
+      {isOwner && (
+        <SettingsSection title={t("settings.sectionInstance")} hint={t("settings.sectionInstanceHint")}>
+          <LicenseCard />
+          <InstanceApiAccessCard />
+          <UpdatesCard />
+          <TelemetryCard />
+          <Wide><SsoConfigCard /></Wide>
+        </SettingsSection>
+      )}
     </div>
+  );
+}
+
+/** Shortcut to the notification-channel manager (not owner-only). */
+function ChannelsCard() {
+  const t = useT();
+  return (
+    <Card style={{ padding: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>{t("settings.channels")}</div>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.channelsDesc")}</div>
+      </div>
+      <Link href="/notifications"><Btn variant="ghost">{t("settings.channelsManage")}</Btn></Link>
+    </Card>
   );
 }
 

@@ -63,7 +63,7 @@ export function ApiTokensCard() {
   };
 
   return (
-    <Card style={{ padding: 18, marginTop: 16 }}>
+    <Card style={{ padding: 18 }}>
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("settings.apiTokens")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("settings.apiTokensDesc")}</p>
 
