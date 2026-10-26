@@ -4,13 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
-import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { InstanceSettingsService } from "../instance/instance-settings.service";
+import { ProxyConfigService } from "../proxy-config/proxy-config.service";
 import {
   buildProxyLogsScript,
   buildProxyRestartScript,
@@ -38,9 +36,7 @@ export class ProxyOpsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
-    private readonly config: ConfigService,
-    private readonly crypto: CryptoService,
-    private readonly settings: InstanceSettingsService,
+    private readonly proxyConfig: ProxyConfigService,
   ) {}
 
   async status(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {
@@ -51,12 +47,22 @@ export class ProxyOpsService {
 
   async start(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {
     await this.requireWrite(userId, serverId);
-    const email = await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"));
-    const dns = await this.dnsConfig(serverId);
-    // The bind mode is applied here — `start` recreates the proxy container, so changing it
-    // and re-starting the proxy publishes :80/:443 differently (public / loopback / tunnel-only).
-    const s = await this.prisma.server.findUnique({ where: { id: serverId }, select: { proxyBind: true } }).catch(() => null);
-    const r = await this.agentWs.sendCommand(serverId, buildProxySetupScript({ acmeEmail: email, bind: s?.proxyBind, ...dns }), "deploy", PROXY_TIMEOUT_MS);
+    // Single source of truth (ProxyConfigService) — SAME resolver as ProxyService.ensureProxy, so `start`
+    // and a domained deploy produce an identical proxy (email, bind mode, DNS-01 creds, and — on the local
+    // server — the panel router). `start` recreates the container, so the bind mode is (re)applied here too.
+    const cfg = await this.proxyConfig.resolveFor(serverId);
+    const r = await this.agentWs.sendCommand(
+      serverId,
+      buildProxySetupScript({
+        acmeEmail: cfg.acmeEmail,
+        bind: cfg.bind,
+        dnsProvider: cfg.dnsProvider,
+        dnsCreds: cfg.dnsCreds,
+        panel: cfg.panel,
+      }),
+      "deploy",
+      PROXY_TIMEOUT_MS,
+    );
     // The script removes the old container before `docker run`; a non-zero exit means the proxy is now
     // gone/broken. Fail loudly (and skip the success audit + status probe) rather than reporting success.
     if (r.exitCode !== 0) {
@@ -64,21 +70,6 @@ export class ProxyOpsService {
     }
     await this.audit.log({ actor: userId, action: "server.proxy.start", target: serverId });
     return this.statusAfter(serverId);
-  }
-
-  /** The server's DNS-01 provider + decrypted creds, when certMode is "le-dns". */
-  private async dnsConfig(
-    serverId: string,
-  ): Promise<{ dnsProvider?: string | null; dnsCreds?: Record<string, string> | null }> {
-    const s = await this.prisma.server
-      .findUnique({ where: { id: serverId }, select: { certMode: true, dnsProvider: true, dnsCredsEnc: true } })
-      .catch(() => null);
-    if (!s || s.certMode !== "le-dns" || !s.dnsProvider || !s.dnsCredsEnc) return {};
-    try {
-      return { dnsProvider: s.dnsProvider, dnsCreds: JSON.parse(this.crypto.decrypt(s.dnsCredsEnc)) };
-    } catch {
-      return {};
-    }
   }
 
   async stop(userId: string, serverId: string): Promise<{ status: ProxyStatus }> {

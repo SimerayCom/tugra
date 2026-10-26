@@ -5,6 +5,7 @@ import {
   buildRestartScript,
   buildStartScript,
   buildProxySetupScript,
+  buildPanelRouterWriteScript,
   buildProxyLogsScript,
   buildProxyRestartScript,
   buildProxyStatusScript,
@@ -689,6 +690,97 @@ describe("deploy-script", () => {
     // the proxy still runs + listens internally (entrypoints) — reachable via the tunnel on the docker network
     expect(s).toContain("--entrypoints.web.address=:80");
     expect(s).toContain(PROXY_IMAGE);
+  });
+
+  // --- Panel-TLS (DİLİM 1) ------------------------------------------------------------------------
+  it("always mounts the file provider (even without a panel), alongside the docker provider", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com" });
+    expect(s).toContain("-v /etc/tugra/proxy-dynamic:/dynamic:ro");
+    expect(s).toContain("--providers.file.directory=/dynamic");
+    expect(s).toContain("--providers.file.watch=true");
+    expect(s).toContain("mkdir -p /etc/tugra/proxy-dynamic");
+    expect(s).toContain("--providers.docker=true");
+    expect(s).toContain("--providers.docker.exposedbydefault=false");
+    // no panel => no router write/remove, no network connect
+    expect(s).not.toContain("proxy-dynamic/panel.yml");
+    expect(s).not.toContain("network connect tugra-panel");
+  });
+
+  it("panel:undefined leaves the panel file untouched (no write, no rm)", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com" });
+    expect(s).not.toContain("panel.yml");
+  });
+
+  it("panel object: atomic write (.tmp then mv) appears BEFORE docker run; YAML carries Host(domain)+resolver", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", panel: { domain: "app.example.com", resolver: "le" } });
+    const writeIdx = s.indexOf("/etc/tugra/proxy-dynamic/.panel.yml.tmp");
+    const mvIdx = s.indexOf("mv /etc/tugra/proxy-dynamic/.panel.yml.tmp /etc/tugra/proxy-dynamic/panel.yml");
+    const runIdx = s.indexOf("docker run -d --name tugra-proxy");
+    expect(writeIdx).toBeGreaterThanOrEqual(0);
+    expect(mvIdx).toBeGreaterThan(writeIdx);
+    expect(runIdx).toBeGreaterThan(mvIdx); // write happens before the proxy starts
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/proxy-dynamic\/\.panel\.yml\.tmp/);
+    expect(m).toBeTruthy();
+    const yaml = Buffer.from(m![1], "base64").toString();
+    expect(yaml).toContain("Host(`app.example.com`)");
+    expect(yaml).toContain("certResolver: le");
+  });
+
+  it("panel object: docker network connect + verify appear AFTER docker run", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", panel: { domain: "app.example.com" } });
+    const runIdx = s.indexOf("docker run -d --name tugra-proxy");
+    const connectIdx = s.indexOf("docker network connect tugra-panel tugra-proxy");
+    const verifyIdx = s.indexOf("failed to attach to tugra-panel");
+    expect(connectIdx).toBeGreaterThan(runIdx);
+    expect(verifyIdx).toBeGreaterThan(connectIdx);
+    expect(s).toContain("tugra-panel network missing");
+  });
+
+  it("panel:null removes panel.yml and nothing else (acme.json untouched)", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", panel: null });
+    expect(s).toContain("rm -f /etc/tugra/proxy-dynamic/panel.yml");
+    expect(s).not.toContain("rm -f /etc/tugra/letsencrypt/acme.json");
+    expect(s).not.toContain(".panel.yml.tmp");
+    expect(s).not.toContain("network connect tugra-panel");
+  });
+
+  it("panel path REQUIRES a real email (throws); the non-panel path keeps the admin@example.com fallback", () => {
+    expect(() => buildProxySetupScript({ panel: { domain: "app.example.com" } })).toThrow();
+    expect(() => buildProxySetupScript({ acmeEmail: "admin@example.com", panel: { domain: "app.example.com" } })).toThrow();
+    // classic app proxy with no email still works (fallback), unchanged behavior
+    const s = buildProxySetupScript({});
+    expect(s).toContain("acme.email='admin@example.com'");
+  });
+
+  it("panel + bind:'none' => httpOnly router (no tls block), still keeps the no-host-ports behavior", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", panel: { domain: "app.example.com" }, bind: "none" });
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/proxy-dynamic\/\.panel\.yml\.tmp/);
+    const yaml = Buffer.from(m![1], "base64").toString();
+    expect(yaml).not.toContain("certResolver");
+    expect(yaml).not.toContain("tls:");
+    expect(s).not.toMatch(/ -p \d/);
+  });
+
+  it("panel + dns creds still passes creds via a 0600 --env-file, never in argv", () => {
+    const s = buildProxySetupScript({
+      acmeEmail: "me@x.com",
+      panel: { domain: "app.example.com", resolver: "le-dns" },
+      dnsProvider: "cloudflare",
+      dnsCreds: { CF_DNS_API_TOKEN: "s3cr3t-token" },
+    });
+    expect(s).toContain("--env-file /etc/tugra/proxy/dns.env");
+    expect(s).not.toContain("s3cr3t-token".replace("s3cr3t-token", "s3cr3t-token") + " "); // token never bare in argv
+    expect(s).not.toContain("-e CF_DNS_API_TOKEN");
+  });
+
+  it("buildPanelRouterWriteScript only writes/removes the router file (no docker rm/run) for hot-reload", () => {
+    const write = buildPanelRouterWriteScript({ domain: "app.example.com", resolver: "le" });
+    expect(write).toContain("mv /etc/tugra/proxy-dynamic/.panel.yml.tmp /etc/tugra/proxy-dynamic/panel.yml");
+    expect(write).not.toContain("docker run");
+    expect(write).not.toContain("docker rm -f tugra-proxy");
+    const rm = buildPanelRouterWriteScript(null);
+    expect(rm).toContain("rm -f /etc/tugra/proxy-dynamic/panel.yml");
+    expect(rm).not.toContain("docker run");
   });
 
   it("start/restart scripts target the app container (no rebuild)", () => {

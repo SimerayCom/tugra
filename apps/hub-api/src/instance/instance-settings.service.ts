@@ -53,6 +53,17 @@ export class InstanceSettingsService {
   }
 
   /**
+   * The effective panel-TLS hostname (DİLİM 1), or null when panel TLS is off. The env wins — PANEL_TLS="1"
+   * + PANEL_DOMAIN (written by install.sh --auto-tls) overrides the DB — else the owner's stored
+   * InstanceSettings.panelDomain. Mirrors acmeEmailFor's env-over-DB precedence. Null = bring-your-own proxy.
+   */
+  async panelDomainFor(envDomain?: string, envFlag?: string): Promise<string | null> {
+    if (envFlag === "1" && envDomain && envDomain.trim()) return envDomain.trim();
+    const s = await this.get();
+    return s.panelDomain ?? null;
+  }
+
+  /**
    * The effective white-label branding, safe to expose publicly (login page themes pre-auth). Branding is a
    * PRO feature, so it is applied ONLY while the instance is Pro+ — a Community or lapsed-license instance
    * always gets the Tugra defaults, which is what enforces the paywall at read time (a stored brand can't

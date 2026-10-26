@@ -40,6 +40,12 @@ export const envSchema = z
     .refine(isBase64Seed32, "HUB_SIGNING_KEY must be a base64-encoded 32-byte ed25519 seed")
     .optional(),
   ACME_EMAIL: z.string().email().optional(), // Let's Encrypt account email (deploy SSL)
+  // Panel-TLS (DİLİM 1): opt-in auto-HTTPS for the control panel. PANEL_TLS="1" + PANEL_DOMAIN (written by
+  // install.sh --auto-tls) provision the panel's Traefik file-provider router; both unset = bring-your-own
+  // proxy (unchanged). PANEL_TLS=1 + PANEL_DOMAIN take precedence over the DB value and are synced to it at
+  // bootstrap. The domain format is validated strictly at provisioning time (panel-router.validatePanelDomain).
+  PANEL_TLS: z.enum(["0", "1"]).optional(),
+  PANEL_DOMAIN: z.string().optional(),
   // Public base URL the agent dials back to (e.g. https://hub.example.com). Used to
   // build the install command; falls back to the request Host when unset.
   HUB_PUBLIC_URL: z.string().url().optional(),
