@@ -5,6 +5,14 @@
  */
 
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
+import {
+  buildPanelRouterYaml,
+  validateAcmeEmail,
+  PANEL_NETWORK,
+  PROXY_DYNAMIC_DIR,
+  PANEL_FILE,
+  type PanelResolver,
+} from "./panel-router";
 
 export const PROXY_NETWORK = "tugra-proxy";
 export const PROXY_NAME = "tugra-proxy";
@@ -930,9 +938,18 @@ export const PROXY_DNS_ENV_PATH = `${PROXY_DNS_ENV_DIR}/dns.env`;
  * --env-file (never `-e`/argv), so they never appear on the process list.
  */
 export function buildProxySetupScript(
-  opts: { acmeEmail?: string | null; dnsProvider?: string | null; dnsCreds?: Record<string, string> | null; bind?: string | null } = {},
+  opts: {
+    acmeEmail?: string | null;
+    dnsProvider?: string | null;
+    dnsCreds?: Record<string, string> | null;
+    bind?: string | null;
+    // Panel-TLS (DİLİM 1): object => (re)write the panel router file; null => remove it; undefined => leave it.
+    panel?: { domain: string; resolver?: PanelResolver } | null;
+  } = {},
 ): string {
-  const email = opts.acmeEmail || "admin@example.com";
+  // The panel path demands a real ACME email (no admin@example.com fallback — Let's Encrypt rejects it); the
+  // classic app path keeps the fallback so existing http deploys never break.
+  const email = opts.panel ? validateAcmeEmail(opts.acmeEmail) : opts.acmeEmail || "admin@example.com";
   const dns =
     opts.dnsProvider && opts.dnsCreds && Object.keys(opts.dnsCreds).length > 0
       ? { provider: opts.dnsProvider, creds: opts.dnsCreds }
@@ -955,6 +972,8 @@ export function buildProxySetupScript(
     ...portPublish,
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
     "-v /etc/tugra/letsencrypt:/letsencrypt",
+    // Panel (+ future dynamic) routers live here, read-only, hot-reloaded by the file provider below.
+    `-v ${PROXY_DYNAMIC_DIR}:/dynamic:ro`,
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
     ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
     PROXY_IMAGE,
@@ -964,6 +983,10 @@ export function buildProxySetupScript(
     "--global.sendanonymoususage=false",
     "--providers.docker=true",
     "--providers.docker.exposedbydefault=false",
+    // File provider for the panel router. ALWAYS on (even without a panel) so ANY recreate path keeps an
+    // already-written panel.yml; apps keep routing via docker labels.
+    "--providers.file.directory=/dynamic",
+    "--providers.file.watch=true",
     "--entrypoints.web.address=:80",
     "--entrypoints.websecure.address=:443",
     `--certificatesresolvers.le.acme.email=${shq(email)}`,
@@ -981,10 +1004,35 @@ export function buildProxySetupScript(
       : []),
   ].join(" ");
 
+  // Panel router file: object => atomic write (tmp+mv INSIDE the mounted dir so fsnotify fires); null =>
+  // remove; undefined => leave untouched. httpOnly when the proxy publishes no host ports (CF tunnel).
+  const panelHttpOnly = bind === "none";
+  const panelWriteSteps =
+    opts.panel === undefined
+      ? []
+      : opts.panel === null
+        ? [`rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`]
+        : [
+            `printf %s ${shq(
+              b64(buildPanelRouterYaml({ domain: opts.panel.domain, resolver: opts.panel.resolver, httpOnly: panelHttpOnly })),
+            )} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
+            `mv ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`,
+          ];
+  // When a panel is configured Traefik must join the dedicated tugra-panel network (attachment is lost on
+  // every recreate, so it is re-done here); fail loudly if the network is missing or the attach didn't take.
+  const panelConnectSteps = opts.panel
+    ? [
+        `docker network inspect ${PANEL_NETWORK} >/dev/null 2>&1 || { echo "${PANEL_NETWORK} network missing - run: docker compose up -d" >&2; exit 1; }`,
+        `docker network connect ${PANEL_NETWORK} ${PROXY_NAME} 2>/dev/null || true`,
+        `docker inspect -f '{{json .NetworkSettings.Networks}}' ${PROXY_NAME} | grep -q ${PANEL_NETWORK} || { echo "proxy failed to attach to ${PANEL_NETWORK}" >&2; exit 1; }`,
+      ]
+    : [];
+
   return [
     "set -e",
     `docker network create ${PROXY_NETWORK} 2>/dev/null || true`,
     `docker rm -f ${PROXY_NAME} 2>/dev/null || true`,
+    `mkdir -p ${PROXY_DYNAMIC_DIR}`,
     "mkdir -p /etc/tugra/letsencrypt && touch /etc/tugra/letsencrypt/acme.json && chmod 600 /etc/tugra/letsencrypt/acme.json",
     ...(dns
       ? [
@@ -994,7 +1042,27 @@ export function buildProxySetupScript(
           `chmod 600 ${PROXY_DNS_ENV_PATH}`,
         ]
       : []),
+    ...panelWriteSteps,
     runArgs,
+    ...panelConnectSteps,
+  ].join("\n");
+}
+
+/**
+ * Just (re)write or remove the panel router file — for a hot-reload re-apply that must NOT recreate the
+ * proxy (no app downtime). The file provider picks the change up via --providers.file.watch.
+ */
+export function buildPanelRouterWriteScript(
+  panel: { domain: string; resolver?: PanelResolver; httpOnly?: boolean } | null,
+): string {
+  if (panel === null) {
+    return ["set -e", `rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`].join("\n");
+  }
+  return [
+    "set -e",
+    `mkdir -p ${PROXY_DYNAMIC_DIR}`,
+    `printf %s ${shq(b64(buildPanelRouterYaml(panel)))} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
+    `mv ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`,
   ].join("\n");
 }
 

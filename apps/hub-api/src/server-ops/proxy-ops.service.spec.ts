@@ -1,15 +1,14 @@
 import { ForbiddenException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { ProxyOpsService } from "./proxy-ops.service";
+import { ProxyService } from "../applications/proxy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { ConfigService } from "@nestjs/config";
+import type { ProxyConfigService, ResolvedProxyConfig } from "../proxy-config/proxy-config.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
-const config = { get: jest.fn().mockReturnValue("me@x.com") } as unknown as ConfigService;
-const crypto = { encrypt: (s: string) => s, decrypt: (s: string) => s } as unknown as import("../crypto/crypto.service").CryptoService;
 const server = { id: "s1", teamId: "t1" };
 
 const ALL_PERMS = [
@@ -27,14 +26,12 @@ const ALL_PERMS = [
   "variables",
 ];
 
-function make(role: Role | null, send: jest.Mock) {
+function make(role: Role | null, send: jest.Mock, cfg: ResolvedProxyConfig = { acmeEmail: "me@x.com", bind: "public" }) {
   const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
   // OWNER/ADMIN hold every granular permission; VIEWER holds none.
   const perms = new Set(role === Role.OWNER || role === Role.ADMIN ? ALL_PERMS : []);
   const access = {
-    // read path (status) still checks team membership
     teamRole: jest.fn().mockResolvedValue(role),
-    // write path enforces the granular servers:ops permission
     requirePermission: jest.fn((_u: string, _t: string, perm: string) =>
       perms.has(perm)
         ? Promise.resolve(undefined)
@@ -42,8 +39,8 @@ function make(role: Role | null, send: jest.Mock) {
     ),
   } as unknown as TeamAccessService;
   const agentWs = { sendCommand: send } as unknown as AgentWsServer;
-  const settings = { acmeEmailFor: async (e?: string) => e } as unknown as import("../instance/instance-settings.service").InstanceSettingsService;
-  return new ProxyOpsService(prisma, access, audit, agentWs, config, crypto, settings);
+  const proxyConfig = { resolveFor: jest.fn().mockResolvedValue(cfg) } as unknown as ProxyConfigService;
+  return new ProxyOpsService(prisma, access, audit, agentWs, proxyConfig);
 }
 
 describe("ProxyOpsService", () => {
@@ -71,6 +68,15 @@ describe("ProxyOpsService", () => {
     expect(audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "server.proxy.start" }));
   });
 
+  it("start carries the panel router when the resolver returns one (local server)", async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "" })
+      .mockResolvedValueOnce({ exitCode: 0, output: "running\n" });
+    await make(Role.OWNER, send, { acmeEmail: "me@x.com", bind: "public", panel: { domain: "app.example.com", resolver: "le" } }).start("u1", "s1");
+    expect(send.mock.calls[0][1]).toContain("/etc/tugra/proxy-dynamic/panel.yml");
+  });
+
   it("status parses the container state", async () => {
     expect((await make(Role.VIEWER, jest.fn().mockResolvedValue({ exitCode: 0, output: "running\n" })).status("u1", "s1")).status).toBe("running");
     expect((await make(Role.VIEWER, jest.fn().mockResolvedValue({ exitCode: 0, output: "exited\n" })).status("u1", "s1")).status).toBe("stopped");
@@ -92,5 +98,32 @@ describe("ProxyOpsService", () => {
     const r = await make(Role.OWNER, send).logs("u1", "s1", 50);
     expect(send).toHaveBeenCalledWith("s1", expect.stringContaining("docker logs --tail 50 tugra-proxy"), "deploy", expect.any(Number));
     expect(r.output).toContain("level=info");
+  });
+
+  // Drift guard: ProxyOpsService.start and ProxyService.ensureProxy BOTH resolve through ProxyConfigService
+  // and pass the result identically into buildProxySetupScript — so for the same resolved config the emitted
+  // script is byte-identical. This is what guarantees `start` and a domained deploy can never diverge.
+  it("start and ProxyService.ensureProxy build the SAME script from the shared resolver (no drift)", async () => {
+    const cfg: ResolvedProxyConfig = { acmeEmail: "me@x.com", bind: "public", panel: { domain: "app.example.com", resolver: "le" } };
+    const proxyConfig = { resolveFor: jest.fn().mockResolvedValue(cfg) } as unknown as ProxyConfigService;
+
+    const opsSend = jest
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "" })
+      .mockResolvedValueOnce({ exitCode: 0, output: "running\n" });
+    const opsPrisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+    const opsAccess = {
+      teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+    } as unknown as TeamAccessService;
+    const ops = new ProxyOpsService(opsPrisma, opsAccess, audit, { sendCommand: opsSend } as unknown as AgentWsServer, proxyConfig);
+    await ops.start("u1", "s1");
+
+    const appSend = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const appPrisma = { cluster: { count: jest.fn().mockResolvedValue(0) } } as unknown as PrismaService;
+    const app = new ProxyService({ sendCommand: appSend } as unknown as AgentWsServer, appPrisma, proxyConfig);
+    await app.ensureProxy("s1");
+
+    expect(opsSend.mock.calls[0][1]).toBe(appSend.mock.calls[0][1]);
   });
 });

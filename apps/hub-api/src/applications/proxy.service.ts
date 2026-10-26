@@ -1,20 +1,16 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
-import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { InstanceSettingsService } from "../instance/instance-settings.service";
+import { ProxyConfigService } from "../proxy-config/proxy-config.service";
 import { buildProxySetupScript } from "../deploy/deploy-script";
 
 /** Ensures the Traefik reverse-proxy is running on a server (idempotent). */
 @Injectable()
 export class ProxyService {
   constructor(
-    private readonly config: ConfigService,
     private readonly agentWs: AgentWsServer,
     private readonly prisma: PrismaService,
-    private readonly crypto: CryptoService,
-    private readonly settings: InstanceSettingsService,
+    private readonly proxyConfig: ProxyConfigService,
   ) {}
 
   async ensureProxy(serverId: string): Promise<void> {
@@ -29,14 +25,20 @@ export class ProxyService {
         "this server is a swarm manager (it runs the cluster's swarm ingress on :80/:443) — domain-routed single-server apps can't be deployed directly here",
       );
     }
-    const email = await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"));
-    // this runs on EVERY domained deploy and recreates the proxy (docker rm -f + run), so it
-    // MUST honor the server's bind mode — otherwise a deploy would silently re-publish :80/:443 (reverting a
-    // loopback/none server) or fail where another web server holds those ports. Default servers stay public.
-    const { bind, ...dns } = await this.proxyConfig(serverId);
+    // Single source of truth (ProxyConfigService): email, bind mode, DNS-01 creds AND — for the local server
+    // — the panel router. This runs on EVERY domained deploy and recreates the proxy (docker rm -f + run), so
+    // resolving through one place is what keeps it from drifting from ProxyOpsService.start and from silently
+    // re-publishing :80/:443 or dropping the panel.
+    const cfg = await this.proxyConfig.resolveFor(serverId);
     const r = await this.agentWs.sendCommand(
       serverId,
-      buildProxySetupScript({ acmeEmail: email, bind, ...dns }),
+      buildProxySetupScript({
+        acmeEmail: cfg.acmeEmail,
+        bind: cfg.bind,
+        dnsProvider: cfg.dnsProvider,
+        dnsCreds: cfg.dnsCreds,
+        panel: cfg.panel,
+      }),
       "deploy",
       60_000,
     );
@@ -45,24 +47,6 @@ export class ProxyService {
     // as a successful deploy — surface it so the caller fails loudly.
     if (r.exitCode !== 0) {
       throw new BadRequestException(`reverse-proxy (Traefik) setup failed on this server: ${r.output.trim().slice(-500)}`);
-    }
-  }
-
-  /** The server's proxy bind mode + its DNS-01 provider/decrypted creds (the latter only when certMode is
-   *  "le-dns"). bind is always returned (defaults to the column's "public") so every proxy (re)creation —
-   *  here and in ProxyOpsService.start — applies the same binding and the two call sites cannot drift. */
-  private async proxyConfig(
-    serverId: string,
-  ): Promise<{ bind?: string | null; dnsProvider?: string | null; dnsCreds?: Record<string, string> | null }> {
-    const s = await this.prisma.server
-      .findUnique({ where: { id: serverId }, select: { certMode: true, dnsProvider: true, dnsCredsEnc: true, proxyBind: true } })
-      .catch(() => null);
-    const bind = s?.proxyBind;
-    if (!s || s.certMode !== "le-dns" || !s.dnsProvider || !s.dnsCredsEnc) return { bind };
-    try {
-      return { bind, dnsProvider: s.dnsProvider, dnsCreds: JSON.parse(this.crypto.decrypt(s.dnsCredsEnc)) };
-    } catch {
-      return { bind }; // unreadable creds → set up the proxy without the DNS resolver (fail-safe)
     }
   }
 }

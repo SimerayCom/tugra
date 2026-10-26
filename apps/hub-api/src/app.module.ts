@@ -14,6 +14,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { RedisModule } from "./redis/redis.module";
 import { AuditModule } from "./audit/audit.module";
 import { InstanceSettingsModule } from "./instance/instance-settings.module";
+import { ProxyConfigModule } from "./proxy-config/proxy-config.module";
 import { TeamAccessModule } from "./common/team-access.module";
 import { MailModule } from "./mail/mail.module";
 import { AuthModule } from "./auth/auth.module";
@@ -68,6 +69,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     RedisModule,
     AuditModule,
     InstanceSettingsModule,
+    ProxyConfigModule,
     TeamAccessModule,
     MailModule,
     AuthModule,

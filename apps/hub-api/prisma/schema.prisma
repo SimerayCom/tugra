@@ -1123,6 +1123,10 @@ model InstanceSettings {
   edition             String    @default("community") // community | pro | cloud
   publicUrl           String?
   acmeEmail           String?
+  // Panel-TLS (DİLİM 1): the control panel's own HTTPS hostname (opt-in). When set (install.sh --auto-tls
+  // or env PANEL_DOMAIN), the hub provisions a Traefik file-provider router for the panel. env PANEL_TLS=1 +
+  // PANEL_DOMAIN win over this (synced to DB at bootstrap). Null = bring-your-own-proxy (unchanged).
+  panelDomain         String?
   autoUpdate          Boolean   @default(false)
   updateChannel       String    @default("stable")
   cachedLatestVersion String?
