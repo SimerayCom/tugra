@@ -512,10 +512,10 @@ describe("AuthService — turnkey local-server auto-provision (LOCAL_AGENT_ENROL
     } as unknown as PrismaService;
     return { prisma, serverCreate, updateMany };
   }
-  function svc(token: string | undefined, prisma: PrismaService, settings: Record<string, unknown> = { initializedAt: null, allowRegistration: false }, defaultUiMode?: string): AuthService {
+  function svc(token: string | undefined, prisma: PrismaService, settings: Record<string, unknown> = { initializedAt: null, allowRegistration: false }, defaultUiMode?: string, pinIp?: string): AuthService {
     const cfg = {
       get: (k: string) =>
-        k === "LOCAL_AGENT_ENROLL_TOKEN" ? token : k === "DEFAULT_UI_MODE" ? defaultUiMode : k === "JWT_ACCESS_SECRET" ? "access-secret-aaaaaaaaaaaa" : k === "JWT_REFRESH_SECRET" ? "refresh-secret-bbbbbbbbbbbb" : undefined,
+        k === "LOCAL_AGENT_ENROLL_TOKEN" ? token : k === "LOCAL_SERVER_PUBLIC_IP" ? pinIp : k === "DEFAULT_UI_MODE" ? defaultUiMode : k === "JWT_ACCESS_SECRET" ? "access-secret-aaaaaaaaaaaa" : k === "JWT_REFRESH_SECRET" ? "refresh-secret-bbbbbbbbbbbb" : undefined,
     } as unknown as ConfigService;
     const instanceSettings = { get: jest.fn().mockResolvedValue(settings), update: jest.fn() } as unknown as InstanceSettingsService;
     const s = new AuthService(
@@ -533,6 +533,32 @@ describe("AuthService — turnkey local-server auto-provision (LOCAL_AGENT_ENROL
     expect(serverCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ name: "This machine", teamId: "t1", enrollToken: "local-enroll-token-xyz", isLocal: true, status: "PENDING" }),
     });
+  });
+
+  it("pins the server's publicIp from the owner's request host (observed) when no env pin is set", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc("local-enroll-token-xyz", prisma).register("a@x.io", "password123", undefined, undefined, "http://203.0.113.9:3001");
+    expect(serverCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ publicIp: "203.0.113.9", ipSource: "observed" }) });
+  });
+
+  it("prefers the LOCAL_SERVER_PUBLIC_IP env pin (manual) over the request host", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc("local-enroll-token-xyz", prisma, undefined, undefined, "198.51.100.2").register("a@x.io", "password123", undefined, undefined, "http://203.0.113.9:3001");
+    expect(serverCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ publicIp: "198.51.100.2", ipSource: "manual" }) });
+  });
+
+  it("does NOT pin an IP when the owner reached the panel via a DNS name", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc("local-enroll-token-xyz", prisma).register("a@x.io", "password123", undefined, undefined, "https://panel.example.com");
+    const data = (serverCreate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.publicIp).toBeUndefined();
+    expect(data.publicIpv6).toBeUndefined();
+  });
+
+  it("ignores a private/loopback request host (e.g. an SSH tunnel to the panel)", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc("local-enroll-token-xyz", prisma).register("a@x.io", "password123", undefined, undefined, "http://127.0.0.1:3001");
+    expect((serverCreate.mock.calls[0][0] as { data: Record<string, unknown> }).data.publicIp).toBeUndefined();
   });
 
   it("does NOT provision a local server when the token is unset (manual/remote install unchanged)", async () => {

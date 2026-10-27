@@ -59,6 +59,24 @@ export function isPublicIp(ip: string): boolean {
 }
 
 /**
+ * The public IP the owner's browser used to reach the panel — derived from the request URL, NOT an outbound
+ * probe (trust-wedge: no IP phone-home). Returns the host only when it is a globally-routable IP literal (v4
+ * or v6); a DNS name, a port-only value or a private/loopback address yields null. Used to pin the single-box
+ * local server's reachable address at first-owner claim so deployed-app URLs resolve from the very first deploy.
+ */
+export function observedPublicIpFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  let host: string;
+  try {
+    host = new URL(url).hostname; // strips scheme + port; IPv6 stays bracketed ([2001:db8::1])
+  } catch {
+    return null;
+  }
+  const ip = normalizeIp(host.replace(/^\[|\]$/g, "")); // unwrap the IPv6 brackets URL.hostname keeps
+  return isPublicIp(ip) ? ip : null;
+}
+
+/**
  * SSRF: addresses that are NEVER a legitimate outbound target, regardless of any policy toggle.
  * Loopback, unspecified (0.0.0.0/8, ::), IPv4 link-local incl. 169.254.169.254 cloud metadata,
  * broadcast, multicast (v4 224/4, v6 ff00::/8), IPv6 link-local (fe80::/10), NAT64 (64:ff9b::/96),
