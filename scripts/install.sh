@@ -158,6 +158,80 @@ valid_acme_email() {
   return 0
 }
 
+# Resolve a host's IPv4 A records to a newline-separated list, PORTABLY and best-effort. Every lookup is
+# wrapped in `$( … || true )` so a failed resolver/pipeline can't trip `set -euo pipefail`; the function
+# always exits 0 and prints "" when nothing resolves or no resolver tool exists.
+_resolve_a() {
+  _h="$1"; _out=""
+  if command -v getent >/dev/null 2>&1; then
+    _out="$(getent ahostsv4 "$_h" 2>/dev/null | awk '{print $1}' | sort -u || true)"
+  elif command -v dig >/dev/null 2>&1; then
+    _out="$(dig +short +time=3 +tries=1 A "$_h" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u || true)"
+  elif command -v host >/dev/null 2>&1; then
+    _out="$(host -W 3 "$_h" 2>/dev/null | awk '/has address/{print $NF}' | sort -u || true)"
+  elif command -v nslookup >/dev/null 2>&1; then
+    _out="$(nslookup "$_h" 2>/dev/null | awk '/^Address: ?/{print $NF}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u || true)"
+  fi
+  printf '%s' "$_out"
+}
+
+# This server's public IPv4, via an external echo (best-effort, short timeout). Prints "" if curl is
+# missing or none answers — the caller then softens its message rather than claiming a mismatch.
+_detect_public_ip() {
+  command -v curl >/dev/null 2>&1 || { printf ''; return 0; }
+  for _u in https://api.ipify.org https://checkip.amazonaws.com https://ifconfig.me/ip; do
+    _ip="$(curl -fsS --max-time 6 "$_u" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "$_ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) printf '%s' "$_ip"; return 0 ;; esac
+  done
+  printf ''
+}
+
+# Advisory DNS/token sanity for --auto-tls, run BEFORE anything is provisioned so a misconfigured domain
+# is caught here (with an exact fix) instead of as a silent cert failure — the #1 "SSL just didn't work"
+# foot-gun. It ONLY prints guidance: never errors, never changes the decision, never blocks headless, so a
+# false read can't stop a correct setup or burn a Let's Encrypt attempt. HTTP-01 validates over :80 at the
+# domain's A record, so that record must point here; DNS-01 (Cloudflare token) validates over DNS instead,
+# so the record may stay proxied and we sanity-check the token rather than the address.
+panel_dns_preflight() {
+  _dom="$1"; _dns01="$2"
+  _dom="$(printf '%s' "$_dom" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*$##')"
+  [ -n "$_dom" ] || return 0
+
+  if [ "$_dns01" = "1" ]; then
+    if command -v curl >/dev/null 2>&1 && [ -n "${ACME_DNS_TOKEN_ARG:-}" ]; then
+      # No -f here: an invalid token returns HTTP 400 with a JSON error body we WANT to read (so we can say
+      # "rejected" vs. "couldn't reach"). -f would discard that body and make both look like a network miss.
+      _vr="$(curl -sS --max-time 6 -H "Authorization: Bearer ${ACME_DNS_TOKEN_ARG}" \
+             https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null || true)"
+      case "$_vr" in
+        *'"status":"active"'*) ok "Cloudflare API token verified (DNS-01 — a real cert while $_dom stays proxied, IP hidden)." ;;
+        '') note "Couldn't reach Cloudflare to verify the DNS-01 token right now; provisioning continues and the cert issues once it works." ;;
+        *) warn "Cloudflare rejected the DNS-01 token (not active / wrong scope). The panel cert won't issue until it's a valid token with Zone:DNS:Edit — re-run with a correct --acme-dns-cloudflare <token>." ;;
+      esac
+    fi
+    return 0
+  fi
+
+  _resolved="$(_resolve_a "$_dom")"
+  if [ -z "$_resolved" ]; then
+    note "$_dom has no A record yet. HTTP-01 needs it pointing at this server's public IP; add the DNS record and the panel cert issues automatically."
+    return 0
+  fi
+  _pubip="$(_detect_public_ip)"
+  _disp="$(printf '%s' "$_resolved" | tr '\n' ' ' | sed 's/ *$//')"
+  if [ -z "$_pubip" ]; then
+    note "$_dom resolves to $_disp. Make sure that is THIS server's public IP (couldn't auto-detect it to compare) — HTTP-01 validates over :80 at that address."
+    return 0
+  fi
+  if printf '%s\n' "$_resolved" | grep -qxF "$_pubip"; then
+    ok "$_dom resolves to this server ($_pubip) — HTTP-01 can validate; the panel cert issues on the first reachable request."
+  else
+    warn "$_dom resolves to $_disp, but this server's public IP is $_pubip."
+    note "HTTP-01 validates over :80 at the domain's address, so the panel cert WON'T issue until $_dom points here."
+    note "Behind Cloudflare's orange-cloud proxy this is expected — re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden. Otherwise set $_dom's A record to $_pubip."
+  fi
+}
+
 # --- preflight (skipped for --dry-run so tests stay quiet + need no Docker) --------------------------
 preflight() {
   step "Checking requirements & installing prerequisites…"
@@ -325,6 +399,13 @@ if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
         ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${_p}$" &&
           note "Port ${_p} looks busy — if another web server owns it, the panel TLS proxy can't bind (free it or use --no-auto-tls)."
       done
+    fi
+    # Catch a misconfigured domain HERE (before any ACME attempt), not as a silent cert failure later.
+    # Advisory only — never blocks the install. DNS-01 token in play => check the token, not the A record.
+    if [ "$DRY_RUN" -eq 0 ]; then
+      _p01=0
+      if [ -n "$ACME_DNS_TOKEN_ARG" ] || env_has ACME_DNS_TOKEN; then _p01=1; fi
+      panel_dns_preflight "$DOMAIN" "$_p01" || true
     fi
   elif [ "$_want" = "0" ]; then
     PANEL_TLS_DECISION=0

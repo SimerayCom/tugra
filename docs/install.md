@@ -61,6 +61,10 @@ certificate and path-routes the single origin (table below). This is **opt-in** 
 outbound call is to Let's Encrypt for *your* domain — no phone-home), so plain `--domain` stays
 bring-your-own-proxy. `--acme-email` is required (expiry notices; a placeholder like `example.com` is
 rejected). Point the domain's DNS at this host first; the certificate issues on the first reachable request.
+Before it provisions, the installer sanity-checks the setup — that the domain's A record resolves to this
+server (HTTP-01), or that the Cloudflare token is valid (DNS-01) — and prints the precise fix if something's
+off, so a misconfigured domain surfaces up front instead of as a silent certificate failure. The check is
+advisory: it never blocks the install, and the panel stays reachable on its host port regardless.
 
 **Behind Cloudflare (orange cloud):** HTTP-01 can't validate through the proxy, so pass a Cloudflare API
 token and Tugra uses **DNS-01** instead — a real certificate while the record stays proxied and your origin
@@ -74,7 +78,7 @@ IP stays hidden:
 (The token is stored only in the `0600` `.env` and handed to Traefik via a `0600` env-file, never on the
 command line.) Alternatives without a token: keep the record **DNS-only (grey)** so HTTP-01 issues directly,
 or set Cloudflare SSL/TLS to **Full** (Cloudflare serves its own edge cert; the origin serves Traefik's).
-Flip the panel on/off or re-apply anytime from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`).
+Flip the panel on/off or re-apply anytime from **Settings → Panel HTTPS** (`GET`/`POST /instance/panel-tls`).
 
 ### Option B — bring your own reverse proxy
 

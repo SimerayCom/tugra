@@ -12,9 +12,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and path-routes the single origin, with no hand-written reverse-proxy config. Works behind Cloudflare (a
   grey DNS record, SSL mode Full, or a DNS-01 token). Opt-in: plain `--domain` stays bring-your-own-proxy and
   the only outbound call is to Let's Encrypt for your own domain (no phone-home). The hub and web join a
-  dedicated `tugra-panel` Docker network that Traefik routes over, isolated from deployed apps. Check or
-  re-apply from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`). See
-  [docs/install.md](docs/install.md).
+  dedicated `tugra-panel` Docker network that Traefik routes over, isolated from deployed apps. Before
+  provisioning, the installer sanity-checks the domain — that its A record points at this server (HTTP-01)
+  or that the Cloudflare token is valid (DNS-01) — and prints the exact fix up front instead of letting the
+  certificate fail silently. Check or re-apply from **Settings → Panel HTTPS** (`GET`/`POST
+  /instance/panel-tls`). See [docs/install.md](docs/install.md).
 - **Turnkey add-server:** the agent installer now auto-installs Docker (via get.docker.com) when it's
   missing and the script runs as root — matching the hub installer, so adding a second/remote server is a
   single pasted command. Opt out with `TUGRA_SKIP_DOCKER_INSTALL=1`; a non-root run still prints the manual
