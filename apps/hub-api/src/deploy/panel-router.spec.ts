@@ -3,6 +3,7 @@ import {
   buildPanelRouterYaml,
   validatePanelDomain,
   validateAcmeEmail,
+  dnsProviderEnvCreds,
   PANEL_HUB_PATHS,
   PANEL_HUB_EXACT_PATHS,
   PANEL_HUB_ALIAS,
@@ -128,5 +129,16 @@ describe("panel-router", () => {
     // Pinned here so a drift between code and docs is caught (docs-links spec cross-checks the doc side).
     expect([...PANEL_HUB_PATHS]).toEqual(["/agent", "/terminal", "/install", "/webhooks", "/auth/oauth", "/auth/oidc"]);
     expect([...PANEL_HUB_EXACT_PATHS]).toEqual(["/health", "/version"]);
+  });
+
+  describe("dnsProviderEnvCreds", () => {
+    it("maps a Cloudflare token to CF_DNS_API_TOKEN (trimmed)", () => {
+      expect(dnsProviderEnvCreds("cloudflare", "  tok123 ")).toEqual({ CF_DNS_API_TOKEN: "tok123" });
+      expect(dnsProviderEnvCreds("CLOUDFLARE", "tok123")).toEqual({ CF_DNS_API_TOKEN: "tok123" });
+    });
+    it("throws on an unsupported provider or an empty token", () => {
+      expect(() => dnsProviderEnvCreds("route53", "tok")).toThrow(/unsupported/i);
+      expect(() => dnsProviderEnvCreds("cloudflare", "")).toThrow(/token/i);
+    });
   });
 });

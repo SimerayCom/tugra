@@ -62,11 +62,19 @@ outbound call is to Let's Encrypt for *your* domain — no phone-home), so plain
 bring-your-own-proxy. `--acme-email` is required (expiry notices; a placeholder like `example.com` is
 rejected). Point the domain's DNS at this host first; the certificate issues on the first reachable request.
 
-**Behind Cloudflare (orange cloud):** HTTP-01 can't validate through the proxy. Either keep the record
-**DNS-only (grey)** so the cert issues directly, or set Cloudflare SSL/TLS to **Full** (Cloudflare serves
-its own edge certificate and your origin serves Traefik's — your IP stays hidden), or attach a Cloudflare
-**DNS-01** API token to the server for an automatic cert while proxied (owner → Server → DNS). Flip the
-panel on/off or re-apply anytime from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`).
+**Behind Cloudflare (orange cloud):** HTTP-01 can't validate through the proxy, so pass a Cloudflare API
+token and Tugra uses **DNS-01** instead — a real certificate while the record stays proxied and your origin
+IP stays hidden:
+
+```bash
+./scripts/install.sh --domain panel.example.com --auto-tls --acme-email you@example.com \
+  --acme-dns-cloudflare <cf-dns-api-token>
+```
+
+(The token is stored only in the `0600` `.env` and handed to Traefik via a `0600` env-file, never on the
+command line.) Alternatives without a token: keep the record **DNS-only (grey)** so HTTP-01 issues directly,
+or set Cloudflare SSL/TLS to **Full** (Cloudflare serves its own edge cert; the origin serves Traefik's).
+Flip the panel on/off or re-apply anytime from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`).
 
 ### Option B — bring your own reverse proxy
 
@@ -91,6 +99,7 @@ public origin so the session cookie is visible to the SPA); it isn't available i
 | `--auto-tls` | With `--domain`: auto-provision the panel's HTTPS (bundled Traefik + Let's Encrypt). Needs `--acme-email`. Opt-in. |
 | `--no-auto-tls` | With `--domain`: keep bring-your-own-proxy (no bundled TLS). |
 | `--acme-email <addr>` | Let's Encrypt contact email (required by `--auto-tls`; providing it implies `--auto-tls`). |
+| `--acme-dns-cloudflare <token>` | DNS-01 via a Cloudflare API token — a real panel cert while the record stays proxied (IP hidden). Implies `--auto-tls`. |
 | `--hub-url <url>` | Explicit public hub URL (overrides `--domain`). |
 | `--web-url <url>` | Explicit public web (browser) origin. |
 | `--build` | Force building images from your checkout (skip pulling published images). |

@@ -16,6 +16,9 @@
 #                       Requires --acme-email. Opt-in; plain --domain stays bring-your-own-proxy.
 #   --no-auto-tls       With --domain: keep bring-your-own-proxy (no bundled TLS).
 #   --acme-email <addr> Contact email for Let's Encrypt (required by --auto-tls; providing it implies it).
+#   --acme-dns-cloudflare <token>  DNS-01 with a Cloudflare API token: a REAL panel cert while the record
+#                       stays Cloudflare-proxied (IP hidden). Implies --auto-tls. (HTTP-01 can't validate
+#                       through the proxy.)
 #   --hub-url <url>     Explicit public hub URL (agents dial <url>/agent). Overrides --domain.
 #   --web-url <url>     Explicit public web URL (the browser origin).
 #   --build             Force build-from-source (skip pulling published images).
@@ -53,6 +56,8 @@ HOME_MODE="${TUGRA_HOME_MODE:-0}"               # --home: start the owner in the
 # Panel-TLS (DİLİM 1): opt-in auto-HTTPS for the control panel. AUTO_TLS "" = undecided, "1"/"0" explicit.
 AUTO_TLS="${TUGRA_AUTO_TLS:-}"
 ACME_EMAIL_ARG="${TUGRA_ACME_EMAIL:-}"
+ACME_DNS_PROVIDER_ARG="${TUGRA_ACME_DNS_PROVIDER:-}"
+ACME_DNS_TOKEN_ARG="${TUGRA_ACME_DNS_TOKEN:-}"
 HUB_PORT="${HUB_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3001}"
 
@@ -117,6 +122,7 @@ while [ $# -gt 0 ]; do
     --auto-tls)             AUTO_TLS=1; shift ;;
     --no-auto-tls)          AUTO_TLS=0; shift ;;
     --acme-email)           ACME_EMAIL_ARG="${2:-}"; shift 2 ;;
+    --acme-dns-cloudflare)  ACME_DNS_PROVIDER_ARG="cloudflare"; ACME_DNS_TOKEN_ARG="${2:-}"; shift 2 ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     -h|--help)  sed -n '2,25p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -282,7 +288,7 @@ fi
 PANEL_TLS_DECISION=""; PANEL_ACME_EMAIL=""
 if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   _want=""
-  if [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ]; then _want=1
+  if [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ] || [ -n "$ACME_DNS_TOKEN_ARG" ]; then _want=1
   elif [ "$AUTO_TLS" = "0" ]; then _want=0
   elif ! env_has PANEL_TLS; then
     if [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
@@ -318,8 +324,8 @@ if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   elif [ "$_want" = "0" ]; then
     PANEL_TLS_DECISION=0
   fi
-elif [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ]; then
-  err "--auto-tls / --acme-email require --domain <host> (the panel's HTTPS hostname)."
+elif [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ] || [ -n "$ACME_DNS_TOKEN_ARG" ]; then
+  err "--auto-tls / --acme-email / --acme-dns-cloudflare require --domain <host> (the panel's HTTPS hostname)."
   exit 1
 fi
 
@@ -404,6 +410,11 @@ if [ -n "$PANEL_TLS_DECISION" ]; then
   if [ "$PANEL_TLS_DECISION" = "1" ]; then
     set_env PANEL_DOMAIN "$DOMAIN"
     set_env ACME_EMAIL "$PANEL_ACME_EMAIL"
+    # DNS-01 (optional): a real cert while the record stays proxied (IP hidden). Token is a secret → 0600 .env.
+    if [ -n "$ACME_DNS_TOKEN_ARG" ]; then
+      set_env ACME_DNS_PROVIDER "${ACME_DNS_PROVIDER_ARG:-cloudflare}"
+      set_env ACME_DNS_TOKEN "$ACME_DNS_TOKEN_ARG"
+    fi
   fi
 fi
 
@@ -469,11 +480,13 @@ fi
 PANEL_UP=0
 if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
   _pd="$(env_get PANEL_DOMAIN)"; _pe="$(env_get ACME_EMAIL)"
+  # DNS-01 creds (optional) — passed to the generator so it emits the le-dns resolver for a real cert while proxied.
+  _pdp="$(env_has ACME_DNS_PROVIDER && env_get ACME_DNS_PROVIDER || true)"; _pdt="$(env_has ACME_DNS_TOKEN && env_get ACME_DNS_TOKEN || true)"
   if [ -n "$_pd" ] && [ -n "$_pe" ]; then
     step "Provisioning HTTPS for the panel ($_pd)…"
     _setup="$(mktemp)"
     # Single source of truth: the hub image prints the Traefik setup script (panel router); we run it as root.
-    if compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e PANEL_CERT_RESOLVER=le -e ACME_EMAIL="$_pe" \
+    if compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e ACME_EMAIL="$_pe" -e ACME_DNS_PROVIDER="$_pdp" -e ACME_DNS_TOKEN="$_pdt" \
         --entrypoint node hub-api dist/deploy/print-proxy-setup.js >"$_setup" 2>/tmp/tugra-panel-setup.log && [ -s "$_setup" ]; then
       if sh "$_setup" >/tmp/tugra-panel-run.log 2>&1; then
         # The router is up immediately (self-signed until Let's Encrypt issues over :80). Resolve the panel

@@ -84,6 +84,41 @@ describe("ProxyConfigService.resolveFor — panel decision", () => {
     const { svc } = make({ serverRow: { ...localHttp, proxyBind: "loopback" } });
     expect((await svc.resolveFor("s1")).bind).toBe("loopback");
   });
+
+  // DNS-01 for the panel via env (install.sh --acme-dns-cloudflare), so hub recreates keep le-dns.
+  it("local server + env ACME_DNS_* (no stored creds) => le-dns panel + cloudflare creds from env", async () => {
+    const { svc } = make({
+      env: { ACME_DNS_PROVIDER: "cloudflare", ACME_DNS_TOKEN: "cf-tok" },
+      serverRow: localHttp,
+      panelDomain: "demo.tugra.io",
+    });
+    const cfg = await svc.resolveFor("s1");
+    expect(cfg.panel).toEqual({ domain: "demo.tugra.io", resolver: "le-dns" });
+    expect(cfg.dnsProvider).toBe("cloudflare");
+    expect(cfg.dnsCreds).toEqual({ CF_DNS_API_TOKEN: "cf-tok" });
+  });
+
+  it("env ACME_DNS_* is ignored for a NON-local server", async () => {
+    const { svc } = make({
+      env: { ACME_DNS_PROVIDER: "cloudflare", ACME_DNS_TOKEN: "cf-tok" },
+      serverRow: { ...localHttp, isLocal: false },
+      panelDomain: "demo.tugra.io",
+    });
+    const cfg = await svc.resolveFor("s1");
+    expect(cfg.panel).toBeUndefined();
+    expect(cfg.dnsProvider).toBeUndefined();
+  });
+
+  it("an unsupported env DNS provider falls back to HTTP-01 (le), never breaks resolution", async () => {
+    const { svc } = make({
+      env: { ACME_DNS_PROVIDER: "route53", ACME_DNS_TOKEN: "x" },
+      serverRow: localHttp,
+      panelDomain: "demo.tugra.io",
+    });
+    const cfg = await svc.resolveFor("s1");
+    expect(cfg.panel).toEqual({ domain: "demo.tugra.io", resolver: "le" });
+    expect(cfg.dnsProvider).toBeUndefined();
+  });
 });
 
 describe("ProxyConfigService.onApplicationBootstrap — env PANEL_DOMAIN -> DB sync", () => {
