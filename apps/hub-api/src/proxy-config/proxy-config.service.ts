@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { validatePanelDomain, validateAcmeEmail, type PanelResolver } from "../deploy/panel-router";
+import { validatePanelDomain, validateAcmeEmail, dnsProviderEnvCreds, type PanelResolver } from "../deploy/panel-router";
 
 export interface ResolvedProxyConfig {
   acmeEmail?: string;
@@ -64,6 +64,22 @@ export class ProxyConfigService implements OnApplicationBootstrap {
         dnsUsable = true;
       } catch {
         dnsUsable = false;
+      }
+    }
+    // Local-server panel fallback: install.sh --acme-dns-cloudflare writes the token to env (ACME_DNS_*) — the
+    // local server row has no stored creds yet. Honor it HERE so every hub-driven recreate keeps le-dns (a real
+    // cert while proxied); without this the first redeploy would silently revert the panel to HTTP-01.
+    if (!dnsUsable && s?.isLocal === true) {
+      const envProvider = this.config.get<string>("ACME_DNS_PROVIDER")?.trim();
+      const envToken = this.config.get<string>("ACME_DNS_TOKEN")?.trim();
+      if (envProvider && envToken) {
+        try {
+          dnsCreds = dnsProviderEnvCreds(envProvider, envToken);
+          dnsProvider = envProvider;
+          dnsUsable = true;
+        } catch {
+          dnsUsable = false; // unsupported provider → fall back to HTTP-01
+        }
       }
     }
 

@@ -36,6 +36,23 @@ const SVC_WEB = "tugra-panel-web";
 
 export type PanelResolver = "le" | "le-dns";
 
+// Traefik's lego DNS-01 providers read their token from a provider-specific env var. Map the ones we offer
+// at install time so a user who pastes a Cloudflare token gets a REAL cert WHILE the record stays proxied
+// (IP hidden) — the HTTP-01 default can't validate through the proxy.
+const DNS_PROVIDER_ENV_KEY: Record<string, string> = { cloudflare: "CF_DNS_API_TOKEN" };
+
+/** Build the Traefik DNS-01 provider creds ({<ENV_KEY>: token}) for a supported provider, or throw. */
+export function dnsProviderEnvCreds(provider: string, token: string): Record<string, string> {
+  const key = DNS_PROVIDER_ENV_KEY[(provider ?? "").trim().toLowerCase()];
+  if (!key) {
+    throw new Error(
+      `unsupported DNS-01 provider: ${JSON.stringify(provider)} (supported: ${Object.keys(DNS_PROVIDER_ENV_KEY).join(", ")})`,
+    );
+  }
+  if (!token || !token.trim()) throw new Error("a DNS-01 provider token is required");
+  return { [key]: token.trim() };
+}
+
 // A single DNS label is 1-63 chars; the whole name ≤253. No wildcard, scheme, path, port, IP literal,
 // whitespace, backtick or quote can match — so the validated value is safe to embed in a Traefik rule.
 const PANEL_DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;

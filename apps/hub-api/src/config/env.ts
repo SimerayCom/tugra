@@ -46,6 +46,12 @@ export const envSchema = z
   // bootstrap. The domain format is validated strictly at provisioning time (panel-router.validatePanelDomain).
   PANEL_TLS: z.enum(["0", "1"]).optional(),
   PANEL_DOMAIN: z.string().optional(),
+  // Optional DNS-01 for the panel (install.sh --acme-dns-cloudflare): a real Let's Encrypt cert at the
+  // origin WHILE the record stays Cloudflare-proxied (IP hidden) — HTTP-01 can't validate through a proxy.
+  // When both are set, the panel uses the le-dns resolver with the token (passed to Traefik via a 0600
+  // env-file, never argv). ACME_DNS_TOKEN is a secret, kept only in the 0600 .env.
+  ACME_DNS_PROVIDER: z.string().optional(),
+  ACME_DNS_TOKEN: z.string().optional(),
   // Public base URL the agent dials back to (e.g. https://hub.example.com). Used to
   // build the install command; falls back to the request Host when unset.
   HUB_PUBLIC_URL: z.string().url().optional(),
