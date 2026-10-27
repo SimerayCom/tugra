@@ -15,6 +15,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dedicated `tugra-panel` Docker network that Traefik routes over, isolated from deployed apps. Check or
   re-apply from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`). See
   [docs/install.md](docs/install.md).
+- **Turnkey add-server:** the agent installer now auto-installs Docker (via get.docker.com) when it's
+  missing and the script runs as root — matching the hub installer, so adding a second/remote server is a
+  single pasted command. Opt out with `TUGRA_SKIP_DOCKER_INSTALL=1`; a non-root run still prints the manual
+  install hint (nothing half-installs).
 - One-click Coolify database migration: after importing a Coolify fleet, mint a one-time migration
   token for the import operation and paste the printed one-liner on the Coolify host. It dumps each
   Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly database and restores it into the matching
