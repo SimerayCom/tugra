@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { cleanDomain } from "../lib/domain";
@@ -24,11 +25,13 @@ const errText: React.CSSProperties = { color: "var(--c-r)", fontSize: 12, margin
 export function DnsAutoSetup({
   appId,
   teamId,
+  serverId,
   domain,
   onApplied,
 }: {
   appId: string;
   teamId?: string;
+  serverId?: string;
   domain: string;
   onApplied: () => void;
 }) {
@@ -120,6 +123,14 @@ export function DnsAutoSetup({
     <div style={{ marginTop: 12, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12 }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("apps.dnsAutoTitle")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "4px 0 10px" }}>{t("apps.dnsAutoDesc")}</p>
+
+      {serverId && (
+        <p style={{ fontSize: 12, margin: "0 0 10px" }}>
+          <Link href={`/servers/${serverId}?tab=maintenance#wildcard`} style={{ color: "var(--c-ac)" }}>
+            {t("apps.dnsAutoWildcardLink")}
+          </Link>
+        </p>
+      )}
 
       {!host && <p style={{ fontSize: 12, color: "var(--c-am)" }}>{t("apps.dnsAutoNoDomain")}</p>}
       {credsQ.isError && <div style={errText}>{(credsQ.error as Error).message}</div>}

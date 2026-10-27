@@ -103,7 +103,7 @@ export function ExposeModal({
               onChange={(e) => setDomain(e.target.value)}
             />
           </Field>
-          <DnsAutoSetup appId={appId} teamId={appQ.data?.teamId} domain={domain} onApplied={onClose} />
+          <DnsAutoSetup appId={appId} teamId={appQ.data?.teamId} serverId={serverId} domain={domain} onApplied={onClose} />
         </div>
       )}
       {tunnelReady && appQ.data && (

@@ -58,12 +58,15 @@ export function Btn({
 export function Card({
   children,
   style,
+  id,
 }: {
   children: ReactNode;
   style?: CSSProperties;
+  id?: string; // optional anchor target (e.g. deep-link #wildcard)
 }) {
   return (
     <div
+      id={id}
       style={{
         background: "var(--c-sb)",
         border: "1px solid var(--c-bd)",
