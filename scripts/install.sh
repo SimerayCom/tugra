@@ -202,6 +202,11 @@ preflight() {
     for p in "${HUB_PORT:-3000}" "${WEB_PORT:-3001}"; do
       ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && note "Port ${p} looks busy — the stack may fail to bind it (set HUB_PORT/WEB_PORT or free it)"
     done
+    # :80/:443 are the reverse-proxy's ports (needed for --auto-tls and any app with a domain). A warning
+    # only — the proxy is created lazily, so a quick start without a domain is unaffected.
+    for p in 80 443; do
+      ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$" && note "Port ${p} is in use — Tugra's reverse proxy (--auto-tls or a domained app) needs it; free it or set a server's proxyBind to loopback/none. (Docker-published ports bypass ufw — use a cloud firewall.)"
+    done
   fi
   [ "$fail" -eq 0 ] || { err "Preflight failed — fix the ✗ item(s) above and re-run."; exit 1; }
   printf '\n'
