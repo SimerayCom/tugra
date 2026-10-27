@@ -7264,6 +7264,28 @@
                           "additionalProperties": false
                         }
                       },
+                      "hostMounts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "hostPath": {
+                              "type": "string"
+                            },
+                            "containerPath": {
+                              "type": "string"
+                            },
+                            "readOnly": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "hostPath",
+                            "containerPath"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "composeVolumes": {
                         "type": "array",
                         "items": {
@@ -7650,6 +7672,7 @@
                       "dockerOptions",
                       "dbNetwork",
                       "volumes",
+                      "hostMounts",
                       "composeVolumes",
                       "hasConfigMounts",
                       "hasGitToken",
@@ -8006,6 +8029,28 @@
                         "required": [
                           "name",
                           "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "hostMounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPath": {
+                            "type": "string"
+                          },
+                          "containerPath": {
+                            "type": "string"
+                          },
+                          "readOnly": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "hostPath",
+                          "containerPath"
                         ],
                         "additionalProperties": false
                       }
@@ -8396,6 +8441,7 @@
                     "dockerOptions",
                     "dbNetwork",
                     "volumes",
+                    "hostMounts",
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
@@ -8839,6 +8885,28 @@
                         "additionalProperties": false
                       }
                     },
+                    "hostMounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPath": {
+                            "type": "string"
+                          },
+                          "containerPath": {
+                            "type": "string"
+                          },
+                          "readOnly": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "hostPath",
+                          "containerPath"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "composeVolumes": {
                       "type": "array",
                       "items": {
@@ -9225,6 +9293,7 @@
                     "dockerOptions",
                     "dbNetwork",
                     "volumes",
+                    "hostMounts",
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
@@ -9672,6 +9741,28 @@
                         "additionalProperties": false
                       }
                     },
+                    "hostMounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPath": {
+                            "type": "string"
+                          },
+                          "containerPath": {
+                            "type": "string"
+                          },
+                          "readOnly": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "hostPath",
+                          "containerPath"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "composeVolumes": {
                       "type": "array",
                       "items": {
@@ -10058,6 +10149,7 @@
                     "dockerOptions",
                     "dbNetwork",
                     "volumes",
+                    "hostMounts",
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
@@ -13143,6 +13235,135 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/host-mounts": {
+      "put": {
+        "operationId": "ApplicationsController_setHostMounts",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostMounts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "hostPath": {
+                          "type": "string",
+                          "pattern": "^\\/[A-Za-z0-9._/-]+$"
+                        },
+                        "containerPath": {
+                          "type": "string",
+                          "pattern": "^\\/[A-Za-z0-9._/-]+$"
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "hostPath",
+                        "containerPath"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "hostMounts"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/placement": {
       "put": {
         "operationId": "ApplicationsController_setPlacement",
@@ -14513,6 +14734,28 @@
                         "additionalProperties": false
                       }
                     },
+                    "hostMounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPath": {
+                            "type": "string"
+                          },
+                          "containerPath": {
+                            "type": "string"
+                          },
+                          "readOnly": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "hostPath",
+                          "containerPath"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "composeVolumes": {
                       "type": "array",
                       "items": {
@@ -14899,6 +15142,7 @@
                     "dockerOptions",
                     "dbNetwork",
                     "volumes",
+                    "hostMounts",
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
@@ -15271,6 +15515,28 @@
                           "required": [
                             "name",
                             "path"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "hostMounts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "hostPath": {
+                              "type": "string"
+                            },
+                            "containerPath": {
+                              "type": "string"
+                            },
+                            "readOnly": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "hostPath",
+                            "containerPath"
                           ],
                           "additionalProperties": false
                         }
@@ -15661,6 +15927,7 @@
                       "dockerOptions",
                       "dbNetwork",
                       "volumes",
+                      "hostMounts",
                       "composeVolumes",
                       "hasConfigMounts",
                       "hasGitToken",
@@ -16107,6 +16374,28 @@
                         "additionalProperties": false
                       }
                     },
+                    "hostMounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPath": {
+                            "type": "string"
+                          },
+                          "containerPath": {
+                            "type": "string"
+                          },
+                          "readOnly": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "hostPath",
+                          "containerPath"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "composeVolumes": {
                       "type": "array",
                       "items": {
@@ -16493,6 +16782,7 @@
                     "dockerOptions",
                     "dbNetwork",
                     "volumes",
+                    "hostMounts",
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
@@ -17964,6 +18254,28 @@
                         "additionalProperties": false
                       }
                     },
+                    "hostMounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPath": {
+                            "type": "string"
+                          },
+                          "containerPath": {
+                            "type": "string"
+                          },
+                          "readOnly": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "hostPath",
+                          "containerPath"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "composeVolumes": {
                       "type": "array",
                       "items": {
@@ -18350,6 +18662,7 @@
                     "dockerOptions",
                     "dbNetwork",
                     "volumes",
+                    "hostMounts",
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",

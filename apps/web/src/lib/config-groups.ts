@@ -37,6 +37,7 @@ export type ConfigCardId =
   | "domain"
   | "domainOptions"
   | "volumes"
+  | "hostMounts"
   | "volumeBackups"
   | "configMounts"
   | "healthCheck"
@@ -86,6 +87,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "domainOptions", group: "domains", visible: (a) => !!a.domain },
   // Storage
   { id: "volumes", group: "storage", visible: notCompose },
+  // Host folder bind-mounts (e.g. a media library) — docker-run apps only; a COMPOSE stack declares its own.
+  { id: "hostMounts", group: "storage", visible: notCompose },
   { id: "volumeBackups", group: "storage", visible: (a) => notCompose(a) && a.volumes.length > 0 },
   { id: "configMounts", group: "storage", visible: (a) => a.source === "COMPOSE" && a.canWrite && a.hasConfigMounts },
   // Health & Resources

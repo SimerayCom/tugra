@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
-import type { AppVolume } from "../../../../lib/types";
+import type { AppVolume, HostMount } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
@@ -197,6 +197,7 @@ export default function AppDetailPage() {
         <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} />
       ) : null,
     volumes: () => <VolumesCard id={id} volumes={appData.volumes} />,
+    hostMounts: () => <HostMountsCard id={id} hostMounts={appData.hostMounts} />,
     volumeBackups: () => (
       <VolumeBackupsCard id={id} volumes={appData.volumes} enabled={appData.volumeBackupEnabled} intervalHours={appData.volumeBackupIntervalHours} retention={appData.volumeBackupRetention} destinationId={appData.volumeBackupDestinationId} />
     ),
@@ -1079,6 +1080,57 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
           <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
         </div>
       </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [rows, setRows] = useState<HostMount[]>(hostMounts.length ? hostMounts : []);
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppHostMounts(
+        id,
+        rows.filter((r) => r.hostPath.trim() && r.containerPath.trim()),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  const setRow = (i: number, patch: Partial<HostMount>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.hostMounts")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.hostMountsDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input style={{ ...envField, flex: 1, minWidth: 150 }} placeholder={t("apps.hostMountHostPath")} value={r.hostPath} onChange={(e) => setRow(i, { hostPath: e.target.value })} />
+            <span style={{ color: "var(--c-tx3)" }}>→</span>
+            <input style={{ ...envField, flex: 1, minWidth: 150 }} placeholder={t("apps.hostMountContainerPath")} value={r.containerPath} onChange={(e) => setRow(i, { containerPath: e.target.value })} />
+            <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--c-tx2)" }}>
+              <input type="checkbox" checked={r.readOnly !== false} onChange={(e) => setRow(i, { readOnly: e.target.checked })} />
+              {t("apps.hostMountReadOnly")}
+            </label>
+            <button
+              onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+              aria-label={t("common.remove")}
+              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { hostPath: "", containerPath: "", readOnly: true }])}>{t("apps.addHostMount")}</Btn>
+          <div style={{ flex: 1 }} />
+          <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10, lineHeight: 1.5 }}>{t("apps.hostMountsHint")}</p>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );

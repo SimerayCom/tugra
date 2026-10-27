@@ -79,6 +79,8 @@ import {
   SetPlacementSchema,
   SetVolumesInput,
   SetVolumesSchema,
+  SetHostMountsInput,
+  SetHostMountsSchema,
 } from "./dto";
 
 @ApiTags("apps")
@@ -466,6 +468,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetVolumesSchema)) body: SetVolumesInput,
   ) {
     await this.apps.setVolumes(user.userId, id, body.volumes);
+    return { ok: true };
+  }
+
+  @Put(":id/host-mounts")
+  @HttpCode(200)
+  @ApiZodBody(SetHostMountsSchema)
+  async setHostMounts(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetHostMountsSchema)) body: SetHostMountsInput,
+  ) {
+    await this.apps.setHostMounts(user.userId, id, body.hostMounts);
     return { ok: true };
   }
 

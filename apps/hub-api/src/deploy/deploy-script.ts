@@ -70,6 +70,8 @@ export interface AppSpec {
   /** Swarm-only: spread replicas across values of this node-label key (`--placement-pref spread=…`). */
   placementSpreadLabelKey?: string | null;
   volumes?: AppVolume[] | null;
+  /** Host directories bind-mounted into the container (advanced; validated against the sensitive-path denylist). */
+  hostMounts?: HostMount[] | null;
   gitToken?: string | null;
   registryAuth?: RegistryAuth | null;
   env: Record<string, string>;
@@ -147,6 +149,15 @@ export interface RegistryAuth {
 export interface AppVolume {
   name: string;
   path: string;
+}
+
+/** A HOST directory bind-mounted into the app container (e.g. a media library at /mnt/media). Unlike a
+ *  named volume, the source is a real host path — validated against the sensitive-path denylist before it
+ *  is ever stored (see validateHostMounts), and shell-quoted at deploy so a path can't inject into `sh -c`. */
+export interface HostMount {
+  hostPath: string;
+  containerPath: string;
+  readOnly?: boolean;
 }
 
 /** A template config file materialized on the host and bind-mounted read-only into a service at
@@ -685,6 +696,13 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     .map((v) => `-v ${appVolumeName(app, v.name)}:${v.path}`)
     .join(" ");
 
+  // Host bind-mounts (e.g. a media library). The whole `host:ctr[:ro]` value is a user-supplied path, so
+  // shell-quote it as ONE word — it can't inject into the `sh -c` deploy command. Paths were validated
+  // against the sensitive-path denylist (+ no `:`) before storage, so docker's `-v` parse is unambiguous.
+  const hostMountArgs = (app.hostMounts ?? [])
+    .map((m) => `-v ${shq(`${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`)}`)
+    .join(" ");
+
   const run = [
     "docker run -d",
     `--name ${name}`,
@@ -696,6 +714,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     envArg,
     netExpose.trim(),
     volArgs,
+    hostMountArgs,
     shq(ref),
   ]
     .filter(Boolean)

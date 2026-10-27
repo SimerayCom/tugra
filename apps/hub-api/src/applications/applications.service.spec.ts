@@ -868,6 +868,24 @@ describe("ApplicationsService", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("setHostMounts persists validated mounts (read-only default) and audits", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setHostMounts("u1", "app1", [{ hostPath: "/mnt/media", containerPath: "/media" }]);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { hostMounts: [{ hostPath: "/mnt/media", containerPath: "/media", readOnly: true }] } }));
+  });
+
+  it("setHostMounts rejects a sensitive host path and writes nothing", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.setHostMounts("u1", "app1", [{ hostPath: "/etc", containerPath: "/x" }])).rejects.toThrow(/protected system path/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("setComposeFile rejects a non-compose app before any write", async () => {
     const update = jest.fn();
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;

@@ -863,6 +863,7 @@ model Application {
   gpus           String?      // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
   deployTimeoutSec Int?
   volumes        Json?
+  hostMounts     Json?        // [{hostPath, containerPath, readOnly}] — host directory bind-mounts (validated vs the sensitive-path denylist)
   portMappings   Json?        // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
   installConfig  Json?        // redacted user field selections captured at template install (never secret values)
   configMounts   Json?        // [{serviceName, target, content, mode}] — template config files materialized + bound at deploy (${KEY} placeholders, never resolved secrets)

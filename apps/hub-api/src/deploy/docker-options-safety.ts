@@ -1,6 +1,34 @@
 import { BadRequestException } from "@nestjs/common";
 import { SAFE_CAPS, isSensitivePath } from "./compose-safety";
-import { tokenizeDockerOptions } from "./deploy-script";
+import { tokenizeDockerOptions, type HostMount } from "./deploy-script";
+
+/** Max host bind-mounts per app — a sane cap so one app can't attach an unbounded number of host dirs. */
+export const MAX_HOST_MOUNTS = 20;
+
+/**
+ * Validate an app's structured host bind-mounts (the friendly "Host folders" UI) with the SAME safety bar
+ * the free-form dockerOptions `-v` path already enforces: each source must be an absolute host path that is
+ * NOT the docker socket and NOT a sensitive system path (isSensitivePath also rejects `..`, `${}` and
+ * normalizes `/./`, `//`). A `:` is rejected in either path so docker's `-v host:ctr[:ro]` parse stays
+ * unambiguous. Returns the cleaned list (trimmed, readOnly coerced to a real boolean); throws on any
+ * violation so a bad mount fails with a clear 400 now, not a broken deploy later.
+ */
+export function validateHostMounts(mounts: unknown): HostMount[] {
+  if (mounts == null) return [];
+  if (!Array.isArray(mounts)) throw new BadRequestException("hostMounts must be a list");
+  if (mounts.length > MAX_HOST_MOUNTS) throw new BadRequestException(`at most ${MAX_HOST_MOUNTS} host folders per app`);
+  const okPath = (p: string) => typeof p === "string" && p.startsWith("/") && !p.includes(":") && !/[\s\n\r]/.test(p) && p.length <= 1024;
+  return mounts.map((raw) => {
+    const m = (raw ?? {}) as { hostPath?: unknown; containerPath?: unknown; readOnly?: unknown };
+    const hostPath = typeof m.hostPath === "string" ? m.hostPath.trim() : "";
+    const containerPath = typeof m.containerPath === "string" ? m.containerPath.trim() : "";
+    if (!okPath(hostPath)) throw new BadRequestException(`host path must be an absolute path without ':' — got "${hostPath}"`);
+    if (!okPath(containerPath)) throw new BadRequestException(`container path must be an absolute path without ':' — got "${containerPath}"`);
+    if (isDockerSock(hostPath)) throw new BadRequestException("the docker socket cannot be mounted");
+    if (isSensitivePath(hostPath)) throw new BadRequestException(`host path ${hostPath} is a protected system path`);
+    return { hostPath, containerPath, readOnly: m.readOnly !== false }; // default read-only (safer for media)
+  });
+}
 
 /**
  * Structural safety check for an app's free-form `dockerOptions` (advanced `docker run` flags on IMAGE/GIT

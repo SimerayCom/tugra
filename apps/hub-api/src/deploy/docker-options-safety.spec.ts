@@ -1,7 +1,38 @@
-import { assertSafeDockerOptions } from "./docker-options-safety";
+import { assertSafeDockerOptions, validateHostMounts } from "./docker-options-safety";
 
 const ok = (s: string) => expect(() => assertSafeDockerOptions(s)).not.toThrow();
 const bad = (s: string, re?: RegExp) => expect(() => assertSafeDockerOptions(s)).toThrow(re ?? /disallowed flag|unterminated/);
+
+describe("validateHostMounts", () => {
+  it("accepts a legitimate media mount (read-only by default)", () => {
+    expect(validateHostMounts([{ hostPath: "/mnt/media", containerPath: "/media" }])).toEqual([
+      { hostPath: "/mnt/media", containerPath: "/media", readOnly: true },
+    ]);
+  });
+  it("keeps an explicit read-write mount", () => {
+    expect(validateHostMounts([{ hostPath: "/data/x", containerPath: "/x", readOnly: false }])[0].readOnly).toBe(false);
+  });
+  it("rejects a sensitive host path", () => {
+    for (const p of ["/etc", "/", "/var/lib/docker", "/root", "/home/user", "/proc"]) {
+      expect(() => validateHostMounts([{ hostPath: p, containerPath: "/x" }])).toThrow(/protected system path|absolute/);
+    }
+  });
+  it("rejects the docker socket", () => {
+    expect(() => validateHostMounts([{ hostPath: "/var/run/docker.sock", containerPath: "/s" }])).toThrow(/docker socket|protected/);
+  });
+  it("rejects a path-traversal / non-absolute / colon'd path", () => {
+    expect(() => validateHostMounts([{ hostPath: "/mnt/../etc", containerPath: "/x" }])).toThrow();
+    expect(() => validateHostMounts([{ hostPath: "relative", containerPath: "/x" }])).toThrow(/absolute/);
+    expect(() => validateHostMounts([{ hostPath: "/mnt/a:b", containerPath: "/x" }])).toThrow(/absolute/);
+    expect(() => validateHostMounts([{ hostPath: "/mnt/media", containerPath: "rel" }])).toThrow(/absolute/);
+  });
+  it("caps the number of mounts and accepts an empty/null list", () => {
+    expect(validateHostMounts(null)).toEqual([]);
+    expect(validateHostMounts([])).toEqual([]);
+    const many = Array.from({ length: 21 }, (_, i) => ({ hostPath: `/mnt/m${i}`, containerPath: `/m${i}` }));
+    expect(() => validateHostMounts(many)).toThrow(/at most/);
+  });
+});
 
 describe("assertSafeDockerOptions", () => {
   it("allows legitimate, non-escaping flags", () => {
