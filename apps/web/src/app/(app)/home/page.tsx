@@ -17,6 +17,7 @@ import { ErrorState } from "../../../components/error-state";
 import { ExposeModal } from "../../../components/expose-modal";
 import { TileActionsSheet } from "../../../components/tile-actions-sheet";
 import { RemoteAccessCard } from "../../../components/remote-access-card";
+import { LiveGauges } from "../../../components/live-gauges";
 import { AppLogo } from "../../../components/app-logo";
 
 const grid: React.CSSProperties = {
@@ -61,6 +62,9 @@ export default function HomePage() {
     <div style={{ padding: "var(--page-pad)" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("home.title")}</h1>
       <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 20px" }}>{t("home.subtitle")}</p>
+
+      {/* At-a-glance health of the home box — CPU/RAM/disk (+temp/GPU). Hides itself until the agent reports. */}
+      {remoteTarget && <LiveGauges id={remoteTarget.id} nowMs={Date.now()} />}
 
       {/* Only an operator who can manage the server (servers:manage) can set up a tunnel — hide it otherwise. */}
       {remoteTarget?.canWrite && <RemoteAccessCard serverId={remoteTarget.id} />}

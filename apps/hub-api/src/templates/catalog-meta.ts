@@ -33,10 +33,13 @@ export const TEMPLATE_META_OVERLAY: Record<string, TemplateMetaOverlay> = {
   audiobookshelf: { tagline: "Audiobook & podcast server", tags: ["audiobooks", "podcasts", "media", "listening"], featured: true },
   navidrome: { tagline: "Your personal music streaming server", tags: ["music", "streaming", "media", "subsonic"] },
   syncthing: { tagline: "Continuous file sync across your devices", tags: ["sync", "files", "backup", "p2p"] },
+  photoprism: { tagline: "AI-powered photo gallery, self-hosted", tags: ["photos", "gallery", "ai", "media", "google photos"], featured: true },
+  frigate: { tagline: "AI security-camera NVR with object detection", tags: ["cameras", "nvr", "security", "surveillance", "ai"], featured: true },
 
   // ── Security & network ──
   vaultwarden: { tagline: "Private password manager (Bitwarden-compatible)", tags: ["passwords", "security", "bitwarden", "vault", "secrets"], featured: true },
   "pi-hole": { tagline: "Network-wide ad & tracker blocker", tags: ["dns", "adblock", "network", "privacy", "pihole"], featured: true },
+  adguard: { tagline: "Network-wide DNS ad & tracker blocker", tags: ["dns", "adblock", "network", "privacy", "adguard"], featured: true },
   minio: { tagline: "S3-compatible object storage", tags: ["storage", "s3", "objects", "buckets"] },
 
   // ── Productivity & home ──
@@ -47,6 +50,8 @@ export const TEMPLATE_META_OVERLAY: Record<string, TemplateMetaOverlay> = {
   excalidraw: { tagline: "Collaborative hand-drawn whiteboard", tags: ["whiteboard", "drawing", "diagrams", "sketch"] },
   "stirling-pdf": { tagline: "All-in-one PDF toolkit", tags: ["pdf", "tools", "documents", "convert"], featured: true },
   "it-tools": { tagline: "Handy developer utilities in one place", tags: ["tools", "developer", "utilities", "converters"] },
+  paperless: { tagline: "Scan, index & search all your documents", tags: ["documents", "paperless", "ocr", "scan", "archive"], featured: true },
+  "home-assistant": { tagline: "Open-source smart-home control hub", tags: ["smart home", "automation", "iot", "home assistant", "hass"], featured: true },
 
   // ── Sites, blogs & CMS ──
   wordpress: { tagline: "The world's most popular website & blog platform", tags: ["blog", "website", "cms", "php"], featured: true },
