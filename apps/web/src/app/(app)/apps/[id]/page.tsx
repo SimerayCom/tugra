@@ -5,8 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
-import type { AppVolume, HostMount } from "../../../../lib/types";
+import type { AppVolume, HostMount, Application, Deployment } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
+import { relativeTime } from "../../../../lib/fleet";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
@@ -48,6 +49,62 @@ function rolloutColor(state: string): string {
   if (state === "healthy" || state === "converged") return "var(--c-g)";
   if (state === "rolled_back") return "var(--c-am)";
   return "var(--c-r)";
+}
+
+/** At-a-glance summary for a non-compose app's Overview tab: the live URL plus a compact stat grid
+ *  (status, source, exposure, placement, resources, port, environment, last deployment). Replaces the
+ *  earlier single-line placeholder so the first tab actually tells you what the app is and how it ran. */
+function AppOverview({ app, deployments }: { app: Application; deployments: Deployment[] }) {
+  const t = useT();
+  const last = deployments[0] ?? null;
+  const resourceParts: string[] = [];
+  if (app.memoryMb) resourceParts.push(`${app.memoryMb} MB`);
+  if (app.cpus) resourceParts.push(`${app.cpus} CPU`);
+  const stats: { label: string; node: ReactNode }[] = [
+    { label: t("apps.status"), node: <span style={{ color: appColor(app.status), fontWeight: 600 }}>{app.status}</span> },
+    { label: t("apps.source"), node: <span className="mono">{appSourceSummary(app) || "—"}</span> },
+    { label: t("apps.exposeTitle"), node: t(`apps.exposeMode_${app.exposeMode}`) },
+    { label: t("apps.placementTitle"), node: app.clusterId ? t("apps.ovSwarm", { n: app.replicas ?? 1 }) : t("apps.ovSingleServer") },
+    { label: t("apps.ovResources"), node: resourceParts.length ? resourceParts.join(" · ") : t("apps.ovNoLimit") },
+    { label: t("apps.ovPort"), node: app.containerPort != null ? String(app.containerPort) : "—" },
+    { label: t("apps.ovEnv"), node: t("apps.ovEnvCount", { n: app.envCount }) },
+    {
+      label: t("apps.ovLastDeploy"),
+      node: last ? (
+        <span>
+          <span style={{ color: deploymentColor(last.status), fontWeight: 600 }}>{last.status}</span>
+          {" · "}
+          {relativeTime(last.createdAt)}
+        </span>
+      ) : (
+        t("apps.ovNever")
+      ),
+    },
+  ];
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", paddingBottom: 14, marginBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)" }}>{t("apps.ovLiveUrl")}</span>
+        {app.url ? (
+          <a href={app.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)", fontSize: 14, wordBreak: "break-all" }}>
+            {app.url} ↗
+          </a>
+        ) : (
+          <span style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("apps.ovNotExposed")}</span>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 190px), 1fr))", gap: 14 }}>
+        {stats.map((s) => (
+          <div key={s.label}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 13, color: "var(--c-tx)" }}>{s.node}</div>
+          </div>
+        ))}
+      </div>
+      {app.canWrite && !last && <div style={{ marginTop: 14, fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.overviewHint")}</div>}
+      {!app.canWrite && <div style={{ marginTop: 14, fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.readOnlyHint")}</div>}
+    </Card>
+  );
 }
 
 export default function AppDetailPage() {
@@ -367,11 +424,7 @@ export default function AppDetailPage() {
         appData.source === "COMPOSE" && appData.composeFile ? (
           <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />
         ) : (
-          <Card style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
-              {appData.canWrite ? t("apps.overviewHint") : t("apps.readOnlyHint")}
-            </div>
-          </Card>
+          <AppOverview app={appData} deployments={deployments} />
         )
       )}
 
