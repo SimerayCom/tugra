@@ -258,7 +258,15 @@ preflight() {
   ensure_pkg git git && ok "git" || note "git not found and could not be installed (needed only for Git-source deploys)"
   command -v curl >/dev/null 2>&1 && ok "curl" || note "curl not found (used for the post-install health check)"
   arch="$(uname -m 2>/dev/null || echo '?')"
-  case "$arch" in x86_64|amd64|aarch64|arm64) ok "Architecture: $arch" ;; *) note "Unusual architecture: $arch (published images target amd64/arm64)" ;; esac
+  case "$arch" in
+    x86_64|amd64) ok "Architecture: $arch" ;;
+    aarch64|arm64)
+      # Only the agent image is published multi-arch; the hub/web/updater are amd64-only. So on an arm64
+      # control-plane host `compose pull` finds no matching image and the installer BUILDS them from source
+      # (correct, just slower + a little RAM) rather than failing. Say so up front — not a surprise long build.
+      note "arm64 host: the hub/web images are amd64-only, so they'll be BUILT from source here (a few minutes + ~2GB RAM). Automatic; pass --build to force it, or run the hub on an amd64 box to pull prebuilt images." ;;
+    *) note "Unusual architecture: $arch — prebuilt images target amd64, so the installer will build from source." ;;
+  esac
   if [ -r /proc/meminfo ]; then
     memkb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || true)"
     if [ -n "${memkb:-}" ]; then
