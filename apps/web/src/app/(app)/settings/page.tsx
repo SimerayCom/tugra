@@ -134,7 +134,7 @@ function AccountCard() {
     onError: (e) => toast(e instanceof Error ? e.message : t("settings.profileSaveFailed"), "error"),
   });
   return (
-    <Card style={{ padding: 18, marginBottom: 16 }}>
+    <Card style={{ padding: 18 }}>
       <div style={{ fontWeight: 600, marginBottom: 12 }}>{t("settings.account")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <Field label={t("settings.name")} htmlFor="acc-name">
@@ -172,7 +172,7 @@ function UiModeCard() {
     { value: "home", label: t("settings.uiModeHome"), desc: t("settings.uiModeHomeDesc"), icon: Home },
   ];
   return (
-    <Card style={{ padding: 18, marginBottom: 16 }}>
+    <Card style={{ padding: 18 }}>
       <div style={{ fontWeight: 600 }}>{t("settings.uiMode")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.uiModeDesc")}</div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -224,7 +224,7 @@ function PasswordCard() {
     change.mutate();
   };
   return (
-    <Card style={{ padding: 18, marginTop: 16 }}>
+    <Card style={{ padding: 18 }}>
       <div style={{ fontWeight: 600, marginBottom: 12 }}>{t("settings.password")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <Field label={t("settings.currentPassword")}>
@@ -256,7 +256,7 @@ function SessionsCard() {
     router.replace("/login");
   };
   return (
-    <Card style={{ padding: 18, marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+    <Card style={{ padding: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600 }}>{t("settings.sessions")}</div>
         <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("settings.sessionsDesc")}</div>
