@@ -14,6 +14,8 @@ import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { ProxyService } from "./proxy.service";
+import { PanelTlsService } from "./panel-tls.service";
+import { PanelTlsController } from "./panel-tls.controller";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
@@ -21,11 +23,12 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule],
-  controllers: [ApplicationsController],
+  controllers: [ApplicationsController, PanelTlsController],
   providers: [
     ApplicationsService,
     AppDatabaseLinksService,
     ProxyService,
+    PanelTlsService,
     AiService,
     PortAllocatorService,
     ContainerLogStreamGuard,

@@ -16831,6 +16831,236 @@
         ]
       }
     },
+    "/api/v1/instance/panel-tls": {
+      "get": {
+        "operationId": "PanelTlsController_status",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "domain": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "resolver": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "originHost": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "originMatches": {
+                      "type": "boolean"
+                    },
+                    "acmeEmailOk": {
+                      "type": "boolean"
+                    },
+                    "localServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "localServerOnline": {
+                      "type": "boolean"
+                    },
+                    "proxyRunning": {
+                      "type": "boolean"
+                    },
+                    "routerPresent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "domain",
+                    "resolver",
+                    "originHost",
+                    "originMatches",
+                    "acmeEmailOk",
+                    "localServerId",
+                    "localServerOnline",
+                    "proxyRunning",
+                    "routerPresent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
+    "/api/v1/instance/panel-tls/apply": {
+      "post": {
+        "operationId": "PanelTlsController_apply",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "domain": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "resolver": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "originHost": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "originMatches": {
+                      "type": "boolean"
+                    },
+                    "acmeEmailOk": {
+                      "type": "boolean"
+                    },
+                    "localServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "localServerOnline": {
+                      "type": "boolean"
+                    },
+                    "proxyRunning": {
+                      "type": "boolean"
+                    },
+                    "routerPresent": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "domain",
+                    "resolver",
+                    "originHost",
+                    "originMatches",
+                    "acmeEmailOk",
+                    "localServerId",
+                    "localServerOnline",
+                    "proxyRunning",
+                    "routerPresent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
     "/api/v1/git-sources": {
       "get": {
         "operationId": "GitSourcesController_list",

@@ -31,3 +31,13 @@ Docker socket — a root-equivalent surface — so it is deliberately minimal:
 - The hub verifies the release manifest's **ed25519 signature** before queueing any update, refuses any
   **downgrade** and any **channel-skip**, and auto-update applies **patch releases only** (a minor/major
   always waits for an explicit owner click). The sidecar re-checks "strictly newer" as defense-in-depth.
+
+## Control-panel TLS (`--auto-tls`)
+
+Opt-in auto-HTTPS for the panel (`install.sh --auto-tls`) runs a bundled Traefik that gets a Let's Encrypt
+certificate. Its only added outbound call is to Let's Encrypt for the operator's **own** domain — no
+phone-home. The hub and web attach to a dedicated **`tugra-panel`** Docker network that Traefik routes over,
+separate from the app network: a deployed (untrusted) app container can neither reach the hub directly
+(bypassing the API IP-allowlist / the one-hop trusted-proxy `X-Forwarded-For`) nor shadow the panel's route,
+and Postgres/Redis never join it. Panel TLS stays **off** unless the operator opts in; plain `--domain`
+remains bring-your-own-proxy.
