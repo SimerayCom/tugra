@@ -175,25 +175,26 @@ _resolve_a() {
   printf '%s' "$_out"
 }
 
-# This server's public IPv4, via an external echo (best-effort, short timeout). Prints "" if curl is
-# missing or none answers — the caller then softens its message rather than claiming a mismatch.
-_detect_public_ip() {
-  command -v curl >/dev/null 2>&1 || { printf ''; return 0; }
-  for _u in https://api.ipify.org https://checkip.amazonaws.com https://ifconfig.me/ip; do
-    _ip="$(curl -fsS --max-time 6 "$_u" 2>/dev/null | tr -d '[:space:]' || true)"
-    case "$_ip" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) printf '%s' "$_ip"; return 0 ;; esac
-  done
-  printf ''
+# This host's own IPv4 from LOCAL sources only — the primary interface address, then the default-route
+# source IP. NO outbound call (that would break the "no IP probe by default" trust-wedge; the opt-in echo
+# lives behind --detect-public-ip elsewhere). Behind NAT this is a private address, so the caller treats a
+# mismatch as advisory. Prints "" when it can't tell (then the caller falls back to a resolve-only note).
+_local_ip() {
+  _i="$( { hostname -I 2>/dev/null || true; } | awk '{print $1; exit}' )"
+  [ -n "$_i" ] || _i="$( { ip route get 1.1.1.1 2>/dev/null || true; } | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' )"
+  case "$_i" in localhost|"") printf '' ;; *) printf '%s' "$_i" ;; esac
 }
 
 # Advisory DNS/token sanity for --auto-tls, run BEFORE anything is provisioned so a misconfigured domain
 # is caught here (with an exact fix) instead of as a silent cert failure — the #1 "SSL just didn't work"
 # foot-gun. It ONLY prints guidance: never errors, never changes the decision, never blocks headless, so a
-# false read can't stop a correct setup or burn a Let's Encrypt attempt. HTTP-01 validates over :80 at the
-# domain's A record, so that record must point here; DNS-01 (Cloudflare token) validates over DNS instead,
-# so the record may stay proxied and we sanity-check the token rather than the address.
+# false read can't stop a correct setup or burn a Let's Encrypt attempt. Crucially it makes NO outbound IP
+# probe (trust-wedge): HTTP-01 compares the domain's A record against this host's LOCAL interface IP (or a
+# --public-ip you gave), never an external echo. DNS-01 (Cloudflare token) validates over DNS instead, so
+# the record may stay proxied and we verify the token — a call to the user's own Cloudflare account, which
+# DNS-01 provisioning makes anyway — rather than the address. Args: <domain> <dns01?> [known-ipv4].
 panel_dns_preflight() {
-  _dom="$1"; _dns01="$2"
+  _dom="$1"; _dns01="$2"; _knownip="${3:-}"
   _dom="$(printf '%s' "$_dom" | sed -e 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' -e 's#[/:].*$##')"
   [ -n "$_dom" ] || return 0
 
@@ -217,18 +218,18 @@ panel_dns_preflight() {
     note "$_dom has no A record yet. HTTP-01 needs it pointing at this server's public IP; add the DNS record and the panel cert issues automatically."
     return 0
   fi
-  _pubip="$(_detect_public_ip)"
+  [ -n "$_knownip" ] || _knownip="$(_local_ip)"
   _disp="$(printf '%s' "$_resolved" | tr '\n' ' ' | sed 's/ *$//')"
-  if [ -z "$_pubip" ]; then
-    note "$_dom resolves to $_disp. Make sure that is THIS server's public IP (couldn't auto-detect it to compare) — HTTP-01 validates over :80 at that address."
+  if [ -z "$_knownip" ]; then
+    note "$_dom resolves to $_disp. Make sure that is THIS server's public IP — HTTP-01 validates over :80 at that address. (Behind Cloudflare's proxy, re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden.)"
     return 0
   fi
-  if printf '%s\n' "$_resolved" | grep -qxF "$_pubip"; then
-    ok "$_dom resolves to this server ($_pubip) — HTTP-01 can validate; the panel cert issues on the first reachable request."
+  if printf '%s\n' "$_resolved" | grep -qxF "$_knownip"; then
+    ok "$_dom resolves to this host ($_knownip) — HTTP-01 can validate; the panel cert issues on the first reachable request."
   else
-    warn "$_dom resolves to $_disp, but this server's public IP is $_pubip."
+    warn "$_dom resolves to $_disp, but this host's address is $_knownip."
     note "HTTP-01 validates over :80 at the domain's address, so the panel cert WON'T issue until $_dom points here."
-    note "Behind Cloudflare's orange-cloud proxy this is expected — re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden. Otherwise set $_dom's A record to $_pubip."
+    note "Behind Cloudflare's orange-cloud proxy (or NAT) this is expected — re-run with --acme-dns-cloudflare <token> for a real cert with the IP hidden. On a bare VPS, set $_dom's A record to this host."
   fi
 }
 
@@ -405,7 +406,8 @@ if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
     if [ "$DRY_RUN" -eq 0 ]; then
       _p01=0
       if [ -n "$ACME_DNS_TOKEN_ARG" ] || env_has ACME_DNS_TOKEN; then _p01=1; fi
-      panel_dns_preflight "$DOMAIN" "$_p01" || true
+      # Pass a known IP so the HTTP-01 check needs no outbound probe: --public-ip if given, else a local read.
+      panel_dns_preflight "$DOMAIN" "$_p01" "${MANUAL_PUBLIC_IP:-}" || true
     fi
   elif [ "$_want" = "0" ]; then
     PANEL_TLS_DECISION=0
