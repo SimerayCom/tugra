@@ -686,6 +686,13 @@ export const api = {
       body: JSON.stringify({ name, teamId }),
     });
   },
+  // Fleet fan-out: add many servers to one team at once, each with its own enroll token + install command.
+  createServersBulk(names: string[], teamId: string) {
+    return apiFetch<{ servers: { server: ServerView; enrollToken: string; installCommand: string }[] }>("/servers/bulk", {
+      method: "POST",
+      body: JSON.stringify({ names, teamId }),
+    });
+  },
   deleteServer(id: string, opts?: { destroyVm?: boolean }) {
     return apiFetch<{ ok: true }>(`/servers/${id}${opts?.destroyVm ? "?destroyVm=true" : ""}`, { method: "DELETE" });
   },

@@ -162,6 +162,42 @@ describe("ServersService.createServer (team role enforced)", () => {
   });
 });
 
+describe("ServersService.createServersBulk (fleet fan-out)", () => {
+  it("creates one PENDING server per name, each with its own enroll token", async () => {
+    const membershipFind = jest.fn().mockResolvedValue({ role: Role.OWNER });
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    const prisma = { membership: { findUnique: membershipFind }, server: { create } } as unknown as PrismaService;
+    const res = await svcWith(prisma).createServersBulk("u1", ["web", "api", "worker"], "teamA");
+    expect(res.servers).toHaveLength(3);
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(res.servers.every((s) => /^tugra_en_/.test(s.enrollToken) && s.installCommand.includes(s.enrollToken))).toBe(true);
+    // servers:manage is checked ONCE up front, not per name.
+    expect(membershipFind).toHaveBeenCalledTimes(1);
+  });
+
+  it("trims names and drops blanks + duplicates (order preserved)", async () => {
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    const prisma = { membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) }, server: { create } } as unknown as PrismaService;
+    const res = await svcWith(prisma).createServersBulk("u1", ["web", " web ", "api", "   ", ""], "teamA");
+    expect(res.servers).toHaveLength(2); // "web" (deduped) + "api"
+    expect(create.mock.calls.map((c) => c[0].data.name)).toEqual(["web", "api"]);
+  });
+
+  it("rejects when nothing valid is left after trimming", async () => {
+    const create = jest.fn();
+    const prisma = { membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) }, server: { create } } as unknown as PrismaService;
+    await expect(svcWith(prisma).createServersBulk("u1", ["  ", ""], "teamA")).rejects.toThrow(/no valid server names/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("forbids a VIEWER and writes nothing", async () => {
+    const create = jest.fn();
+    const prisma = { membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.VIEWER }) }, server: { create } } as unknown as PrismaService;
+    await expect(svcWith(prisma).createServersBulk("u1", ["web", "api"], "teamA")).rejects.toThrow(/insufficient (role|permission)/);
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
 describe("ServersService.deleteForUser (destroy VM)", () => {
   function svcForDelete(prisma: Partial<PrismaService>, destroyVm = jest.fn().mockResolvedValue(undefined)) {
     const mr = {

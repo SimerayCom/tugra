@@ -8,6 +8,15 @@ export const CreateServerSchema = z.object({
 });
 export type CreateServerInput = z.infer<typeof CreateServerSchema>;
 
+/** Bulk add: one team, many named servers in a single call — each gets its own enroll token + install
+ *  command. Capped so a single request can't create an unbounded number of PENDING servers. */
+export const MAX_BULK_SERVERS = 50;
+export const CreateServersBulkSchema = z.object({
+  names: z.array(z.string().min(1)).min(1).max(MAX_BULK_SERVERS),
+  teamId: z.string().min(1),
+});
+export type CreateServersBulkInput = z.infer<typeof CreateServersBulkSchema>;
+
 // Granted agent capabilities the hub will sign commands for on this server. Derived from the shared
 // AGENT_CAPABILITIES source of truth so a new capability (e.g. "swarm"/"files") can never be grantable
 // in the service yet silently rejected here.

@@ -35,6 +35,7 @@ import { hubBaseUrl, agentWsUrl } from "../common/hub-url";
 import { isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
+import { MAX_BULK_SERVERS } from "./dto/servers.schemas";
 
 const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 // The capabilities a NEW server is granted by default — everything except `terminal`
@@ -124,7 +125,19 @@ export class ServersService {
     provisioning?: { provider: string; cloudCredentialId: string },
   ): Promise<{ server: ServerView; enrollToken: string; installCommand: string }> {
     await this.access.requirePermission(userId, teamId, "servers:manage");
+    return this.insertServer(userId, name, teamId, publicUrl, provisioning);
+  }
 
+  /** Insert ONE PENDING server (its own enroll token + install command) and audit it. Assumes the caller
+   *  already checked servers:manage on the team — so createServer (single) and createServersBulk (many)
+   *  share one create path and the bulk endpoint can check the permission just once. */
+  private async insertServer(
+    userId: string,
+    name: string,
+    teamId: string,
+    publicUrl?: string,
+    provisioning?: { provider: string; cloudCredentialId: string },
+  ): Promise<{ server: ServerView; enrollToken: string; installCommand: string }> {
     const enrollToken = generateEnrollToken();
     const created = await this.prisma.server.create({
       data: {
@@ -149,6 +162,36 @@ export class ServersService {
       enrollToken,
       installCommand: this.buildInstallCommand(enrollToken, publicUrl),
     };
+  }
+
+  /**
+   * Fleet onboarding fan-out: add MANY servers to one team in a single call — each still gets its own enroll
+   * token + install command to paste on that box. servers:manage is checked ONCE up front (fail fast before
+   * any row is written); names are trimmed, blanks dropped and duplicates collapsed while preserving order.
+   */
+  async createServersBulk(
+    userId: string,
+    names: string[],
+    teamId: string,
+    publicUrl?: string,
+  ): Promise<{ servers: Array<{ server: ServerView; enrollToken: string; installCommand: string }> }> {
+    await this.access.requirePermission(userId, teamId, "servers:manage");
+    const seen = new Set<string>();
+    const clean: string[] = [];
+    for (const raw of names) {
+      const n = raw.trim();
+      if (n && !seen.has(n)) {
+        seen.add(n);
+        clean.push(n);
+      }
+    }
+    if (clean.length === 0) throw new BadRequestException("no valid server names");
+    if (clean.length > MAX_BULK_SERVERS) throw new BadRequestException(`at most ${MAX_BULK_SERVERS} servers per request`);
+    // Sequential (not a transaction): mirrors single-create's non-transactional insert+audit, and a partial
+    // batch is recoverable — the operator sees what landed and can retry the rest. N is capped above.
+    const servers = [];
+    for (const n of clean) servers.push(await this.insertServer(userId, n, teamId, publicUrl));
+    return { servers };
   }
 
   /** The one-line agent install command. A `curl | sh` bootstrap that fetches the agent installer from
