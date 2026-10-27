@@ -24,7 +24,7 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv, duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
-import { collapseCarriageReturns } from "../../../../lib/log-lines";
+import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
 import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
@@ -39,6 +39,16 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
 import { resolveTab } from "../../../../lib/tab-param";
+
+// Post-deploy rollout states the agent reports via the TUGRA_ROLLOUT marker, mapped to a chip colour.
+// `healthy`/`converged` are good outcomes; `rolled_back` is a caution; anything else (rollback_failed,
+// failed, unexpected) is an error. Known states get a translated label; an unknown one shows verbatim.
+const ROLLOUT_KNOWN = new Set(["healthy", "converged", "rolled_back", "rollback_failed", "failed"]);
+function rolloutColor(state: string): string {
+  if (state === "healthy" || state === "converged") return "var(--c-g)";
+  if (state === "rolled_back") return "var(--c-am)";
+  return "var(--c-r)";
+}
 
 export default function AppDetailPage() {
   const t = useT();
@@ -391,11 +401,17 @@ export default function AppDetailPage() {
               // Rollbackable when the deploy's artifact is retained (image tag / registry image, or —
               // for compose apps — the compose YAML in its snapshot), and it isn't the current version.
               const canRollback = appData.canWrite && d.rollbackable && d.id !== latestSuccessId;
+              const sum = d.logs ? summarizeDeployLog(d.logs) : null;
               return (
                 <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
                     {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
+                    {sum?.rollout && (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: rolloutColor(sum.rollout), border: `1px solid ${rolloutColor(sum.rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>
+                        {ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}
+                      </span>
+                    )}
                     {d.registryImage && <span title={d.registryImage} style={{ fontSize: 10, color: "var(--c-tx3)" }}>☁</span>}
                     {d.imageDigest && (
                       <span title={d.imageDigest} className="mono" style={{ fontSize: 10, color: "var(--c-tx3)" }}>
@@ -447,8 +463,20 @@ export default function AppDetailPage() {
                       </div>
                     </details>
                   )}
-                  {d.logs && (
-                    <pre className="mono" style={{ margin: "6px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{collapseCarriageReturns(d.logs)}</pre>
+                  {sum && (sum.body || sum.stripped) && (
+                    <div style={{ marginTop: 6 }}>
+                      {sum.body ? (
+                        <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{sum.body}</pre>
+                      ) : (
+                        <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.noBuildOutput")}</div>
+                      )}
+                      {sum.stripped && (
+                        <details style={{ marginTop: 6 }}>
+                          <summary style={{ fontSize: 11, color: "var(--c-tx3)", cursor: "pointer" }}>{t("apps.fullLog")}</summary>
+                          <pre className="mono" style={{ margin: "4px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto" }}>{collapseCarriageReturns(d.logs ?? "")}</pre>
+                        </details>
+                      )}
+                    </div>
                   )}
                 </div>
               );
