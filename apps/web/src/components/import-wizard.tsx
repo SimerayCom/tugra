@@ -7,8 +7,9 @@ import { useT } from "../i18n/provider";
 import { Card, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
+import { CopyBtn } from "./copy-row";
 import { planSummary, itemsByKind, riskTone, opProgress } from "../lib/import";
-import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportTaskStatus } from "../lib/types";
+import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -220,7 +221,10 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
 
   const prog = opProgress(op);
   const canRollback = prog.settled && op.tasks.some((task) => task.status === "DONE" && task.resourceType === "application");
+  // Post-import steps only make sense once apps have actually landed (same condition as rollback).
+  const showPostSteps = canRollback;
   return (
+    <>
     <Card style={{ padding: 20, maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 600, flex: 1 }}>{t("import.timelineTitle")} <span style={{ color: "var(--c-tx3)", fontWeight: 400 }}>· {op.status}</span></div>
@@ -256,6 +260,149 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
           </div>
         ))}
       </div>
+    </Card>
+    {showPostSteps && (
+      <>
+        <MigrateDataCard opId={opId} />
+        <RemapEnvCard opId={opId} />
+      </>
+    )}
+    </>
+  );
+}
+
+/** A copyable one-line command (mono, with a Copy button); `muted` greys it as a template, not a live command. */
+function CommandBox({ cmd, muted }: { cmd: string; muted?: boolean }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "var(--c-sur)", border: "1px solid var(--c-bd)", borderRadius: 8, padding: 10 }}>
+      <code className="mono" style={{ flex: 1, fontSize: 11, wordBreak: "break-all", whiteSpace: "pre-wrap", color: muted ? "var(--c-tx3)" : "var(--c-tx)" }}>{cmd}</code>
+      <CopyBtn text={cmd} />
+    </div>
+  );
+}
+
+/** Post-import step 1 — database DATA migration: mint the one-time token and show the one-liner the operator
+ *  pastes on the SOURCE host to pull each database's data over. The live command is shown once; after that the
+ *  read-only state shows active/expiry + a Reissue. */
+function MigrateDataCard({ opId }: { opId: string }) {
+  const t = useT();
+  const toast = useToast();
+  const [minted, setMinted] = useState<MintedMigrationToken | null>(null);
+  const { data: state } = useQuery({ queryKey: ["migrate-command", opId], queryFn: () => api.getMigrateCommand(opId) });
+  const mint = useMutation({
+    mutationFn: (reissue: boolean) => (reissue ? api.reissueMigrationToken(opId) : api.mintMigrationToken(opId)),
+    onSuccess: (r) => setMinted(r),
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+  const active = !!state?.active;
+  return (
+    <Card style={{ padding: 20, maxWidth: 720, marginTop: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("import.migrateTitle")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("import.migrateDesc")}</p>
+      {minted ? (
+        <>
+          <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 6 }}>{t("import.migrateTokenOnce")}</div>
+          <CommandBox cmd={minted.command} />
+          <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("import.migrateExpires", { date: new Date(minted.expiresAt).toLocaleString() })}</div>
+        </>
+      ) : (
+        <>
+          {active && <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 8 }}>{t("import.migrateActive", { date: state?.expiresAt ? new Date(state.expiresAt).toLocaleString() : "" })}</div>}
+          {state?.commandTemplate && <CommandBox cmd={state.commandTemplate} muted />}
+          <div style={{ marginTop: 10 }}>
+            <Btn onClick={() => mint.mutate(active)} disabled={mint.isPending}>
+              {mint.isPending ? "…" : active ? t("import.migrateReissue") : t("import.migrateGenerate")}
+            </Btn>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/** Post-import step 2 — env remap: preview the (secret-masked) rewrites that point each migrated app at its new
+ *  Tugra database, then apply (confirm-gated by the planHash) or undo. Pure wiring over the importer API. */
+function RemapEnvCard({ opId }: { opId: string }) {
+  const t = useT();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [plan, setPlan] = useState<ImportRemapPlan | null>(null);
+  const [result, setResult] = useState<ImportRemapResult | null>(null);
+  const preview = useMutation({
+    mutationFn: () => api.remapEnvPlan(opId),
+    onSuccess: (p) => { setPlan(p); setResult(null); },
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+  const apply = useMutation({
+    mutationFn: (hash: string) => api.remapEnvApply(opId, hash),
+    onSuccess: (r) => { setResult(r); setPlan(null); toast(t("import.remapApplied"), "success"); },
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+  const undo = useMutation({
+    mutationFn: () => api.remapEnvUndo(opId),
+    onSuccess: (r) => { setResult(r); toast(t("import.remapUndone"), "success"); },
+    onError: (e) => toast((e as Error).message, "error"),
+  });
+  const onApply = async () => {
+    if (!plan) return;
+    const ok = await confirm({ title: t("import.remapApplyTitle"), body: t("import.remapApplyBody") });
+    if (ok) apply.mutate(plan.planHash);
+  };
+  const changeCount = plan?.apps.reduce((n, a) => n + a.changes.length, 0) ?? 0;
+  const manualCount = plan?.apps.reduce((n, a) => n + a.needsManual.length, 0) ?? 0;
+  return (
+    <Card style={{ padding: 20, maxWidth: 720, marginTop: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("import.remapTitle")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("import.remapDesc")}</p>
+
+      {!plan && !result && (
+        <Btn onClick={() => preview.mutate()} disabled={preview.isPending}>{preview.isPending ? "…" : t("import.remapPreview")}</Btn>
+      )}
+
+      {plan && !result && (
+        <>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>
+            {t("import.remapSummary", { apps: plan.apps.length, changes: changeCount })}
+            {manualCount > 0 ? ` · ${t("import.remapManual", { n: manualCount })}` : ""}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+            {plan.apps.map((a) => (
+              <div key={a.appId} style={{ border: "1px solid var(--c-bd)", borderRadius: 8, padding: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{a.name}</div>
+                {a.changes.map((c) => (
+                  <div key={c.key} style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 4, wordBreak: "break-all" }}>
+                    <span className="mono">{c.key}</span>: <span style={{ color: "var(--c-tx2)" }}>{c.oldMasked}</span> → <span style={{ color: "var(--c-g)" }}>{c.newMasked}</span>
+                  </div>
+                ))}
+                {a.needsManual.map((m) => (
+                  <div key={m.key} style={{ fontSize: 11, color: "var(--c-am)", marginTop: 4 }}>⚠ <span className="mono">{m.key}</span> — {m.reason}</div>
+                ))}
+                {a.dbNetwork && (
+                  <div style={{ fontSize: 11, color: a.dbNetwork.willLink ? "var(--c-g)" : "var(--c-am)", marginTop: 4 }}>
+                    {a.dbNetwork.willLink ? t("import.remapWillLink") : t("import.remapNoLink", { reason: a.dbNetwork.reason ?? "" })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn onClick={onApply} disabled={apply.isPending || changeCount === 0}>{apply.isPending ? t("import.applying") : t("import.remapApply")}</Btn>
+            <Btn variant="ghost" onClick={() => setPlan(null)} disabled={apply.isPending}>{t("import.remapDiscard")}</Btn>
+          </div>
+        </>
+      )}
+
+      {result && (
+        <>
+          <div style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10, lineHeight: 1.5 }}>{result.note}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>
+            {t("import.remapResult", { n: result.apps.length })}{result.failed.length > 0 ? ` · ${t("import.remapResultFailed", { n: result.failed.length })}` : ""}
+          </div>
+          {result.applied && (
+            <Btn variant="ghost" onClick={() => undo.mutate()} disabled={undo.isPending}>{undo.isPending ? "…" : t("import.remapUndo")}</Btn>
+          )}
+        </>
+      )}
     </Card>
   );
 }
