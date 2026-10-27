@@ -7,6 +7,7 @@ import type {
   InstanceUpdateStatus,
   TelemetryStatus,
   Branding,
+  PanelTlsStatus,
   OwnerInstanceSettings,
   OidcConfig,
   LicenseStatus,
@@ -320,6 +321,13 @@ export const api = {
   // Owner-only white-label update (Pro; the hub 403s below Pro). "" clears a field back to the Tugra default.
   updateBranding(patch: { name?: string | null; logoUrl?: string | null; faviconUrl?: string | null; accentColor?: string | null; hidePoweredBy?: boolean }) {
     return apiFetch<Branding>("/instance/branding", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  // Owner-only control-panel HTTPS (DİLİM 1): status + idempotent re-apply. Session-only (not a PAT).
+  getPanelTls() {
+    return apiFetch<PanelTlsStatus>("/instance/panel-tls");
+  },
+  applyPanelTls() {
+    return apiFetch<PanelTlsStatus>("/instance/panel-tls/apply", { method: "POST" });
   },
   // Owner-only anonymous usage stats (on by default, opt-out). Status includes a live payload preview.
   getTelemetry() {

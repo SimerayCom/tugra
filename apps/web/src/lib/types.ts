@@ -302,6 +302,20 @@ export interface Branding {
   hidePoweredBy: boolean;
 }
 
+/** Control-panel HTTPS status (GET /instance/panel-tls, DİLİM 1). Owner-only. */
+export interface PanelTlsStatus {
+  enabled: boolean;
+  domain: string | null;
+  resolver: string | null; // "le" | "le-dns" | null
+  originHost: string | null;
+  originMatches: boolean;
+  acmeEmailOk: boolean;
+  localServerId: string | null;
+  localServerOnline: boolean;
+  proxyRunning: boolean;
+  routerPresent: boolean;
+}
+
 /** Anonymous usage stats status (GET /instance/telemetry). Owner-only. On by default, opt-out. */
 export interface TelemetryStatus {
   /** Effective state: on AND not env-forced-off. */
