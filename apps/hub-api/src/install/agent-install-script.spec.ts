@@ -39,6 +39,13 @@ describe("renderAgentInstallScript", () => {
     expect(script).toMatch(/Docker is required[\s\S]*>&2/);
   });
 
+  it("auto-installs Docker when root (opt-out via TUGRA_SKIP_DOCKER_INSTALL), with a non-root guard", () => {
+    expect(script).toContain("TUGRA_SKIP_DOCKER_INSTALL");
+    expect(script).toContain('[ "$(id -u)" != "0" ]'); // only auto-installs as root
+    expect(script).toContain("curl -fsSL https://get.docker.com | sh");
+    expect(script).toMatch(/automatic Docker install failed/);
+  });
+
   it("pulls the image and fails loudly if the pull fails", () => {
     expect(script).toContain('if ! docker pull "$IMAGE"; then');
     expect(script).toContain("could not pull");
