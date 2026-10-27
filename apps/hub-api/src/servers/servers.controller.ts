@@ -34,6 +34,8 @@ import { ServersService, ServerViewSchema } from "./servers.service";
 import {
   CreateServerInput,
   CreateServerSchema,
+  CreateServersBulkInput,
+  CreateServersBulkSchema,
   NetworkSettingsInput,
   NetworkSettingsSchema,
   SetCapabilitiesInput,
@@ -129,6 +131,17 @@ export class ServersController {
     @Req() req: ReqLike,
   ) {
     return this.servers.createServer(user.userId, body.name, body.teamId, publicUrlFrom(req));
+  }
+
+  // Fleet onboarding fan-out: add many servers to a team at once, each with its own install command.
+  @Post("bulk")
+  @ApiZodBody(CreateServersBulkSchema)
+  createBulk(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(CreateServersBulkSchema)) body: CreateServersBulkInput,
+    @Req() req: ReqLike,
+  ) {
+    return this.servers.createServersBulk(user.userId, body.names, body.teamId, publicUrlFrom(req));
   }
 
   // The install command embeds the server enroll token — a bearer credential that lets its holder
