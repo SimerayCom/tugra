@@ -151,7 +151,9 @@ body {
    Desktop = sticky vertical menu beside the cards; mobile = horizontal pill strip above them. */
 .cfg-layout {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  /* Cap the panel column at a readable form width so inputs don't stretch across a wide screen
+     (left-aligned beside the sub-nav; the extra space stays empty instead of over-wide fields). */
+  grid-template-columns: 220px minmax(0, 860px);
   gap: 24px;
   align-items: start;
 }
