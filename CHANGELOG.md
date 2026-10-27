@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Automatic HTTPS for the control panel (opt-in).** `install.sh --domain <host> --auto-tls --acme-email
+  <you@domain>` now provisions the panel's TLS itself — the bundled Traefik gets a Let's Encrypt certificate
+  and path-routes the single origin, with no hand-written reverse-proxy config. Works behind Cloudflare (a
+  grey DNS record, SSL mode Full, or a DNS-01 token). Opt-in: plain `--domain` stays bring-your-own-proxy and
+  the only outbound call is to Let's Encrypt for your own domain (no phone-home). The hub and web join a
+  dedicated `tugra-panel` Docker network that Traefik routes over, isolated from deployed apps. Check or
+  re-apply from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`). See
+  [docs/install.md](docs/install.md).
 - One-click Coolify database migration: after importing a Coolify fleet, mint a one-time migration
   token for the import operation and paste the printed one-liner on the Coolify host. It dumps each
   Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly database and restores it into the matching

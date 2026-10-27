@@ -8,9 +8,14 @@
 #   ./scripts/install.sh --domain tugra.example.com   # behind your TLS reverse proxy (https)
 #
 # Flags:
-#   --domain <host>     Serve over https://<host> (behind a reverse proxy that terminates TLS and
-#                       path-routes / -> web and /api,/agent,/terminal,/install -> hub). Sets
+#   --domain <host>     Serve over https://<host>. By default you bring your own TLS reverse proxy
+#                       (path-routes / -> web and /agent,/terminal,/install,/webhooks,/auth/* -> hub).
+#                       Add --auto-tls to have Tugra provision the panel's HTTPS itself. Sets
 #                       COOKIE_SECURE=true + HUB_TRUSTED_PROXY=true.
+#   --auto-tls          With --domain: auto-provision the panel's HTTPS (bundled Traefik + Let's Encrypt).
+#                       Requires --acme-email. Opt-in; plain --domain stays bring-your-own-proxy.
+#   --no-auto-tls       With --domain: keep bring-your-own-proxy (no bundled TLS).
+#   --acme-email <addr> Contact email for Let's Encrypt (required by --auto-tls; providing it implies it).
 #   --hub-url <url>     Explicit public hub URL (agents dial <url>/agent). Overrides --domain.
 #   --web-url <url>     Explicit public web URL (the browser origin).
 #   --build             Force build-from-source (skip pulling published images).
@@ -45,6 +50,9 @@ MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
 ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
 NO_TELEMETRY="${TUGRA_NO_TELEMETRY:-0}"         # explicit opt-out of the default-on anonymous usage stats
 HOME_MODE="${TUGRA_HOME_MODE:-0}"               # --home: start the owner in the simple Home launcher (CasaOS-style)
+# Panel-TLS (DİLİM 1): opt-in auto-HTTPS for the control panel. AUTO_TLS "" = undecided, "1"/"0" explicit.
+AUTO_TLS="${TUGRA_AUTO_TLS:-}"
+ACME_EMAIL_ARG="${TUGRA_ACME_EMAIL:-}"
 HUB_PORT="${HUB_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3001}"
 
@@ -106,6 +114,9 @@ while [ $# -gt 0 ]; do
     --no-telemetry)         NO_TELEMETRY=1; shift ;;
     --detect-public-ip)     DETECT_PUBLIC_IP=1; shift ;;
     --home)                 HOME_MODE=1; shift ;;
+    --auto-tls)             AUTO_TLS=1; shift ;;
+    --no-auto-tls)          AUTO_TLS=0; shift ;;
+    --acme-email)           ACME_EMAIL_ARG="${2:-}"; shift 2 ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     -h|--help)  sed -n '2,25p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -129,6 +140,16 @@ set_env() {
     local tmp; tmp="$(mktemp)"; grep -v "^$1=" "$ENV_FILE" > "$tmp"; cat "$tmp" > "$ENV_FILE"; rm -f "$tmp"
   fi
   printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
+}
+
+# A real ACME contact email: format check + reject the placeholder domains Let's Encrypt won't accept
+# (mirrors panel-router.validateAcmeEmail so the installer fails fast before touching anything).
+valid_acme_email() {
+  [ -n "$1" ] || return 1
+  [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || return 1
+  _d="$(printf '%s' "$1" | sed 's/.*@//' | tr 'A-Z' 'a-z')"
+  case "$_d" in example.com|example.org|example.net|localhost|*.test|*.invalid|*.example) return 1 ;; esac
+  return 0
 }
 
 # --- preflight (skipped for --dry-run so tests stay quiet + need no Docker) --------------------------
@@ -254,6 +275,54 @@ else
   PORT_BIND_DEFAULT="0.0.0.0"
 fi
 
+# --- Panel-TLS (DİLİM 1): decide + validate BEFORE writing .env or starting anything ---------------
+# Opt-in. Only with a --domain https origin. Explicit --auto-tls/--no-auto-tls/--acme-email win; otherwise
+# a fresh install asks once on a TTY (default NO), headless stays off. Plain --domain = bring-your-own proxy
+# (unchanged). A flag-less re-run leaves DOMAIN empty, so a stored PANEL_TLS is preserved untouched here.
+PANEL_TLS_DECISION=""; PANEL_ACME_EMAIL=""
+if [ -n "$DOMAIN" ] && [ "$HUB_TRUSTED_PROXY" = "true" ]; then
+  _want=""
+  if [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ]; then _want=1
+  elif [ "$AUTO_TLS" = "0" ]; then _want=0
+  elif ! env_has PANEL_TLS; then
+    if [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
+      printf '\n  Provision HTTPS for the panel automatically with Let'"'"'s Encrypt?\n'
+      printf '  Contacts Let'"'"'s Encrypt for %s with your email; no other outbound. [y/N] ' "$DOMAIN"
+      IFS= read -r _tls_ans </dev/tty || _tls_ans=""
+      case "$_tls_ans" in [Yy] | [Yy][Ee][Ss]) _want=1 ;; *) _want=0 ;; esac
+      printf '\n'
+    else
+      _want=0   # headless default: bring-your-own proxy (no surprise outbound to Let's Encrypt)
+    fi
+  fi
+  if [ "$_want" = "1" ]; then
+    PANEL_ACME_EMAIL="$ACME_EMAIL_ARG"
+    # env_has guards the fresh-install case: .env does not exist yet here, and `grep` on a missing file
+    # exits 2, which under `set -e` + `&&` would silently abort. env_has returns false (no grep) if absent.
+    if [ -z "$PANEL_ACME_EMAIL" ] && env_has ACME_EMAIL; then PANEL_ACME_EMAIL="$(env_get ACME_EMAIL)"; fi
+    if [ -z "$PANEL_ACME_EMAIL" ] && [ "$DRY_RUN" -eq 0 ] && [ -r /dev/tty ]; then
+      printf '  Let'"'"'s Encrypt needs a contact email (expiry notices). Enter it: '
+      IFS= read -r PANEL_ACME_EMAIL </dev/tty || PANEL_ACME_EMAIL=""
+    fi
+    if ! valid_acme_email "$PANEL_ACME_EMAIL"; then
+      err "--auto-tls needs a real --acme-email <you@domain> (not example/test/localhost). Nothing was changed."
+      exit 1
+    fi
+    PANEL_TLS_DECISION=1
+    if command -v ss >/dev/null 2>&1; then
+      for _p in 80 443; do
+        ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${_p}$" &&
+          note "Port ${_p} looks busy — if another web server owns it, the panel TLS proxy can't bind (free it or use --no-auto-tls)."
+      done
+    fi
+  elif [ "$_want" = "0" ]; then
+    PANEL_TLS_DECISION=0
+  fi
+elif [ "$AUTO_TLS" = "1" ] || [ -n "$ACME_EMAIL_ARG" ]; then
+  err "--auto-tls / --acme-email require --domain <host> (the panel's HTTPS hostname)."
+  exit 1
+fi
+
 # --- write the .env (create with 0600, preserve secrets on re-run) ----------------------------------
 [ "$DRY_RUN" -eq 1 ] || step "Writing configuration (.env with fresh secrets)…"
 [ -f "$ENV_FILE" ] || (umask 077; : > "$ENV_FILE")
@@ -329,6 +398,14 @@ set_env COOKIE_SECURE  "$COOKIE_SECURE"
 # Always upsert (not just in --domain mode): switching back from --domain to the http quick-start must
 # CLEAR a stale HUB_TRUSTED_PROXY=true, else the hub would keep trusting spoofable X-Forwarded-For.
 set_env HUB_TRUSTED_PROXY "$HUB_TRUSTED_PROXY"
+# Panel-TLS: persist only when a decision was made THIS run (a flag-less re-run leaves these untouched).
+if [ -n "$PANEL_TLS_DECISION" ]; then
+  set_env PANEL_TLS "$PANEL_TLS_DECISION"
+  if [ "$PANEL_TLS_DECISION" = "1" ]; then
+    set_env PANEL_DOMAIN "$DOMAIN"
+    set_env ACME_EMAIL "$PANEL_ACME_EMAIL"
+  fi
+fi
 
 chmod 600 "$ENV_FILE"
 log "Wrote configuration to $ENV_FILE"
@@ -385,15 +462,54 @@ if [ "$HEALTHY" = "0" ]; then
 else
   log "Tugra is up."
 fi
+
+# --- Panel-TLS: provision the control-panel HTTPS proxy (opt-in; reads the persisted .env) ----------
+# Runs for a fresh enable AND a flag-less upgrade re-run (reads PANEL_TLS from .env). On ANY failure it
+# changes NOTHING else (no flag flip, no rebind) — the panel stays reachable on the host port.
+PANEL_UP=0
+if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
+  _pd="$(env_get PANEL_DOMAIN)"; _pe="$(env_get ACME_EMAIL)"
+  if [ -n "$_pd" ] && [ -n "$_pe" ]; then
+    step "Provisioning HTTPS for the panel ($_pd)…"
+    _setup="$(mktemp)"
+    # Single source of truth: the hub image prints the Traefik setup script (panel router); we run it as root.
+    if compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e PANEL_CERT_RESOLVER=le -e ACME_EMAIL="$_pe" \
+        --entrypoint node hub-api dist/deploy/print-proxy-setup.js >"$_setup" 2>/tmp/tugra-panel-setup.log && [ -s "$_setup" ]; then
+      if sh "$_setup" >/tmp/tugra-panel-run.log 2>&1; then
+        # The router is up immediately (self-signed until Let's Encrypt issues over :80). Resolve the panel
+        # host to loopback so we test the local Traefik regardless of external DNS; -k since the cert may be
+        # the interim self-signed one until DNS + :80 let ACME complete.
+        i=0
+        while [ "$i" -lt 45 ]; do
+          curl -fsSk --resolve "$_pd:443:127.0.0.1" "https://$_pd/health" >/dev/null 2>&1 && { PANEL_UP=1; break; }
+          i=$((i + 1)); sleep 2
+        done
+      fi
+    fi
+    if [ "$PANEL_UP" = "1" ]; then
+      ok "Panel HTTPS router is live (cert issues once $_pd resolves here and :80/:443 are reachable)."
+    else
+      warn "Panel HTTPS didn't come up yet — the install is fine; the panel is still reachable on the host port."
+      note "Check: docker logs tugra-proxy  ·  DNS for $_pd -> this host  ·  :80/:443 reachable (setup log: /tmp/tugra-panel-run.log)"
+      note "Reach it meanwhile:  ssh -L 3001:127.0.0.1:3001 <this-host>  then open http://localhost:3001"
+      note "Disable auto-TLS anytime:  re-run with --no-auto-tls  (nothing else is changed on failure)."
+    fi
+  fi
+fi
+
 printf '  Web UI:  %s\n' "$WEB_URL"
 printf '  Hub API: %s\n' "$HUB_URL"
-if [ -z "$DOMAIN" ]; then
-  printf '  For TLS + a public domain, front the stack with a reverse proxy and re-run with --domain <host>.\n'
-else
+if [ "$(env_get PANEL_TLS)" = "1" ]; then
+  [ "$PANEL_UP" = "1" ] && printf "  HTTPS is provisioned automatically (Let's Encrypt). Point %s's DNS at this host; the cert issues on the first reachable request.\n" "$(env_get PANEL_DOMAIN)"
+  _hb="$(env_get HUB_BIND)"
+  printf '  Raw hub/web ports bound to %s (behind the bundled TLS proxy). Keep :80/:443 reachable; the raw ports need not be internet-exposed.\n' "${_hb:-127.0.0.1}"
+elif [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   _hb="$(env_get HUB_BIND)"
   printf '  Ports bound to %s. With a trusted proxy the hub honors X-Forwarded-For, so the raw ports must\n' "${_hb:-127.0.0.1}"
   printf '  reach ONLY the proxy. Same-host proxy: the 127.0.0.1 default is correct. Proxy on another host:\n'
   printf '  set HUB_BIND/WEB_BIND to this box private IP and firewall 3000/3001 (Docker-published ports bypass ufw).\n'
+else
+  printf "  For TLS + a public domain: re-run with --domain <host> --auto-tls --acme-email <you@domain> (automatic HTTPS), or front the stack with your own reverse proxy.\n"
 fi
 printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub database (see docs/disaster-recovery.md).\n' "$ENV_FILE"
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'

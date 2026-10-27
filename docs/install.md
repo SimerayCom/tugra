@@ -47,22 +47,37 @@ wants ~2 GB RAM). Force either path with `--pull` or `--build`.
 
 ## Production: TLS + a domain
 
-The quick start serves plain HTTP on the host's ports. For production, put Tugra behind your own
-reverse proxy that terminates TLS, and re-run with your domain:
+The quick start serves plain HTTP on the host's ports. For a public domain over HTTPS you have two
+options — automatic, or bring your own proxy.
+
+### Option A — automatic HTTPS (opt-in)
 
 ```bash
-./scripts/install.sh --domain tugra.example.com
+./scripts/install.sh --domain tugra.example.com --auto-tls --acme-email you@example.com
 ```
 
-`--domain` sets `COOKIE_SECURE=true` and `HUB_TRUSTED_PROXY=true` for that topology. **TLS is not
-bundled** — bring your own proxy (Caddy, Traefik, nginx, …).
+Tugra provisions the control panel's HTTPS for you: a bundled Traefik reverse proxy gets a Let's Encrypt
+certificate and path-routes the single origin (table below). This is **opt-in** (the trust-wedge: the only
+outbound call is to Let's Encrypt for *your* domain — no phone-home), so plain `--domain` stays
+bring-your-own-proxy. `--acme-email` is required (expiry notices; a placeholder like `example.com` is
+rejected). Point the domain's DNS at this host first; the certificate issues on the first reachable request.
 
-Route most traffic to the **web** service (`:3001`), which proxies the REST API and OAuth start to the
-hub; send only the paths the web can't handle to the **hub** (`:3000`):
+**Behind Cloudflare (orange cloud):** HTTP-01 can't validate through the proxy. Either keep the record
+**DNS-only (grey)** so the cert issues directly, or set Cloudflare SSL/TLS to **Full** (Cloudflare serves
+its own edge certificate and your origin serves Traefik's — your IP stays hidden), or attach a Cloudflare
+**DNS-01** API token to the server for an automatic cert while proxied (owner → Server → DNS). Flip the
+panel on/off or re-apply anytime from **Settings → Panel domain** (`GET`/`POST /instance/panel-tls`).
+
+### Option B — bring your own reverse proxy
+
+Run `--domain` without `--auto-tls` and front the stack with your own TLS proxy (Caddy, Traefik, nginx, …).
+
+Either way, `--domain` sets `COOKIE_SECURE=true` and `HUB_TRUSTED_PROXY=true`. Route most traffic to the
+**web** service (`:3001`); send only the paths the web can't handle to the **hub** (`:3000`):
 
 | Path prefix | Route to |
 |---|---|
-| `/agent`, `/terminal` (WebSocket), `/install`, `/webhooks`, `/auth/oauth` | hub `:3000` |
+| `/agent`, `/terminal` (WebSocket), `/install`, `/webhooks`, `/auth/oauth`, `/auth/oidc`, `/health`, `/version` | hub `:3000` |
 | everything else (`/`, `/api/*`) | web `:3001` |
 
 "Sign in with GitHub" works only in this single-origin proxy deployment (the hub and web share one
@@ -72,7 +87,10 @@ public origin so the session cookie is visible to the SPA); it isn't available i
 
 | Flag | Effect |
 |---|---|
-| `--domain <host>` | Serve `https://<host>` behind a TLS reverse proxy (sets `COOKIE_SECURE` + `HUB_TRUSTED_PROXY`). |
+| `--domain <host>` | Serve `https://<host>` (sets `COOKIE_SECURE` + `HUB_TRUSTED_PROXY`). Bring your own proxy unless `--auto-tls`. |
+| `--auto-tls` | With `--domain`: auto-provision the panel's HTTPS (bundled Traefik + Let's Encrypt). Needs `--acme-email`. Opt-in. |
+| `--no-auto-tls` | With `--domain`: keep bring-your-own-proxy (no bundled TLS). |
+| `--acme-email <addr>` | Let's Encrypt contact email (required by `--auto-tls`; providing it implies `--auto-tls`). |
 | `--hub-url <url>` | Explicit public hub URL (overrides `--domain`). |
 | `--web-url <url>` | Explicit public web (browser) origin. |
 | `--build` | Force building images from your checkout (skip pulling published images). |
