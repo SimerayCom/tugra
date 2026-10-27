@@ -22,6 +22,16 @@
 
 > **Status:** Beta. Under active development; APIs may change between minor releases. Stars, issues and feedback are very welcome.
 
+<div align="center">
+
+<img src="docs/assets/screenshot-app-store.png" alt="Tugra App Store — one-click deploy from hundreds of self-hosted app templates" width="860" />
+
+<img src="docs/assets/screenshot-dashboard.png" alt="Command Center — every team's apps, databases and fleet at a glance" width="860" />
+
+<img src="docs/assets/screenshot-app-detail.png" alt="App detail — deploy, restart, scale, logs and files per app" width="420" />&nbsp;<img src="docs/assets/screenshot-databases.png" alt="One-click managed databases with persistent volumes" width="420" />
+
+</div>
+
 ## Agent-native by default
 
 Tugra ships a native [MCP](https://modelcontextprotocol.io) server — point Claude, Cursor or your own agent at your infrastructure to inspect, deploy, scale and operate it, using the same personal-access tokens, scopes and audit trail as the REST API. No separate integration package, no secret values ever returned to the model.
