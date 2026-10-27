@@ -8,7 +8,27 @@ import {
   isSsrfSafeIp,
   isAlwaysBlockedIp,
   isPrivateNetworkIp,
+  observedPublicIpFromUrl,
 } from "./observed-ip";
+
+describe("observedPublicIpFromUrl", () => {
+  it("returns a public IPv4 host (port stripped)", () => {
+    expect(observedPublicIpFromUrl("http://203.0.113.9:3001")).toBe("203.0.113.9");
+    expect(observedPublicIpFromUrl("https://8.8.8.8")).toBe("8.8.8.8");
+  });
+  it("returns a public IPv6 host (brackets stripped)", () => {
+    expect(observedPublicIpFromUrl("http://[2001:db8::1]:3001")).toBe("2001:db8::1");
+  });
+  it("is null for a DNS name, a private/loopback/link-local IP, or a bad/empty input", () => {
+    expect(observedPublicIpFromUrl("https://panel.example.com")).toBeNull();
+    expect(observedPublicIpFromUrl("http://127.0.0.1:3001")).toBeNull();
+    expect(observedPublicIpFromUrl("http://192.168.1.10:3001")).toBeNull();
+    expect(observedPublicIpFromUrl("http://169.254.169.254")).toBeNull(); // link-local / metadata
+    expect(observedPublicIpFromUrl("not a url")).toBeNull();
+    expect(observedPublicIpFromUrl(undefined)).toBeNull();
+    expect(observedPublicIpFromUrl("")).toBeNull();
+  });
+});
 
 describe("observedIp", () => {
   it("uses the raw TCP peer address by default", () => {

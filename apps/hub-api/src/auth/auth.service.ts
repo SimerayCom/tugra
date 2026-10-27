@@ -18,7 +18,7 @@ import { RedisService } from "../redis/redis.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { MailService } from "../mail/mail.service";
-import { isPublicIp } from "../common/observed-ip";
+import { isPublicIp, isIpv6, observedPublicIpFromUrl } from "../common/observed-ip";
 import {
   resetPasswordEmail,
   verifyEmail as verifyEmailTemplate,
@@ -130,16 +130,28 @@ export class AuthService {
    * never pastes an install command. A no-op when the token is unset (every manual/remote install today), so
    * existing behavior is unchanged. Runs only in a first-user branch, so it provisions at most once.
    */
-  private async provisionLocalServer(tx: Prisma.TransactionClient, teamId: string): Promise<void> {
+  private async provisionLocalServer(tx: Prisma.TransactionClient, teamId: string, observedUrl?: string): Promise<void> {
     const token = this.config.get<string>("LOCAL_AGENT_ENROLL_TOKEN");
     if (!token) return;
-    // install.sh best-effort-detects the host's real public IP into LOCAL_SERVER_PUBLIC_IP. Pin it as a
-    // MANUAL address so app URLs are reachable from outside — otherwise the first agent report would record
-    // the agent's in-container docker-bridge source IP (172.18.x) and every deployed app URL would dead-link.
-    // Re-validated here, so a blank/private/garbage value is simply ignored (the hub falls back to its
-    // observed-IP hygiene, which now skips docker-bridge addresses).
+    // A reachable address for "This machine", chosen with NO outbound probe (trust-wedge: no IP phone-home):
+    //   1. LOCAL_SERVER_PUBLIC_IP — install.sh's explicit pin (--public-ip, or the opt-in --detect-public-ip).
+    //   2. the host the owner's browser used to reach the panel on THIS claim request — if it is a public IP
+    //      literal. The owner literally connected to it, so it is reachable; far better than letting the first
+    //      agent report its in-container docker-bridge source IP (172.18.x) and dead-link every deployed URL.
+    // Absent both, leave it null and let observed-IP hygiene fill it from a later agent report. Values are
+    // re-validated (isPublicIp), so a blank/private/garbage pin or a DNS-name host is simply ignored.
     const pinIp = this.config.get<string>("LOCAL_SERVER_PUBLIC_IP")?.trim();
-    const publicIp = pinIp && isPublicIp(pinIp) ? pinIp : null;
+    let ip: string | null = pinIp && isPublicIp(pinIp) ? pinIp : null;
+    let ipSource: "manual" | "observed" = "manual"; // used only when `ip` is set; the pin path is "manual"
+    if (!ip) {
+      const observed = observedPublicIpFromUrl(observedUrl);
+      if (observed) {
+        ip = observed;
+        ipSource = "observed"; // authoritative-if-non-loopback in reconcileReportedIp, so reporting won't clobber it
+      }
+    }
+    // Route by family so a v6 address lands in publicIpv6, never the IPv4 column.
+    const ipData = ip ? (isIpv6(ip) ? { publicIpv6: ip, ipSource } : { publicIp: ip, ipSource }) : {};
     await tx.server.create({
       data: {
         name: "This machine",
@@ -149,7 +161,7 @@ export class AuthService {
         enrollTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         status: ServerStatus.PENDING,
         isLocal: true,
-        ...(publicIp ? { publicIp, ipSource: "manual" } : {}),
+        ...ipData,
         // Mirror ServersService DEFAULT_CAPABILITIES (least privilege — the interactive terminal is opt-in).
         capabilities: ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"],
       },
@@ -193,6 +205,7 @@ export class AuthService {
     password: string,
     name?: string,
     setupCode?: string,
+    observedUrl?: string, // the panel URL the owner's browser used — pins the single-box server's reachable IP
   ): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -219,7 +232,7 @@ export class AuthService {
         data: { userId: created.id, teamId: team.id, role: Role.OWNER },
       });
       await this.teamDefaults.ensureDefaults(team.id, tx);
-      if (firstUser) await this.provisionLocalServer(tx, team.id); // turnkey single-box: auto-add "This machine"
+      if (firstUser) await this.provisionLocalServer(tx, team.id, observedUrl); // turnkey single-box: auto-add "This machine"
       return created;
     });
 

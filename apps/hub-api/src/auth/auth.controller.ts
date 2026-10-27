@@ -23,6 +23,7 @@ import {
   TG_REFRESH,
 } from "../common/cookies";
 import { CsrfExempt } from "../common/csrf-exempt.decorator";
+import { publicUrlFrom, type ReqLike } from "../common/hub-url";
 import { AllowUnverified } from "../common/allow-unverified.decorator";
 import { AuthService } from "./auth.service";
 import { CurrentUser } from "./decorators/current-user.decorator";
@@ -69,10 +70,12 @@ export class AuthController {
   async register(
     @Body(new ZodValidationPipe(RegisterSchema)) body: RegisterInput,
     @Res({ passthrough: true }) res: CookieResponse,
+    @Req() req: ReqLike,
   ) {
     // Dual-mode: also set httpOnly session cookies for the browser, while keeping `tokens` in the
-    // body so PAT/CLI/e2e bearer clients are unaffected.
-    const result = await this.auth.register(body.email, body.password, body.name, body.setupCode);
+    // body so PAT/CLI/e2e bearer clients are unaffected. The request's public host pins the single-box
+    // server's reachable IP at first-owner claim (no outbound probe) so deployed-app URLs resolve at once.
+    const result = await this.auth.register(body.email, body.password, body.name, body.setupCode, publicUrlFrom(req));
     setAuthCookies(res, result.tokens);
     return result;
   }
