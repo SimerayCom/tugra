@@ -93,6 +93,23 @@ describe("dockerOptionsArgs (shell-injection guard)", () => {
   });
 });
 
+describe("host bind-mounts", () => {
+  it("emits a shell-quoted -v for each host mount (`:ro` only when read-only)", () => {
+    const s = buildRunScript(
+      { ...base, hostMounts: [
+        { hostPath: "/mnt/media", containerPath: "/media", readOnly: true },
+        { hostPath: "/data/x", containerPath: "/x", readOnly: false },
+      ] } as AppSpec,
+      "v1",
+    );
+    expect(s).toContain("-v '/mnt/media:/media:ro'");
+    expect(s).toContain("-v '/data/x:/x'");
+  });
+  it("emits nothing extra when there are no host mounts", () => {
+    expect(buildRunScript(base, "v1")).not.toContain("/mnt/media");
+  });
+});
+
 describe("digest pin", () => {
   it("an IMAGE deploy resolves + echoes the upstream digest right after pull", () => {
     const s = buildRunScript(base, "v1", true);

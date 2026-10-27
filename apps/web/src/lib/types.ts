@@ -846,6 +846,12 @@ export interface AppVolume {
   path: string;
 }
 
+export interface HostMount {
+  hostPath: string;
+  containerPath: string;
+  readOnly?: boolean;
+}
+
 /** One entry in an app-volume file listing (metadata only — never content). */
 export interface FileEntry {
   name: string;
@@ -1004,6 +1010,7 @@ export interface Application {
   deployTimeoutSec: number | null;
   dockerOptions: string | null;
   volumes: AppVolume[];
+  hostMounts: HostMount[];
   // Named volumes a COMPOSE app declares (empty for non-compose); browsable=false → external/custom.
   composeVolumes: { key: string; browsable: boolean; mounts: { service: string; path: string }[] }[];
   hasConfigMounts: boolean;

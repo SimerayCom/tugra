@@ -20,6 +20,7 @@ import type {
   Application,
   AppConfigMount,
   AppVolume,
+  HostMount,
   FileListing,
   BulkOperation,
   Backup,
@@ -1153,6 +1154,12 @@ export const api = {
     return apiFetch<{ ok: true }>(`/apps/${id}/volumes`, {
       method: "PUT",
       body: JSON.stringify({ volumes }),
+    });
+  },
+  setAppHostMounts(id: string, hostMounts: HostMount[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/host-mounts`, {
+      method: "PUT",
+      body: JSON.stringify({ hostMounts }),
     });
   },
   listAppTasks(id: string) {

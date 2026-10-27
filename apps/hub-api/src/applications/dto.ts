@@ -307,3 +307,18 @@ export const SetVolumesSchema = z.object({
     }),
 });
 export type SetVolumesInput = z.infer<typeof SetVolumesSchema>;
+
+export const SetHostMountsSchema = z.object({
+  hostMounts: z
+    .array(
+      z.object({
+        // Absolute paths, safe charset only — no ':' (breaks docker's `-v host:ctr` grammar) and no ','/'='.
+        // The service additionally rejects the docker socket + sensitive system paths (validateHostMounts).
+        hostPath: z.string().regex(/^\/[A-Za-z0-9._/-]+$/, "absolute host path ([A-Za-z0-9._/-])"),
+        containerPath: z.string().regex(/^\/[A-Za-z0-9._/-]+$/, "absolute container path ([A-Za-z0-9._/-])"),
+        readOnly: z.boolean().optional(),
+      }),
+    )
+    .max(20),
+});
+export type SetHostMountsInput = z.infer<typeof SetHostMountsSchema>;

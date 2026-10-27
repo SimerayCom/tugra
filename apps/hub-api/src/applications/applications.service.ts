@@ -60,10 +60,11 @@ import {
   hasNetworkOpt,
   type AppSpec,
   type AppVolume,
+  type HostMount,
   type AppConfigMount,
   type RegistryAuth,
 } from "../deploy/deploy-script";
-import { assertSafeDockerOptions } from "../deploy/docker-options-safety";
+import { assertSafeDockerOptions, validateHostMounts } from "../deploy/docker-options-safety";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import {
   buildConfigSnapshot,
@@ -135,6 +136,7 @@ export const AppViewSchema = z.object({
   dockerOptions: z.string().nullable(),
   dbNetwork: z.boolean(), // attached to the node-local managed-DB network (tugra-net) — set by DB links
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
+  hostMounts: z.array(z.object({ hostPath: z.string(), containerPath: z.string(), readOnly: z.boolean().optional() })),
   // Named volumes a COMPOSE app declares (empty for non-compose). Surfaced so the Files tab can show
   // them; `browsable` is false for external / custom-named volumes (not Tugra-owned → not browsable).
   composeVolumes: z.array(
@@ -1818,6 +1820,16 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.healthcheck.update", target: id });
   }
 
+  /** Replace an app's HOST bind-mounts (e.g. a media library). Validated now against the sensitive-path
+   *  denylist (clear 400, not a broken deploy later) — the exact bar the free-form dockerOptions `-v` path
+   *  already enforces. Applies on the next deploy. */
+  async setHostMounts(userId: string, id: string, mounts: HostMount[]): Promise<void> {
+    await this.requireWrite(userId, id);
+    const clean = validateHostMounts(mounts);
+    await this.prisma.application.update({ where: { id }, data: { hostMounts: clean as unknown as Prisma.InputJsonValue } });
+    await this.audit.log({ actor: userId, action: "app.host_mounts.update", target: id, meta: { count: clean.length } });
+  }
+
   async setVolumes(userId: string, id: string, volumes: AppVolume[]): Promise<void> {
     const app = await this.requireWrite(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = { volumes: volumes as unknown as Prisma.InputJsonValue };
@@ -2226,6 +2238,10 @@ export class ApplicationsService {
     return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
   }
 
+  private appHostMounts(app: Application): HostMount[] {
+    return Array.isArray(app.hostMounts) ? (app.hostMounts as unknown as HostMount[]) : [];
+  }
+
   /** The named volumes a COMPOSE app declares, for the Files tab (empty for non-compose). The real
    *  docker name stays server-side; only the key, mount points and a browsable flag are exposed. */
   private composeVolumesView(app: Application): { key: string; browsable: boolean; mounts: { service: string; path: string }[] }[] {
@@ -2364,6 +2380,7 @@ export class ApplicationsService {
       // runs as a swarm service on the overlay, where a node-local bridge is meaningless.
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
+      hostMounts: this.appHostMounts(app),
       gitToken: this.appGitToken(app),
       registryAuth: this.appRegistryAuth(app),
       env: this.appEnv(app),
@@ -2494,6 +2511,7 @@ export class ApplicationsService {
       dockerOptions: app.dockerOptions,
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
+      hostMounts: this.appHostMounts(app),
       composeVolumes: this.composeVolumesView(app),
       hasGitToken: !!app.gitTokenEnc,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
