@@ -15,6 +15,8 @@ import type { FsEntry, TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
+import { ConfigService } from "@nestjs/config";
+import { InstanceSettingsService } from "../instance/instance-settings.service";
 // Lazy string-token lookup (ModuleRef) avoids a static applications→tunnel cycle.
 import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
@@ -266,6 +268,35 @@ export class ApplicationsService {
   }
 
   /**
+   * Reject routing an app to the control panel's OWN domain. When panel TLS is configured the bundled
+   * Traefik serves the panel via a file-provider router on that host; an app's label router on the same
+   * host would fight it and could take the host over — locking the owner out of their own control plane.
+   * No configured panel domain (bring-your-own-proxy) => nothing is reserved, so this is a no-op. Resolved
+   * lazily via ModuleRef to avoid widening the constructor (and its one direct test construction). The
+   * settings/env read is best-effort: a lookup failure must not block a legitimate domain change.
+   */
+  private async assertDomainNotReserved(domain: string | null | undefined): Promise<void> {
+    if (!domain) return;
+    // Fail-OPEN: any resolution hiccup (a partial test module, a missing provider) must not block a
+    // legitimate domain change — it just means "nothing reserved". Only a genuine collision throws.
+    let panelDomain: string | null = null;
+    try {
+      const config = this.moduleRef.get(ConfigService, { strict: false });
+      panelDomain = await this.moduleRef
+        .get(InstanceSettingsService, { strict: false })
+        .panelDomainFor(config.get<string>("PANEL_DOMAIN"), config.get<string>("PANEL_TLS"));
+    } catch {
+      panelDomain = null;
+    }
+    const norm = (h: string) => h.trim().replace(/\.+$/, "").toLowerCase();
+    if (panelDomain && norm(domain) === norm(panelDomain)) {
+      throw new BadRequestException(
+        "That hostname is your control panel's domain — routing an app to it would take over the panel. Use a different hostname.",
+      );
+    }
+  }
+
+  /**
    * Resolve a new app's initial exposure. A user-provided domain is "custom" and
    * served over HTTPS (Let's Encrypt) as today. Otherwise, with the default
    * exposeMode "magic" on a non-COMPOSE app, generate a sslip.io magic domain from
@@ -411,6 +442,7 @@ export class ApplicationsService {
     });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "apps:config");
+    await this.assertDomainNotReserved(dto.domain); // never let a new app claim the panel's own hostname
     if (dto.environmentId) await this.assertEnvInTeam(dto.environmentId, server.teamId);
     // Never orphan: fall back to the team's default environment when none is chosen.
     const environmentId =
@@ -2041,6 +2073,7 @@ export class ApplicationsService {
   /** Assign, change or clear an app's domain after creation (applied on next deploy). */
   async setDomain(userId: string, id: string, domain: string | null): Promise<void> {
     const app = await this.requireWrite(userId, id);
+    await this.assertDomainNotReserved(domain); // don't let an app steal the control-panel hostname
     // A user-set domain is "custom" and served over HTTPS (Let's Encrypt); clearing
     // it resets the kind. This keeps custom domains on HTTPS under the certType-aware
     // Traefik labels (a bare `{ domain }` update would leave certType at the "http"
@@ -2067,6 +2100,7 @@ export class ApplicationsService {
     input: { mode: "magic" | "port" | "none" | "custom"; domain?: string },
   ): Promise<AppView> {
     const app = await this.requireWrite(userId, id);
+    if (input.mode === "custom") await this.assertDomainNotReserved(input.domain); // not the panel's hostname
     const server = await this.prisma.server.findUnique({ where: { id: app.serverId } });
     if (!server) throw new NotFoundException("server not found");
     const composeWebService = app.source === "COMPOSE" ? (this.composeWeb(app)?.service ?? null) : null;
@@ -2116,6 +2150,7 @@ export class ApplicationsService {
     input: { domain: string; credentialId?: string; includeWww?: boolean; overwrite?: boolean; dryRun?: boolean },
   ): Promise<{ dryRun: boolean; hostname: string; status?: string; apex?: boolean; sslMode?: string; records: unknown[] }> {
     await this.requireWrite(userId, id); // apps:config — we will set the domain; fail before any DNS mutation
+    await this.assertDomainNotReserved(input.domain); // fail before creating DNS records for the panel's host
     const opts = { domain: input.domain, credentialId: input.credentialId, includeWww: input.includeWww, overwrite: input.overwrite };
     if (input.dryRun) {
       const plan = await this.dns.previewRecords(userId, id, opts);

@@ -89,6 +89,7 @@ function make(
   swarm: { status?: jest.Mock } = { status: jest.fn().mockResolvedValue({ live: [] }) },
   dns: { previewRecords?: jest.Mock; applyRecords?: jest.Mock; verify?: jest.Mock; cleanup?: jest.Mock; purgeDomains?: jest.Mock; manualRecords?: jest.Mock } = {},
   dbLinks: { resolveLinkedEnv?: jest.Mock } = {},
+  panelDomain: string | null = null, // when set, the reserved control-panel hostname (collision guard)
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -150,7 +151,15 @@ function make(
       resolveLinkedEnv: dbLinks.resolveLinkedEnv ?? jest.fn().mockResolvedValue({}),
     } as unknown as import("./app-database-links.service").AppDatabaseLinksService,
     {
-      get: () => ({ syncIngress: jest.fn().mockResolvedValue(undefined) }),
+      // One token-agnostic stub serves every lazy ModuleRef.get() the service makes: the tunnel service
+      // (syncIngress), InstanceSettingsService (panelDomainFor) and ConfigService (get). panelDomain is
+      // null by default so the reserved-domain guard is a no-op for all existing tests.
+      get: () => ({
+        syncIngress: jest.fn().mockResolvedValue(undefined),
+        panelDomainFor: jest.fn().mockResolvedValue(panelDomain),
+        get: (key: string) =>
+          key === "PANEL_DOMAIN" ? (panelDomain ?? undefined) : key === "PANEL_TLS" ? (panelDomain ? "1" : undefined) : undefined,
+      }),
     } as unknown as import("@nestjs/core").ModuleRef,
   );
 }
@@ -1957,6 +1966,55 @@ describe("ApplicationsService", () => {
     });
     await svc.setDomain("u1", "app1", null);
     expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null, domainKind: "none" } });
+  });
+
+  it("setDomain rejects the control-panel's own hostname (lockout guard) and writes nothing", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, "panel.example.com");
+    await expect(svc.setDomain("u1", "app1", "panel.example.com")).rejects.toMatchObject({ status: 400 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setDomain panel-hostname match is case-insensitive and ignores a trailing dot", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, "Panel.Example.com");
+    await expect(svc.setDomain("u1", "app1", "panel.example.com.")).rejects.toMatchObject({ status: 400 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setDomain still allows a DIFFERENT hostname when a panel domain is configured", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, "panel.example.com");
+    await svc.setDomain("u1", "app1", "app.example.com");
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: "app.example.com", domainKind: "custom", certType: "le-http", https: true } });
+  });
+
+  it("expose custom rejects the panel's own hostname", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, "panel.example.com");
+    await expect(svc.expose("u1", "app1", { mode: "custom", domain: "panel.example.com" })).rejects.toMatchObject({ status: 400 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("autoSetupDomain rejects the panel's own hostname BEFORE any DNS write", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const previewRecords = jest.fn();
+    const applyRecords = jest.fn();
+    const svc = make(prisma, access, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, { previewRecords, applyRecords }, undefined, "panel.example.com");
+    await expect(svc.autoSetupDomain("u1", "app1", { domain: "panel.example.com" })).rejects.toMatchObject({ status: 400 });
+    expect(previewRecords).not.toHaveBeenCalled();
+    expect(applyRecords).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("autoSetupDomain dryRun returns the plan and writes nothing (no setDomain)", async () => {
