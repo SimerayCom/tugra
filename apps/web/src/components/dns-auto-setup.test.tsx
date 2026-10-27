@@ -4,8 +4,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { api } from "../lib/api";
-import { DnsAutoSetup } from "./dns-auto-setup";
 import type { DnsCredential } from "../lib/types";
+
+// next/link needs the app-router context to render; stub it to a plain <a> so we can assert the href.
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...rest }: { href: string; children: React.ReactNode; [k: string]: unknown }) =>
+    React.createElement("a", { href, ...rest }, children),
+}));
+
+import { DnsAutoSetup } from "./dns-auto-setup";
 
 afterEach(cleanup);
 
@@ -84,6 +91,20 @@ describe("DnsAutoSetup", () => {
     // change the domain → the stale conflict plan is cleared so it can't be applied against a new domain
     rerender(<QueryClientProvider client={qc}><I18nProvider><DnsAutoSetup appId="a1" teamId="t1" domain="other.com" onApplied={vi.fn()} /></I18nProvider></QueryClientProvider>);
     await waitFor(() => expect(screen.queryByText("9.9.9.9")).toBeNull());
+  });
+
+  it("links to the server's DNS-01 / wildcard setup when a serverId is given", async () => {
+    vi.spyOn(api, "listDnsCredentials").mockResolvedValue([CRED]);
+    wrap(<DnsAutoSetup appId="a1" teamId="t1" serverId="s1" domain="example.com" onApplied={vi.fn()} />);
+    const link = await screen.findByRole("link", { name: /wildcard/i });
+    expect(link.getAttribute("href")).toBe("/servers/s1?tab=maintenance#wildcard");
+  });
+
+  it("shows no wildcard link when no serverId is given", async () => {
+    vi.spyOn(api, "listDnsCredentials").mockResolvedValue([CRED]);
+    wrap(<DnsAutoSetup appId="a1" teamId="t1" domain="example.com" onApplied={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Cloudflare credential")).toBeTruthy());
+    expect(screen.queryByRole("link", { name: /wildcard/i })).toBeNull();
   });
 
   it("shows the manual-fallback records on demand", async () => {

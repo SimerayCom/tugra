@@ -649,7 +649,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
   });
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
+    <Card id="wildcard" style={{ padding: 16, marginTop: 20, scrollMarginTop: 80 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("servers.networkTitle")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.networkDesc")}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

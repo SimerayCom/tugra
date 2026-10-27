@@ -338,6 +338,7 @@
   "domainPlaceholder": "app.example.com",
   "dnsAutoTitle": "Set up DNS automatically (Cloudflare)",
   "dnsAutoDesc": "Point this domain at your server with a Cloudflare API token — apex A (+ www) records, created for you. DNS-only, so there's no proxy redirect loop.",
+  "dnsAutoWildcardLink": "Need a wildcard (*.example.com) certificate, or one while the record stays Cloudflare-proxied? Set up DNS-01 on this server →",
   "dnsAutoCredential": "Cloudflare credential",
   "dnsAutoPickCredential": "Select a credential",
   "dnsAutoAddNew": "Connect a new Cloudflare token",
