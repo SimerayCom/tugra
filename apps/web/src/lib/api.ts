@@ -70,6 +70,10 @@ import type {
   ImportPlan,
   ImportSession,
   ImportOperation,
+  MigrateCommand,
+  MintedMigrationToken,
+  ImportRemapPlan,
+  ImportRemapResult,
   Template,
   TemplateManifest,
   TokenPair,
@@ -1375,6 +1379,28 @@ export const api = {
   },
   rollbackImport(opId: string) {
     return apiFetch<ImportOperation>(`/import/operations/${encodeURIComponent(opId)}/rollback`, { method: "POST" });
+  },
+  // ── post-import: database-data migration (one-liner pasted on the source host) ──
+  // Read-only state + a command TEMPLATE (never the live token); the live command is returned once by mint.
+  getMigrateCommand(opId: string) {
+    return apiFetch<MigrateCommand>(`/import/operations/${encodeURIComponent(opId)}/migrate-command`);
+  },
+  // Mint (or rotate) the one-time migration token; the full command is shown ONCE and the token is hashed at rest.
+  mintMigrationToken(opId: string) {
+    return apiFetch<MintedMigrationToken>(`/import/operations/${encodeURIComponent(opId)}/migration-token`, { method: "POST" });
+  },
+  reissueMigrationToken(opId: string) {
+    return apiFetch<MintedMigrationToken>(`/import/operations/${encodeURIComponent(opId)}/migration-token/reissue`, { method: "POST" });
+  },
+  // ── post-import: env remap (point migrated apps at their new Tugra databases) ──
+  remapEnvPlan(opId: string) {
+    return apiFetch<ImportRemapPlan>(`/import/operations/${encodeURIComponent(opId)}/remap-env/plan`);
+  },
+  remapEnvApply(opId: string, confirmToken: string) {
+    return apiFetch<ImportRemapResult>(`/import/operations/${encodeURIComponent(opId)}/remap-env`, { method: "POST", body: JSON.stringify({ confirmToken }) });
+  },
+  remapEnvUndo(opId: string) {
+    return apiFetch<ImportRemapResult>(`/import/operations/${encodeURIComponent(opId)}/remap-env/undo`, { method: "POST" });
   },
 
   // ── shared variables (team-wide env) ──

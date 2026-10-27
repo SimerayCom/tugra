@@ -761,6 +761,81 @@ export interface ImportOperation {
   plan?: ImportPlan | null;
 }
 
+// ── post-import: database-data migration (the one-liner pasted on the source host) ──
+/** Read-only migration state + a command TEMPLATE (never a live token). */
+export interface MigrateCommand {
+  opId: string;
+  active: boolean; // a token is currently live
+  expiresAt: string | null;
+  commandTemplate: string; // the command with a <token> placeholder (shown as guidance)
+}
+/** The minted token response — the full `command` is shown ONCE (the token is hashed at rest). */
+export interface MintedMigrationToken {
+  opId: string;
+  token: string;
+  expiresAt: string;
+  command: string; // ready-to-paste one-liner carrying the live token
+}
+
+// ── post-import: env remap (point migrated apps at their new Tugra databases) ──
+export interface RemapChange {
+  key: string;
+  rule: string;
+  targetItemRef: string;
+  targetName: string;
+  targetKind: string;
+  oldMasked: string;
+  newMasked: string;
+  confidence: string;
+}
+export interface RemapNeedsManual {
+  key: string;
+  reason: string;
+  targetItemRef?: string;
+}
+export interface RemapAppDbNetwork {
+  willLink: boolean;
+  reason?: string;
+  databases: string[];
+  serverDbCount: number;
+  hasUnauthEngine: boolean;
+}
+export interface RemapApp {
+  itemRef: string;
+  appId: string;
+  name: string;
+  changes: RemapChange[];
+  unchangedCount: number;
+  needsManual: RemapNeedsManual[];
+  dbNetwork: RemapAppDbNetwork | null;
+}
+export interface RemapDatabase {
+  itemRef: string;
+  name: string;
+  engine: string;
+  mode: "preserve" | "rotate";
+}
+/** Secret-masked env-remap preview + the planHash the apply must confirm against. */
+export interface ImportRemapPlan {
+  opId: string;
+  planHash: string;
+  databases: RemapDatabase[];
+  skipped: unknown[];
+  apps: RemapApp[];
+  note: string;
+}
+/** Result of applying (or undoing) the env remap — secret-free counts + keys. */
+export interface ImportRemapResult {
+  opId: string;
+  applied?: boolean;
+  undone?: boolean;
+  planHash?: string;
+  apps: { appId: string; name: string; written?: number; keys?: string[]; needsRedeploy?: boolean; linked?: boolean }[];
+  failed: { appId: string; name: string }[];
+  linkFailed?: { appId: string; name: string }[];
+  note: string;
+}
+
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export type AppSource = "IMAGE" | "GIT" | "COMPOSE";

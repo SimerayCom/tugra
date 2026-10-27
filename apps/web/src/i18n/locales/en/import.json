@@ -37,5 +37,30 @@
   "rollback": "Roll back",
   "rollingBack": "Rolling back…",
   "rollbackTitle": "Roll back this import?",
-  "rollbackBody": "Removes the apps this import created on the target server. Apps you have deployed since are kept. This cannot be undone."
+  "rollbackBody": "Removes the apps this import created on the target server. Apps you have deployed since are kept. This cannot be undone.",
+
+  "migrateTitle": "Migrate database data",
+  "migrateDesc": "Your databases were recreated empty. Generate a one-time command and run it on your source (Coolify) host to copy each database's data into its new Tugra database. The token works once and expires.",
+  "migrateGenerate": "Generate migration command",
+  "migrateReissue": "Reissue command",
+  "migrateTokenOnce": "Copy this now — the token is shown only once.",
+  "migrateActive": "A migration command is active until {date}.",
+  "migrateExpires": "Expires {date}.",
+
+  "remapTitle": "Point apps at their new databases",
+  "remapDesc": "Rewrite each migrated app's environment so it connects to its new Tugra database instead of the old Coolify one. Preview the exact (secret-masked) changes first, then apply — changes take effect on each app's next deploy, and an undo is available.",
+  "remapPreview": "Preview env changes",
+  "remapSummary": "{apps} app(s) · {changes} change(s)",
+  "remapManual": "{n} need manual review",
+  "remapWillLink": "Will join the database network",
+  "remapNoLink": "Won't auto-link the database network ({reason}) — wire it by hand",
+  "remapApply": "Apply changes",
+  "remapDiscard": "Discard",
+  "remapApplyTitle": "Apply these env changes?",
+  "remapApplyBody": "Rewrites the shown environment keys on each app. Changes take effect on the next deploy and can be undone.",
+  "remapApplied": "Environment rewritten — redeploy each app to apply",
+  "remapUndone": "Environment changes undone",
+  "remapResult": "{n} app(s) updated",
+  "remapResultFailed": "{n} failed",
+  "remapUndo": "Undo changes"
 }

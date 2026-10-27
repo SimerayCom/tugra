@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
@@ -50,6 +50,8 @@ describe("ImportWizard", () => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
+    // The post-import MigrateDataCard reads this on mount once the timeline settles — default to "no live token".
+    vi.spyOn(api, "getMigrateCommand").mockResolvedValue({ opId: "op1", active: false, expiresAt: null, commandTemplate: "run on the source host" });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -100,6 +102,44 @@ describe("ImportWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" })); // dialog confirm
     await screen.findByText("ROLLED_BACK");
     expect(rb).toHaveBeenCalledWith("op1");
+  });
+
+  it("post-import: mints the data-migration command, and previews + applies the env remap", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+    const mintSpy = vi.spyOn(api, "mintMigrationToken").mockResolvedValue({ opId: "op1", token: "T", command: "tugra-migrate --token T --hub https://hub", expiresAt: "2026-02-01T00:00:00.000Z" });
+    vi.spyOn(api, "remapEnvPlan").mockResolvedValue({
+      opId: "op1", planHash: "p".repeat(32), databases: [], skipped: [],
+      apps: [{ itemRef: "app:srv:web", appId: "a1", name: "web-app", unchangedCount: 0,
+        changes: [{ key: "DATABASE_URL", rule: "url", targetItemRef: "db:1", targetName: "pg", targetKind: "database", oldMasked: "postgres://old", newMasked: "postgres://new", confidence: "high" }],
+        needsManual: [], dbNetwork: { willLink: true, databases: ["db:1"], serverDbCount: 1, hasUnauthEngine: false } }],
+      note: "preview",
+    });
+    const applySpy = vi.spyOn(api, "remapEnvApply").mockResolvedValue({ opId: "op1", applied: true, planHash: "p".repeat(32), apps: [{ appId: "a1", name: "web-app", written: 1, keys: ["DATABASE_URL"], needsRedeploy: true, linked: true }], failed: [], linkFailed: [], note: "done" });
+    wrap(<ImportWizard />);
+
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("Import preview");
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE");
+
+    // Data migration: mint the one-liner (shown once).
+    fireEvent.click(screen.getByRole("button", { name: "Generate migration command" }));
+    await waitFor(() => expect(mintSpy).toHaveBeenCalledWith("op1"));
+    await screen.findByText(/tugra-migrate --token T/);
+
+    // Env remap: preview → apply with the planHash as the confirm token.
+    fireEvent.click(screen.getByRole("button", { name: "Preview env changes" }));
+    await screen.findByText("DATABASE_URL");
+    fireEvent.click(screen.getByRole("button", { name: "Apply changes" }));
+    await screen.findByText("Apply these env changes?"); // confirm dialog
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(applySpy).toHaveBeenCalledWith("op1", "p".repeat(32)));
   });
 
   it("keeps the connect button disabled until url + token are filled", async () => {
