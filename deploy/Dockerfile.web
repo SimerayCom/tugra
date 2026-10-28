@@ -4,7 +4,7 @@
 # this is unset, so a single published image works for any single-origin (reverse-proxy) deployment.
 # A split-port deployment that needs a fixed absolute hub URL should build from source with this set.
 # node:22 LTS — Node 20 reached end-of-life; 22 is the active LTS that still gets security patches.
-FROM node:22
+FROM node:25
 
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
