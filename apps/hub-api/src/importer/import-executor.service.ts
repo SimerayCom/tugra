@@ -247,7 +247,8 @@ export class ImportExecutorService {
     if (!(await this.claim(taskId))) return;
     try {
       const { values, unresolved } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
-      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: "coolify" });
+      const gitSourceId = await this.resolveGitSourceId(targetServerId, app);
+      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: "coolify", gitSourceId });
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       await this.prisma.bulkTask.update({
         where: { id: taskId },
@@ -261,6 +262,26 @@ export class ImportExecutorService {
       });
     } catch (e) {
       await this.prisma.bulkTask.update({ where: { id: taskId }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });
+    }
+  }
+
+  /** For a private GitHub-App repo (git.provider === "github"), link the imported app to a connected GitHub
+   *  App so its first deploy can clone it. Conservative: only auto-links when the TARGET team has EXACTLY one
+   *  GitSource (an unambiguous, safe pick); with zero or several it stays unlinked — the plan's
+   *  `app.git.private` warning tells the user to connect/pick one, and create() would reject a cross-team id
+   *  anyway. Best-effort: never throws (a lookup failure just means no auto-link). */
+  private async resolveGitSourceId(targetServerId: string, app: ForeignApp): Promise<string | undefined> {
+    if (app.git?.provider !== "github") return undefined;
+    try {
+      const server = await this.prisma.server.findUnique({ where: { id: targetServerId }, select: { teamId: true } });
+      if (!server) return undefined;
+      // Only INSTALLED sources are usable: linking one whose GitHub App was never installed would make the
+      // first deploy throw at token mint ("git source is not installed yet") instead of cloning — worse than
+      // leaving a public repo unlinked. So an un-installed source does not count toward the exactly-one rule.
+      const sources = await this.prisma.gitSource.findMany({ where: { teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
+      return sources.length === 1 ? sources[0].id : undefined;
+    } catch {
+      return undefined;
     }
   }
 

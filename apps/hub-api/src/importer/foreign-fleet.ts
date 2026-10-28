@@ -73,7 +73,7 @@ export interface ForeignApp {
   image?: string;
   imageOrigin?: ImageOrigin;
   registry?: { host: string; secretRef?: string }; // private registry the image is pulled from
-  git?: { url: string; branch?: string; dockerfilePath?: string; dockerfileContent?: string; baseDirectory?: string };
+  git?: { url: string; branch?: string; dockerfilePath?: string; dockerfileContent?: string; baseDirectory?: string; provider?: string }; // provider "github" = a private GitHub-App repo (needs a connected GitSource to clone)
   buildCommand?: string;
   startCommand?: string;
   installCommand?: string;
