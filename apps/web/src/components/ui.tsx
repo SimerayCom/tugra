@@ -22,11 +22,14 @@ export function Btn({
   // Default to "button" so a <Btn onClick> inside a <form> doesn't ALSO submit
   // the form (that double-fired mutations). Submit buttons pass type="submit".
   type = "button",
+  icon: Icon,
   children,
   style,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "ghost" | "danger";
+  // Optional leading lucide icon, rendered before the label (decorative, aria-hidden).
+  icon?: LucideIcon;
 }) {
   const base: CSSProperties = {
     fontFamily: "inherit",
@@ -38,6 +41,10 @@ export function Btn({
     opacity: rest.disabled ? 0.5 : 1,
     border: "1px solid transparent",
     transition: "filter .15s",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
   };
   const variants: Record<string, CSSProperties> = {
     primary: { background: "var(--c-a)", color: "#0d0d11" },
@@ -50,6 +57,7 @@ export function Btn({
   };
   return (
     <button type={type} style={{ ...base, ...variants[variant], ...style }} {...rest}>
+      {Icon && <Icon size={14} aria-hidden style={{ flexShrink: 0 }} />}
       {children}
     </button>
   );

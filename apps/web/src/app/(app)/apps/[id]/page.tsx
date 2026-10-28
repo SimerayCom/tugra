@@ -40,6 +40,19 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
 import { resolveTab } from "../../../../lib/tab-param";
+import {
+  LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
+  SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
+  RotateCw, Play, RefreshCw, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
+  Pencil, Trash2, Lock, ChevronRight, ExternalLink, ArrowDown, X, type LucideIcon,
+} from "lucide-react";
+
+// Icon per Configuration sub-nav group. Kept here (not in config-groups.ts) so that pure, tested file
+// stays presentation-free.
+const CONFIG_GROUP_ICONS: Record<string, LucideIcon> = {
+  general: SlidersHorizontal, build: Hammer, environment: Variable, domains: Globe,
+  storage: HardDrive, "health-resources": HeartPulse, automation: Clock,
+};
 
 // Post-deploy rollout states the agent reports via the TUGRA_ROLLOUT marker, mapped to a chip colour.
 // `healthy`/`converged` are good outcomes; `rolled_back` is a caution; anything else (rollback_failed,
@@ -101,7 +114,7 @@ function AppOverview({ app, deployments }: { app: Application; deployments: Depl
         <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)" }}>{t("apps.ovLiveUrl")}</span>
         {app.url ? (
           <a href={app.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)", fontSize: 14, wordBreak: "break-all" }}>
-            {app.url} ↗
+            {app.url}<ExternalLink size={13} aria-hidden style={{ marginLeft: 4, verticalAlign: "middle" }} />
           </a>
         ) : (
           <span style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("apps.ovNotExposed")}</span>
@@ -218,13 +231,13 @@ export default function AppDetailPage() {
     onSuccess: () => { setRenameOpen(false); qc.invalidateQueries({ queryKey: ["app", id] }); },
   });
   const tabDefs = [
-    { key: "overview", label: t("apps.tabOverview") },
-    ...(appData?.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration") }] : []),
-    { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length },
-    { key: "metrics", label: t("apps.tabMetrics") },
-    { key: "logs", label: t("apps.tabLogs") },
+    { key: "overview", label: t("apps.tabOverview"), icon: LayoutDashboard },
+    ...(appData?.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration"), icon: Settings2 }] : []),
+    { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length, icon: Rocket },
+    { key: "metrics", label: t("apps.tabMetrics"), icon: Activity },
+    { key: "logs", label: t("apps.tabLogs"), icon: ScrollText },
     // Files listing is writer-only (the hub endpoint requires write permission), like logs/config.
-    ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles") }] : []),
+    ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles"), icon: FolderOpen }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
   // Configuration sub-nav section, deep-linked as ?section= (resolved to a visible group below).
@@ -330,16 +343,17 @@ export default function AppDetailPage() {
           appData.canWrite ? (
             <>
               {primary === "restart" && (
-                <Btn onClick={() => restart.mutate()} disabled={restart.isPending}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
+                <Btn icon={RotateCw} onClick={() => restart.mutate()} disabled={restart.isPending}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
               )}
               {primary === "start" && (
-                <Btn onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
+                <Btn icon={Play} onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
               )}
-              <Btn variant={primary === "deploy" ? "primary" : "ghost"} onClick={() => onDeploy()} disabled={deploy.isPending}>
+              <Btn icon={appData.status === "NEW" ? Rocket : RefreshCw} variant={primary === "deploy" ? "primary" : "ghost"} onClick={() => onDeploy()} disabled={deploy.isPending}>
                 {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
               </Btn>
-              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
+              <Btn icon={Square} variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
               <Btn
+                icon={Terminal}
                 variant="ghost"
                 onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}
                 disabled={!isRunning}
@@ -348,17 +362,17 @@ export default function AppDetailPage() {
                 {t("apps.openShell")}
               </Btn>
               <div style={{ position: "relative" }}>
-                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("apps.more")}>⋯</Btn>
+                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("apps.more")}><Ellipsis size={16} /></Btn>
                 {moreOpen && (
                   <div
                     role="menu"
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
-                    <Btn variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
+                    <Btn icon={appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer} variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
-                    <Btn variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                    <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
+                    <Btn icon={Trash2} variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name })) del.mutate(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>
@@ -456,6 +470,7 @@ export default function AppDetailPage() {
             groups={configGroups.map((g) => ({
               key: g.key,
               label: t(g.labelKey),
+              icon: CONFIG_GROUP_ICONS[g.key],
               content: g.cardIds.map((cid) => <Fragment key={cid}>{renderConfigCard[cid]()}</Fragment>),
             }))}
           />
@@ -506,16 +521,16 @@ export default function AppDetailPage() {
                         {ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}
                       </span>
                     )}
-                    {d.registryImage && <span title={d.registryImage} style={{ fontSize: 10, color: "var(--c-tx3)" }}>☁</span>}
+                    {d.registryImage && <span title={d.registryImage} style={{ display: "inline-flex", alignItems: "center", color: "var(--c-tx3)" }}><CloudUpload size={12} aria-hidden /></span>}
                     {d.imageDigest && (
-                      <span title={d.imageDigest} className="mono" style={{ fontSize: 10, color: "var(--c-tx3)" }}>
-                        🔒 {shortDigest(d.imageDigest)}
+                      <span title={d.imageDigest} className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--c-tx3)" }}>
+                        <Lock size={11} aria-hidden /> {shortDigest(d.imageDigest)}
                       </span>
                     )}
                     {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
                     <span style={{ flex: 1 }} />
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
-                    <span aria-hidden style={{ fontSize: 15, lineHeight: 1, color: "var(--c-tx3)" }}>›</span>
+                    <ChevronRight size={15} aria-hidden style={{ color: "var(--c-tx3)", flexShrink: 0 }} />
                   </button>
                 );
               })}
@@ -863,11 +878,12 @@ function LiveLogCard({ lines }: { lines: string }) {
         </pre>
         {!following && (
           <Btn
+            icon={ArrowDown}
             variant="ghost"
             onClick={jump}
             style={{ position: "absolute", right: 10, bottom: 10, fontSize: 11, padding: "2px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 1px 6px rgba(0,0,0,.25)" }}
           >
-            ↓ {t("apps.jumpToLatest")}
+            {t("apps.jumpToLatest")}
           </Btn>
         )}
       </div>
@@ -978,7 +994,7 @@ function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
                 <div key={i} style={{ display: "flex", gap: 6 }}>
                   <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} />
                   <input style={{ ...envField, flex: 1 }} type={reveal ? "text" : "password"} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
-                  <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)" }}>✕</button>
+                  <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
                 </div>
               );
             })}
@@ -1034,7 +1050,7 @@ function BuildArgsCard({ id }: { id: string }) {
             <div key={i} style={{ display: "flex", gap: 6 }}>
               <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} />
               <input style={{ ...envField, flex: 1 }} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
-              <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)" }}>✕</button>
+              <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
             </div>
           );
         })}

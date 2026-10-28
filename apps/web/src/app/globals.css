@@ -172,6 +172,9 @@ body {
 .cfg-nav-item {
   width: 100%;
   min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   text-align: left;
   padding: 8px 12px;
   background: transparent;
