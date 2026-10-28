@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 
 export interface ConfigLayoutGroup {
   key: string;
   label: string;
   content: ReactNode;
+  icon?: LucideIcon;
 }
 
 /**
@@ -57,6 +59,7 @@ export function ConfigLayout({
                   aria-controls={`cfg-panel-${g.key}`}
                   onClick={() => onChange(g.key)}
                 >
+                  {g.icon && <g.icon size={15} aria-hidden style={{ flexShrink: 0 }} />}
                   {g.label}
                 </button>
               </li>

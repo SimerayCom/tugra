@@ -1,12 +1,14 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
+
 /** Underline tab strip for detail pages. Controlled via `active`/`onChange`. */
 export function Tabs({
   tabs,
   active,
   onChange,
 }: {
-  tabs: { key: string; label: string; badge?: number }[];
+  tabs: { key: string; label: string; badge?: number; icon?: LucideIcon }[];
   active: string;
   onChange: (key: string) => void;
 }) {
@@ -44,6 +46,7 @@ export function Tabs({
               gap: 6,
             }}
           >
+            {tab.icon && <tab.icon size={14} aria-hidden style={{ flexShrink: 0 }} />}
             {tab.label}
             {tab.badge != null && tab.badge > 0 && (
               <span
