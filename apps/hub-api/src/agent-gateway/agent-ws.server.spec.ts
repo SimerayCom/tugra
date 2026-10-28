@@ -401,3 +401,46 @@ describe("AgentWsServer keepalive sweep (half-open detection)", () => {
     expect(s.ping).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("AgentWsServer pre-auth handshake deadline", () => {
+  const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
+  const makeServer = (authenticate = jest.fn().mockResolvedValue(true)) =>
+    new AgentWsServer({} as any, { authenticate, grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any, {} as any, {} as any, hubSign);
+
+  it("closes a socket still unauthenticated when the deadline fires (1008)", () => {
+    const server = makeServer();
+    const sock = mockSocket();
+    (server as any).state.set(sock, { nonce: "n", authed: false, isAlive: true });
+    (server as any).closeIfUnauthed(sock);
+    expect(sock.close).toHaveBeenCalledWith(1008, "auth timeout");
+  });
+
+  it("leaves an already-authenticated socket alone at the deadline", () => {
+    const server = makeServer();
+    const sock = mockSocket();
+    (server as any).state.set(sock, { nonce: "n", authed: true, serverId: "s1", isAlive: true });
+    (server as any).closeIfUnauthed(sock);
+    expect(sock.close).not.toHaveBeenCalled();
+  });
+
+  it("schedules the close on connect, and a successful auth clears it so it never fires", async () => {
+    jest.useFakeTimers();
+    try {
+      const server = makeServer();
+      // never authenticates → timer fires → closed
+      const dead = mockSocket();
+      (server as any).onConnection(dead, { socket: { remoteAddress: "1.2.3.4" }, headers: {} });
+      jest.advanceTimersByTime(10_000);
+      expect(dead.close).toHaveBeenCalledWith(1008, "auth timeout");
+
+      // authenticates before the deadline → timer cleared → never closed
+      const live = mockSocket();
+      (server as any).onConnection(live, { socket: { remoteAddress: "1.2.3.4" }, headers: {} });
+      await (server as any).onMessage(live, JSON.stringify({ type: "auth", serverId: "s1", signature: "sig", agentVersion: "1" }));
+      jest.advanceTimersByTime(10_000);
+      expect(live.close).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
