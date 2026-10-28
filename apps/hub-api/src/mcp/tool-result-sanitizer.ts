@@ -43,6 +43,8 @@ const SECRET_FIELD_NAMES = new Set([
   // mount host paths / inject env), and the deploy webhook token.
   "composeFile",
   "dockerOptions",
+  "preDeployCommand",
+  "postDeployCommand",
   "webhookToken",
 ]);
 

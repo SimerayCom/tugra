@@ -51,6 +51,20 @@ function rolloutColor(state: string): string {
   return "var(--c-r)";
 }
 
+// Deployment origins (Deployment.trigger) that have a translated label; an unknown one shows verbatim, and a
+// null trigger (legacy rows) falls back to the kind label.
+const TRIGGER_KNOWN = new Set(["manual", "webhook", "preview", "rollback"]);
+
+/** Human-readable wall-clock duration from a millisecond count (e.g. 1500 → "2s", 83000 → "1m 23s"). */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return rs ? `${m}m ${rs}s` : `${m}m`;
+}
+
 /** At-a-glance summary for a non-compose app's Overview tab: the live URL plus a compact stat grid
  *  (status, source, exposure, placement, resources, port, environment, last deployment). Replaces the
  *  earlier single-line placeholder so the first tab actually tells you what the app is and how it ran. */
@@ -245,6 +259,7 @@ export default function AppDetailPage() {
     ),
     buildArgs: () => <BuildArgsCard id={id} />,
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
+    deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
     credentials: () => (
       <CredentialsCard id={id} source={appData.source} hasGitToken={appData.hasGitToken} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
     ),
@@ -525,7 +540,7 @@ export default function AppDetailPage() {
             (deployments[0]?.logs ? (
               <Card style={{ padding: 16 }}>
                 <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
-                <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflowY: "auto" }}>{collapseCarriageReturns(deployments[0].logs)}</pre>
+                <pre className="mono" style={{ ...TERMINAL_PRE_STYLE, maxHeight: 420 }}>{collapseCarriageReturns(deployments[0].logs)}</pre>
               </Card>
             ) : (
               !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
@@ -711,10 +726,14 @@ function DeploymentDetail({
 
   const stats: { label: string; node: ReactNode }[] = [
     { label: t("apps.status"), node: <span style={{ color: deploymentColor(d.status), fontWeight: 600 }}>{d.status}</span> },
-    { label: t("apps.trigger"), node: t(`apps.kind_${d.kind}`) },
+    // Trigger = ORIGIN (manual/webhook/preview/rollback). Legacy rows have no trigger → fall back to the
+    // kind (outcome) label so the stat is never blank.
+    { label: t("apps.trigger"), node: d.trigger ? (TRIGGER_KNOWN.has(d.trigger) ? t(`apps.trigger_${d.trigger}`) : d.trigger) : t(`apps.kind_${d.kind}`) },
     ...(sum?.rollout ? [{ label: t("apps.rolloutLabel"), node: <span style={{ color: rolloutColor(sum.rollout), fontWeight: 600 }}>{ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}</span> }] : []),
+    ...(d.durationMs != null ? [{ label: t("apps.durationLabel"), node: formatDuration(d.durationMs) }] : []),
     ...(d.registryImage || d.imageTag ? [{ label: t("apps.imageLabel"), node: <span className="mono" style={{ wordBreak: "break-all" }}>{d.registryImage ?? d.imageTag}</span> }] : []),
     ...(d.imageDigest ? [{ label: t("apps.digestLabel"), node: <span className="mono" title={d.imageDigest}>{shortDigest(d.imageDigest)}</span> }] : []),
+    ...(d.commitSha ? [{ label: t("apps.commitLabel"), node: <span style={{ wordBreak: "break-word" }}><span className="mono">{d.commitSha.slice(0, 7)}</span>{d.commitMessage ? ` ${d.commitMessage}` : ""}</span> }] : []),
     ...(d.exitCode != null ? [{ label: t("apps.exitLabel"), node: <span className="mono">{d.exitCode}</span> }] : []),
     { label: t("apps.startedLabel"), node: <span>{new Date(d.createdAt).toLocaleString()}{" · "}{relativeTime(d.createdAt)}</span> },
   ];
@@ -799,7 +818,7 @@ function DeploymentDetail({
         </div>
         <pre
           className="mono"
-          style={{ margin: 0, padding: "12px 14px", fontSize: 12, lineHeight: 1.55, color: "#cdd3de", background: "#0b0e14", whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 300, maxHeight: "62vh", overflow: "auto" }}
+          style={{ ...TERMINAL_PRE_STYLE, borderRadius: 0, minHeight: 300, maxHeight: "62vh" }}
         >
           {shown || <span style={{ color: "#6b7280" }}>{t("apps.noBuildOutput")}</span>}
         </pre>
@@ -838,9 +857,9 @@ function LiveLogCard({ lines }: { lines: string }) {
           ref={ref}
           onScroll={onScroll}
           className="mono"
-          style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto" }}
+          style={{ ...TERMINAL_PRE_STYLE, maxHeight: 360 }}
         >
-          {collapseCarriageReturns(lines) || <span style={{ color: "var(--c-tx3)" }}>{t("apps.waitingForBuild")}</span>}
+          {collapseCarriageReturns(lines) || <span style={{ color: "#6b7280" }}>{t("apps.waitingForBuild")}</span>}
         </pre>
         {!following && (
           <Btn
@@ -855,6 +874,21 @@ function LiveLogCard({ lines }: { lines: string }) {
     </Card>
   );
 }
+
+// The deployment/build log terminal look — intentionally dark in both themes (like Coolify/Dokploy). Shared
+// by the deployment drill-in, the Logs tab's last-deploy log, and the live build-log stream so they can't drift.
+const TERMINAL_PRE_STYLE: React.CSSProperties = {
+  margin: 0,
+  padding: "12px 14px",
+  fontSize: 12,
+  lineHeight: 1.55,
+  color: "#cdd3de",
+  background: "#0b0e14",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  borderRadius: "var(--r1)",
+  overflow: "auto",
+};
 
 const envField: React.CSSProperties = {
   padding: "6px 9px",
@@ -1232,6 +1266,37 @@ function DockerOptionsCard({ id, dockerOptions }: { id: string; dockerOptions: s
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.dockerOptionsRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function DeployHooksCard({ id, pre, post }: { id: string; pre: string | null; post: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [preVal, setPreVal] = useState(pre ?? "");
+  const [postVal, setPostVal] = useState(post ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setAppDeployHooks(id, { preDeployCommand: preVal.trim() || null, postDeployCommand: postVal.trim() || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  const field: React.CSSProperties = { ...envField, width: "100%", boxSizing: "border-box", minHeight: 52, resize: "vertical" };
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.deployHooks")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.deployHooksDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.preDeployCommand")}</span>
+          <textarea style={field} placeholder={t("apps.preDeployPlaceholder")} value={preVal} onChange={(e) => setPreVal(e.target.value)} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.postDeployCommand")}</span>
+          <textarea style={field} placeholder={t("apps.postDeployPlaceholder")} value={postVal} onChange={(e) => setPostVal(e.target.value)} />
+        </label>
+        <div><Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn></div>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.deployHooksRedeploy")}</div>}
     </Card>
   );
 }

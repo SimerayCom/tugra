@@ -862,6 +862,8 @@ model Application {
   reserveCpus    Float?       // soft swarm scheduling hint (--reserve-cpu); swarm-only, advisory
   gpus           String?      // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
   deployTimeoutSec Int?
+  preDeployCommand  String?    // shell command run (in a one-shot container of the new image) before the swap — e.g. DB migrations
+  postDeployCommand String?    // shell command run (inside the live container) after the health gate passes
   volumes        Json?
   hostMounts     Json?        // [{hostPath, containerPath, readOnly}] — host directory bind-mounts (validated vs the sensitive-path denylist)
   portMappings   Json?        // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
@@ -995,6 +997,10 @@ model Deployment {
   imageDigest String?     // resolved upstream digest of the pulled IMAGE (nginx@sha256:…) — provenance + byte-exact rollback
   // Redacted config snapshot this deploy ran with (secrets fingerprinted, not stored).
   configSnapshot Json?
+  durationMs    Int?           // wall-clock ms from row creation to terminal status; null for legacy/RUNNING rows
+  trigger       String?        // what initiated this run: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
+  commitSha     String?        // deployed git commit (GIT source only); null otherwise
+  commitMessage String?        // first line of the deployed commit's message (GIT source only), capped + sanitized
   createdAt   DateTime         @default(now())
 
   @@index([appId])

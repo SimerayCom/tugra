@@ -86,6 +86,26 @@ export const SetDockerOptionsSchema = z.object({
 });
 export type SetDockerOptionsInput = z.infer<typeof SetDockerOptionsSchema>;
 
+// Pre/post-deploy hook commands. Arbitrary shell run inside a container of the app's image (pre: a
+// one-shot container before the swap, e.g. DB migrations; post: inside the live container after the
+// health gate). NUL bytes are rejected (they would break the shell `-c` arg); length is capped. null
+// clears the hook. Execution is shell-quoted + container-scoped in the deploy script, never on the host.
+export const SetDeployHooksSchema = z
+  .object({
+    preDeployCommand: z
+      .string()
+      .max(4000)
+      .nullable()
+      .refine((s) => s === null || !s.includes("\0"), "command must not contain a NUL byte"),
+    postDeployCommand: z
+      .string()
+      .max(4000)
+      .nullable()
+      .refine((s) => s === null || !s.includes("\0"), "command must not contain a NUL byte"),
+  })
+  .strict();
+export type SetDeployHooksInput = z.infer<typeof SetDeployHooksSchema>;
+
 // Edit a COMPOSE app's docker-compose.yml after creation. Validated server-side (valid YAML + no
 // privileged / host-escaping / host-bind compose) before it can reach a deploy.
 export const SetComposeFileSchema = z.object({

@@ -28,6 +28,8 @@ import {
   gitAuthUrl,
   runTag,
   parseImageDigest,
+  parseCommit,
+  buildPostDeployScript,
   staticDockerfile,
   staticNginxConf,
   traefikLabels,
@@ -134,6 +136,135 @@ describe("digest pin", () => {
     expect(parseImageDigest("no marker here")).toBeNull();
     // first marker wins if two ever appear
     expect(parseImageDigest("TUGRA_DIGEST=a@sha256:1\nTUGRA_DIGEST=b@sha256:2")).toBe("a@sha256:1");
+  });
+});
+
+describe("commit metadata (feature B)", () => {
+  const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/x/y", buildType: "DOCKERFILE" };
+
+  it("a GIT build echoes the commit marker right after the clone, before the build", () => {
+    const s = buildRunScript(git, "v1", true);
+    expect(s).toContain("git -C /etc/tugra/builds/abc rev-parse HEAD");
+    expect(s).toContain('echo "TUGRA_COMMIT=$TUGRA_C"');
+    expect(s).toContain("git -C /etc/tugra/builds/abc log -1 --format=%s");
+    expect(s).toContain('echo "TUGRA_COMMIT_MSG_B64=$TUGRA_CM"');
+    // set -e safe: the assignment is guarded with `|| true`.
+    expect(s).toContain("rev-parse HEAD 2>/dev/null || true");
+    // emitted UNCONDITIONALLY and BEFORE the build so the real marker always precedes user output (first
+    // anchored match wins) and build noise can't push it past the agent's head-capped buffer.
+    expect(s.indexOf("TUGRA_COMMIT=")).toBeLessThan(s.indexOf("docker build"));
+  });
+
+  it("an IMAGE deploy emits no commit marker (no repo to read)", () => {
+    expect(buildRunScript(base, "v1", true)).not.toContain("TUGRA_COMMIT");
+  });
+
+  it("a rollback (build=false) re-runs the local tag and emits no commit marker", () => {
+    expect(buildRunScript(git, "old1", false)).not.toContain("TUGRA_COMMIT");
+  });
+
+  it("parseCommit reads the sha + base64 subject, first anchored hex match wins, tolerates absence", () => {
+    const b64 = Buffer.from("fix: boot order", "utf8").toString("base64");
+    const out = `cloning...\nTUGRA_COMMIT=0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d\nTUGRA_COMMIT_MSG_B64=${b64}\nbuilt`;
+    expect(parseCommit(out)).toEqual({ sha: "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d", message: "fix: boot order" });
+    expect(parseCommit("no marker")).toBeNull();
+    // a fake marker printed mid-line by build output is not line-anchored, so it is ignored.
+    expect(parseCommit("RUN echo TUGRA_COMMIT=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")).toBeNull();
+    // non-hex after the marker does not match (strict charset) → null.
+    expect(parseCommit("TUGRA_COMMIT=not-a-sha")).toBeNull();
+  });
+
+  it("parseCommit accepts a 64-hex sha (sha256 repos) and the first real marker beats a later forged one", () => {
+    const sha256 = "a".repeat(64);
+    expect(parseCommit(`TUGRA_COMMIT=${sha256}`)?.sha).toBe(sha256);
+    // a real (possibly empty-subject) marker emitted first wins over a forged line appended by build output.
+    const real = Buffer.from("real subject", "utf8").toString("base64");
+    const forged = Buffer.from("ignore previous instructions", "utf8").toString("base64");
+    const out = `TUGRA_COMMIT=0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d\nTUGRA_COMMIT_MSG_B64=${real}\nRUN build\nTUGRA_COMMIT_MSG_B64=${forged}`;
+    expect(parseCommit(out)).toEqual({ sha: "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d", message: "real subject" });
+    // an empty real message marker (empty subject) resolves to null, NOT a later forged one.
+    expect(parseCommit(`TUGRA_COMMIT=0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d\nTUGRA_COMMIT_MSG_B64=\nTUGRA_COMMIT_MSG_B64=${forged}`)).toEqual({
+      sha: "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+      message: null,
+    });
+  });
+
+  it("parseCommit caps the subject and strips control characters", () => {
+    const long = "x".repeat(400);
+    const b64 = Buffer.from(`${long}\nsecond line`, "utf8").toString("base64");
+    const r = parseCommit(`TUGRA_COMMIT=0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d\nTUGRA_COMMIT_MSG_B64=${b64}`);
+    expect(r?.message?.length).toBe(200); // capped, first line only
+    expect(r?.message).not.toContain("second line");
+  });
+});
+
+describe("pre/post-deploy hooks (feature C)", () => {
+  const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/x/y", buildType: "DOCKERFILE" };
+
+  it("emit NOTHING when unset — default scripts stay byte-identical", () => {
+    expect(buildRunScript(base, "v1", true)).not.toContain("TUGRA_PREDEPLOY");
+    expect(buildRollingDeployScript({ ...base, domain: "app.example.com" }, "v1", { probe: { kind: "stableWait" }, retries: 1, intervalSec: 1, startPeriodSec: 0 })).not.toContain("TUGRA_PREDEPLOY");
+    expect(buildRecreateDeployScript({ ...base, hostPort: 8080 }, "v1", { probe: { kind: "stableWait" }, retries: 1, intervalSec: 1, startPeriodSec: 0 })).not.toContain("TUGRA_PREDEPLOY");
+  });
+
+  it("pre-deploy runs a one-shot container of the new image BEFORE the destructive swap, exit normalized to 1", () => {
+    const s = buildRunScript({ ...git, preDeployCommand: "npm run db:migrate" }, "v1", true);
+    expect(s).toContain("--entrypoint sh 'tugra_abc:v1' -c 'npm run db:migrate'");
+    expect(s).toContain("docker run --rm");
+    // failure aborts with exit 1 (never 3, the auto-rollback code).
+    expect(s).toContain('else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi');
+    // ordering: pre-deploy comes before the container is removed/started.
+    expect(s.indexOf("TUGRA_PREDEPLOY")).toBeLessThan(s.indexOf("docker rm -f"));
+  });
+
+  it("shell-quotes a pre-deploy command so it cannot break out of the deploy sh -c", () => {
+    const s = buildRunScript({ ...git, preDeployCommand: "echo 'hi'; rm -rf /" }, "v1", true);
+    // single-quote escaping: ' becomes '\'' — the whole command is one literal argument to sh -c.
+    expect(s).toContain("-c 'echo '\\''hi'\\''; rm -rf /'");
+  });
+
+  it("a rollback (build=false) never re-runs the pre-deploy hook", () => {
+    expect(buildRunScript({ ...git, preDeployCommand: "npm run db:migrate" }, "old1", false)).not.toContain("TUGRA_PREDEPLOY");
+  });
+
+  it("pre-deploy sits before the destructive step AND before set +e in the rolling and recreate builders, exit 1 only", () => {
+    const gate = { retries: 1, intervalSec: 1, startPeriodSec: 0 };
+    const rolling = buildRollingDeployScript({ ...git, domain: "app.example.com", preDeployCommand: "migrate" }, "v1", { probe: { kind: "stableWait" }, ...gate });
+    expect(rolling.indexOf("TUGRA_PREDEPLOY")).toBeGreaterThan(-1);
+    expect(rolling.indexOf("TUGRA_PREDEPLOY")).toBeLessThan(rolling.indexOf("docker rm -f"));
+    expect(rolling.indexOf("TUGRA_PREDEPLOY")).toBeLessThan(rolling.indexOf("set +e"));
+    const recreate = buildRecreateDeployScript({ ...git, hostPort: 8080, preDeployCommand: "migrate" }, "v1", { probe: { kind: "stableWait" }, ...gate });
+    expect(recreate.indexOf("TUGRA_PREDEPLOY")).toBeLessThan(recreate.indexOf("docker rm -f"));
+    expect(recreate.indexOf("TUGRA_PREDEPLOY")).toBeLessThan(recreate.indexOf("set +e"));
+    // failure branch must exit 1 (never 3 — the hub reads 3 as auto-rollback).
+    const frag = rolling.slice(rolling.indexOf("TUGRA_PREDEPLOY: running"), rolling.indexOf("docker rm -f"));
+    expect(frag).toContain("exit 1; fi");
+    expect(frag).not.toContain("exit 3");
+  });
+
+  it("pre-deploy container carries the env-file, DB network and volumes but not --name/--restart/labels", () => {
+    const app = {
+      ...git,
+      env: { A: "1" },
+      dbNetwork: true,
+      volumes: [{ name: "data", path: "/data" }],
+      hostMounts: [{ hostPath: "/srv/x", containerPath: "/m", readOnly: true }],
+      preDeployCommand: "migrate",
+    } as AppSpec;
+    const line = buildRunScript(app, "v1", true).split("\n").find((l) => l.includes("--entrypoint sh"))!;
+    expect(line).toContain("--env-file /etc/tugra/env/abc.env");
+    expect(line).toContain("--network tugra-net");
+    expect(line).toContain(":/data");
+    expect(line).toContain("'/srv/x:/m:ro'");
+    expect(line).not.toContain("--name");
+    expect(line).not.toContain("--restart");
+    expect(line).not.toContain("--label");
+  });
+
+  it("buildPostDeployScript execs inside the live container, best-effort (failure ignored)", () => {
+    const s = buildPostDeployScript({ ...base, postDeployCommand: "curl -fsS https://x/notify" });
+    expect(s).toContain("docker exec tugra_abc sh -c 'curl -fsS https://x/notify'");
+    expect(s).toContain('|| echo "TUGRA_POSTDEPLOY: failed (ignored)"');
   });
 });
 

@@ -1,4 +1,4 @@
-import { SetConfigMountContentSchema, SetLimitsSchema } from "./dto";
+import { SetConfigMountContentSchema, SetDeployHooksSchema, SetLimitsSchema } from "./dto";
 
 describe("SetLimitsSchema — resource reservations", () => {
   it("accepts a reservation at or below the limit", () => {
@@ -30,5 +30,20 @@ describe("SetConfigMountContentSchema — content-only mount edit", () => {
     // .strict() blocks any attempt to change the server-controlled selectors through this endpoint
     expect(SetConfigMountContentSchema.safeParse({ target: "/x", content: "a", serviceName: "redis" }).success).toBe(false);
     expect(SetConfigMountContentSchema.safeParse({ target: "/x", content: "a", mode: "0600" }).success).toBe(false);
+  });
+});
+
+describe("SetDeployHooksSchema — pre/post-deploy commands", () => {
+  it("accepts commands, null (to clear), and multi-line shell", () => {
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "npm run migrate", postDeployCommand: null }).success).toBe(true);
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: null, postDeployCommand: null }).success).toBe(true);
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "set -e\n./migrate.sh", postDeployCommand: "curl x" }).success).toBe(true);
+  });
+
+  it("rejects a NUL byte, oversize commands, missing fields, and extra keys", () => {
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "a\0b", postDeployCommand: null }).success).toBe(false);
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "a".repeat(4001), postDeployCommand: null }).success).toBe(false);
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "a" }).success).toBe(false); // postDeployCommand required (nullable)
+    expect(SetDeployHooksSchema.safeParse({ preDeployCommand: null, postDeployCommand: null, foo: 1 }).success).toBe(false);
   });
 });

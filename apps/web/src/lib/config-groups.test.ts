@@ -119,4 +119,11 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ clusterId: "c1" }), "environment")!.cardIds).toEqual(["env"]);
     expect(group(facts({ isPreview: true }), "environment")!.cardIds).toEqual(["env"]);
   });
+
+  it("deployHooks shows for a classic app and hides for compose / swarm / preview", () => {
+    expect(group(facts(), "automation")!.cardIds).toContain("deployHooks");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "automation")?.cardIds ?? []).not.toContain("deployHooks");
+    expect(group(facts({ clusterId: "c1" }), "automation")!.cardIds).not.toContain("deployHooks");
+    expect(group(facts({ isPreview: true }), "automation")!.cardIds).not.toContain("deployHooks");
+  });
 });

@@ -282,6 +282,13 @@ describe("ApplicationsService", () => {
     expect(depUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ configSnapshot: expect.any(Object) }) }),
     );
+    // deploy-history (feature B): wall-clock duration stamped on the terminal update; origin on create
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ durationMs: expect.any(Number) }) }),
+    );
+    expect(prisma.deployment.create as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ trigger: "manual" }) }),
+    );
   });
 
   it("records the resolved image digest echoed by the deploy (null when no marker)", async () => {
@@ -2147,6 +2154,86 @@ describe("ApplicationsService", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
     await expect(svc.rollback("u1", "app1", "depX")).rejects.toThrow(/rollbackable/);
+  });
+
+  it("a registry-pull rollback (build=true) does NOT re-run the pre-deploy hook", async () => {
+    const hookApp = {
+      ...app,
+      source: "GIT",
+      gitUrl: "https://x/y.git",
+      gitBranch: "main",
+      buildType: "DOCKERFILE",
+      image: null,
+      registryId: "reg1",
+      preDeployCommand: "npm run migrate",
+    };
+    let sentCmd = "";
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(hookApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(
+            where.status === "RUNNING"
+              ? null
+              : { id: "target", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/x/y:target", imageDigest: null, commitSha: null, commitMessage: null },
+          ),
+        ),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+      },
+      registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: null, username: "u", passwordEnc: "enc" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, c: string) => { sentCmd = c; return Promise.resolve({ exitCode: 0, output: "ok" }); }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).rollback("u1", "app1", "target");
+    expect(sentCmd).toContain("docker pull"); // the registry image is pulled (build=true path)
+    expect(sentCmd).not.toContain("TUGRA_PREDEPLOY"); // but the hook is cleared for a rollback
+  });
+
+  it("setDeployHooks rejects a hook on swarm/compose/preview apps, allows clearing, and never audits the command text", async () => {
+    const mk = (over: object) => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, ...over }), update } } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      return { svc: make(prisma, access, {} as AgentWsServer), update };
+    };
+    await expect(mk({ clusterId: "c1" }).svc.setDeployHooks("u1", "app1", "migrate", null)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(mk({ source: "COMPOSE" }).svc.setDeployHooks("u1", "app1", "migrate", null)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(mk({ isPreview: true }).svc.setDeployHooks("u1", "app1", null, "notify")).rejects.toBeInstanceOf(BadRequestException);
+    // clearing (both null) is allowed even on a swarm app so a stale value can be removed
+    const cleared = mk({ clusterId: "c1" });
+    await cleared.svc.setDeployHooks("u1", "app1", null, null);
+    expect(cleared.update).toHaveBeenCalledWith(expect.objectContaining({ data: { preDeployCommand: null, postDeployCommand: null } }));
+    // a classic app persists (trimmed) + audits only lengths, never the command text
+    const ok = mk({ source: "IMAGE" });
+    await ok.svc.setDeployHooks("u1", "app1", "  SECRET_HOOK_CMD  ", null);
+    expect(ok.update).toHaveBeenCalledWith(expect.objectContaining({ data: { preDeployCommand: "SECRET_HOOK_CMD", postDeployCommand: null } }));
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("SECRET_HOOK_CMD");
+  });
+
+  it("the post-deploy hook never fires on a FAILED deploy", async () => {
+    const hookApp = { ...app, postDeployCommand: "curl http://x/notify" };
+    const sent: string[] = [];
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(hookApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, c: string) => { sent.push(c); return Promise.resolve({ exitCode: 1, output: "boom" }); }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(sent.some((c) => c.includes("TUGRA_POSTDEPLOY"))).toBe(false);
   });
 
   it("deploys a COMPOSE app via docker compose, without setting an image tag", async () => {

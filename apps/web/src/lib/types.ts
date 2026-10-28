@@ -1009,6 +1009,9 @@ export interface Application {
   gpus: string | null;
   deployTimeoutSec: number | null;
   dockerOptions: string | null;
+  // Pre/post-deploy hook commands (writer-only in the API → null for read-only members). Single-server apps.
+  preDeployCommand: string | null;
+  postDeployCommand: string | null;
   volumes: AppVolume[];
   hostMounts: HostMount[];
   // Named volumes a COMPOSE app declares (empty for non-compose); browsable=false → external/custom.
@@ -1094,6 +1097,10 @@ export interface Deployment {
   registryImage: string | null;
   imageDigest: string | null; // resolved upstream digest of the pulled image (nginx@sha256:…) — provenance
   rollbackable: boolean; // artifact retained → can be a rollback target (image tag/registry, or compose snapshot)
+  durationMs?: number | null; // wall-clock ms (creation → terminal status); null for legacy/RUNNING rows
+  trigger?: string | null; // origin: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
+  commitSha?: string | null; // deployed git commit (GIT source); null otherwise
+  commitMessage?: string | null; // first line of the deployed commit message (GIT source)
   configChanges?: ConfigChange[];
   createdAt: string;
 }

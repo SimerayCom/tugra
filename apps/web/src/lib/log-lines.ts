@@ -20,9 +20,12 @@ export function collapseCarriageReturns(raw: string): string {
 
 // Control lines the agent's deploy script echoes for the hub to parse — not meant for a human reader.
 // `TUGRA_DIGEST=…` feeds digest-pinning (shown separately as the lock chip); `TUGRA_ROLLOUT: <state>`
-// reports post-deploy health; a lone 64-hex line is the container/image id a `docker run`/`build` prints.
+// reports post-deploy health; `TUGRA_COMMIT=…` / `TUGRA_COMMIT_MSG_B64=…` carry the deployed commit
+// (shown separately as the commit stat); a lone 64-hex line is the container/image id a `docker run`/`build` prints.
 const DIGEST_MARKER = /^TUGRA_DIGEST=/;
 const ROLLOUT_MARKER = /^TUGRA_ROLLOUT:\s*(\S+)/;
+const COMMIT_MARKER = /^TUGRA_COMMIT=/;
+const COMMIT_MSG_MARKER = /^TUGRA_COMMIT_MSG_B64=/;
 const BARE_ID = /^[0-9a-f]{64}$/;
 
 export type DeployLogSummary = {
@@ -53,7 +56,12 @@ export function summarizeDeployLog(raw: string): DeployLogSummary {
       stripped = true;
       continue;
     }
-    if (DIGEST_MARKER.test(trimmed) || BARE_ID.test(trimmed)) {
+    if (
+      DIGEST_MARKER.test(trimmed) ||
+      COMMIT_MARKER.test(trimmed) ||
+      COMMIT_MSG_MARKER.test(trimmed) ||
+      BARE_ID.test(trimmed)
+    ) {
       stripped = true;
       continue;
     }
