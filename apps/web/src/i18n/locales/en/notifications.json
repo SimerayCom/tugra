@@ -15,7 +15,7 @@
   "off": "Off",
   "emptyTitle": "No channels yet",
   "noChannels": "Add an email or chat channel below to receive alerts.",
-  "testSent": "Test sent ✓",
+  "testSent": "Test sent",
   "testFailed": "Test failed",
   "eventDeploySuccess": "Deploy succeeded",
   "eventDeployFailed": "Deploy failed",

@@ -21,7 +21,7 @@ describe("CopyBtn", () => {
     wrap(<CopyBtn text="secret-token" />);
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledWith("secret-token");
-    expect(await screen.findByText("Copied ✓")).toBeTruthy(); // toast fires after the awaited write
+    expect(await screen.findByText("Copied")).toBeTruthy(); // toast fires after the awaited write
   });
 
   it("falls back to execCommand on an insecure origin (no navigator.clipboard) and still reports success", async () => {
@@ -30,7 +30,7 @@ describe("CopyBtn", () => {
     Object.assign(document, { execCommand: exec });
     wrap(<CopyBtn text="tok" />);
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    expect(await screen.findByText("Copied ✓")).toBeTruthy();
+    expect(await screen.findByText("Copied")).toBeTruthy();
     expect(exec).toHaveBeenCalledWith("copy");
   });
 
@@ -39,8 +39,8 @@ describe("CopyBtn", () => {
     Object.assign(document, { execCommand: vi.fn().mockReturnValue(false) });
     wrap(<CopyBtn text="tok" />);
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-    expect(await screen.findByText(/Couldn't copy/)).toBeTruthy(); // no false "Copied ✓"
-    expect(screen.queryByText("Copied ✓")).toBeNull();
+    expect(await screen.findByText(/Couldn't copy/)).toBeTruthy(); // no false "Copied"
+    expect(screen.queryByText("Copied")).toBeNull();
   });
 });
 

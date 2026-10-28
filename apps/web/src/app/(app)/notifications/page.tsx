@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Pencil, Trash2 } from "lucide-react";
+import { Bell, Pencil, Trash2, X } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
@@ -232,7 +232,7 @@ export default function NotificationsPage() {
                   <div key={i} style={{ display: "flex", gap: 6 }}>
                     <TextInput style={{ width: 200 }} placeholder={t("notifications.headerKey")} value={r.key} onChange={(e) => setHeaderRow(i, { key: e.target.value })} />
                     <TextInput style={{ flex: 1 }} placeholder={t("notifications.headerValue")} value={r.value} onChange={(e) => setHeaderRow(i, { value: e.target.value })} />
-                    <Btn variant="ghost" onClick={() => setHeaders((rs) => rs.filter((_, j) => j !== i))}>✕</Btn>
+                    <Btn variant="ghost" aria-label={t("common.remove")} onClick={() => setHeaders((rs) => rs.filter((_, j) => j !== i))}><X size={14} /></Btn>
                   </div>
                 ))}
               </div>
