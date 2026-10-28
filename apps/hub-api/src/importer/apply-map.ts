@@ -7,6 +7,7 @@ export interface AppCreateOptions {
   serverId: string; // the target Tugra server/cluster the app is created on
   environmentId?: string;
   sourceTag?: string; // e.g. "coolify" — added alongside "imported" for traceability
+  gitSourceId?: string; // a connected GitHub App (GitSource) to link a private-repo import to; create() re-checks the team
 }
 
 /**
@@ -49,6 +50,7 @@ export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, str
     input.dockerfilePath = opt(app.git?.dockerfilePath);
     input.buildCommand = opt(app.buildCommand);
     input.outputDir = opt(app.publishDirectory);
+    if (opts.gitSourceId) input.gitSourceId = opts.gitSourceId; // link a private GitHub-App repo to a connected GitSource
   }
   return input;
 }

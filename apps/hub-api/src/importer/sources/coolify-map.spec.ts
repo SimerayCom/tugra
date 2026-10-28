@@ -8,6 +8,7 @@ import {
   mapDatabase,
   buildCoolifyFleet,
   normalizeGitUrl,
+  isGithubAppRepo,
   type CoolifyFleetInput,
 } from "./coolify-map";
 
@@ -27,6 +28,20 @@ describe("normalizeGitUrl", () => {
   });
   it("the normalized owner/repo URL satisfies CreateAppSchema's gitUrl regex", () => {
     expect(/^(https:\/\/|git@|ssh:\/\/)/.test(normalizeGitUrl("o/r"))).toBe(true);
+  });
+});
+
+describe("isGithubAppRepo", () => {
+  it("flags a bare owner/repo (Coolify's GitHub-App form = private, needs a connected GitSource)", () => {
+    expect(isGithubAppRepo("o/r")).toBe(true);
+    expect(isGithubAppRepo("acme/my-app.git")).toBe(true);
+    expect(isGithubAppRepo("  acme/my-app  ")).toBe(true);
+  });
+  it("does NOT flag a full URL / scp form (a plain, usually public clone)", () => {
+    expect(isGithubAppRepo("https://github.com/o/r.git")).toBe(false);
+    expect(isGithubAppRepo("git@github.com:o/r.git")).toBe(false);
+    expect(isGithubAppRepo("ssh://git@host/o/r.git")).toBe(false);
+    expect(isGithubAppRepo("some-weird-value")).toBe(false);
   });
 });
 
@@ -130,6 +145,16 @@ describe("mapApplication", () => {
       { key: "SERVICE_FQDN_WEB", buildTime: undefined, generated: true, ref: { type: "magic" } },
     ]);
     expect(app.volumes).toEqual([{ name: "web-data", hostPath: undefined, mountPath: "/data", type: "named", ownerRef: "app-1" }]);
+    expect(app.git?.provider).toBe("github"); // owner/repo shorthand → GitHub-App (private) signal for auto-link
+  });
+
+  it("does NOT mark provider for a full git URL (a plain/public clone — no auto-link needed)", () => {
+    const app = mapApplication(
+      { uuid: "app-2", name: "pub", build_pack: "nixpacks", git_repository: "https://github.com/o/pub.git", git_branch: "main" },
+      { envs: [], volumes: [], serverRef: "srv-a" },
+    );
+    expect(app.git?.url).toBe("https://github.com/o/pub.git");
+    expect(app.git?.provider).toBeUndefined();
   });
 });
 

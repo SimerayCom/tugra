@@ -21,7 +21,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[] } = {}) {
+function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; gitSources?: Array<{ id: string }> } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -44,6 +44,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
     },
     application: { findMany: jest.fn().mockResolvedValue([]) },
     database: { findMany: jest.fn().mockResolvedValue((over.liveDbIds ?? []).map((id) => ({ id }))) },
+    gitSource: { findMany: jest.fn().mockResolvedValue(over.gitSources ?? []) }, // İş 2: team GitSources for private-repo auto-link
   };
   const source = {
     discover: jest.fn().mockResolvedValue(fleet()),
@@ -159,5 +160,60 @@ describe("ImportExecutorService.rollback — database teardown guard (S1)", () =
     const { svc, dbs } = rollbackHarness({ dbStatus: "NEW", restores: 1 });
     await svc.rollback("user-1", "op-1");
     expect(dbs.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("ImportExecutorService.resolveGitSourceId — private GitHub-App auto-link (İş 2)", () => {
+  const ghApp = { sourceRef: "a", name: "web", kind: "git", buildPack: "nixpacks", git: { url: "https://github.com/o/r.git", provider: "github" } };
+  // resolveGitSourceId is private — call it directly for a focused unit test of the link policy.
+  const resolve = (svc: ImportExecutorService, app: unknown): Promise<string | undefined> =>
+    (svc as unknown as { resolveGitSourceId(s: string, a: unknown): Promise<string | undefined> }).resolveGitSourceId("srv-tugra", app);
+
+  it("auto-links to the team's single GitSource for a github-provider repo", async () => {
+    const { svc, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
+    await expect(resolve(svc, ghApp)).resolves.toBe("gs-1");
+    // scoped to the TARGET server's team AND only installed sources (an un-installed one would break deploy).
+    expect(prisma.gitSource.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ teamId: "team-1", installationId: { not: null } }) }));
+  });
+
+  it("does not link when the team has NO GitSource (the plan's warning covers it)", async () => {
+    const { svc } = harness({ gitSources: [] });
+    await expect(resolve(svc, ghApp)).resolves.toBeUndefined();
+  });
+
+  it("does not auto-pick when the team has MULTIPLE GitSources (ambiguous → left for manual link)", async () => {
+    const { svc } = harness({ gitSources: [{ id: "gs-1" }, { id: "gs-2" }] });
+    await expect(resolve(svc, ghApp)).resolves.toBeUndefined();
+  });
+
+  it("never links a non-github git app (full URL / public clone) — no GitSource lookup at all", async () => {
+    const { svc, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
+    await expect(resolve(svc, { ...ghApp, git: { url: "https://github.com/o/r.git" } })).resolves.toBeUndefined();
+    expect(prisma.gitSource.findMany).not.toHaveBeenCalled();
+  });
+
+  it("is best-effort: a lookup failure yields no link so the import still proceeds", async () => {
+    const { svc, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
+    prisma.server.findUnique.mockRejectedValueOnce(new Error("db down"));
+    await expect(resolve(svc, ghApp)).resolves.toBeUndefined();
+  });
+
+  it("end-to-end: runCopyApp passes the resolved gitSourceId into apps.create for a github-provider import", async () => {
+    const { svc, apps, source } = harness({ gitSources: [{ id: "gs-1" }] });
+    const base = fleet();
+    const ghFleet = { ...base, databases: [], apps: [{ ...base.apps[0], git: { url: "https://github.com/o/r.git", provider: "github" } }] };
+    source.discover.mockResolvedValue(ghFleet);
+    const planHash = planImport(ghFleet, { sourceKind: "coolify" }).planHash;
+    await svc.apply("user-1", { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash });
+    await flush();
+    expect(apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-1" }));
+  });
+
+  it("end-to-end: an ordinary (non-github) import never sends a gitSourceId to apps.create", async () => {
+    const { svc, apps } = harness({ gitSources: [{ id: "gs-1" }] });
+    await svc.apply("user-1", input());
+    await flush();
+    expect(apps.create).toHaveBeenCalledTimes(1);
+    expect(apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
   });
 });

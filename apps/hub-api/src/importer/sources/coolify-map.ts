@@ -142,6 +142,14 @@ export function normalizeGitUrl(repo: string): string {
   return r;
 }
 
+/** A bare `owner/repo` (not a URL) is exactly how Coolify stores a GitHub-App source — the signal that the
+ *  repo is private and needs a connected GitHub App to clone. A full URL is a plain (usually public) clone. */
+export function isGithubAppRepo(repo: string): boolean {
+  const r = repo.trim();
+  if (/^(https?:\/\/|git@|ssh:\/\/)/i.test(r)) return false;
+  return /^[\w.-]+\/[\w.-]+$/.test(r);
+}
+
 /** Whether the app actually builds from a real git repository (filters out Coolify's dockerimage placeholder). */
 export function hasRealGit(app: CoolifyApp): boolean {
   const r = app.git_repository;
@@ -269,6 +277,7 @@ export function mapApplication(
           branch: app.git_branch ?? undefined,
           dockerfilePath: app.dockerfile_location ?? undefined,
           baseDirectory: app.base_directory ?? undefined,
+          provider: isGithubAppRepo(app.git_repository!) ? "github" : undefined,
         }
       : undefined,
     composeFile: app.docker_compose_raw ?? undefined, // present only with a read:sensitive token

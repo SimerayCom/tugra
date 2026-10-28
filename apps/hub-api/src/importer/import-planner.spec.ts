@@ -88,3 +88,27 @@ describe("planImport", () => {
     expect(withWarn.planHash).toBe(plan.planHash); // advisory warnings must not perturb the hash
   });
 });
+
+describe("planImport — private GitHub-App repos (İş 2)", () => {
+  const gh: ForeignFleet = {
+    servers: [{ ref: "s", name: "box" }],
+    apps: [
+      { sourceRef: "priv", name: "priv", kind: "git", buildPack: "nixpacks", serverRef: "s", git: { url: "https://github.com/o/r.git", provider: "github" } },
+      { sourceRef: "pub", name: "pub", kind: "git", buildPack: "nixpacks", serverRef: "s", git: { url: "https://github.com/o/pub.git" } },
+    ],
+    databases: [], services: [], volumes: [], sharedEnv: [], warnings: [],
+  };
+  const plan = planImport(gh, { sourceKind: "coolify" });
+
+  it("warns (not blocks) that a private GitHub repo will be auto-linked to a connected GitHub App", () => {
+    const priv = plan.items.find((i) => i.itemRef === "app:s:priv")!;
+    const r = priv.risks.find((x) => x.code === "app.git.private");
+    expect(r).toBeDefined();
+    expect(r!.level).toBe("warn"); // never a blocker — the import proceeds and auto-links when possible
+  });
+
+  it("does NOT warn for a plain (public) git URL", () => {
+    const pub = plan.items.find((i) => i.itemRef === "app:s:pub")!;
+    expect(pub.risks.some((x) => x.code === "app.git.private")).toBe(false);
+  });
+});

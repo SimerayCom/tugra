@@ -60,4 +60,20 @@ describe("foreignAppToCreateInput", () => {
     );
     expect(input).toMatchObject({ source: "GIT", buildType: "STATIC", outputDir: "/dist", dockerfilePath: "/Dockerfile" });
   });
+
+  it("links a git import to a resolved GitSource when opts.gitSourceId is given, and omits it otherwise", () => {
+    const withLink = foreignAppToCreateInput(
+      base({ kind: "git", buildPack: "nixpacks", git: { url: "https://github.com/o/r.git", provider: "github" } }),
+      {},
+      { serverId: "t-srv", gitSourceId: "gs-1" },
+    );
+    expect(withLink.gitSourceId).toBe("gs-1");
+    const noLink = foreignAppToCreateInput(base({ kind: "git", buildPack: "nixpacks", git: { url: "https://github.com/o/r.git" } }), {}, { serverId: "t-srv" });
+    expect(noLink.gitSourceId).toBeUndefined();
+  });
+
+  it("never attaches gitSourceId to a non-git import", () => {
+    const img = foreignAppToCreateInput(base({ kind: "image", buildPack: "image", image: "redis:7" }), {}, { serverId: "t-srv", gitSourceId: "gs-1" });
+    expect(img.gitSourceId).toBeUndefined();
+  });
 });

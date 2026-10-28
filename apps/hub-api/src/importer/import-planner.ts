@@ -94,6 +94,7 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
   if (build.source === "IMAGE" && !app.image && app.imageOrigin === "local") risks.push({ level: "warn", code: "app.image.transfer", message: "image is local-only on the source — it must be shipped (docker save/load or a registry)" });
   if (build.source === "IMAGE" && !app.image && app.imageOrigin !== "local") risks.push({ level: "blocker", code: "app.image.missing", message: "nothing to deploy — no image and no git repository" });
   if (build.source === "COMPOSE" && !app.composeFile) risks.push({ level: "blocker", code: "app.compose.missing", message: "compose app has no compose file to import" });
+  if (build.source === "GIT" && app.git?.provider === "github") risks.push({ level: "warn", code: "app.git.private", message: "GitHub owner/repo source (Coolify's GitHub-App form) — if the repo is private, Tugra links it to your connected GitHub App on import ONLY when your team has exactly one installed; with none or several, connect/pick one in the app's Git settings before the first deploy or the clone fails" });
 
   const domains = app.domains ?? [];
   if (domains.length > 1) risks.push({ level: "warn", code: "app.domain.multi", message: `${domains.length} domains — the first ("${domains[0].host}") is primary; add the rest after` });
