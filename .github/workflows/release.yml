@@ -95,7 +95,7 @@ jobs:
                 arm64: (.manifests[] | select(.platform.os=="linux" and .platform.architecture=="arm64") | .digest)
               }' > agent-digests.json
           cat agent-digests.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.name == 'agent'
         with:
           name: agent-digests
