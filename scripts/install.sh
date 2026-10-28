@@ -31,6 +31,9 @@
 #   --detect-public-ip  Best-effort auto-detect this host's public IP (off by default, for privacy).
 #   --public-ip <ip>    Pin the host's public IP (so deployed-app magic URLs are reachable from outside).
 #   --dry-run           Generate the .env and exit — do not touch Docker.
+#   --restore-from <f>  Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto THIS host (moves an
+#                       existing hub here, no pg_dump). Overwrites this host's .env + hub volume. See
+#                       docs/disaster-recovery.md.
 set -euo pipefail
 
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
@@ -45,6 +48,9 @@ WEB_URL=""
 FORCE_BUILD=0
 FORCE_PULL=0
 DRY_RUN=0
+RESTORE_FROM=""
+RESTORE_SET=0
+ASSUME_YES=0
 # Outbound policy: update checks and public-IP detection are explicit opt-in (default off); anonymous usage
 # stats are on by default (opt-out, see below). env-var forms let the one-line curl|sh installer opt in too.
 ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}"
@@ -125,10 +131,24 @@ while [ $# -gt 0 ]; do
     --acme-dns-cloudflare)  ACME_DNS_PROVIDER_ARG="cloudflare"; ACME_DNS_TOKEN_ARG="${2:-}"; shift 2 ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
-    -h|--help)  sed -n '2,25p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --restore-from) RESTORE_FROM="${2:-}"; RESTORE_SET=1; shift 2 ;;
+    --yes|-y) ASSUME_YES=1; shift ;;
+    -h|--help)  sed -n '2,28p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
   esac
 done
+
+# --restore-from: this install is a hub MOVE, not a fresh setup. Hand the whole job to hub-migrate.sh, which
+# validates the bundle (arch/PG-major/checksums) BEFORE anything destructive, backs up the old .env, restores
+# the .env + Postgres volume, verifies the credentials over TCP, and brings the stack up. Nothing else in this
+# installer runs — no fresh secrets, no owner-claim code. (Requires Docker already present on this host.)
+if [ "$RESTORE_SET" = "1" ]; then
+  [ -n "$RESTORE_FROM" ] || { err "--restore-from needs a bundle path"; exit 1; }
+  [ "$DRY_RUN" = "1" ] && { err "--restore-from cannot be combined with --dry-run (restore is a real, destructive operation)"; exit 1; }
+  [ -f "$SCRIPT_DIR/hub-migrate.sh" ] || { err "scripts/hub-migrate.sh not found next to this installer"; exit 1; }
+  log "Restoring a hub bundle onto this host (via hub-migrate.sh)…"
+  exec env ASSUME_YES="$ASSUME_YES" "$SCRIPT_DIR/hub-migrate.sh" unpack "$RESTORE_FROM"
+fi
 
 # --- secret generators (openssl, falling back to /dev/urandom) --------------------------------------
 rand_b64() { openssl rand -base64 "$1" 2>/dev/null || { head -c "$1" /dev/urandom | base64 | tr -d '\n'; }; }
