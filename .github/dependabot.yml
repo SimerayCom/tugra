@@ -1,46 +1,65 @@
 # Dependabot keeps dependencies and security advisories current across every ecosystem in the repo.
-# Minor/patch bumps are grouped into a single PR per ecosystem to cut review noise; majors come separately.
+# Deliberately quiet: monthly, minor/patch grouped into ONE PR per ecosystem. MAJOR version bumps are
+# ignored here (they can break builds/runtime - e.g. a Node or Docker base-image major - and are taken
+# manually, with testing, when we choose). Security advisory PRs are opened regardless of these rules.
 version: 2
 updates:
-  # Node workspace (pnpm) — root manifest + lockfile cover every app/package.
+  # Node workspace (pnpm) - root manifest + lockfile cover every app/package.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
+      interval: "monthly"
+    open-pull-requests-limit: 5
     groups:
-      npm-minor-patch:
+      npm:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Go agent.
   - package-ecosystem: "gomod"
     directory: "/agent"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    open-pull-requests-limit: 3
     groups:
-      go-minor-patch:
+      go:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Container base images (hub, web, agent, updater).
   - package-ecosystem: "docker"
     directory: "/deploy"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      docker:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used by CI + release.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    open-pull-requests-limit: 3
     groups:
       actions:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
