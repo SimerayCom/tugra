@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { JwtModule } from "@nestjs/jwt";
@@ -63,7 +63,17 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
-    ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
+    // Global HTTP rate limit, configurable via THROTTLE_TTL_MS / THROTTLE_LIMIT (defaults 60s / 120 req).
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [
+        {
+          name: "default",
+          ttl: config.get<number>("THROTTLE_TTL_MS") ?? 60_000,
+          limit: config.get<number>("THROTTLE_LIMIT") ?? 120,
+        },
+      ],
+    }),
     JwtModule.register({}), // for EmailVerifiedGuard to verify the access token itself
     PrismaModule,
     RedisModule,

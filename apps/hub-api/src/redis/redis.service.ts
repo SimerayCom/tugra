@@ -1,17 +1,26 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private redis!: Redis;
+  private readonly logger = new Logger(RedisService.name);
 
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
+    // commandTimeout makes a command REJECT (instead of hanging forever) when Redis is unreachable, so the
+    // auth path (login rate-limit, refresh-token store) and every other caller fail fast rather than pile up
+    // and exhaust the event loop. maxRetriesPerRequest stays unbounded so a short reconnect blip is still
+    // retried within the timeout window, not failed outright.
     this.redis = new Redis(this.config.get<string>("REDIS_URL")!, {
       maxRetriesPerRequest: null,
+      commandTimeout: this.config.get<number>("REDIS_COMMAND_TIMEOUT_MS") ?? 10_000,
     });
+    // ioredis emits "error" on connection trouble; without a listener Node would throw on the unhandled
+    // "error" event and crash the process. Log and let ioredis manage its own reconnect/backoff.
+    this.redis.on("error", (err: Error) => this.logger.warn(`redis connection error: ${err.message}`));
   }
 
   get client(): Redis {
