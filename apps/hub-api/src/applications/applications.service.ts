@@ -49,12 +49,14 @@ import {
   buildBuildOnlyScript,
   buildRollingDeployScript,
   buildRecreateDeployScript,
+  buildPostDeployScript,
   resolveHealthProbe,
   buildStartScript,
   buildStopScript,
   runTag,
   registryImageRef,
   parseImageDigest,
+  parseCommit,
   containerName,
   appVolumeName,
   hasNetworkOpt,
@@ -134,6 +136,8 @@ export const AppViewSchema = z.object({
   gpus: z.string().nullable(),
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
+  preDeployCommand: z.string().nullable(), // write-gated in view() (exec-power, may embed internal paths)
+  postDeployCommand: z.string().nullable(),
   dbNetwork: z.boolean(), // attached to the node-local managed-DB network (tugra-net) — set by DB links
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   hostMounts: z.array(z.object({ hostPath: z.string(), containerPath: z.string(), readOnly: z.boolean().optional() })),
@@ -877,10 +881,23 @@ export class ApplicationsService {
     );
   }
 
+  /** Wall-clock metadata stamped onto every terminal deploy/rollback update: ms from the row's creation
+   *  to now, clamped ≥ 0 (createdAt is the DB clock, finish is the hub clock, so skew can't go negative). */
+  private finishStamp(dep: { createdAt?: Date | string | null }): { durationMs: number } {
+    const started = dep.createdAt ? new Date(dep.createdAt).getTime() : NaN;
+    return { durationMs: Number.isFinite(started) ? Math.max(0, Date.now() - started) : 0 };
+  }
+
+  /** Origin of a deploy, derived from runDeploy's actor (userId | "webhook" | "webhook:pr"). Distinct
+   *  from Deployment.kind, which is the OUTCOME (DEPLOY / ROLLBACK / AUTO_ROLLBACK). */
+  private triggerOf(actor: string): string {
+    return actor === "webhook:pr" ? "preview" : actor === "webhook" ? "webhook" : "manual";
+  }
+
   /** Core deploy: build/run on the agent and record the Deployment. */
   private async runDeploy(app: Application, actor: string, noCache = false) {
     const dep = await this.prisma.deployment.create({
-      data: { appId: app.id, status: "RUNNING" },
+      data: { appId: app.id, status: "RUNNING", trigger: this.triggerOf(actor) },
     });
     this.deployLogs.begin(app.id);
     try {
@@ -924,6 +941,7 @@ export class ApplicationsService {
         });
         const ok = sd.exitCode === 0;
         const rolledBack = sd.exitCode === 3; // Swarm's native --update-failure-action rollback restored the previous live spec
+        const sc = app.source === "GIT" ? parseCommit(sd.output) : null; // only GIT emits a real marker; gating blocks forged ones
         await this.prisma.deployment.update({
           where: { id: dep.id },
           data: {
@@ -934,6 +952,9 @@ export class ApplicationsService {
             imageTag: null, // no local retag on a swarm — the registry ref is the artifact
             registryImage: ok ? sd.registryRef : null,
             imageDigest: ok ? sd.digest : null,
+            commitSha: sc?.sha ?? null,
+            commitMessage: sc?.message ?? null,
+            ...this.finishStamp(dep),
           },
         });
         await this.prisma.application.update({
@@ -1024,6 +1045,9 @@ export class ApplicationsService {
       // The IMAGE prep steps echo the digest marker; for a build-server deploy those steps run on the
       // BUILD server (buildLog), not the deploy server (r.output), so parse the COMBINED output.
       const combinedOutput = buildLog ? `${buildLog}\n${r.output}` : r.output;
+      // GIT deploys echo the deployed commit right after the clone; gate on GIT so an IMAGE/COMPOSE build
+      // (or a hook) can't forge a marker — no real one is emitted there.
+      const cc = app.source === "GIT" ? parseCommit(combinedOutput) : null;
       await this.prisma.deployment.update({
         where: { id: dep.id },
         data: {
@@ -1041,6 +1065,9 @@ export class ApplicationsService {
           // The resolved upstream digest the deploy script echoed (IMAGE pulls only) — provenance +
           // a byte-exact rollback source when the local tag is later pruned.
           imageDigest: ok && !isCompose ? parseImageDigest(combinedOutput) : null,
+          commitSha: cc?.sha ?? null,
+          commitMessage: cc?.message ?? null,
+          ...this.finishStamp(dep),
         },
       });
       await this.prisma.application.update({
@@ -1048,6 +1075,20 @@ export class ApplicationsService {
         // A rolled-back deploy keeps the previous container running → app is still RUNNING.
         data: { status: ok || rolledBack ? AppStatus.RUNNING : AppStatus.FAILED },
       });
+      // Post-deploy hook (classic path only): run the user command inside the now-live container. Issued as a
+      // separate best-effort command so the delicate health-gate exit logic is untouched; failure never rolls back.
+      if (ok && !isCompose && spec.postDeployCommand?.trim()) {
+        const pr = await this.agentWs
+          .sendCommand(app.serverId, buildPostDeployScript(spec), "deploy", this.deployTimeoutMs(app), (chunk) => this.deployLogs.push(app.id, chunk))
+          .catch((e) => ({ output: e instanceof Error ? e.message : "post-deploy hook failed to run", exitCode: -1 }));
+        // Persist the hook's output into the deployment record so the history has it (best-effort; the hook
+        // is post-success, so it never changes the SUCCESS status or triggers a rollback).
+        if (pr?.output) {
+          await this.prisma.deployment
+            .update({ where: { id: dep.id }, data: { logs: `${combinedOutput}\n${pr.output}`.slice(0, 65536) } })
+            .catch(() => undefined);
+        }
+      }
       this.deployLogs.finish(app.id, {
         status: ok ? "SUCCESS" : "FAILED",
         exitCode: code,
@@ -1068,9 +1109,18 @@ export class ApplicationsService {
           .catch(() => undefined);
       }
     } catch (e) {
+      // Best-effort: a build-server failure throws with the build output, which may still carry the commit
+      // marker. GIT-only, so an IMAGE/COMPOSE failure message can't forge one.
+      const cc = app.source === "GIT" && e instanceof Error ? parseCommit(e.message) : null;
       await this.prisma.deployment.update({
         where: { id: dep.id },
-        data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed" },
+        data: {
+          status: "FAILED",
+          logs: e instanceof Error ? e.message : "failed",
+          commitSha: cc?.sha ?? null,
+          commitMessage: cc?.message ?? null,
+          ...this.finishStamp(dep),
+        },
       });
       await this.prisma.application.update({
         where: { id: app.id },
@@ -1124,7 +1174,7 @@ export class ApplicationsService {
       }
     }
     const dep = await this.prisma.deployment.create({
-      data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK" },
+      data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK", trigger: "rollback" },
     });
     this.deployLogs.begin(app.id);
     try {
@@ -1136,6 +1186,10 @@ export class ApplicationsService {
       const spec = this.toSpec(isCompose ? { ...app, composeFile: composeFile! } : app);
       spec.env = await this.resolvedEnv(app);
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
+      // A rollback re-runs a PRIOR image; never re-run deploy hooks (e.g. a migration) against it — a
+      // registry/digest rollback is build=true, which would otherwise emit the pre-deploy step.
+      spec.preDeployCommand = null;
+      spec.postDeployCommand = null;
       let command: string;
       if (isCompose) {
         command = buildComposeUpScript(spec);
@@ -1175,7 +1229,11 @@ export class ApplicationsService {
           registryImage: ok && !isCompose ? target!.registryImage : null,
           // Carry the digest forward so the rollback deploy is itself a byte-exact rollback target.
           imageDigest: ok && !isCompose ? target!.imageDigest : null,
+          // Rollback re-runs a prior image (no clone) → show the commit that is now live, carried from the target.
+          commitSha: ok && !isCompose ? target!.commitSha : null,
+          commitMessage: ok && !isCompose ? target!.commitMessage : null,
           ...(ok && isCompose ? { configSnapshot: buildConfigSnapshot(spec) as object } : {}),
+          ...this.finishStamp(dep),
         },
       });
       await this.prisma.application.update({
@@ -1190,7 +1248,7 @@ export class ApplicationsService {
     } catch (e) {
       await this.prisma.deployment.update({
         where: { id: dep.id },
-        data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed" },
+        data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed", ...this.finishStamp(dep) },
       });
       await this.prisma.application.update({
         where: { id: app.id },
@@ -1213,7 +1271,13 @@ export class ApplicationsService {
   private async rollbackSwarm(
     userId: string,
     app: Application,
-    target: { id: string; registryImage: string | null; imageDigest: string | null } | null,
+    target: {
+      id: string;
+      registryImage: string | null;
+      imageDigest: string | null;
+      commitSha: string | null;
+      commitMessage: string | null;
+    } | null,
   ) {
     if (!target || (!target.registryImage && !target.imageDigest)) {
       throw new NotFoundException("no rollbackable deployment with that id");
@@ -1230,7 +1294,7 @@ export class ApplicationsService {
       ref = target.imageDigest!;
       auth = this.appRegistryAuth(app) ?? null;
     }
-    const dep = await this.prisma.deployment.create({ data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK" } });
+    const dep = await this.prisma.deployment.create({ data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK", trigger: "rollback" } });
     this.deployLogs.begin(app.id);
     try {
       const spec = this.toSpec(app);
@@ -1248,13 +1312,17 @@ export class ApplicationsService {
           imageTag: null,
           registryImage: ok ? ref : null,
           imageDigest: ok ? sd.digest : null,
+          // Carry the target deploy's commit forward so the rollback row shows what is now live.
+          commitSha: ok ? target.commitSha : null,
+          commitMessage: ok ? target.commitMessage : null,
+          ...this.finishStamp(dep),
         },
       });
       await this.prisma.application.update({ where: { id: app.id }, data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED } });
       this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: sd.exitCode, deploymentId: dep.id });
       this.notifyDeploy(app, dep, ok ? "deploy_success" : "deploy_failed").catch(() => {});
     } catch (e) {
-      await this.prisma.deployment.update({ where: { id: dep.id }, data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed" } });
+      await this.prisma.deployment.update({ where: { id: dep.id }, data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed", ...this.finishStamp(dep) } });
       await this.prisma.application.update({ where: { id: app.id }, data: { status: AppStatus.FAILED } });
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
     }
@@ -1700,6 +1768,32 @@ export class ApplicationsService {
     }
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
+  }
+
+  /** Set the pre/post-deploy hook commands. Arbitrary shell, so: write-gated, trimmed (empty → null to
+   *  clear the hook), and the audit record carries only lengths — never the command text. Execution runs
+   *  in a container of the app image at deploy time (shell-quoted, exit-normalized), never on the host. */
+  async setDeployHooks(userId: string, id: string, pre: string | null, post: string | null): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const norm = (s: string | null) => {
+      const trimmed = (s ?? "").trim();
+      return trimmed ? trimmed : null;
+    };
+    const preDeployCommand = norm(pre);
+    const postDeployCommand = norm(post);
+    // Hooks only execute on the classic single-server path (preDeploySteps / buildPostDeployScript). Reject
+    // setting them where they'd silently never run — but always allow clearing (both null) so stale values
+    // can be removed after an app is moved to a cluster.
+    if ((preDeployCommand || postDeployCommand) && (app.clusterId || app.source === "COMPOSE" || app.isPreview)) {
+      throw new BadRequestException("deploy hooks are only supported on single-server, non-compose apps");
+    }
+    await this.prisma.application.update({ where: { id }, data: { preDeployCommand, postDeployCommand } });
+    await this.audit.log({
+      actor: userId,
+      action: "app.deploy_hooks.update",
+      target: id,
+      meta: { preLen: preDeployCommand?.length ?? 0, postLen: postDeployCommand?.length ?? 0 },
+    });
   }
 
   /**
@@ -2376,6 +2470,8 @@ export class ApplicationsService {
       placementConstraints: this.appPlacement(app).constraints,
       placementSpreadLabelKey: this.appPlacement(app).spreadLabelKey,
       dockerOptions: app.dockerOptions,
+      preDeployCommand: app.preDeployCommand,
+      postDeployCommand: app.postDeployCommand,
       // Attach to the node-local managed-DB network only for a classic (non-swarm) deploy — a clustered app
       // runs as a swarm service on the overlay, where a node-local bridge is meaningless.
       dbNetwork: !!app.dbNetwork && !app.clusterId,
@@ -2509,6 +2605,9 @@ export class ApplicationsService {
       gpus: app.gpus,
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,
+      // Hooks are deploy-time exec power and may embed internal paths → writer-only (like composeFile).
+      preDeployCommand: canWrite ? app.preDeployCommand : null,
+      postDeployCommand: canWrite ? app.postDeployCommand : null,
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       hostMounts: this.appHostMounts(app),

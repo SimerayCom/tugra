@@ -124,7 +124,9 @@ const APP_STATUSES = new Set(["NEW", "RUNNING", "STOPPED", "FAILED"]);
  *  a deploy-only caller can't exfiltrate config a read of the app would deny them. Undefined for a null row. */
 function stripDeployment(dep: unknown): Record<string, unknown> | undefined {
   if (!dep || typeof dep !== "object") return undefined;
-  const { logs: _logs, configSnapshot: _cs, ...rest } = dep as Record<string, unknown>;
+  // Also drop commitMessage: it is the deployed repo's commit subject — third-party-controlled free text,
+  // so keep it out of LLM context (prompt-injection surface). commitSha stays (hex provenance).
+  const { logs: _logs, configSnapshot: _cs, commitMessage: _cm, ...rest } = dep as Record<string, unknown>;
   return rest;
 }
 
@@ -176,7 +178,9 @@ export const MCP_TOOLS: McpTool[] = [
     // context; the metadata (status/image/timestamps/configChanges/rollbackable) is what a list needs.
     execute: async (d, userId, a) => {
       const rows = (await d.apps.deployments(userId, reqStr(a, "id"))) as Array<Record<string, unknown>>;
-      return rows.map(({ logs: _logs, ...rest }) => rest);
+      // Drop the raw `logs` blob (may hold secrets) and commitMessage (third-party commit subject → prompt
+      // injection); commitSha/trigger/durationMs are safe metadata.
+      return rows.map(({ logs: _logs, commitMessage: _cm, ...rest }) => rest);
     },
   },
   {

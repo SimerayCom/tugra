@@ -43,6 +43,7 @@ export type ConfigCardId =
   | "healthCheck"
   | "limits"
   | "scheduledTasks"
+  | "deployHooks"
   | "webhooks"
   | "preview";
 
@@ -96,6 +97,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "limits", group: "health-resources", visible: notCompose },
   // Automation
   { id: "scheduledTasks", group: "automation", visible: notCompose },
+  // Pre/post-deploy hook commands run in a container of the app image; v1 is classic (non-swarm,
+  // non-compose, non-preview) apps only — hide the card where execution is not wired.
+  { id: "deployHooks", group: "automation", visible: (a) => notCompose(a) && !a.clusterId && !a.isPreview },
   { id: "webhooks", group: "automation", visible: (a) => !!a.webhookToken },
   { id: "preview", group: "automation", visible: (a) => !a.isPreview && a.source === "GIT" },
 ];

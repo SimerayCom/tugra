@@ -51,6 +51,8 @@ import {
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
   SetDockerOptionsSchema,
+  SetDeployHooksInput,
+  SetDeployHooksSchema,
   SetCredentialsInput,
   SetCredentialsSchema,
   SetEnvInput,
@@ -354,6 +356,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDockerOptionsSchema)) body: SetDockerOptionsInput,
   ) {
     await this.apps.setDockerOptions(user.userId, id, body.dockerOptions);
+    return { ok: true };
+  }
+
+  @Put(":id/deploy-hooks")
+  @HttpCode(200)
+  @ApiZodBody(SetDeployHooksSchema)
+  async setDeployHooks(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDeployHooksSchema)) body: SetDeployHooksInput,
+  ) {
+    await this.apps.setDeployHooks(user.userId, id, body.preDeployCommand, body.postDeployCommand);
     return { ok: true };
   }
 

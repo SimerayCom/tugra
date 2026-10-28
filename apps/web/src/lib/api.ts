@@ -1102,6 +1102,12 @@ export const api = {
       body: JSON.stringify({ dockerOptions }),
     });
   },
+  setAppDeployHooks(id: string, hooks: { preDeployCommand: string | null; postDeployCommand: string | null }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/deploy-hooks`, {
+      method: "PUT",
+      body: JSON.stringify(hooks),
+    });
+  },
   setAppComposeFile(id: string, composeFile: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/compose-file`, {
       method: "PUT",
