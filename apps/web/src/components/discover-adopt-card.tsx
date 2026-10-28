@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { DiscoveredContainer, DiscoveredPort } from "../lib/types";
@@ -157,7 +158,7 @@ function AdoptModal({
       )}
 
       <div style={{ fontSize: 12, color: "var(--c-am)", background: "color-mix(in srgb, var(--c-am) 10%, transparent)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, marginBottom: 14 }}>
-        <div style={{ marginBottom: 4 }}>⚠ {t("servers.adoptDataWarning")}</div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 4 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0, marginTop: 1 }} /> {t("servers.adoptDataWarning")}</div>
         <div>{t("servers.adoptImageWarning")}</div>
       </div>
 

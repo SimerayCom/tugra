@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Unlink } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -69,8 +70,8 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
               {l.shadowedBy === "app-env" && <span style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.dbLinksShadowed")}</span>}
               <span style={{ flex: 1 }} />
               {canWrite && (
-                <button onClick={() => unlink.mutate(l.linkId)} disabled={unlink.isPending} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }} aria-label={t("apps.dbLinksUnlink")}>
-                  ✕
+                <button onClick={() => unlink.mutate(l.linkId)} disabled={unlink.isPending} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }} aria-label={t("apps.dbLinksUnlink")}>
+                  <Unlink size={14} />
                 </button>
               )}
             </div>

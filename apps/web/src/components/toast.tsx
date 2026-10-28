@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { CheckCircle2, Info, X, XCircle, type LucideIcon } from "lucide-react";
 import { subscribeToast, emitToast, type ToastType } from "../lib/toast-bus";
 
 interface Toast {
@@ -13,6 +14,11 @@ const COLOR: Record<ToastType, string> = {
   error: "var(--c-r)",
   success: "var(--c-g)",
   info: "var(--c-a)",
+};
+const ICON: Record<ToastType, LucideIcon> = {
+  error: XCircle,
+  success: CheckCircle2,
+  info: Info,
 };
 const TTL = 4000;
 
@@ -41,7 +47,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         style={{ position: "fixed", top: 16, right: 16, zIndex: 100, display: "flex", flexDirection: "column", gap: 8, maxWidth: 360, pointerEvents: "none" }}
       >
-        {toasts.map((t) => (
+        {toasts.map((t) => {
+          const TypeIcon = ICON[t.type];
+          return (
           <div
             key={t.id}
             role={t.type === "error" ? "alert" : "status"}
@@ -61,16 +69,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               color: "var(--c-tx)",
             }}
           >
+            <TypeIcon size={16} aria-hidden style={{ color: COLOR[t.type], flexShrink: 0, marginTop: 1 }} />
             <span style={{ flex: 1, wordBreak: "break-word" }}>{t.message}</span>
             <button
               onClick={() => dismiss(t.id)}
               aria-label="Dismiss"
-              style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0, fontFamily: "inherit" }}
+              style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", display: "inline-flex", alignItems: "center", lineHeight: 1, padding: 0, fontFamily: "inherit" }}
             >
-              ×
+              <X size={14} />
             </button>
           </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );

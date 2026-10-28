@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { TriangleAlert } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -375,7 +376,7 @@ function RemapEnvCard({ opId }: { opId: string }) {
                   </div>
                 ))}
                 {a.needsManual.map((m) => (
-                  <div key={m.key} style={{ fontSize: 11, color: "var(--c-am)", marginTop: 4 }}>⚠ <span className="mono">{m.key}</span> — {m.reason}</div>
+                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--c-am)", marginTop: 4 }}><TriangleAlert size={12} aria-hidden style={{ flexShrink: 0 }} /> <span className="mono">{m.key}</span> — {m.reason}</div>
                 ))}
                 {a.dbNetwork && (
                   <div style={{ fontSize: 11, color: a.dbNetwork.willLink ? "var(--c-g)" : "var(--c-am)", marginTop: 4 }}>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { TriangleAlert, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -366,10 +367,10 @@ function PatchCard({ id }: { id: string }) {
       {info && info.supported && (
         <>
           {info.rebootRequired && (
-            <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}>⚠ {t("patching.rebootRequired")}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 10 }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.rebootRequired")}</div>
           )}
           {info.checkFailed ? (
-            <div style={{ fontSize: 13, color: "var(--c-r)" }}>⚠ {t("patching.checkFailed")}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-r)" }}><TriangleAlert size={13} aria-hidden style={{ flexShrink: 0 }} /> {t("patching.checkFailed")}</div>
           ) : info.count === 0 ? (
             <div style={{ fontSize: 13, color: "var(--c-g)" }}>{t("patching.upToDate")}</div>
           ) : (
@@ -771,7 +772,7 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
       <Btn variant="ghost" onClick={() => viewLogs.mutate()} disabled={viewLogs.isPending}>
         {viewLogs.isPending ? "…" : t("servers.proxyViewLogs")}
       </Btn>
-      <button onClick={refresh} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>↻</button>
+      <button onClick={refresh} aria-label={t("servers.proxyViewLogs")} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}><RefreshCw size={13} /></button>
       {logs && (
         <pre className="mono" style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs}</pre>
       )}
