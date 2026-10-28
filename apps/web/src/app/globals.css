@@ -293,3 +293,13 @@ body {
 .fleet-card:hover {
   border-color: var(--c-tx3);
 }
+
+/* Deployment list rows are the click target that drills into a deployment (Coolify-style). */
+.dep-row:hover {
+  background: var(--c-el);
+  border-color: var(--c-tx3);
+}
+.dep-row:focus-visible {
+  outline: 2px solid var(--c-lapis);
+  outline-offset: 1px;
+}

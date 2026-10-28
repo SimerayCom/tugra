@@ -197,6 +197,8 @@ export default function AppDetailPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [exposeOpen, setExposeOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  // Which deployment the Deployments tab has drilled into (Coolify-style). null ⇒ show the list.
+  const [selDep, setSelDep] = useState<string | null>(null);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameApp(id, name),
     onSuccess: () => { setRenameOpen(false); qc.invalidateQueries({ queryKey: ["app", id] }); },
@@ -213,6 +215,8 @@ export default function AppDetailPage() {
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
   // Configuration sub-nav section, deep-linked as ?section= (resolved to a visible group below).
   const [sectionRaw, setSection] = useTabState("general", CONFIG_GROUP_KEYS, "section");
+  // Leaving the Deployments tab clears the drilled-in deployment so returning starts at the list.
+  useEffect(() => { if (tab !== "deployments") setSelDep(null); }, [tab]);
 
   if (isError && !appData) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -446,18 +450,40 @@ export default function AppDetailPage() {
         </>
       )}
 
-      {tab === "deployments" && (
-        <Card style={{ padding: 16 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {deployments.map((d) => {
-              const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
-              // Rollbackable when the deploy's artifact is retained (image tag / registry image, or —
-              // for compose apps — the compose YAML in its snapshot), and it isn't the current version.
-              const canRollback = appData.canWrite && d.rollbackable && d.id !== latestSuccessId;
-              const sum = d.logs ? summarizeDeployLog(d.logs) : null;
-              return (
-                <div key={d.id} style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      {tab === "deployments" && (() => {
+        // Current version = latest SUCCESS; a deploy is rollbackable when its artifact is retained
+        // (image tag / registry image, or — for compose apps — the compose YAML snapshot) and isn't current.
+        const latestSuccessId = deployments.find((x) => x.status === "SUCCESS")?.id;
+        const selDepObj = selDep ? deployments.find((x) => x.id === selDep) ?? null : null;
+        if (selDepObj) {
+          return (
+            <DeploymentDetail
+              app={appData}
+              deployment={selDepObj}
+              canRollback={appData.canWrite && selDepObj.rollbackable && selDepObj.id !== latestSuccessId}
+              aiResult={aiResults[selDepObj.id]}
+              analyzePending={analyze.isPending && analyze.variables === selDepObj.id}
+              rollbackPending={rollback.isPending}
+              onBack={() => setSelDep(null)}
+              onRollback={async (did) => { if (await confirm({ body: t("apps.rollbackConfirm"), danger: true })) rollback.mutate(did); }}
+              onAnalyze={(did) => analyze.mutate(did)}
+            />
+          );
+        }
+        return (
+          <Card style={{ padding: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {deployments.map((d) => {
+                const sum = d.logs ? summarizeDeployLog(d.logs) : null;
+                // The whole row is the click target: it drills into the deployment (full log lives there).
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    className="dep-row"
+                    onClick={() => setSelDep(d.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", width: "100%", textAlign: "left", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", transition: "background .12s, border-color .12s" }}
+                  >
                     <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
                     {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
                     {sum?.rollout && (
@@ -474,74 +500,19 @@ export default function AppDetailPage() {
                     {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
                     <span style={{ flex: 1 }} />
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
-                    {canRollback && (
-                      <button
-                        onClick={async () => { if (await confirm({ body: t("apps.rollbackConfirm"), danger: true })) rollback.mutate(d.id); }}
-                        disabled={rollback.isPending}
-                        style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
-                      >
-                        {t("apps.rollback")}
-                      </button>
-                    )}
-                    {d.status === "FAILED" && appData.canWrite && (
-                      <button
-                        onClick={() => analyze.mutate(d.id)}
-                        disabled={analyze.isPending}
-                        style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-a)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
-                      >
-                        {analyze.isPending && analyze.variables === d.id ? t("apps.analyzing") : t("apps.analyzeAi")}
-                      </button>
-                    )}
-                  </div>
-                  {aiResults[d.id] && (
-                    <div style={{ marginTop: 6, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)" }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-a)", marginBottom: 4 }}>{t("apps.aiAnalysis")}</div>
-                      <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap" }}>{aiResults[d.id]}</pre>
-                    </div>
-                  )}
-                  {d.configChanges && d.configChanges.length > 0 && (
-                    <details style={{ marginTop: 6 }}>
-                      <summary style={{ fontSize: 11, color: "var(--c-tx3)", cursor: "pointer" }}>
-                        {t("apps.configChanges", { count: d.configChanges.length })}
-                      </summary>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 2, margin: "4px 0 0", paddingLeft: 4 }}>
-                        {d.configChanges.map((c) => (
-                          <div key={c.field} className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
-                            <span style={{ color: c.kind === "added" ? "var(--c-g)" : c.kind === "removed" ? "var(--c-r)" : "var(--c-a)" }}>{t(`apps.cfg_${c.kind}`)}</span>{" "}
-                            <span style={{ color: "var(--c-tx2)" }}>{c.field}</span>
-                            {c.kind === "changed" && <span>: {c.before} → {c.after}</span>}
-                            {c.kind === "added" && c.after != null && <span>: {c.after}</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  )}
-                  {sum && (sum.body || sum.stripped) && (
-                    <div style={{ marginTop: 6 }}>
-                      {sum.body ? (
-                        <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 160, overflowY: "auto" }}>{sum.body}</pre>
-                      ) : (
-                        <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.noBuildOutput")}</div>
-                      )}
-                      {sum.stripped && (
-                        <details style={{ marginTop: 6 }}>
-                          <summary style={{ fontSize: 11, color: "var(--c-tx3)", cursor: "pointer" }}>{t("apps.fullLog")}</summary>
-                          <pre className="mono" style={{ margin: "4px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto" }}>{collapseCarriageReturns(d.logs ?? "")}</pre>
-                        </details>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {deployments.length === 0 && (
-              <EmptyState action={appData.canWrite ? <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>{t("apps.deploy")}</Btn> : undefined}>
-                {t("apps.noDeployments")}
-              </EmptyState>
-            )}
-          </div>
-        </Card>
-      )}
+                    <span aria-hidden style={{ fontSize: 15, lineHeight: 1, color: "var(--c-tx3)" }}>›</span>
+                  </button>
+                );
+              })}
+              {deployments.length === 0 && (
+                <EmptyState action={appData.canWrite ? <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>{t("apps.deploy")}</Btn> : undefined}>
+                  {t("apps.noDeployments")}
+                </EmptyState>
+              )}
+            </div>
+          </Card>
+        );
+      })()}
 
       {tab === "metrics" && <AppMetricsCard id={id} />}
 
@@ -691,6 +662,149 @@ function LiveContainerLogsCard({ id, isCompose }: { id: string; isCompose: boole
         />
       )}
     </>
+  );
+}
+
+/** Deployment drill-in (Coolify/Dokploy pattern): clicking a row in the Deployments list ENTERS the
+ *  deployment and its full build log fills a proper dark terminal panel here — instead of being crammed
+ *  into a tiny inline <details> expander. Metadata, rollback/analyze actions and config changes sit above. */
+function DeploymentDetail({
+  app,
+  deployment: d,
+  canRollback,
+  aiResult,
+  analyzePending,
+  rollbackPending,
+  onBack,
+  onRollback,
+  onAnalyze,
+}: {
+  app: Application;
+  deployment: Deployment;
+  canRollback: boolean;
+  aiResult?: string;
+  analyzePending: boolean;
+  rollbackPending: boolean;
+  onBack: () => void;
+  onRollback: (id: string) => void;
+  onAnalyze: (id: string) => void;
+}) {
+  const t = useT();
+  const toast = useToast();
+  const sum = d.logs ? summarizeDeployLog(d.logs) : null;
+  const rawLog = collapseCarriageReturns(d.logs ?? "");
+  const hasCleaned = !!(sum && sum.stripped && sum.body);
+  // Drilling in is the "full log" view, so default to the raw build log; a Cleaned toggle appears only
+  // when the raw output actually carries control markers (TUGRA_*, bare ids) worth hiding.
+  const [cleaned, setCleaned] = useState(false);
+  const shown = cleaned && hasCleaned ? sum!.body : rawLog;
+  const lineCount = shown ? shown.split("\n").length : 0;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(shown);
+      toast(t("apps.copied"), "success");
+    } catch {
+      toast(t("common.copyFailed"), "error");
+    }
+  };
+
+  const stats: { label: string; node: ReactNode }[] = [
+    { label: t("apps.status"), node: <span style={{ color: deploymentColor(d.status), fontWeight: 600 }}>{d.status}</span> },
+    { label: t("apps.trigger"), node: t(`apps.kind_${d.kind}`) },
+    ...(sum?.rollout ? [{ label: t("apps.rolloutLabel"), node: <span style={{ color: rolloutColor(sum.rollout), fontWeight: 600 }}>{ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}</span> }] : []),
+    ...(d.registryImage || d.imageTag ? [{ label: t("apps.imageLabel"), node: <span className="mono" style={{ wordBreak: "break-all" }}>{d.registryImage ?? d.imageTag}</span> }] : []),
+    ...(d.imageDigest ? [{ label: t("apps.digestLabel"), node: <span className="mono" title={d.imageDigest}>{shortDigest(d.imageDigest)}</span> }] : []),
+    ...(d.exitCode != null ? [{ label: t("apps.exitLabel"), node: <span className="mono">{d.exitCode}</span> }] : []),
+    { label: t("apps.startedLabel"), node: <span>{new Date(d.createdAt).toLocaleString()}{" · "}{relativeTime(d.createdAt)}</span> },
+  ];
+
+  return (
+    <Card style={{ padding: 16 }}>
+      <button
+        type="button"
+        onClick={onBack}
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: "var(--c-lapis)", font: "inherit", fontSize: 12, cursor: "pointer", padding: 0, marginBottom: 14 }}
+      >
+        <span aria-hidden>‹</span> {t("apps.backToDeployments")}
+      </button>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
+        {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
+        {sum?.rollout && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: rolloutColor(sum.rollout), border: `1px solid ${rolloutColor(sum.rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>
+            {ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {canRollback && (
+          <button onClick={() => onRollback(d.id)} disabled={rollbackPending} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "3px 10px", font: "inherit" }}>
+            {t("apps.rollback")}
+          </button>
+        )}
+        {d.status === "FAILED" && app.canWrite && (
+          <button onClick={() => onAnalyze(d.id)} disabled={analyzePending} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-a)", fontSize: 11, cursor: "pointer", padding: "3px 10px", font: "inherit" }}>
+            {analyzePending ? t("apps.analyzing") : t("apps.analyzeAi")}
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 190px), 1fr))", gap: 14, paddingBottom: 14, marginBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
+        {stats.map((s) => (
+          <div key={s.label}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 13, color: "var(--c-tx)" }}>{s.node}</div>
+          </div>
+        ))}
+      </div>
+
+      {d.configChanges && d.configChanges.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 6 }}>{t("apps.configChanges", { count: d.configChanges.length })}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {d.configChanges.map((c) => (
+              <div key={c.field} className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
+                <span style={{ color: c.kind === "added" ? "var(--c-g)" : c.kind === "removed" ? "var(--c-r)" : "var(--c-a)" }}>{t(`apps.cfg_${c.kind}`)}</span>{" "}
+                <span style={{ color: "var(--c-tx2)" }}>{c.field}</span>
+                {c.kind === "changed" && <span>: {c.before} → {c.after}</span>}
+                {c.kind === "added" && c.after != null && <span>: {c.after}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {aiResult && (
+        <div style={{ marginBottom: 14, padding: "10px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-a)", marginBottom: 4 }}>{t("apps.aiAnalysis")}</div>
+          <pre className="mono" style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: "pre-wrap" }}>{aiResult}</pre>
+        </div>
+      )}
+
+      {/* The log terminal — full width, dark in both themes, like Coolify/Dokploy's deployment view. */}
+      <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", background: "var(--c-el)", borderBottom: "1px solid var(--c-bd)" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx2)" }}>{t("apps.buildLog")}</span>
+          {shown && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.logLines", { n: lineCount })}</span>}
+          <span style={{ flex: 1 }} />
+          {hasCleaned && (
+            <div style={{ display: "inline-flex", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", overflow: "hidden" }}>
+              {([{ k: false, label: t("apps.viewRaw") }, { k: true, label: t("apps.viewCleaned") }] as const).map((o) => (
+                <button key={String(o.k)} type="button" onClick={() => setCleaned(o.k)} aria-pressed={cleaned === o.k} style={{ background: cleaned === o.k ? "var(--c-lapis)" : "transparent", color: cleaned === o.k ? "#fff" : "var(--c-tx3)", border: "none", font: "inherit", fontSize: 11, padding: "2px 10px", cursor: "pointer" }}>{o.label}</button>
+              ))}
+            </div>
+          )}
+          <button type="button" onClick={copy} disabled={!shown} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", font: "inherit", fontSize: 11, padding: "2px 10px", cursor: shown ? "pointer" : "default" }}>{t("apps.copy")}</button>
+        </div>
+        <pre
+          className="mono"
+          style={{ margin: 0, padding: "12px 14px", fontSize: 12, lineHeight: 1.55, color: "#cdd3de", background: "#0b0e14", whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 300, maxHeight: "62vh", overflow: "auto" }}
+        >
+          {shown || <span style={{ color: "#6b7280" }}>{t("apps.noBuildOutput")}</span>}
+        </pre>
+      </div>
+    </Card>
   );
 }
 
