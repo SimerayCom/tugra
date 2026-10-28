@@ -1,7 +1,7 @@
 # Tugra self-update sidecar. Minimal image: the Docker CLI (+ compose plugin) to recreate the app
 # containers, redis-cli to drain the job queue, and bash to run scripts/update.sh (mounted from the repo).
 # It has docker.sock but a FIXED command set (pull + up -d --no-deps hub-api web) — no arbitrary exec.
-FROM docker:27-cli
+FROM docker:29-cli
 
 # OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
 LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
