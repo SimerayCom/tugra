@@ -46,12 +46,21 @@ const TRUST_PROXY = process.env.HUB_TRUSTED_PROXY === "true";
 // ~one interval and the server flips OFFLINE, instead of sitting ONLINE forever.
 const PING_INTERVAL_MS = 30_000;
 
+// Close a connection that has not authenticated within this window, so an unauthenticated peer can't camp on
+// a socket (default 10s — a real agent signs the challenge in well under a second). Env-overridable.
+const AUTH_DEADLINE_MS = Number(process.env.AGENT_WS_AUTH_DEADLINE_MS) || 10_000;
+// Cap a single inbound frame (the ws default is 100 MiB). Generous for real agent messages (metrics, command
+// output, log chunks) while denying a multi-hundred-MB frame — especially from an unauthenticated peer, whose
+// only legitimate messages (enroll/auth) are tiny. Env-overridable.
+const MAX_PAYLOAD_BYTES = Number(process.env.AGENT_WS_MAX_PAYLOAD_BYTES) || 64 * 1024 * 1024;
+
 interface ConnState {
   nonce: string;
   serverId?: string;
   authed: boolean;
   remoteIp?: string | null;
   isAlive: boolean; // ws keepalive: pong flips it true; the ping sweep terminates a socket that missed one
+  authTimer?: ReturnType<typeof setTimeout>; // pre-auth deadline; cleared on auth/enroll/close
 }
 
 interface Pending {
@@ -112,7 +121,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     // noServer + manual upgrade routing so a second WS server (the terminal
     // gateway) can share this HTTP server without ws aborting each other's
     // handshakes (two {server,path} servers destroy non-matching upgrades).
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
     this.wss.on("connection", (socket: WebSocket, req: import("node:http").IncomingMessage) =>
       this.onConnection(socket, req),
     );
@@ -155,6 +164,26 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     }
   }
 
+  /** Close a socket that is still unauthenticated when the handshake deadline fires. Extracted so the
+   *  decision is unit-testable without a real timer (mirrors keepaliveSweep). */
+  closeIfUnauthed(socket: WebSocket): void {
+    const st = this.state.get(socket);
+    if (!st || st.authed) return;
+    this.logger.warn(`agent handshake timeout from ${st.remoteIp ?? "?"} — closing unauthenticated socket`);
+    try {
+      socket.close(1008, "auth timeout");
+    } catch {
+      socket.terminate();
+    }
+  }
+
+  private clearAuthTimer(st: ConnState): void {
+    if (st.authTimer) {
+      clearTimeout(st.authTimer);
+      st.authTimer = undefined;
+    }
+  }
+
   private onConnection(socket: WebSocket, req?: import("node:http").IncomingMessage): void {
     const nonce = randomUUID();
     const fwd = req?.headers["x-forwarded-for"];
@@ -163,7 +192,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       Array.isArray(fwd) ? fwd[0] : fwd,
       TRUST_PROXY,
     );
-    this.state.set(socket, { nonce, authed: false, remoteIp, isAlive: true });
+    // Close the socket if it hasn't authenticated by the deadline (an unauthenticated peer can otherwise
+    // hold a connection open indefinitely). Cleared on successful enroll/auth and on close.
+    const authTimer = setTimeout(() => this.closeIfUnauthed(socket), AUTH_DEADLINE_MS);
+    authTimer.unref?.();
+    this.state.set(socket, { nonce, authed: false, remoteIp, isAlive: true, authTimer });
     this.send(socket, { type: "challenge", nonce });
 
     // ws keepalive: a pong marks the socket alive again for the next sweep (see startKeepalive).
@@ -174,6 +207,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     socket.on("message", (raw) => void this.onMessage(socket, raw.toString()));
     socket.on("close", () => {
       const st = this.state.get(socket);
+      if (st) this.clearAuthTimer(st);
       if (st?.authed && st.serverId) {
         if (this.sockets.get(st.serverId) === socket) {
           this.sockets.delete(st.serverId);
@@ -210,6 +244,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           });
           st.serverId = serverId;
           st.authed = true;
+          this.clearAuthTimer(st);
           this.sockets.set(serverId, socket);
           this.send(socket, {
             type: "enrolled",
@@ -232,6 +267,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           if (!ok) return this.fail(socket, "auth failed");
           st.serverId = msg.serverId;
           st.authed = true;
+          this.clearAuthTimer(st);
           this.sockets.set(msg.serverId, socket);
           this.send(socket, {
             type: "auth_ok",

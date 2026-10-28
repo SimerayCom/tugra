@@ -120,6 +120,11 @@ export const envSchema = z
   // where every browser user shares one proxy-IP bucket; set very high to effectively disable throttling.
   THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
   THROTTLE_LIMIT: z.coerce.number().int().positive().default(120),
+  // Agent WebSocket gateway limits. AGENT_WS_AUTH_DEADLINE_MS closes a connection that has not authenticated
+  // in time (default 10s); AGENT_WS_MAX_PAYLOAD_BYTES caps a single inbound frame (default 64 MiB; the ws
+  // default is 100 MiB). Read directly by the gateway; validated here so a bad value fails fast at boot.
+  AGENT_WS_AUTH_DEADLINE_MS: z.coerce.number().int().positive().optional(),
+  AGENT_WS_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().optional(),
   // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),
