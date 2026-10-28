@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.0",
-    "@nestjs/testing": "^10.4.0",
+    "@nestjs/testing": "^12.2.0",
     "@types/jest": "^29.5.14",
     "@types/libsodium-wrappers": "^0.8.2",
     "@types/node": "^20.0.0",
