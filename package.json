@@ -15,7 +15,7 @@
     "db:migrate": "pnpm --filter @tugra/hub-api exec prisma migrate dev"
   },
   "devDependencies": {
-    "turbo": "^2.1.0",
+    "turbo": "^2.11.10",
     "typescript": "^5.7.0"
   },
   "pnpm": {
