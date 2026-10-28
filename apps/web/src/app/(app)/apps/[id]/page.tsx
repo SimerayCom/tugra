@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
@@ -139,6 +139,8 @@ export default function AppDetailPage() {
   const id = String(useParams().id);
   const qc = useQueryClient();
   const router = useRouter();
+  const sp = useSearchParams();
+  const pathname = usePathname();
   const confirm = useConfirm();
   const toast = useToast();
 
@@ -230,9 +232,11 @@ export default function AppDetailPage() {
     mutationFn: (name: string) => api.renameApp(id, name),
     onSuccess: () => { setRenameOpen(false); qc.invalidateQueries({ queryKey: ["app", id] }); },
   });
+  // Overview is merged with Configuration (Coolify-style): the one "overview" tab renders a left sub-nav
+  // whose first section is the summary and the rest are the config groups. An old ?tab=configuration link
+  // simply falls back to "overview" (resolveTab drops the now-unknown key).
   const tabDefs = [
     { key: "overview", label: t("apps.tabOverview"), icon: LayoutDashboard },
-    ...(appData?.canWrite ? [{ key: "configuration", label: t("apps.tabConfiguration"), icon: Settings2 }] : []),
     { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length, icon: Rocket },
     { key: "metrics", label: t("apps.tabMetrics"), icon: Activity },
     { key: "logs", label: t("apps.tabLogs"), icon: ScrollText },
@@ -240,8 +244,19 @@ export default function AppDetailPage() {
     ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles"), icon: FolderOpen }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
-  // Configuration sub-nav section, deep-linked as ?section= (resolved to a visible group below).
-  const [sectionRaw, setSection] = useTabState("general", CONFIG_GROUP_KEYS, "section");
+  // Overview/Configuration sub-nav section, deep-linked as ?section=. "overview" is the first section
+  // (the summary); the rest are the config groups. Default lands on the summary.
+  const [sectionRaw, setSection] = useTabState("overview", ["overview", ...CONFIG_GROUP_KEYS], "section");
+  // Jump into a specific sub-nav section from elsewhere (e.g. the not-deployed banner). Writes tab + section
+  // in ONE navigation so the two useTabState setters don't race (each rebuilds the URL from the same snapshot).
+  const goToSection = (section: string) => {
+    const params = new URLSearchParams(sp.toString());
+    params.delete("tab"); // "overview" is the tab fallback → omit the param
+    if (section === "overview") params.delete("section");
+    else params.set("section", section);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
   // Leaving the Deployments tab clears the drilled-in deployment so returning starts at the list.
   useEffect(() => { if (tab !== "deployments") setSelDep(null); }, [tab]);
 
@@ -257,7 +272,7 @@ export default function AppDetailPage() {
   // Configuration tab is a Coolify-style left sub-nav: group gating lives in config-groups.ts,
   // and each card's JSX is a thunk so a null webhookToken/domain never renders (and never throws).
   const configGroups = visibleConfigGroups(appData);
-  const activeSection = resolveTab(sectionRaw, configGroups.map((g) => g.key), "general");
+  const activeSection = resolveTab(sectionRaw, ["overview", ...configGroups.map((g) => g.key)], "overview");
   const renderConfigCard: Record<ConfigCardId, () => ReactNode> = {
     deploySettings: () => (
       <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} />
@@ -444,8 +459,8 @@ export default function AppDetailPage() {
             <div style={{ fontWeight: 600, fontSize: 13 }}>{t("apps.notDeployedTitle")}</div>
             <div style={{ fontSize: 12.5, color: "var(--c-tx3)", marginTop: 2 }}>{t("apps.notDeployedBody")}</div>
           </div>
-          {appData.canWrite && tab !== "configuration" && (
-            <Btn variant="ghost" onClick={() => setTab("configuration")}>{t("apps.tabConfiguration")}</Btn>
+          {appData.canWrite && (
+            <Btn variant="ghost" icon={Settings2} onClick={() => goToSection("general")}>{t("apps.tabConfiguration")}</Btn>
           )}
           {appData.canWrite && (
             <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>{t("apps.deploy")}</Btn>
@@ -453,32 +468,39 @@ export default function AppDetailPage() {
         </div>
       )}
 
-      {tab === "overview" && (
-        appData.source === "COMPOSE" && appData.composeFile ? (
-          <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />
-        ) : (
-          <AppOverview app={appData} deployments={deployments} />
-        )
-      )}
-
-      {tab === "configuration" && appData.canWrite && (
-        <>
-          <ConfigLayout
-            navLabel={t("apps.cfgNavLabel")}
-            active={activeSection}
-            onChange={setSection}
-            groups={configGroups.map((g) => ({
-              key: g.key,
-              label: t(g.labelKey),
-              icon: CONFIG_GROUP_ICONS[g.key],
-              content: g.cardIds.map((cid) => <Fragment key={cid}>{renderConfigCard[cid]()}</Fragment>),
-            }))}
-          />
-          {exposeOpen && (
-            <ExposeModal appId={id} current={appData.exposeMode} currentDomain={appData.domain} onClose={() => setExposeOpen(false)} />
-          )}
-        </>
-      )}
+      {tab === "overview" && (() => {
+        // The merged Overview+Configuration page. The summary is the first sub-nav section; the config
+        // groups follow. A COMPOSE app's summary is its compose editor. Read-only users (no config groups)
+        // just get the summary, with no sidebar.
+        const overviewPanel =
+          appData.source === "COMPOSE" && appData.composeFile ? (
+            <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />
+          ) : (
+            <AppOverview app={appData} deployments={deployments} />
+          );
+        if (!appData.canWrite) return overviewPanel;
+        return (
+          <>
+            <ConfigLayout
+              navLabel={t("apps.cfgNavLabel")}
+              active={activeSection}
+              onChange={setSection}
+              groups={[
+                { key: "overview", label: t("apps.cfgGroupOverview"), icon: LayoutDashboard, content: overviewPanel },
+                ...configGroups.map((g) => ({
+                  key: g.key,
+                  label: t(g.labelKey),
+                  icon: CONFIG_GROUP_ICONS[g.key],
+                  content: g.cardIds.map((cid) => <Fragment key={cid}>{renderConfigCard[cid]()}</Fragment>),
+                })),
+              ]}
+            />
+            {exposeOpen && (
+              <ExposeModal appId={id} current={appData.exposeMode} currentDomain={appData.domain} onClose={() => setExposeOpen(false)} />
+            )}
+          </>
+        );
+      })()}
 
       {tab === "deployments" && (() => {
         // Current version = latest SUCCESS; a deploy is rollbackable when its artifact is retained
