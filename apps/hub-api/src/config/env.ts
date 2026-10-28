@@ -28,6 +28,11 @@ export const envSchema = z
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
+  // Fail fast instead of hanging: a Redis command that cannot complete within this many ms rejects
+  // (default 10s). Guards the auth path (login rate-limit, refresh-token store) and every other Redis
+  // user from blocking indefinitely when Redis is unreachable. A transient reconnect blip under this
+  // window still succeeds (maxRetriesPerRequest stays unbounded, so a short blip is retried, not failed).
+  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   HUB_PORT: z.coerce.number().int().positive().default(3000),
   JWT_ACCESS_SECRET: z.string().min(16, "JWT_ACCESS_SECRET must be at least 16 chars"),
   JWT_REFRESH_SECRET: z.string().min(16, "JWT_REFRESH_SECRET must be at least 16 chars"),
@@ -110,6 +115,11 @@ export const envSchema = z
   // commands across many servers, so the default is generous (5 min) — the old hard-coded 20s failed any
   // real task (migrations, long installs). Raise it for very long maintenance commands.
   BULK_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
+  // Global HTTP rate limit (per client IP, per window) applied by ThrottlerGuard. Defaults: 120 requests
+  // per 60s. Raise the limit / shorten the window for a busy dashboard (5s polling) or a no-domain install
+  // where every browser user shares one proxy-IP bucket; set very high to effectively disable throttling.
+  THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
+  THROTTLE_LIMIT: z.coerce.number().int().positive().default(120),
   // Base domain for generated sslip.io-style magic domains. Overridable to nip.io
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),

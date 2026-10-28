@@ -44,6 +44,25 @@ describe("validateEnv — LOCAL_AGENT_ENROLL_TOKEN fail-closed", () => {
   });
 });
 
+describe("validateEnv — throttle + redis timeout (ops hardening)", () => {
+  it("defaults the global rate limit to 120 req / 60s and the Redis command timeout to 10s", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development" });
+    expect(env.THROTTLE_TTL_MS).toBe(60_000);
+    expect(env.THROTTLE_LIMIT).toBe(120);
+    expect(env.REDIS_COMMAND_TIMEOUT_MS).toBe(10_000);
+  });
+  it("coerces string overrides to positive integers", () => {
+    const env = validateEnv({ ...base, NODE_ENV: "development", THROTTLE_TTL_MS: "30000", THROTTLE_LIMIT: "600", REDIS_COMMAND_TIMEOUT_MS: "5000" });
+    expect(env.THROTTLE_TTL_MS).toBe(30_000);
+    expect(env.THROTTLE_LIMIT).toBe(600);
+    expect(env.REDIS_COMMAND_TIMEOUT_MS).toBe(5_000);
+  });
+  it("rejects a non-positive throttle/timeout value (fail fast at boot)", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", THROTTLE_LIMIT: "0" })).toThrow(/THROTTLE_LIMIT/);
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", REDIS_COMMAND_TIMEOUT_MS: "-1" })).toThrow(/REDIS_COMMAND_TIMEOUT_MS/);
+  });
+});
+
 describe("validateEnv — retention", () => {
   it("defaults raw metric retention to 48h, heartbeat to 30d, and rollup to 30d", () => {
     const env = validateEnv({ ...base, NODE_ENV: "development" });

@@ -13,6 +13,7 @@ import { DatabasesModule } from "../databases/databases.module";
 import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
+import { DeploymentReconcileService } from "./deployment-reconcile.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
 import { PanelTlsController } from "./panel-tls.controller";
@@ -27,6 +28,7 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
   providers: [
     ApplicationsService,
     AppDatabaseLinksService,
+    DeploymentReconcileService,
     ProxyService,
     PanelTlsService,
     AiService,
