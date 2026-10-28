@@ -24,7 +24,7 @@
     "@nestjs/swagger": "^8",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^10.4.22",
-    "@prisma/client": "^6.0.0",
+    "@prisma/client": "^7.10.1",
     "@tugra/shared": "workspace:*",
     "argon2": "^0.44.0",
     "bullmq": "^5.78.1",
