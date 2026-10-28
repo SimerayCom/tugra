@@ -1344,9 +1344,10 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
             <input style={{ ...envField, flex: 1 }} placeholder={t("apps.volumePath")} value={r.path} onChange={(e) => setRow(i, { path: e.target.value })} />
             <button
               onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
-              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}
+              aria-label={t("common.remove")}
+              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}
             >
-              ×
+              <X size={14} />
             </button>
           </div>
         ))}
@@ -1394,9 +1395,9 @@ function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[
             <button
               onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
               aria-label={t("common.remove")}
-              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit" }}
+              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}
             >
-              ×
+              <X size={14} />
             </button>
           </div>
         ))}
@@ -1443,7 +1444,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{tk.schedule}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.command}</span>
             {tk.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(tk.lastRunAt).toLocaleString()}</span>}
-            <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(tk.id); }}>×</IconBtn>
+            <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(tk.id); }}><X size={14} /></IconBtn>
           </div>
         ))}
       </div>
@@ -1515,7 +1516,7 @@ function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnable
                       {p.url} {t("apps.open")}
                     </a>
                   )}
-                  <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(p.id); }}>×</IconBtn>
+                  <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(p.id); }}><X size={14} /></IconBtn>
                 </div>
               ))}
             </div>
@@ -1829,7 +1830,7 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
               <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                 {t("databases.restore")}
               </button>
-              <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+              <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>
             </div>
             {exported?.id === b.id && (
               <div style={{ padding: "0 4px 4px" }}>

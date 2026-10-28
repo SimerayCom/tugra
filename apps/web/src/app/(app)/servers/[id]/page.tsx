@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { TriangleAlert, RefreshCw } from "lucide-react";
+import { TriangleAlert, RefreshCw, LayoutDashboard, Activity, Boxes, PackageCheck, Waypoints, Wrench, Terminal, Plus } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -60,11 +60,11 @@ export default function ServerDetailPage() {
   });
   const [shellOpen, setShellOpen] = useState(false);
   const tabDefs = [
-    { key: "overview", label: t("servers.tabOverview") },
-    { key: "monitoring", label: t("servers.tabMonitoring") },
-    { key: "containers", label: t("servers.tabContainers") },
-    ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates") }, { key: "drains", label: t("servers.tabDrains") }] : []),
-    { key: "maintenance", label: t("servers.tabMaintenance") },
+    { key: "overview", label: t("servers.tabOverview"), icon: LayoutDashboard },
+    { key: "monitoring", label: t("servers.tabMonitoring"), icon: Activity },
+    { key: "containers", label: t("servers.tabContainers"), icon: Boxes },
+    ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates"), icon: PackageCheck }, { key: "drains", label: t("servers.tabDrains"), icon: Waypoints }] : []),
+    { key: "maintenance", label: t("servers.tabMaintenance"), icon: Wrench },
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
   // Push live samples into the metrics cache while the overview gauges or the live monitoring charts
@@ -102,8 +102,8 @@ export default function ServerDetailPage() {
         badge={!server.canWrite ? <Badge tone="muted">{t("servers.readOnly")}</Badge> : undefined}
         actions={server.canWrite ? (
           <>
-            <Link href={`/resources/new?server=${id}`}><Btn>{t("servers.addResource")}</Btn></Link>
-            <Btn variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
+            <Link href={`/resources/new?server=${id}`}><Btn icon={Plus}>{t("servers.addResource")}</Btn></Link>
+            <Btn icon={Terminal} variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
           </>
         ) : undefined}
       >

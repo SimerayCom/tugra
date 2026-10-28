@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
@@ -136,11 +136,11 @@ export default function DatabaseDetailPage() {
   });
 
   const tabDefs = [
-    { key: "overview", label: t("databases.tabOverview") },
-    ...(db?.canWrite && db?.status !== "NEW" ? [{ key: "logs", label: t("databases.tabLogs") }] : []),
-    ...(db?.status !== "NEW" ? [{ key: "metrics", label: t("databases.tabMetrics") }] : []),
-    { key: "backups", label: t("databases.tabBackups") },
-    ...(db?.canWrite ? [{ key: "settings", label: t("databases.tabSettings") }] : []),
+    { key: "overview", label: t("databases.tabOverview"), icon: LayoutDashboard },
+    ...(db?.canWrite && db?.status !== "NEW" ? [{ key: "logs", label: t("databases.tabLogs"), icon: ScrollText }] : []),
+    ...(db?.status !== "NEW" ? [{ key: "metrics", label: t("databases.tabMetrics"), icon: Activity }] : []),
+    { key: "backups", label: t("databases.tabBackups"), icon: DatabaseBackup },
+    ...(db?.canWrite ? [{ key: "settings", label: t("databases.tabSettings"), icon: Settings2 }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
@@ -156,7 +156,7 @@ export default function DatabaseDetailPage() {
         actions={
           db.canWrite ? (
             <>
-              <Btn onClick={() => provision.mutate()} disabled={provision.isPending}>
+              <Btn icon={db.status === "RUNNING" ? RotateCw : db.status === "STOPPED" ? Play : Rocket} onClick={() => provision.mutate()} disabled={provision.isPending}>
                 {provision.isPending
                   ? t("databases.provisioning")
                   : db.status === "RUNNING" ? t("databases.restart")
@@ -164,8 +164,9 @@ export default function DatabaseDetailPage() {
                   : db.status === "FAILED" ? t("databases.retryProvision")
                   : t("databases.provision")}
               </Btn>
-              <Btn variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
+              <Btn icon={Square} variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
               <Btn
+                icon={Terminal}
                 variant="ghost"
                 onClick={() => setShellOpen(true)}
                 disabled={db.status !== "RUNNING"}
@@ -174,14 +175,14 @@ export default function DatabaseDetailPage() {
                 {t("databases.openShell")}
               </Btn>
               <div style={{ position: "relative" }}>
-                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("databases.more")}>⋯</Btn>
+                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("databases.more")}><Ellipsis size={16} /></Btn>
                 {moreOpen && (
                   <div
                     role="menu"
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
-                    <Btn variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
-                    <Btn variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name })) del.mutate(); }}>{t("databases.delete")}</Btn>
+                    <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
+                    <Btn icon={Trash2} variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name })) del.mutate(); }}>{t("databases.delete")}</Btn>
                   </div>
                 )}
               </div>
