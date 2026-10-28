@@ -4,7 +4,7 @@
 # Cross-compiled so a single `docker buildx --platform linux/amd64,linux/arm64` build produces both
 # arches (the agent runs on managed servers of any arch — Raspberry Pi to a cloud VM). BUILDPLATFORM
 # keeps the Go toolchain native (no QEMU for the compile); only the final runtime stage is emulated.
-FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 WORKDIR /src
 COPY agent/ ./
 ARG TARGETOS
