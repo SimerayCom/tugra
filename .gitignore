@@ -12,6 +12,9 @@
 *.pem
 *.key
 *.crt
+# hub-migrate.sh bundles — contain ALL hub secrets, never commit
+tugra-hub-*.tar
+tugra-hub-*.tar.enc
 secrets/
 
 # Node
