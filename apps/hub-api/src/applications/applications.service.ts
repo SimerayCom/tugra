@@ -1379,10 +1379,12 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.clusterId) {
       // Swarm: scale the service to 0 (keeps the service definition so start can scale it back up).
-      await this.swarmDeploy.scale(app, 0).catch(() => undefined);
+      await this.swarmDeploy.scale(app, 0);
     } else {
       const cmd = app.source === "COMPOSE" ? buildComposeStopScript(this.toSpec(app)) : buildStopScript(app);
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+      // Let an offline agent / transport failure propagate. This used to be swallowed and the app was
+      // marked STOPPED anyway, so a failed stop reported success (HTTP 200 + audit + UI toast all lied).
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy");
     }
     await this.prisma.application.update({
       where: { id },
@@ -1394,10 +1396,11 @@ export class ApplicationsService {
   async start(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.clusterId) {
-      await this.swarmDeploy.scale(app, Math.max(1, app.replicas ?? 1)).catch(() => undefined);
+      await this.swarmDeploy.scale(app, Math.max(1, app.replicas ?? 1));
     } else {
       const cmd = app.source === "COMPOSE" ? buildComposeStartScript(this.toSpec(app)) : buildStartScript(app);
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+      // Propagate an offline/failed agent instead of falsely reporting RUNNING (see stop()).
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy");
     }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
     await this.audit.log({ actor: userId, action: "app.start", target: id });
@@ -1407,10 +1410,11 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.clusterId) {
       // Swarm restart = a forced rolling recreation of all tasks (async; the builder polls to convergence).
-      await this.swarmDeploy.restart(app).catch(() => undefined);
+      await this.swarmDeploy.restart(app);
     } else {
       const cmd = app.source === "COMPOSE" ? buildComposeRestartScript(this.toSpec(app)) : buildRestartScript(app);
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+      // Propagate an offline/failed agent instead of falsely reporting RUNNING (see stop()).
+      await this.agentWs.sendCommand(app.serverId, cmd, "deploy");
     }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
     await this.audit.log({ actor: userId, action: "app.restart", target: id });
