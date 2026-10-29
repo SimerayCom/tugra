@@ -1,8 +1,11 @@
 name: Release
 
 # Cuts a release on a version tag: builds + pushes the four images to GHCR, then publishes a signed
-# update manifest (versions.json + .sig) to the gh-pages branch. Tag a commit already green on `main`
-# (this workflow does not re-run the CI test suite — tag pushes don't match ci.yml's branch trigger).
+# update manifest (versions.json + .sig) to the gh-pages branch. The `ci` job re-runs the FULL CI
+# suite against the tagged commit and the `guard` job refuses any commit that is not an ancestor of
+# origin/main, so a red or off-main commit cannot be released. NOTE: an in-workflow guard is a safety
+# net, not a security boundary (the tagged commit supplies this very file) — enforce who may push
+# `v*` tags / to main with repo rulesets + a protected `release` Environment for UPDATE_SIGNING_KEY.
 on:
   push:
     tags: ["v*.*.*"]
@@ -15,13 +18,60 @@ on:
         description: "Optional: minimum version required to upgrade directly to this release"
         required: false
 
+# Least privilege at the top: only build-push needs packages:write (GHCR push) and the publishing jobs
+# declare their own contents:write. ci + guard then run with contents:read only, so test code on an
+# unvetted commit never holds a token that can publish.
 permissions:
   contents: read
-  packages: write
+
+# One release at a time per ref; never cancel a publish midway (it signs + pushes a manifest).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-push:
+  # Gate 1: re-run the FULL CI suite (unit + e2e + agent) against the exact tagged commit. A tag push
+  # does not match ci.yml's branch trigger, so without this a commit that is red on `main` — or never
+  # CI'd at all — could still be released. openapi-breaking self-skips here (it is PR-only), which is
+  # correct: there is no base branch to diff a tag against.
+  ci:
+    needs: guard # don't even run the suite on an off-main commit
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  # Gate 2: refuse to release a commit that is not on `main`. The published images and the signed
+  # update manifest must only ever come from main — never an arbitrary tag, a feature branch, or a
+  # workflow_dispatch from a non-main ref. ("Ancestor of main" is the exact rule: an older main commit
+  # stays releasable, which a hotfix tag may legitimately want.)
+  guard:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require the released commit to be an ancestor of main
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$SHA" FETCH_HEAD; then
+            echo "::error::$SHA is not on origin/main — releases must be cut from main." >&2
+            exit 1
+          fi
+          echo "OK: $SHA is on origin/main."
+
+  build-push:
+    needs: [ci, guard]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push images to GHCR
     outputs:
       version: ${{ steps.ver.outputs.version }}
       channel: ${{ steps.ver.outputs.channel }}
@@ -50,9 +100,13 @@ jobs:
             platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # the exact commit ci + guard vetted (a tag could be moved mid-run)
       - id: ver
         name: Derive version + channel
-        run: bash scripts/release-version.sh "${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+        env:
+          REF: ${{ github.event.inputs.version || github.ref_name }}
+        run: bash scripts/release-version.sh "$REF" >> "$GITHUB_OUTPUT"
       - id: tags
         name: Compute image tags
         run: |
@@ -111,6 +165,8 @@ jobs:
       contents: write # push to gh-pages
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # sign from the vetted commit, not a moved tag
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -185,6 +241,8 @@ jobs:
       contents: write # create/edit releases
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }} # release notes from the vetted commit's CHANGELOG
       - name: Create or update the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
