@@ -348,7 +348,7 @@ function TwoFactorCard() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={setup.qrDataUrl} alt="2FA QR" width={160} height={160} style={{ borderRadius: 8, background: "#fff", padding: 8 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <input className="mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder="000000" maxLength={6}
+            <input className="mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder="000000" aria-label={t("settings.codePrompt")} maxLength={6}
               style={{ flex: 1, padding: "8px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", letterSpacing: "0.2em", textAlign: "center" }} />
             <Btn onClick={enable}>{t("settings.enable")}</Btn>
           </div>
@@ -401,8 +401,8 @@ function SudoPrompt({ kind, onClose, onDone }: { kind: "disable" | "regenerate";
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{kind === "disable" ? t("settings.disable2fa") : t("settings.regenerate")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.sudoDesc")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <input type="password" placeholder={t("settings.currentPassword")} value={password} onChange={(e) => setPassword(e.target.value)} style={modalField} autoFocus />
-        <input className="mono" placeholder={t("settings.codePrompt")} value={code} onChange={(e) => setCode(e.target.value)} style={modalField} />
+        <input type="password" placeholder={t("settings.currentPassword")} aria-label={t("settings.currentPassword")} value={password} onChange={(e) => setPassword(e.target.value)} style={modalField} autoFocus />
+        <input className="mono" placeholder={t("settings.codePrompt")} aria-label={t("settings.codePrompt")} value={code} onChange={(e) => setCode(e.target.value)} style={modalField} />
       </div>
       {err && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{err}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>

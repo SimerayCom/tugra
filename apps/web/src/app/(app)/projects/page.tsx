@@ -70,7 +70,7 @@ export default function ProjectsPage() {
           onSubmit={(e) => { e.preventDefault(); create.mutate(); }}
           style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
         >
-          <input style={{ ...field, flex: 1, minWidth: 160 }} placeholder={t("projects.name")} value={name} onChange={(e) => setName(e.target.value)} required />
+          <input style={{ ...field, flex: 1, minWidth: 160 }} placeholder={t("projects.name")} aria-label={t("projects.name")} value={name} onChange={(e) => setName(e.target.value)} required />
           {teams.length > 1 && (
             <select style={field} value={target} onChange={(e) => setCreateTeam(e.target.value)} aria-label={t("common.team")}>
               {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}

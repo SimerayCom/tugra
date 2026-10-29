@@ -85,13 +85,13 @@ export default function DestinationsPage() {
           <Select value={teamId} onChange={setTeamId} autoSelectFirst required placeholder={t("common.pickTeam")}
             style={{ width: "auto", minWidth: 130 }}
             options={teams.map((tm) => ({ value: tm.id, label: tm.name }))} />
-          <input style={{ ...field, width: 130 }} placeholder={t("destinations.name")} value={name} onChange={(e) => setName(e.target.value)} required />
-          <input style={{ ...field, width: 140 }} placeholder={t("destinations.bucket")} value={bucket} onChange={(e) => setBucket(e.target.value)} required />
-          <input style={{ ...field, width: 150 }} placeholder={t("destinations.endpoint")} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} required />
-          <input style={{ ...field, width: 100 }} placeholder={t("destinations.region")} value={region} onChange={(e) => setRegion(e.target.value)} />
-          <input style={{ ...field, width: 130 }} placeholder={t("destinations.accessKey")} value={accessKey} onChange={(e) => setAccessKey(e.target.value)} required />
-          <input style={{ ...field, width: 150 }} type="password" placeholder={t("destinations.secretKey")} value={secretKey} onChange={(e) => setSecretKey(e.target.value)} required />
-          <input style={{ ...field, width: 100 }} placeholder={t("destinations.prefix")} value={prefix} onChange={(e) => setPrefix(e.target.value)} />
+          <input style={{ ...field, width: 130 }} placeholder={t("destinations.name")} aria-label={t("destinations.name")} value={name} onChange={(e) => setName(e.target.value)} required />
+          <input style={{ ...field, width: 140 }} placeholder={t("destinations.bucket")} aria-label={t("destinations.bucket")} value={bucket} onChange={(e) => setBucket(e.target.value)} required />
+          <input style={{ ...field, width: 150 }} placeholder={t("destinations.endpoint")} aria-label={t("destinations.endpoint")} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} required />
+          <input style={{ ...field, width: 100 }} placeholder={t("destinations.region")} aria-label={t("destinations.region")} value={region} onChange={(e) => setRegion(e.target.value)} />
+          <input style={{ ...field, width: 130 }} placeholder={t("destinations.accessKey")} aria-label={t("destinations.accessKey")} value={accessKey} onChange={(e) => setAccessKey(e.target.value)} required />
+          <input style={{ ...field, width: 150 }} type="password" placeholder={t("destinations.secretKey")} aria-label={t("destinations.secretKey")} value={secretKey} onChange={(e) => setSecretKey(e.target.value)} required />
+          <input style={{ ...field, width: 100 }} placeholder={t("destinations.prefix")} aria-label={t("destinations.prefix")} value={prefix} onChange={(e) => setPrefix(e.target.value)} />
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)" }}>
             <input type="checkbox" checked={encrypt} onChange={(e) => setEncrypt(e.target.checked)} />
             {t("destinations.encrypt")}

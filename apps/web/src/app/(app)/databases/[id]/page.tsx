@@ -368,8 +368,8 @@ export default function DatabaseDetailPage() {
             <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.import")}</div>
             <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("databases.importDesc")}</p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input style={{ ...fieldSm, width: 320, flex: "1 1 280px" }} placeholder={t("databases.importUrl")} value={importUrl} onChange={(e) => setImportUrl(e.target.value)} />
-              <input style={{ ...fieldSm, width: 160 }} type="password" placeholder={t("databases.importKey")} value={importKey} onChange={(e) => setImportKey(e.target.value)} />
+              <input style={{ ...fieldSm, width: 320, flex: "1 1 280px" }} placeholder={t("databases.importUrl")} aria-label={t("databases.importUrl")} value={importUrl} onChange={(e) => setImportUrl(e.target.value)} />
+              <input style={{ ...fieldSm, width: 160 }} type="password" placeholder={t("databases.importKey")} aria-label={t("databases.importKey")} value={importKey} onChange={(e) => setImportKey(e.target.value)} />
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
                 <input type="checkbox" checked={importGzip} onChange={(e) => setImportGzip(e.target.checked)} />
                 {t("databases.importGzip")}
@@ -455,9 +455,9 @@ function DbLimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.limits")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.limitsDesc")}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input style={{ ...limField, flex: "1 1 100%" }} placeholder={t("databases.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
-        <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
-        <input style={{ ...limField, width: 130 }} type="number" step="0.1" placeholder={t("databases.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
+        <input style={{ ...limField, flex: "1 1 100%" }} placeholder={t("databases.healthCmd")} aria-label={t("databases.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
+        <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.memoryMb")} aria-label={t("databases.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
+        <input style={{ ...limField, width: 130 }} type="number" step="0.1" placeholder={t("databases.cpus")} aria-label={t("databases.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.limitsRedeploy")}</div>}
@@ -481,7 +481,7 @@ function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | nul
         {hostPort != null ? t("databases.publicPortExposed", { port: hostPort }) : t("databases.publicPortInternal")}
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.publicPortField")} value={port} onChange={(e) => setPort(e.target.value)} />
+        <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.publicPortField")} aria-label={t("databases.publicPortField")} value={port} onChange={(e) => setPort(e.target.value)} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.publicPortRedeploy")}</div>}

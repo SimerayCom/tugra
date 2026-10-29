@@ -68,7 +68,7 @@ export function ApiTokensCard() {
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("settings.apiTokensDesc")}</p>
 
       <form onSubmit={(e) => { e.preventDefault(); create.mutate(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <input style={field} placeholder={t("settings.tokenName")} value={name} onChange={(e) => setName(e.target.value)} required />
+        <input style={field} placeholder={t("settings.tokenName")} aria-label={t("settings.tokenName")} value={name} onChange={(e) => setName(e.target.value)} required />
 
         <fieldset style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", margin: 0, minWidth: 0 }}>
           <legend style={{ fontSize: 12, fontWeight: 600, padding: "0 6px" }}>{t("settings.tokenScopes")}</legend>
