@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Box, Database, Layers, Plus, type LucideIcon } from "lucide-react";
+import { Box, Database, Layers, Plus, Pencil, type LucideIcon } from "lucide-react";
 import { api } from "../../../../lib/api";
 import { ErrorState } from "../../../../components/error-state";
+import { RenameModal } from "../../../../components/rename-modal";
 import type { AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
 import { appColor } from "../../../../lib/apps";
 import { dbColor } from "../../../../lib/databases";
@@ -166,12 +167,16 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   const services = all.filter((r) => r.kind === "app" && r.source === "COMPOSE" && match(r));
   const dbs = all.filter((r) => r.kind === "database" && match(r));
   const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: onChange });
+  const [renaming, setRenaming] = useState(false);
+  const rename = useMutation({ mutationFn: (name: string) => api.renameEnvironment(env.id, name), onSuccess: () => { onChange(); setRenaming(false); } });
   const newHref = (kind: "app" | "service" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
   const chip: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "3px 10px", textDecoration: "none" };
   return (
     <Card style={{ padding: 16 }}>
+      {renaming && <RenameModal current={env.name} title={t("projects.renameEnvironment")} onClose={() => setRenaming(false)} onSave={(n) => rename.mutate(n)} pending={rename.isPending} />}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>{env.name}</span>
+        {canWrite && <button onClick={() => setRenaming(true)} title={t("projects.renameEnvironment")} aria-label={t("projects.renameEnvironment")} style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", display: "inline-flex", padding: 2 }}><Pencil size={13} /></button>}
         <Badge>{env.appCount} apps</Badge>
         <Badge>{env.dbCount} dbs</Badge>
         <div style={{ flex: 1 }} />

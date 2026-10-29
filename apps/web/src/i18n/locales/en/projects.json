@@ -9,6 +9,7 @@
   "emptyTitle": "No projects yet",
   "empty": "Create a project to organize apps and databases by environment.",
   "environments": "Environments",
+  "renameEnvironment": "Rename environment",
   "addEnvironment": "+ Add environment",
   "environmentName": "Environment name (e.g. staging)",
   "noResources": "No resources in this environment.",
