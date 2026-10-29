@@ -10,6 +10,7 @@ import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
+import { TextInput } from "../../../components/form";
 import { TemplateLogo, ENGINE_LOGO } from "../../../lib/template-icons";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
@@ -26,9 +27,13 @@ export default function DatabasesPage() {
   });
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [q, setQ] = useState("");
   const scoped = scopeByTeam(databases, teamId);
   const allTags = [...new Set(scoped.flatMap((d) => d.tags))].sort();
-  const visible = scoped.filter((d) => selectedTags.every((tag) => d.tags.includes(tag)));
+  const ql = q.trim().toLowerCase();
+  const visible = scoped.filter(
+    (d) => selectedTags.every((tag) => d.tags.includes(tag)) && (ql === "" || d.name.toLowerCase().includes(ql) || engineLabel(d.engine).toLowerCase().includes(ql)),
+  );
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBackup, setShowBackup] = useState(false);
@@ -60,7 +65,10 @@ export default function DatabasesPage() {
         <Spinner />
       ) : (
         <>
-          <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("databases.searchDatabases")} aria-label={t("databases.searchDatabases")} style={{ maxWidth: 260 }} />
+            <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+          </div>
           <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
             {visible.map((d) => {
               const selectable = d.canWrite && d.backupSupported;
