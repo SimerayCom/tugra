@@ -9,6 +9,7 @@ import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner, StatusPill } from "../../../components/ui";
 import { AppLogo } from "../../../components/app-logo";
+import { TextInput } from "../../../components/form";
 import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
 import { scopeByTeam } from "../../../lib/team-scope";
@@ -24,9 +25,13 @@ export default function AppsPage() {
   });
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [q, setQ] = useState("");
   const scoped = scopeByTeam(apps, teamId);
   const allTags = [...new Set(scoped.flatMap((a) => a.tags))].sort();
-  const visibleApps = scoped.filter((a) => selectedTags.every((tag) => a.tags.includes(tag)));
+  const ql = q.trim().toLowerCase();
+  const visibleApps = scoped.filter(
+    (a) => selectedTags.every((tag) => a.tags.includes(tag)) && (ql === "" || a.name.toLowerCase().includes(ql)),
+  );
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -46,7 +51,10 @@ export default function AppsPage() {
         <Spinner />
       ) : (
         <>
-          <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("apps.searchApps")} aria-label={t("apps.searchApps")} style={{ maxWidth: 260 }} />
+            <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+          </div>
           <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
             {visibleApps.map((a) => {
               return (

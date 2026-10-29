@@ -3,6 +3,7 @@
   "subtitle": "One-click managed databases with a persistent volume.",
   "add": "+ Add Database",
   "newDatabase": "+ New Database",
+  "searchDatabases": "Search databases…",
   "name": "Name",
   "server": "Server",
   "engine": "Engine",

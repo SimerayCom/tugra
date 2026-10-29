@@ -87,6 +87,7 @@
   "noLogs": "No logs yet — deploy this app to see build output here.",
   "add": "+ Add App",
   "newApp": "+ New App",
+  "searchApps": "Search apps…",
   "name": "Name",
   "server": "Server",
   "sourceImage": "Image",
