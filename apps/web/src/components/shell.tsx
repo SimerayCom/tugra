@@ -175,6 +175,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
         <button
           onClick={openPalette}
           title={t("nav.search")}
+          aria-label={t("nav.search")}
           style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 8, width: col ? 32 : "100%", margin: col ? "0 auto" : undefined, padding: col ? "6px 0" : "6px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", cursor: "pointer", color: "var(--c-tx3)", fontSize: 12, fontFamily: "inherit" }}
         >
           {col ? (
@@ -207,6 +208,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
                   href={it.href}
                   onClick={onNavigate}
                   title={col ? t(`nav.${it.key}`) : undefined}
+                  aria-label={col ? t(`nav.${it.key}`) : undefined}
                   style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, padding: col ? "8px 0" : "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
                 >
                   <Icon size={15} strokeWidth={active ? 2.4 : 2} style={{ flexShrink: 0 }} />
@@ -232,6 +234,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
             router.replace("/login");
           }}
           title={col ? t("nav.logout") : undefined}
+          aria-label={col ? t("nav.logout") : undefined}
           style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
         >
           <LogOut size={15} style={{ flexShrink: 0 }} />
@@ -241,6 +244,7 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
           <button
             onClick={toggleCollapsed}
             title={col ? t("nav.expand") : t("nav.collapse")}
+            aria-label={col ? t("nav.expand") : t("nav.collapse")}
             style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
           >
             {col ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
@@ -313,8 +317,8 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
       {!isHome && <NewMenu />}
       <div style={{ flex: 1 }} />
       {!isHome && <TeamScopeSelect />}
-      <button onClick={toggle} title="Toggle theme" style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
-        {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
+      <button onClick={toggle} title={t("nav.toggleTheme")} aria-label={t("nav.toggleTheme")} aria-pressed={theme === "dark"} style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
+        {theme === "dark" ? <Moon size={15} aria-hidden /> : <Sun size={15} aria-hidden />}
       </button>
       {!showMenu && <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{user?.email}</span>}
     </header>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeft, type LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import type { ServerStatus } from "../lib/types";
+import { useT } from "../i18n/provider";
 
 /** Back-to-list link for detail pages (sub-routes have no other way back). */
 export function BackLink({ href, label }: { href: string; label: string }) {
@@ -88,8 +89,11 @@ export function Card({
 }
 
 export function Spinner() {
+  const t = useT();
   return (
     <div
+      role="status"
+      aria-label={t("common.loading")}
       style={{
         width: 18,
         height: 18,
