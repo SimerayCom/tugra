@@ -38,6 +38,13 @@
   --c-tx3: #6e6e78; /* muted — neutral gray, clears WCAG AA on #fafafa */
   --c-a: #9a7b1e; /* gold — the seal (brand), accent only */
   --c-ad: rgba(154, 123, 30, 0.1);
+  /* Status/accent colors re-tuned for the light surface — the dark-theme values (green #34c759,
+     amber #f5a623, red #ff4d4f, blue #5588f5) fail WCAG AA badly on white (2–3.4:1). These 600/700
+     shades clear AA (≥4.5:1) both as text (pills, links, errors) and as fills with white text. */
+  --c-g: #15803d;
+  --c-am: #b45309;
+  --c-r: #dc2626;
+  --c-lapis: #2563eb;
 }
 
 * {
