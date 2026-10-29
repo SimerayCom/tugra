@@ -273,8 +273,10 @@ body {
 .fleet-chip:focus-visible,
 .fleet-namelink:focus-visible,
 .fleet-clusterlink:focus-visible {
-  outline: 2px solid var(--c-a);
-  outline-offset: 2px;
+  /* !important: fleet-sort/fleet-chip carry inline `all:unset`; an inline style outranks this rule, so
+     without !important the keyboard focus ring never appears (WCAG 2.4.7). */
+  outline: 2px solid var(--c-a) !important;
+  outline-offset: 2px !important;
   border-radius: 3px;
 }
 .fleet-namelink::after {
