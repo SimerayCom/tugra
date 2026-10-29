@@ -113,6 +113,8 @@ const STATUS_COLOR: Record<ServerStatus, string> = {
 export function StatusDot({ status }: { status: ServerStatus }) {
   return (
     <span
+      role="img"
+      aria-label={status}
       title={status}
       style={{
         display: "inline-block",
@@ -120,7 +122,9 @@ export function StatusDot({ status }: { status: ServerStatus }) {
         height: 8,
         borderRadius: "50%",
         background: STATUS_COLOR[status],
-        boxShadow: `0 0 0 3px ${STATUS_COLOR[status]}22`,
+        // color-mix, not `${color}22`: the colors are CSS vars, so the old `var(--c-r)22` was invalid
+        // and the whole box-shadow (the soft halo) was dropped by the browser.
+        boxShadow: `0 0 0 3px color-mix(in srgb, ${STATUS_COLOR[status]} 14%, transparent)`,
       }}
     />
   );
@@ -130,7 +134,7 @@ export function StatusDot({ status }: { status: ServerStatus }) {
 export function StatusPill({ label, color }: { label: string; color: string }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color }}>
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 0 3px ${color}22` }} />
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 14%, transparent)` }} />
       {label}
     </span>
   );
