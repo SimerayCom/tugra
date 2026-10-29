@@ -510,12 +510,16 @@ export class ServersService {
     signature: string,
     observedIp?: string | null,
     agentVersion?: string,
-  ): Promise<boolean> {
+  ): Promise<"ok" | "unknown" | "bad_signature"> {
     const server = await this.prisma.server.findUnique({
       where: { id: serverId },
     });
-    if (!server?.agentPublicKey) return false;
-    if (!verifyEd25519(server.agentPublicKey, nonce, signature)) return false;
+    // "unknown" = the server row is gone or was never enrolled → a fresh enroll is the right recovery,
+    // so the gateway tells the agent to re-enroll. "bad_signature" = the server IS known but the agent's
+    // key does not verify → a generic rejection; the agent must KEEP its identity (re-enroll cannot help
+    // an already-enrolled server, and clearing it on a transient mismatch would brick the agent).
+    if (!server?.agentPublicKey) return "unknown";
+    if (!verifyEd25519(server.agentPublicKey, nonce, signature)) return "bad_signature";
     // Refresh online status + the observed IP in one write (reconnect may bring a new address — a dynamic
     // IP is tracked on every auth). Also refresh agentVersion when the agent reports one (only on enroll
     // before this): a self-updated agent reconnects via auth, so this is how the new version becomes
@@ -523,7 +527,7 @@ export class ServersService {
     const extra = this.ipFields(observedIp, server.ipSource, server.isLocal);
     if (agentVersion) extra.agentVersion = agentVersion;
     await this.markOnline(serverId, extra);
-    return true;
+    return "ok";
   }
 
   async markOnline(serverId: string, extra: Prisma.ServerUpdateInput = {}): Promise<void> {

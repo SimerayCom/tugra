@@ -257,14 +257,23 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         case "auth": {
-          const ok = await this.servers.authenticate(
+          const res = await this.servers.authenticate(
             msg.serverId,
             st.nonce,
             msg.signature,
             st.remoteIp,
             msg.agentVersion,
           );
-          if (!ok) return this.fail(socket, "auth failed");
+          if (res !== "ok") {
+            // Only "unknown" (the server row is gone / never enrolled) tells the agent to re-enroll; a
+            // bad signature on a known server is a generic rejection so the agent keeps its identity.
+            if (res === "unknown") return this.fail(socket, "reenroll", "reenroll");
+            // Surface a persistent bad-signature (e.g. a key/volume restored from a different server):
+            // the agent keeps retrying with the same bad key, so without this the server just shows
+            // OFFLINE with no hint why.
+            this.logger.warn(`agent auth rejected (bad signature) for server ${msg.serverId} from ${st.remoteIp ?? "?"}`);
+            return this.fail(socket, "auth failed");
+          }
           st.serverId = msg.serverId;
           st.authed = true;
           this.clearAuthTimer(st);
@@ -623,8 +632,10 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
   }
 
-  private fail(socket: WebSocket, message: string): void {
-    this.send(socket, { type: "error", message });
+  private fail(socket: WebSocket, message: string, code?: string): void {
+    // `code` is an optional machine-readable reason. Only "reenroll" is sent today — the single signal
+    // that authorizes an agent to discard its stored identity (see the agent's shouldForgetIdentity).
+    this.send(socket, code ? { type: "error", message, code } : { type: "error", message });
     socket.close();
   }
 

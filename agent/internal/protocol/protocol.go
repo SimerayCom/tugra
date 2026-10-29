@@ -176,6 +176,10 @@ type ServerMsg struct {
 	ServerID  string `json:"serverId"`
 	Seal      string `json:"seal"`
 	Message   string `json:"message"`
+	// Code is an optional machine-readable reason on a rejection. "reenroll" is the ONLY signal that
+	// tells an already-enrolled agent its stored identity is genuinely gone (server row deleted / never
+	// enrolled) and a fresh enroll is the correct recovery. Absent on generic/transient rejections.
+	Code      string `json:"code,omitempty"`
 	ReqID     string `json:"reqId"`
 	Command   string `json:"command"`
 	TimeoutMs int    `json:"timeoutMs"`

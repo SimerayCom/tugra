@@ -402,9 +402,44 @@ describe("AgentWsServer keepalive sweep (half-open detection)", () => {
   });
 });
 
+describe("AgentWsServer auth-rejection signaling (no agent self-brick)", () => {
+  const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
+  const serverWith = (authResult: "ok" | "unknown" | "bad_signature") =>
+    new AgentWsServer(
+      {} as any,
+      { authenticate: jest.fn().mockResolvedValue(authResult), grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      hubSign,
+    );
+  const drive = async (authResult: "unknown" | "bad_signature") => {
+    const server = serverWith(authResult);
+    const sock = mockSocket();
+    (server as any).onConnection(sock, { socket: { remoteAddress: "1.2.3.4" }, headers: {} });
+    await (server as any).onMessage(sock, JSON.stringify({ type: "auth", serverId: "s1", signature: "sig" }));
+    // onConnection sends the challenge first; the rejection is the last frame written.
+    const sent = String(sock.send.mock.calls.at(-1)?.[0] ?? "");
+    return { sent, sock };
+  };
+
+  it("sends code 'reenroll' ONLY when the identity is unknown (server gone / never enrolled)", async () => {
+    const { sent, sock } = await drive("unknown");
+    expect(sent).toContain('"type":"error"');
+    expect(sent).toContain('"code":"reenroll"');
+    expect(sock.close).toHaveBeenCalled();
+  });
+
+  it("a bad signature on a KNOWN server is a generic rejection with NO reenroll code (agent keeps identity)", async () => {
+    const { sent, sock } = await drive("bad_signature");
+    expect(sent).toContain('"type":"error"');
+    expect(sent).not.toContain("reenroll");
+    expect(sock.close).toHaveBeenCalled();
+  });
+});
+
 describe("AgentWsServer pre-auth handshake deadline", () => {
   const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
-  const makeServer = (authenticate = jest.fn().mockResolvedValue(true)) =>
+  const makeServer = (authenticate = jest.fn().mockResolvedValue("ok")) =>
     new AgentWsServer({} as any, { authenticate, grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any, {} as any, {} as any, hubSign);
 
   it("closes a socket still unauthenticated when the deadline fires (1008)", () => {

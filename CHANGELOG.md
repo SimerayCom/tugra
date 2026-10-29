@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Fixed: an agent could permanently brick its own identity on a transient hub rejection.** On any
+  rejected reconnect with an enroll token set, the agent used to erase its stored identity and fall back
+  to enrollment — which cannot succeed for an already-enrolled server, so a mid-handshake hub restart or
+  a brief DB hiccup left the agent looping on "rejected" forever (control plane down until a manual
+  re-enroll). Now the hub distinguishes an unknown identity (server row gone / never enrolled → it asks
+  the agent to re-enroll via an explicit `code: "reenroll"`) from a generic/transient rejection, and the
+  agent discards its identity **only** on that explicit signal — and even then not until a fresh enroll
+  succeeds, so a spurious signal can never destroy a good identity. A persistent bad-signature is now
+  logged on the hub. Rollout: the fix takes effect agent-side, so **upgrade the hub first, then push the
+  agent update** (an un-upgraded agent keeps the old behaviour until it updates).
 - **Automatic HTTPS for the control panel (opt-in).** `install.sh --domain <host> --auto-tls --acme-email
   <you@domain>` now provisions the panel's TLS itself — the bundled Traefik gets a Let's Encrypt certificate
   and path-routes the single origin, with no hand-written reverse-proxy config. Works behind Cloudflare (a

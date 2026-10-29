@@ -40,25 +40,47 @@ const (
 	maxMessageBytes = 16 << 20
 )
 
-// errStaleIdentity signals that the hub rejected our stored identity (hub DB reset, server row
-// deleted, volume reused with a new hub). Run clears the identity and retries via enroll.
-var errStaleIdentity = errors.New("stored identity rejected by hub")
+// errStaleIdentity signals that the hub explicitly asked us to re-enroll (Code "reenroll"). Run
+// retries once via a FORCED enroll WITHOUT clearing the persisted identity — the stored serverId/seal
+// are overwritten only when that enroll succeeds, so a spurious/transient signal cannot destroy a
+// good identity.
+var errStaleIdentity = errors.New("hub requested re-enroll")
+
+// reenrollCode is the hub's explicit "your identity is gone, enroll fresh" signal (ServerMsg.Code).
+// It is the ONLY rejection that triggers a re-enroll retry — see shouldForgetIdentity.
+const reenrollCode = "reenroll"
+
+// shouldForgetIdentity decides whether a non-OK handshake reply warrants a re-enroll retry. It returns
+// true ONLY when we authenticated with a stored identity, a fresh enroll could actually work (a token
+// is set), AND the hub explicitly told us to re-enroll (Code == "reenroll"). It does NOT itself discard
+// anything: the caller retries via a forced enroll and overwrites the persisted identity only once that
+// enroll succeeds. A generic or transient rejection — a hub restart mid-handshake, a DB hiccup, or a
+// signature mismatch against a still-enrolled server — returns false, so the identity is left untouched
+// and the agent simply retries auth. Clearing a good identity on such a signal would brick the agent
+// for good, because enroll cannot succeed against a server that is already enrolled.
+func shouldForgetIdentity(usedAuth bool, token string, resp protocol.ServerMsg) bool {
+	return usedAuth && token != "" && resp.Code == reenrollCode
+}
 
 // Run dials the hub, authenticates (enroll or reconnect), then streams metrics
 // + heartbeats and executes commands until the context is cancelled. onReady (may be nil) is
 // invoked once the handshake succeeds (enrolled/auth_ok) so the caller can reset its backoff.
 //
-// If the hub rejects a stored identity and an enrollment token is configured, the stale identity
-// is wiped and the session is retried once immediately via the enroll path.
+// If the hub explicitly asks us to re-enroll (Code "reenroll") and a token is configured, the session
+// is retried once immediately via the enroll path — WITHOUT first clearing the stored identity, which
+// is overwritten only when the fresh enroll succeeds. So a failed re-enroll leaves the old identity on
+// disk for the next auth attempt, and a transient/spurious rejection can never brick a good identity.
 func Run(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store, onReady func()) error {
-	err := runOnce(ctx, cfg, kp, store, onReady)
+	err := runOnce(ctx, cfg, kp, store, onReady, false)
 	if errors.Is(err, errStaleIdentity) {
-		return runOnce(ctx, cfg, kp, store, onReady)
+		return runOnce(ctx, cfg, kp, store, onReady, true)
 	}
 	return err
 }
 
-func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store, onReady func()) error {
+// runOnce runs one hub session. forceEnroll takes the enroll path even when a stored identity exists
+// (used for the one-shot re-enroll retry) without touching the persisted identity until enroll succeeds.
+func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *config.Store, onReady func(), forceEnroll bool) error {
 	conn, _, err := websocket.Dial(ctx, cfg.HubURL, nil)
 	if err != nil {
 		return err
@@ -82,7 +104,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		return fmt.Errorf("expected challenge, got %q", challenge.Type)
 	}
 
-	usedAuth := store.ServerID != ""
+	usedAuth := store.ServerID != "" && !forceEnroll
 	if usedAuth {
 		if err := send(protocol.Auth{
 			Type:         "auth",
@@ -124,15 +146,17 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	case "auth_ok":
 		// already known
 	default:
-		// A rejected key-auth with a token available means our identity is stale: forget it so the
-		// retry enrolls fresh instead of looping on "auth failed" forever.
-		if usedAuth && cfg.Token != "" {
-			store.ServerID = ""
-			store.Seal = ""
-			_ = store.Save()
+		// Re-enroll only on the hub's explicit "reenroll" signal, and even then WITHOUT clearing the
+		// persisted identity here: Run() retries via a forced enroll and the "enrolled" branch above
+		// overwrites serverId/seal only on success. A generic/transient rejection keeps the identity and
+		// the agent simply retries auth — never a silent self-brick (see shouldForgetIdentity).
+		if shouldForgetIdentity(usedAuth, cfg.Token, resp) {
 			return errStaleIdentity
 		}
-		return fmt.Errorf("authentication rejected: %s", resp.Message)
+		if usedAuth {
+			return fmt.Errorf("authentication rejected: %s (identity kept; will retry)", resp.Message)
+		}
+		return fmt.Errorf("enrollment rejected: %s", resp.Message)
 	}
 	if onReady != nil {
 		onReady()
