@@ -260,7 +260,7 @@ function Wizard() {
               </>
             ) : (
               <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <Select value={projectId} onChange={setProjectId} placeholder={t("resources.chooseProject")} options={projectPool.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
+                <Select value={projectId} onChange={setProjectId} ariaLabel={t("resources.chooseProject")} placeholder={t("resources.chooseProject")} options={projectPool.map((p) => ({ value: p.id, label: p.name }))} style={{ width: "auto", minWidth: 150 }} />
                 <span style={{ color: "var(--c-tx3)" }}>/</span>
                 <Select value={envId} onChange={setEnvId} options={(project?.environments ?? []).map((e) => ({ value: e.id, label: e.name }))} style={{ width: "auto", minWidth: 130 }} />
               </span>

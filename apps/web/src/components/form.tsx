@@ -91,6 +91,7 @@ export function Select({
   autoSelectFirst = false,
   required = false,
   id,
+  ariaLabel,
   style,
   disabled,
 }: {
@@ -101,6 +102,8 @@ export function Select({
   autoSelectFirst?: boolean;
   required?: boolean;
   id?: string;
+  /** Accessible name when the select has no associated <label> (e.g. a placeholder-only select). */
+  ariaLabel?: string;
   style?: CSSProperties;
   disabled?: boolean;
 }) {
@@ -114,6 +117,7 @@ export function Select({
   return (
     <select
       id={id}
+      aria-label={ariaLabel}
       value={value}
       required={required}
       disabled={disabled}
