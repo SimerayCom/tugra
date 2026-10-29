@@ -15,6 +15,7 @@ export function Modal({
   width = 440,
   zIndex = 50,
   labelledBy,
+  ariaLabel,
   cardStyle: cardStyleOverride,
   backdropStyle: backdropStyleOverride,
   closeOnEsc = true,
@@ -25,6 +26,8 @@ export function Modal({
   width?: number;
   zIndex?: number;
   labelledBy?: string;
+  /** Accessible name when there's no visible title element to point `labelledBy` at. */
+  ariaLabel?: string;
   cardStyle?: CSSProperties;
   backdropStyle?: CSSProperties;
   closeOnEsc?: boolean;
@@ -79,6 +82,7 @@ export function Modal({
     alignItems: "center",
     justifyContent: "center",
     zIndex,
+    padding: 16, // keep the card off the screen edges (mobile gutter)
     ...backdropStyleOverride,
   };
   const cardStyle: CSSProperties = {
@@ -86,8 +90,10 @@ export function Modal({
     border: "1px solid var(--c-bd)",
     borderRadius: "var(--r2)",
     padding: 18,
-    minWidth: 320,
+    minWidth: 0, // let the card shrink below content width on small screens instead of overflowing
     maxWidth: width,
+    maxHeight: "90vh", // tall content scrolls inside the card instead of off-screen
+    overflowY: "auto",
     ...cardStyleOverride,
   };
 
@@ -98,7 +104,7 @@ export function Modal({
       }}
       style={backdrop}
     >
-      <div ref={cardRef} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} style={cardStyle}>
+      <div ref={cardRef} role="dialog" aria-modal="true" aria-labelledby={labelledBy} aria-label={ariaLabel} tabIndex={-1} style={cardStyle}>
         {children}
       </div>
     </div>
