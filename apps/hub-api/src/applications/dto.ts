@@ -2,6 +2,7 @@ import { z } from "zod";
 // Cross-module dto import: reuse the label charset from the clusters domain so app placement rules and node
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
 import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
+import { ENV_KEY_RE, ENV_KEY_DENY } from "../common/env-key";
 
 export const CreateAppSchema = z
   .object({
@@ -55,7 +56,13 @@ export const CreateAppSchema = z
 export type CreateAppInput = z.infer<typeof CreateAppSchema>;
 
 export const SetEnvSchema = z.object({
-  env: z.record(z.string()),
+  // Validate keys like the MCP path (single source: common/env-key), so this REST endpoint can't inject
+  // an extra variable via a key with '=', a newline or whitespace, or set a reserved name.
+  env: z
+    .record(z.string())
+    .refine((env) => Object.keys(env).every((k) => ENV_KEY_RE.test(k) && !ENV_KEY_DENY.has(k)), {
+      message: "invalid environment variable name",
+    }),
 });
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
