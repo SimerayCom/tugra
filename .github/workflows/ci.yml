@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets the Release workflow re-run this exact suite against the tagged commit before it publishes
+  # anything (a tag push does not match the branch trigger above). See release.yml's `ci` job.
+  workflow_call:
 
 jobs:
   node:
