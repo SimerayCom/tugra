@@ -160,11 +160,11 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
             {row.kind !== "system" && (
               <>
                 <Btn variant="ghost" icon={RotateCw} onClick={() => onAction("restart")} disabled={busy}>{t("servers.containerRestart")}</Btn>
-                <Btn variant="ghost" icon={Square} onClick={() => onAction("stop")} disabled={busy}>{t("servers.containerStop")}</Btn>
+                <Btn variant="dangerGhost" icon={Square} onClick={() => onAction("stop")} disabled={busy}>{t("servers.containerStop")}</Btn>
               </>
             )}
             <Btn variant="ghost" icon={ScrollText} onClick={onLogs}>{t("servers.containerLogs")}</Btn>
-            {row.kind === "other" && <Btn variant="danger" icon={Trash2} onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
+            {row.kind === "other" && <Btn variant="dangerGhost" icon={Trash2} onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
           </div>
         </Td>
       )}

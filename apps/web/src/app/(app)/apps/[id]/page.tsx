@@ -466,7 +466,7 @@ export default function AppDetailPage() {
               <Btn icon={appData.status === "NEW" ? Rocket : RefreshCw} variant={primary === "deploy" ? "primary" : "ghost"} onClick={() => onDeploy()} disabled={deploy.isPending}>
                 {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
               </Btn>
-              <Btn icon={Square} variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
+              <Btn icon={Square} variant="dangerGhost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
               <Btn
                 icon={Terminal}
                 variant="ghost"
@@ -487,7 +487,7 @@ export default function AppDetailPage() {
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn icon={Trash2} variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name })) del.mutate(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>

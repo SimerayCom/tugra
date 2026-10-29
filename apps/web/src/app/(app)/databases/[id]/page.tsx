@@ -164,7 +164,7 @@ export default function DatabaseDetailPage() {
                   : db.status === "FAILED" ? t("databases.retryProvision")
                   : t("databases.provision")}
               </Btn>
-              <Btn icon={Square} variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
+              <Btn icon={Square} variant="dangerGhost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
               <Btn
                 icon={Terminal}
                 variant="ghost"
@@ -182,7 +182,7 @@ export default function DatabaseDetailPage() {
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
-                    <Btn icon={Trash2} variant="danger" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name })) del.mutate(); }}>{t("databases.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name })) del.mutate(); }}>{t("databases.delete")}</Btn>
                   </div>
                 )}
               </div>
