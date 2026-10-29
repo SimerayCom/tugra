@@ -24018,6 +24018,10 @@ export interface operations {
                                 serverName: string | null;
                                 tags: string[];
                                 engine: string | null;
+                                /** Format: date-time */
+                                iconUpdatedAt: string | null;
+                                templateSlug: string | null;
+                                templateLogo: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -24111,6 +24115,10 @@ export interface operations {
                                 serverName: string | null;
                                 tags: string[];
                                 engine: string | null;
+                                /** Format: date-time */
+                                iconUpdatedAt: string | null;
+                                templateSlug: string | null;
+                                templateLogo: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -24351,6 +24359,10 @@ export interface operations {
                                 serverName: string | null;
                                 tags: string[];
                                 engine: string | null;
+                                /** Format: date-time */
+                                iconUpdatedAt: string | null;
+                                templateSlug: string | null;
+                                templateLogo: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -24454,6 +24466,10 @@ export interface operations {
                                 serverName: string | null;
                                 tags: string[];
                                 engine: string | null;
+                                /** Format: date-time */
+                                iconUpdatedAt: string | null;
+                                templateSlug: string | null;
+                                templateLogo: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
@@ -24630,6 +24646,10 @@ export interface operations {
                                 serverName: string | null;
                                 tags: string[];
                                 engine: string | null;
+                                /** Format: date-time */
+                                iconUpdatedAt: string | null;
+                                templateSlug: string | null;
+                                templateLogo: string | null;
                             }[];
                             /** Format: date-time */
                             createdAt: string;
