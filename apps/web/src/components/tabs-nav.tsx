@@ -20,6 +20,10 @@ export function Tabs({
         borderBottom: "1px solid var(--c-bd)",
         marginBottom: 20,
         overflowX: "auto",
+        // Only the tab strip scrolls horizontally when it overflows. Without pinning overflow-y, CSS
+        // promotes it from `visible` to `auto` (because overflow-x is set), and the buttons' -1px
+        // bottom margin then triggers a spurious vertical scrollbar.
+        overflowY: "hidden",
       }}
     >
       {tabs.map((tab) => {
