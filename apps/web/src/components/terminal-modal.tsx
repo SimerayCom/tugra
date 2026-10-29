@@ -27,6 +27,7 @@ export function TerminalModal({
   return (
     <Modal
       onClose={onClose}
+      ariaLabel={title}
       zIndex={9000}
       closeOnEsc={false}
       trapTab={false}

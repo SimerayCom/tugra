@@ -73,7 +73,7 @@ export function ExposeModal({
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} ariaLabel={t("apps.exposeTitle")}>
       <div style={{ fontWeight: 700, marginBottom: 10 }}>{t("apps.exposeTitle")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {MODES.map((m) => (

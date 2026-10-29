@@ -102,7 +102,7 @@ export function TileActionsSheet({
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} ariaLabel={tile.name}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
           <AppLogo iconUrl={appIconUrl(tile.id, tile.iconUpdatedAt)} templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={20} />

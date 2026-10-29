@@ -53,7 +53,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     <ConfirmContext.Provider value={confirm}>
       {children}
       {state && (
-        <Modal onClose={() => close(false)} zIndex={70}>
+        <Modal onClose={() => close(false)} zIndex={70} ariaLabel={opts?.title ?? t("common.confirmTitle")}>
           <div style={{ fontWeight: 700, marginBottom: opts?.body ? 8 : 14 }}>{opts?.title ?? t("common.confirmTitle")}</div>
           {opts?.body && <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px", lineHeight: 1.5 }}>{opts.body}</p>}
           {needsText && (

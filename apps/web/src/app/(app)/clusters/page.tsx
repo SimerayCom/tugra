@@ -70,7 +70,7 @@ function CreateClusterModal({ defaultTeamId, onClose }: { defaultTeamId: string 
   });
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} ariaLabel={t("clusters.new")}>
       <div style={{ fontWeight: 700, marginBottom: 12 }}>{t("clusters.new")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {teams.length > 1 && (

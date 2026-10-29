@@ -79,6 +79,7 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
       {logsFor && (
         <Modal
           onClose={() => setLogsFor(null)}
+          ariaLabel={t("servers.containerLogs")}
           zIndex={9000}
           backdropStyle={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", alignItems: "flex-start", paddingTop: "6vh" }}
           cardStyle={{ width: 820, maxWidth: "94vw", background: "var(--c-sb)", padding: 16 }}
@@ -90,6 +91,7 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
       {removeFor && (
         <Modal
           onClose={() => { setRemoveFor(null); setConfirmText(""); }}
+          ariaLabel={t("servers.containerRemoveTitle")}
           zIndex={9000}
           backdropStyle={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", alignItems: "flex-start", paddingTop: "12vh" }}
           cardStyle={{ width: 460, maxWidth: "92vw", background: "var(--c-sb)", padding: 20 }}

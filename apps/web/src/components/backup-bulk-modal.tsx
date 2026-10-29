@@ -43,6 +43,7 @@ export function BackupBulkModal({
 
   return (
     <Modal
+      ariaLabel={t("bulk.backupTitle", { n: selectedIds.length })}
       onClose={onClose}
       zIndex={9000}
       backdropStyle={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)", alignItems: "flex-start", paddingTop: "10vh" }}
