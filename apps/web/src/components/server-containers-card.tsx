@@ -154,14 +154,16 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>r{fmtBytes(row.blkRead)}/s w{fmtBytes(row.blkWrite)}/s</Td>
       {canWrite && (
         <Td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-          {row.kind !== "system" && (
-            <>
-              <Btn variant="ghost" icon={RotateCw} onClick={() => onAction("restart")} disabled={busy}>{t("servers.containerRestart")}</Btn>
-              <Btn variant="ghost" icon={Square} onClick={() => onAction("stop")} disabled={busy}>{t("servers.containerStop")}</Btn>
-            </>
-          )}
-          <Btn variant="ghost" icon={ScrollText} onClick={onLogs}>{t("servers.containerLogs")}</Btn>
-          {row.kind === "other" && <Btn variant="danger" icon={Trash2} onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
+          <div style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end" }}>
+            {row.kind !== "system" && (
+              <>
+                <Btn variant="ghost" icon={RotateCw} onClick={() => onAction("restart")} disabled={busy}>{t("servers.containerRestart")}</Btn>
+                <Btn variant="ghost" icon={Square} onClick={() => onAction("stop")} disabled={busy}>{t("servers.containerStop")}</Btn>
+              </>
+            )}
+            <Btn variant="ghost" icon={ScrollText} onClick={onLogs}>{t("servers.containerLogs")}</Btn>
+            {row.kind === "other" && <Btn variant="danger" icon={Trash2} onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
+          </div>
         </Td>
       )}
     </tr>
