@@ -46,7 +46,7 @@ export function PageHeader({
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         {icon && (
-          <span style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,0.06)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ width: 34, height: 34, borderRadius: 9, background: "var(--c-tile)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             {icon}
           </span>
         )}

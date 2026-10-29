@@ -96,7 +96,7 @@ export default function DestinationsPage() {
             <input type="checkbox" checked={encrypt} onChange={(e) => setEncrypt(e.target.checked)} />
             {t("destinations.encrypt")}
           </label>
-          <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
+          <button type="submit" disabled={create.isPending} style={{ ...field, background: "var(--c-a)", color: "var(--c-on-a)", fontWeight: 600, cursor: "pointer" }}>
             {create.isPending ? "…" : t("destinations.create")}
           </button>
         </form>

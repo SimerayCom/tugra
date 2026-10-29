@@ -198,7 +198,7 @@ function Wizard() {
 
   // Coolify-style "coolbox": logo square + name + 2-line description
   const logoBox: React.CSSProperties = {
-    width: 52, height: 52, borderRadius: 10, background: "rgba(255,255,255,0.06)",
+    width: 52, height: 52, borderRadius: 10, background: "var(--c-tile)",
     display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
     overflow: "hidden", padding: 8, boxSizing: "border-box",
   };
@@ -285,7 +285,7 @@ function Wizard() {
                         onClick={() => done && goto(n)}
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", padding: 0, cursor: done ? "pointer" : "default", fontFamily: "inherit", color: active || done ? "var(--c-a)" : "var(--c-tx3)", fontWeight: active ? 700 : 500, fontSize: 13 }}
                       >
-                        <span style={{ width: 20, height: 20, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, background: active || done ? "var(--c-a)" : "var(--c-el)", color: active || done ? "#0d0d11" : "var(--c-tx3)", border: "1px solid var(--c-bd)" }}>{n}</span>
+                        <span style={{ width: 20, height: 20, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, background: active || done ? "var(--c-a)" : "var(--c-el)", color: active || done ? "var(--c-on-a)" : "var(--c-tx3)", border: "1px solid var(--c-bd)" }}>{n}</span>
                         {label}
                       </button>
                       {n < 3 && <span style={{ width: 24, height: 1, background: "var(--c-bd)" }} />}

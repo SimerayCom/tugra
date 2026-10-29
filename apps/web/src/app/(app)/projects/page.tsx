@@ -76,7 +76,7 @@ export default function ProjectsPage() {
               {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
             </select>
           )}
-          <button type="submit" disabled={create.isPending || !target} style={{ ...field, background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, cursor: "pointer" }}>
+          <button type="submit" disabled={create.isPending || !target} style={{ ...field, background: "var(--c-a)", color: "var(--c-on-a)", fontWeight: 600, cursor: "pointer" }}>
             {create.isPending ? "…" : t("projects.create")}
           </button>
         </form>
@@ -99,7 +99,7 @@ export default function ProjectsPage() {
                 onClick={(e) => { if (!clickedInteractive(e)) router.push(`/projects/${p.id}`); }}
                 style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx)" }}
               >
-                <span style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <FolderTree size={18} color="var(--c-a)" />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>

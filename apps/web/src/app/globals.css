@@ -13,6 +13,8 @@
   --c-tx3: #8d8b93; /* muted — lightened to clear WCAG AA on bg */
   --c-a: #d4af6a; /* gold — the seal (brand kit) */
   --c-ad: rgba(212, 175, 106, 0.15);
+  --c-on-a: #0d0d11; /* text/icon placed ON a --c-a gold fill (gold is light here → dark text) */
+  --c-tile: rgba(255, 255, 255, 0.06); /* subtle icon-tile surface */
   --c-lapis: #5588f5; /* brand kit blue */
   --c-g: #34c759; /* brand kit green */
   --c-am: #f5a623; /* brand kit amber */
@@ -36,8 +38,10 @@
   --c-tx: #18181b;
   --c-tx2: #52525b;
   --c-tx3: #6e6e78; /* muted — neutral gray, clears WCAG AA on #fafafa */
-  --c-a: #9a7b1e; /* gold — the seal (brand), accent only */
-  --c-ad: rgba(154, 123, 30, 0.1);
+  --c-a: #7f6414; /* gold — darkened so it clears WCAG AA as TEXT on the light surface */
+  --c-ad: rgba(127, 100, 20, 0.1);
+  --c-on-a: #ffffff; /* text/icon on a gold fill (fill is dark-gold in light → white text) */
+  --c-tile: #f1f1f3; /* icon-tile surface (dark theme uses a translucent white wash) */
   /* Status/accent colors re-tuned for the light surface — the dark-theme values (green #34c759,
      amber #f5a623, red #ff4d4f, blue #5588f5) fail WCAG AA badly on white (2–3.4:1). These 600/700
      shades clear AA (≥4.5:1) both as text (pills, links, errors) and as fills with white text. */

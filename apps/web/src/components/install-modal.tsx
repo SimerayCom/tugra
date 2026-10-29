@@ -245,7 +245,7 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
 // <button> inside an <a> (invalid). Mirrors Btn's primary look.
 const openLinkBtn: React.CSSProperties = {
   fontFamily: "inherit", fontSize: 13, fontWeight: 600, padding: "8px 14px", borderRadius: "var(--r1)",
-  border: "1px solid transparent", background: "var(--c-a)", color: "#0d0d11", textDecoration: "none",
+  border: "1px solid transparent", background: "var(--c-a)", color: "var(--c-on-a)", textDecoration: "none",
   display: "inline-flex", alignItems: "center", gap: 6,
 };
 const POLL_CAP_MS = 10 * 60_000; // give a slow deploy up to ~10 min before showing a "taking longer" fallback

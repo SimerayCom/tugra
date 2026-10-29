@@ -87,7 +87,7 @@ export function AppFilesCard({ id, volumes }: { id: string; volumes: AppVolume[]
                 cursor: "pointer",
                 border: "1px solid var(--c-bd)",
                 background: v.name === volume ? "var(--c-a)" : "var(--c-el)",
-                color: v.name === volume ? "#0d0d11" : "var(--c-tx)",
+                color: v.name === volume ? "var(--c-on-a)" : "var(--c-tx)",
                 maxWidth: "100%",
                 overflow: "hidden",
                 textOverflow: "ellipsis",

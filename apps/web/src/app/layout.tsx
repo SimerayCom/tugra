@@ -18,6 +18,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <body>
+        {/* Apply the saved theme synchronously, before paint, so a light-mode user doesn't get a dark
+            flash on every load (the server can only render a fixed default). Matches useTheme()'s key. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('tugra.theme')||'dark';document.documentElement.setAttribute('data-theme',t)}catch(e){}",
+          }}
+        />
         <Providers>{children}</Providers>
       </body>
     </html>
