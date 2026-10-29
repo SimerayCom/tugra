@@ -271,8 +271,11 @@ export default function AppDetailPage() {
   const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
   const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
   const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
+  // Read at mutate() time (a stable ref, not a captured state value) so the keep-volumes choice the user
+  // ticked in the confirm dialog isn't lost to a stale closure inside the async handler.
+  const keepVolumes = useRef(false);
   const del = useMutation({
-    mutationFn: () => api.deleteApp(id),
+    mutationFn: () => api.deleteApp(id, keepVolumes.current),
     onSuccess: () => router.replace("/apps"),
     onError: (e) => toast(errMsg(e), "error"),
   });
@@ -487,7 +490,7 @@ export default function AppDetailPage() {
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); keepVolumes.current = false; if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: { label: t("apps.keepVolumes"), ref: keepVolumes } })) del.mutate(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>

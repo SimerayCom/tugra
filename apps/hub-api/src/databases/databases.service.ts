@@ -313,7 +313,7 @@ export class DatabasesService {
     await this.audit.log({ actor: userId, action: "database.stop", target: id });
   }
 
-  async remove(userId: string, id: string): Promise<void> {
+  async remove(userId: string, id: string, opts: { keepVolume?: boolean } = {}): Promise<void> {
     const db = await this.requireWrite(userId, id);
     // Refuse while apps still link this database — deleting it would break their injected connection
     // URIs. Name the apps so the user knows what to unlink first (the DB-level FK is NO ACTION as a
@@ -323,9 +323,9 @@ export class DatabasesService {
       const names = links.map((l) => l.app?.name ?? l.appId);
       throw new ConflictException(`unlink this database from ${names.join(", ")} before deleting it`);
     }
-    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript(db), "database").catch(() => undefined);
+    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript(db, opts), "database").catch(() => undefined);
     await this.prisma.database.delete({ where: { id } });
-    await this.audit.log({ actor: userId, action: "database.remove", target: id });
+    await this.audit.log({ actor: userId, action: "database.remove", target: id, meta: { keepVolume: !!opts.keepVolume } });
   }
 
   /**

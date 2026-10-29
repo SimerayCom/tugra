@@ -1436,16 +1436,18 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.restart", target: id });
   }
 
-  async remove(userId: string, id: string): Promise<void> {
+  async remove(userId: string, id: string, opts: { keepVolumes?: boolean } = {}): Promise<void> {
     const app = await this.requireWrite(userId, id);
     if (app.clusterId) {
       // Swarm: remove the service cluster-wide (Swarm tears down every task on every node).
       await this.swarmDeploy.remove(app).catch(() => undefined);
     } else {
+      // keepVolumes: leave the app's named volumes / compose volumes on the host (the user opted to keep
+      // their data). Default removes them — deleting an app frees its disk, as before.
       const cmd =
         app.source === "COMPOSE"
-          ? buildComposeDownScript(this.toSpec(app), { volumes: true })
-          : buildRemoveScript(app, this.appVolumes(app));
+          ? buildComposeDownScript(this.toSpec(app), { volumes: !opts.keepVolumes })
+          : buildRemoveScript(app, opts.keepVolumes ? [] : this.appVolumes(app));
       await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
     }
     await this.monitors.removeForApp(id).catch(() => undefined);

@@ -1028,8 +1028,8 @@ export const api = {
   restartApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/restart`, { method: "POST" });
   },
-  deleteApp(id: string) {
-    return apiFetch<{ ok: true }>(`/apps/${id}`, { method: "DELETE" });
+  deleteApp(id: string, keepVolumes = false) {
+    return apiFetch<{ ok: true }>(`/apps/${id}${keepVolumes ? "?keepVolumes=1" : ""}`, { method: "DELETE" });
   },
   getDeployments(id: string) {
     return apiFetch<Deployment[]>(`/apps/${id}/deployments`);
@@ -1307,8 +1307,8 @@ export const api = {
   stopDatabase(id: string) {
     return apiFetch<{ ok: true }>(`/databases/${id}/stop`, { method: "POST" });
   },
-  deleteDatabase(id: string) {
-    return apiFetch<{ ok: true }>(`/databases/${id}`, { method: "DELETE" });
+  deleteDatabase(id: string, keepVolume = false) {
+    return apiFetch<{ ok: true }>(`/databases/${id}${keepVolume ? "?keepVolume=1" : ""}`, { method: "DELETE" });
   },
 
   // ── database backups ──

@@ -126,10 +126,16 @@ describe("database-script", () => {
   });
 
   describe("buildDbRemoveScript", () => {
-    it("removes the container and its volume (data dropped)", () => {
+    it("removes the container and its volume (data dropped) by default", () => {
       const s = buildDbRemoveScript({ id: "db1" });
       expect(s).toContain("docker rm -f tugra_db_db1");
       expect(s).toContain("docker volume rm tugra_dbv_db1");
+    });
+
+    it("keeps the data volume when keepVolume is set (only the container is removed)", () => {
+      const s = buildDbRemoveScript({ id: "db1" }, { keepVolume: true });
+      expect(s).toContain("docker rm -f tugra_db_db1");
+      expect(s).not.toContain("docker volume rm");
     });
   });
 

@@ -10449,6 +10449,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "keepVolumes",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -22575,6 +22583,14 @@
             "name": "id",
             "required": true,
             "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keepVolume",
+            "required": true,
+            "in": "query",
             "schema": {
               "type": "string"
             }

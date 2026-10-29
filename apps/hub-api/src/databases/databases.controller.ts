@@ -216,8 +216,8 @@ export class DatabasesController {
 
   @Delete(":id")
   @HttpCode(200)
-  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    await this.databases.remove(user.userId, id);
+  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("keepVolume") keepVolume?: string) {
+    await this.databases.remove(user.userId, id, { keepVolume: keepVolume === "1" });
     return { ok: true };
   }
 }

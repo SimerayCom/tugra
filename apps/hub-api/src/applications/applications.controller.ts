@@ -746,8 +746,8 @@ export class ApplicationsController {
 
   @Delete(":id")
   @HttpCode(200)
-  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    await this.apps.remove(user.userId, id);
+  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("keepVolumes") keepVolumes?: string) {
+    await this.apps.remove(user.userId, id, { keepVolumes: keepVolumes === "1" });
     return { ok: true };
   }
 }

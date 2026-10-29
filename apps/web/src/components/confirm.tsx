@@ -17,6 +17,13 @@ export interface ConfirmOptions {
    * (e.g. the resource name). A typed-name guard for irreversible, data-destroying actions.
    */
   confirmText?: string;
+  /**
+   * Optional extra opt-in (e.g. "Keep volumes"). The dialog renders a checkbox and writes its state to
+   * `ref.current`, so the caller reads the choice from the ref after `confirm()` resolves (a stable ref
+   * avoids the stale-closure a captured state value would hit inside the async handler). The confirm
+   * return stays a plain boolean, so existing callers are unaffected.
+   */
+  checkbox?: { label: string; ref: { current: boolean } };
 }
 
 type ConfirmFn = (opts?: ConfirmOptions) => Promise<boolean>;
@@ -34,9 +41,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const t = useT();
   const [state, setState] = useState<{ opts: ConfirmOptions; resolve: (v: boolean) => void } | null>(null);
   const [typed, setTyped] = useState("");
+  const [checked, setChecked] = useState(false);
 
   const confirm = useCallback<ConfirmFn>((opts = {}) => {
     setTyped("");
+    setChecked(opts.checkbox?.ref.current ?? false);
     return new Promise<boolean>((resolve) => setState({ opts, resolve }));
   }, []);
 
@@ -72,6 +81,17 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 spellCheck={false}
                 style={fieldStyle}
               />
+            </label>
+          )}
+          {opts?.checkbox && (
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 14, fontSize: 13, color: "var(--c-tx2)", cursor: "pointer", lineHeight: 1.5 }}>
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => { setChecked(e.target.checked); opts.checkbox!.ref.current = e.target.checked; }}
+                style={{ marginTop: 2, accentColor: "var(--c-a)", flexShrink: 0 }}
+              />
+              <span>{opts.checkbox.label}</span>
             </label>
           )}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
