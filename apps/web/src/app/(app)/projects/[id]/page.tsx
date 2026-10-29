@@ -5,10 +5,11 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Database, Layers, Plus, Pencil, type LucideIcon } from "lucide-react";
-import { api } from "../../../../lib/api";
+import { api, appIconUrl } from "../../../../lib/api";
 import { ErrorState } from "../../../../components/error-state";
 import { RenameModal } from "../../../../components/rename-modal";
-import type { AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
+import { AppLogo } from "../../../../components/app-logo";
+import type { AppSource, AppStatus, DbStatus, Environment, ProjectResource } from "../../../../lib/types";
 import { appColor } from "../../../../lib/apps";
 import { dbColor } from "../../../../lib/databases";
 import { TemplateLogo, ENGINE_LOGO } from "../../../../lib/template-icons";
@@ -228,7 +229,10 @@ function ResourceGroup({ title, items, icon: Icon }: { title: string; items: Pro
               style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--c-tx)", textDecoration: "none", padding: "10px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)" }}
             >
               <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                {r.kind === "database" && r.engine && ENGINE_LOGO[r.engine] ? (
+                {r.kind === "app" ? (
+                  // Same icon as the app list/detail: custom upload → catalog brand logo → source icon.
+                  <AppLogo iconUrl={appIconUrl(r.id, r.iconUpdatedAt)} templateSlug={r.templateSlug} templateLogo={r.templateLogo} source={(r.source ?? "IMAGE") as AppSource} name={r.name} size={22} />
+                ) : r.engine && ENGINE_LOGO[r.engine] ? (
                   <TemplateLogo logo={ENGINE_LOGO[r.engine]} slug={r.engine} name={r.engine} size={22} />
                 ) : (
                   <Icon size={18} color="var(--c-a)" />

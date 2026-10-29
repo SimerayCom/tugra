@@ -4,8 +4,11 @@ import { ProjectsService } from "./projects.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
+import { TemplateCatalogService } from "../catalog/template-catalog.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
+// Catalog is only consulted to resolve an app's template logo; default to "no template known".
+const catalog = { get: jest.fn().mockReturnValue(undefined) } as unknown as TemplateCatalogService;
 
 // OWNER/ADMIN hold every granular permission; VIEWER holds none.
 const ALL_PERMS = [
@@ -25,7 +28,7 @@ function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
 }
 
 function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new ProjectsService(prisma as PrismaService, accessWith(access), audit);
+  return new ProjectsService(prisma as PrismaService, accessWith(access), audit, catalog);
 }
 
 describe("ProjectsService", () => {

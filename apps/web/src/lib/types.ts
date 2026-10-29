@@ -884,6 +884,9 @@ export interface ProjectResource {
   serverName: string | null;
   tags: string[];
   engine: string | null;
+  iconUpdatedAt: string | null;
+  templateSlug: string | null;
+  templateLogo: string | null;
 }
 
 export interface Environment {

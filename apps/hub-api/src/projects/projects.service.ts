@@ -11,6 +11,7 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessProject } from "../common/team-access.service";
 import { appUrl } from "../common/app-url";
 import { filterByQuery } from "../common/query-filter";
+import { TemplateCatalogService } from "../catalog/template-catalog.service";
 
 export const ProjectResourceSchema = z.object({
   id: z.string(),
@@ -22,6 +23,11 @@ export const ProjectResourceSchema = z.object({
   serverName: z.string().nullable(),
   tags: z.array(z.string()),
   engine: z.string().nullable(),
+  // App icon inputs so the resource list shows the SAME icon as the app list/detail (AppLogo's single source
+  // of truth): a custom upload (iconUpdatedAt → icon endpoint), else the catalog brand logo, else source icon.
+  iconUpdatedAt: z.date().nullable(),
+  templateSlug: z.string().nullable(),
+  templateLogo: z.string().nullable(), // catalog logo filename resolved from templateSlug (null for databases)
 });
 export type ProjectResource = z.infer<typeof ProjectResourceSchema>;
 
@@ -54,6 +60,7 @@ export class ProjectsService {
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
+    private readonly catalog: TemplateCatalogService,
   ) {}
 
   async list(userId: string, q?: string): Promise<ProjectView[]> {
@@ -115,7 +122,7 @@ export class ProjectsService {
     const [apps, dbs] = await Promise.all([
       this.prisma.application.findMany({
         where: { environmentId: { in: envIds } },
-        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, hostPort: true, tags: true, serverId: true },
+        select: { id: true, name: true, status: true, environmentId: true, source: true, domain: true, https: true, hostPort: true, tags: true, serverId: true, iconUpdatedAt: true, templateSlug: true },
       }),
       this.prisma.database.findMany({
         where: { environmentId: { in: envIds } },
@@ -146,6 +153,10 @@ export class ProjectsService {
             serverName: serverName.get(a.serverId) ?? null,
             tags: a.tags,
             engine: null,
+            iconUpdatedAt: a.iconUpdatedAt,
+            templateSlug: a.templateSlug,
+            // Resolve the catalog logo exactly like applications.service, so the icon matches the app view.
+            templateLogo: a.templateSlug ? (this.catalog.get(a.templateSlug)?.logo ?? a.templateSlug) : null,
           })),
           ...dbs.filter((d) => d.environmentId === e.id).map((d) => ({
             id: d.id, name: d.name, kind: "database" as const, source: null, status: d.status,
@@ -153,6 +164,9 @@ export class ProjectsService {
             serverName: serverName.get(d.serverId) ?? null,
             tags: d.tags,
             engine: d.engine,
+            iconUpdatedAt: null,
+            templateSlug: null,
+            templateLogo: null,
           })),
         ];
         return {

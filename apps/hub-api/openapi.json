@@ -32910,6 +32910,19 @@
                                   "engine": {
                                     "type": "string",
                                     "nullable": true
+                                  },
+                                  "iconUpdatedAt": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "nullable": true
+                                  },
+                                  "templateSlug": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "templateLogo": {
+                                    "type": "string",
+                                    "nullable": true
                                   }
                                 },
                                 "required": [
@@ -32921,7 +32934,10 @@
                                   "url",
                                   "serverName",
                                   "tags",
-                                  "engine"
+                                  "engine",
+                                  "iconUpdatedAt",
+                                  "templateSlug",
+                                  "templateLogo"
                                 ],
                                 "additionalProperties": false
                               }
@@ -33135,6 +33151,19 @@
                                 "engine": {
                                   "type": "string",
                                   "nullable": true
+                                },
+                                "iconUpdatedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "templateSlug": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "templateLogo": {
+                                  "type": "string",
+                                  "nullable": true
                                 }
                               },
                               "required": [
@@ -33146,7 +33175,10 @@
                                 "url",
                                 "serverName",
                                 "tags",
-                                "engine"
+                                "engine",
+                                "iconUpdatedAt",
+                                "templateSlug",
+                                "templateLogo"
                               ],
                               "additionalProperties": false
                             }
@@ -33539,6 +33571,19 @@
                                 "engine": {
                                   "type": "string",
                                   "nullable": true
+                                },
+                                "iconUpdatedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "templateSlug": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "templateLogo": {
+                                  "type": "string",
+                                  "nullable": true
                                 }
                               },
                               "required": [
@@ -33550,7 +33595,10 @@
                                 "url",
                                 "serverName",
                                 "tags",
-                                "engine"
+                                "engine",
+                                "iconUpdatedAt",
+                                "templateSlug",
+                                "templateLogo"
                               ],
                               "additionalProperties": false
                             }
@@ -33777,6 +33825,19 @@
                                 "engine": {
                                   "type": "string",
                                   "nullable": true
+                                },
+                                "iconUpdatedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "templateSlug": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "templateLogo": {
+                                  "type": "string",
+                                  "nullable": true
                                 }
                               },
                               "required": [
@@ -33788,7 +33849,10 @@
                                 "url",
                                 "serverName",
                                 "tags",
-                                "engine"
+                                "engine",
+                                "iconUpdatedAt",
+                                "templateSlug",
+                                "templateLogo"
                               ],
                               "additionalProperties": false
                             }
@@ -34103,6 +34167,19 @@
                                 "engine": {
                                   "type": "string",
                                   "nullable": true
+                                },
+                                "iconUpdatedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "templateSlug": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "templateLogo": {
+                                  "type": "string",
+                                  "nullable": true
                                 }
                               },
                               "required": [
@@ -34114,7 +34191,10 @@
                                 "url",
                                 "serverName",
                                 "tags",
-                                "engine"
+                                "engine",
+                                "iconUpdatedAt",
+                                "templateSlug",
+                                "templateLogo"
                               ],
                               "additionalProperties": false
                             }
