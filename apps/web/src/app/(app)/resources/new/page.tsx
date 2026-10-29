@@ -99,6 +99,7 @@ function Wizard() {
   const [outputDir, setOutputDir] = useState("");
   const [composeFile, setComposeFile] = useState("");
   const [hostPort, setHostPort] = useState("");
+  const [containerPort, setContainerPort] = useState("");
   const [domain, setDomain] = useState("");
   const [version, setVersion] = useState("");
   const [gitSourceId, setGitSourceId] = useState("");
@@ -182,6 +183,7 @@ function Wizard() {
         buildCommand: buildType === "STATIC" ? buildCommand || undefined : undefined,
         outputDir: buildType === "STATIC" ? outputDir || undefined : undefined,
         hostPort: hostPort ? Number(hostPort) : undefined,
+        containerPort: containerPort ? Number(containerPort) : undefined,
         domain: domain || undefined,
         environmentId,
         deploy,
@@ -491,6 +493,9 @@ function Wizard() {
                     <>
                       <Field label={t("apps.hostPort")}>
                         <TextInput type="number" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
+                      </Field>
+                      <Field label={t("apps.containerPort")} hint={t("apps.containerPortHint")}>
+                        <TextInput type="number" value={containerPort} onChange={(e) => setContainerPort(e.target.value)} placeholder="80" aria-label={t("apps.containerPort")} />
                       </Field>
                       <Field label={t("apps.domain")}>
                         <TextInput value={domain} onChange={(e) => setDomain(e.target.value)} />
