@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { TriangleAlert, RefreshCw, LayoutDashboard, Activity, Boxes, PackageCheck, Waypoints, Wrench, Terminal, Plus, Play, RotateCw, Square, ScrollText } from "lucide-react";
+import { TriangleAlert, RefreshCw, LayoutDashboard, Activity, Boxes, PackageCheck, Waypoints, Wrench, Terminal, Plus, Play, RotateCw, Square, ScrollText, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
 import { fieldStyle } from "../../../../components/form";
 import { TerminalModal } from "../../../../components/terminal-modal";
+import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
@@ -59,6 +60,15 @@ export default function ServerDetailPage() {
     refetchInterval: live ? 30000 : false, // live: slow heal/fallback (SSE below); history: static
   });
   const [shellOpen, setShellOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const rename = useMutation({
+    mutationFn: (name: string) => api.renameServer(id, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["server", id] });
+      qc.invalidateQueries({ queryKey: ["servers"] });
+      setRenaming(false);
+    },
+  });
   const tabDefs = [
     { key: "overview", label: t("servers.tabOverview"), icon: LayoutDashboard },
     { key: "monitoring", label: t("servers.tabMonitoring"), icon: Activity },
@@ -104,6 +114,7 @@ export default function ServerDetailPage() {
           <>
             <Link href={`/resources/new?server=${id}`}><Btn icon={Plus}>{t("servers.addResource")}</Btn></Link>
             <Btn icon={Terminal} variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
+            <Btn icon={Pencil} variant="ghost" onClick={() => setRenaming(true)}>{t("servers.rename")}</Btn>
           </>
         ) : undefined}
       >
@@ -210,6 +221,15 @@ export default function ServerDetailPage() {
       </>
       )}
 
+      {renaming && (
+        <RenameModal
+          current={server.name}
+          title={t("servers.rename")}
+          onClose={() => setRenaming(false)}
+          onSave={(n) => rename.mutate(n)}
+          pending={rename.isPending}
+        />
+      )}
       {shellOpen && (
         <TerminalModal
           target={{ server: id }}
