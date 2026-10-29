@@ -154,6 +154,9 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
 
   return (
     <aside
+      // When the mobile drawer is slid off-screen it is still in the tab order and the a11y tree;
+      // `inert` takes its links/buttons out of both until it is opened.
+      {...(mobile && !open ? { inert: true } : {})}
       style={{
         width: col ? 56 : 232,
         flexShrink: 0,
@@ -260,13 +263,24 @@ function NewMenu() {
   const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const h = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        btnRef.current?.focus();
+      }
+    };
     document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", h);
+      document.removeEventListener("keydown", key);
+    };
   }, [open]);
 
   const items = [
@@ -278,17 +292,21 @@ function NewMenu() {
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
+        ref={btnRef}
         onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
         style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--c-a)", color: "var(--c-on-a)", fontWeight: 600, fontSize: 13, padding: "6px 12px", borderRadius: "var(--r1)", border: "none", cursor: "pointer", fontFamily: "inherit" }}
       >
-        <Plus size={15} /> {t("nav.new")}
+        <Plus size={15} aria-hidden /> {t("nav.new")}
       </button>
       {open && (
-        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, minWidth: 180, background: "var(--c-sb)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", boxShadow: "0 8px 24px rgba(0,0,0,0.3)", padding: 6, zIndex: 50 }}>
+        <div role="menu" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, minWidth: 180, background: "var(--c-sb)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", boxShadow: "0 8px 24px rgba(0,0,0,0.3)", padding: 6, zIndex: 50 }}>
           {items.map((it) => (
             <Link
               key={it.href}
               href={it.href}
+              role="menuitem"
               onClick={() => setOpen(false)}
               style={{ display: "block", padding: "8px 10px", borderRadius: "var(--r1)", fontSize: 13, color: "var(--c-tx)", textDecoration: "none" }}
             >
@@ -310,7 +328,7 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
   return (
     <header style={{ height: 52, flexShrink: 0, borderBottom: "1px solid var(--c-bd)", display: "flex", alignItems: "center", gap: 14, padding: "0 18px", background: "var(--c-bg)" }}>
       {showMenu && (
-        <button onClick={onMenu} title={t("nav.menu")} aria-label={t("nav.menu")} style={{ display: "flex", alignItems: "center", background: "transparent", border: "none", padding: 4, cursor: "pointer", color: "var(--c-tx2)", marginLeft: -4 }}>
+        <button onClick={onMenu} title={t("nav.menu")} aria-label={t("nav.menu")} style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 44, minHeight: 44, background: "transparent", border: "none", padding: 4, cursor: "pointer", color: "var(--c-tx2)", marginLeft: -8 }}>
           <Menu size={20} />
         </button>
       )}
