@@ -10,7 +10,7 @@ import type { ContainerInventoryRow } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, Spinner, Badge, Btn } from "./ui";
 import { MeterBar } from "./meter-bar";
-import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, type LucideIcon } from "lucide-react";
+import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, RotateCw, Square, ScrollText, Trash2, type LucideIcon } from "lucide-react";
 import { Modal } from "./modal";
 import { LiveLogsCard } from "./live-logs-card";
 import { useToast } from "./toast";
@@ -156,12 +156,12 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
         <Td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
           {row.kind !== "system" && (
             <>
-              <Btn variant="ghost" onClick={() => onAction("restart")} disabled={busy}>{t("servers.containerRestart")}</Btn>
-              <Btn variant="ghost" onClick={() => onAction("stop")} disabled={busy}>{t("servers.containerStop")}</Btn>
+              <Btn variant="ghost" icon={RotateCw} onClick={() => onAction("restart")} disabled={busy}>{t("servers.containerRestart")}</Btn>
+              <Btn variant="ghost" icon={Square} onClick={() => onAction("stop")} disabled={busy}>{t("servers.containerStop")}</Btn>
             </>
           )}
-          <Btn variant="ghost" onClick={onLogs}>{t("servers.containerLogs")}</Btn>
-          {row.kind === "other" && <Btn variant="danger" onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
+          <Btn variant="ghost" icon={ScrollText} onClick={onLogs}>{t("servers.containerLogs")}</Btn>
+          {row.kind === "other" && <Btn variant="danger" icon={Trash2} onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
         </Td>
       )}
     </tr>
