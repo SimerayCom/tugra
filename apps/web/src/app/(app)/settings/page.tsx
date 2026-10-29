@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Home, Server } from "lucide-react";
+import { Home, Server, User, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
@@ -22,22 +22,23 @@ import { CopyBtn } from "../../../components/copy-row";
 import { useConfirm } from "../../../components/confirm";
 import { useToast } from "../../../components/toast";
 import { Modal } from "../../../components/modal";
+import { Tabs } from "../../../components/tabs-nav";
+import { useTabState } from "../../../hooks/useTabState";
 
-/** A labelled settings section: an uppercase heading + an optional hint + a responsive card grid. The grid
- *  is 1 column on phones and flows to 2+ columns on wider screens (min(100%,…) keeps a card from overflowing
- *  a narrow viewport); `align-items:start` stops a tall card from stretching its shorter row-mate. */
-function SettingsSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+/** A settings tab panel: an optional hint + a responsive card grid. The tab strip supplies the heading, so
+ *  the panel carries no title of its own. The grid is 1 column on phones and flows to 2+ columns on wider
+ *  screens (min(100%,…) keeps a card from overflowing a narrow viewport); `align-items:start` stops a tall
+ *  card from stretching its shorter row-mate. */
+function SettingsGrid({ hint, children }: { hint?: string; children: React.ReactNode }) {
   return (
-    <section style={{ marginTop: 28 }}>
-      <h2 style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--c-tx3)", margin: "0 0 4px" }}>{title}</h2>
-      {hint && <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", maxWidth: 560 }}>{hint}</p>}
+    <section>
+      {hint && <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 16px", maxWidth: 560 }}>{hint}</p>}
       <div
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))",
           gap: 16,
           alignItems: "start",
-          marginTop: hint ? 0 : 12,
         }}
       >
         {children}
@@ -57,25 +58,40 @@ export default function SettingsPage() {
   const isOwner = !!user?.isInstanceOwner;
   const isHome = user?.uiMode === "home"; // Home mode hides fleet-only shortcuts (e.g. the notifications link)
 
+  // The instance tab is owner-only; a non-owner deep-linking ?tab=instance falls back to "account"
+  // (resolveTab drops a key that isn't in the live list), and once `user` loads it self-corrects.
+  const tabs = [
+    { key: "account", label: t("settings.sectionAccount"), icon: User },
+    { key: "security", label: t("settings.sectionSecurity"), icon: ShieldCheck },
+    ...(isOwner ? [{ key: "instance", label: t("settings.sectionInstance"), icon: SlidersHorizontal }] : []),
+  ];
+  const [tab, setTab] = useTabState("account", tabs.map((x) => x.key));
+
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 4px" }}>{t("settings.title")}</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 20px" }}>{t("settings.title")}</h1>
 
-      <SettingsSection title={t("settings.sectionAccount")}>
-        <AccountCard />
-        <UiModeCard />
-      </SettingsSection>
+      <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
-      <SettingsSection title={t("settings.sectionSecurity")}>
-        <PasswordCard />
-        <TwoFactorCard />
-        <SessionsCard />
-        {!isHome && <ChannelsCard />}
-        <Wide><ApiTokensCard /></Wide>
-      </SettingsSection>
+      {tab === "account" && (
+        <SettingsGrid>
+          <AccountCard />
+          <UiModeCard />
+        </SettingsGrid>
+      )}
 
-      {isOwner && (
-        <SettingsSection title={t("settings.sectionInstance")} hint={t("settings.sectionInstanceHint")}>
+      {tab === "security" && (
+        <SettingsGrid>
+          <PasswordCard />
+          <TwoFactorCard />
+          <SessionsCard />
+          {!isHome && <ChannelsCard />}
+          <Wide><ApiTokensCard /></Wide>
+        </SettingsGrid>
+      )}
+
+      {tab === "instance" && isOwner && (
+        <SettingsGrid hint={t("settings.sectionInstanceHint")}>
           <LicenseCard />
           <PanelTlsCard />
           <BrandingCard />
@@ -83,7 +99,7 @@ export default function SettingsPage() {
           <UpdatesCard />
           <TelemetryCard />
           <Wide><SsoConfigCard /></Wide>
-        </SettingsSection>
+        </SettingsGrid>
       )}
     </div>
   );
