@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, FolderOpen, Globe, Pin, PinOff, Play, RefreshCw, RotateCw, ScrollText, Square, Trash2, type LucideIcon } from "lucide-react";
-import { api } from "../lib/api";
+import { api, appIconUrl } from "../lib/api";
 import { tileActions, type LauncherTile, type TileAction } from "../lib/launcher";
 import { useT } from "../i18n/provider";
 import { Modal } from "./modal";
@@ -105,7 +105,7 @@ export function TileActionsSheet({
     <Modal onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-          <AppLogo templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={20} />
+          <AppLogo iconUrl={appIconUrl(tile.id, tile.iconUpdatedAt)} templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={20} />
         </span>
         <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tile.name}</div>
       </div>

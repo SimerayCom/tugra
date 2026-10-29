@@ -990,6 +990,8 @@ export interface Application {
   name: string;
   templateSlug: string | null;
   templateLogo: string | null;
+  // ISO timestamp when a custom icon was last uploaded (null = no custom icon); cache-busts the icon URL.
+  iconUpdatedAt: string | null;
   source: AppSource;
   image: string | null;
   gitUrl: string | null;

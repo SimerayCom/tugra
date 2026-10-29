@@ -199,6 +199,9 @@ export const AppViewSchema = z.object({
   volumeBackupDestinationId: z.string().nullable(),
   envCount: z.number(),
   canWrite: z.boolean(),
+  // Set when the app has a user-uploaded custom icon; also cache-busts the GET /apps/:id/icon URL. Null
+  // means "no custom icon" (fall back to the template/source logo). Bytes are never carried in this view.
+  iconUpdatedAt: z.date().nullable(),
   createdAt: z.date(),
 });
 export type AppView = z.infer<typeof AppViewSchema>;
@@ -2507,6 +2510,70 @@ export class ApplicationsService {
     return app;
   }
 
+  // --- Custom app icon (user-uploaded PNG, stored inline in Postgres) ---------------------------------
+  // The icon is served to <img> tags from our own origin, so the upload is validated strictly: a real PNG
+  // (8-byte signature + a well-formed IHDR), square, 32-512px a side, and at most 64KB decoded. A file that
+  // passes those checks cannot be content-sniffed into HTML/SVG/script, which — together with the fixed
+  // image/png Content-Type + nosniff the GET endpoint sends — stops a hostile upload from ever executing in
+  // the panel's origin. Kept small by design (the browser crops to a 128x128 PNG before upload).
+  static readonly ICON_MAX_BYTES = 64 * 1024;
+
+  private validatePngIcon(buf: Buffer): void {
+    if (buf.length > ApplicationsService.ICON_MAX_BYTES) throw new BadRequestException("icon too large (max 64KB)");
+    // Need at least the 8-byte signature + 25-byte IHDR + 12-byte IEND to be a structurally complete PNG.
+    if (buf.length < 45) throw new BadRequestException("icon is not a valid PNG");
+    const SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (!buf.subarray(0, 8).equals(SIG)) throw new BadRequestException("icon must be a PNG");
+    // The first chunk must be IHDR with the canonical 13-byte body (length at 8-11, type "IHDR" at 12-15).
+    if (buf.readUInt32BE(8) !== 13 || buf.toString("ascii", 12, 16) !== "IHDR") {
+      throw new BadRequestException("icon is not a valid PNG");
+    }
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    if (width !== height) throw new BadRequestException("icon must be square");
+    if (width < 32 || width > 512) throw new BadRequestException("icon must be 32-512px square");
+    // Must end with the canonical 12-byte IEND chunk (empty data → fixed CRC 0xAE426082). This rejects a
+    // header-only, truncated or garbage-tailed upload — which no browser could decode — rather than storing
+    // it as a broken image. It is not a full PNG decode, but it bounds a direct-API caller to complete files.
+    const IEND = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+    if (!buf.subarray(buf.length - 12).equals(IEND)) throw new BadRequestException("icon is not a valid PNG");
+  }
+
+  /** Raw icon bytes for the GET endpoint (read-authorized). 404 when the app has no custom icon. */
+  async getIcon(userId: string, id: string): Promise<{ mime: string; data: Buffer }> {
+    await this.require(userId, id);
+    const icon = await this.prisma.appIcon.findUnique({ where: { appId: id } });
+    if (!icon) throw new NotFoundException("no icon");
+    return { mime: icon.mime, data: Buffer.from(icon.data) };
+  }
+
+  /** Store (or replace) the app's custom icon from a base64-encoded PNG. Write-authorized + strictly validated. */
+  async setIcon(userId: string, id: string, pngBase64: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const buf = Buffer.from(pngBase64, "base64"); // tolerant decode; the PNG check below is the real gate
+    if (buf.length === 0) throw new BadRequestException("icon is empty");
+    this.validatePngIcon(buf);
+    await this.prisma.$transaction([
+      this.prisma.appIcon.upsert({
+        where: { appId: id },
+        create: { appId: id, mime: "image/png", data: buf, sizeBytes: buf.length },
+        update: { mime: "image/png", data: buf, sizeBytes: buf.length },
+      }),
+      this.prisma.application.update({ where: { id }, data: { iconUpdatedAt: new Date() } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "app.icon.set", target: app.id, meta: { sizeBytes: buf.length } });
+  }
+
+  /** Remove the app's custom icon (idempotent — a no-op when none is set). Write-authorized. */
+  async deleteIcon(userId: string, id: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    await this.prisma.$transaction([
+      this.prisma.appIcon.deleteMany({ where: { appId: id } }), // deleteMany: removing a missing icon is a no-op, not a 404
+      this.prisma.application.update({ where: { id }, data: { iconUpdatedAt: null } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "app.icon.delete", target: app.id });
+  }
+
   // Deploy-family callers pass "apps:deploy"; config/CRUD callers use the default "apps:config".
   private async requireWrite(
     userId: string,
@@ -2631,6 +2698,7 @@ export class ApplicationsService {
       zeroDowntime: app.source !== "COMPOSE" && this.rollingEligible(app),
       templateSlug: app.templateSlug,
       templateLogo: app.templateSlug ? (this.catalog.get(app.templateSlug)?.logo ?? app.templateSlug) : null,
+      iconUpdatedAt: app.iconUpdatedAt,
       environmentId: app.environmentId,
       projectId: ctx?.projectId ?? null,
       projectName: ctx?.projectName ?? null,

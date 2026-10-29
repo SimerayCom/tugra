@@ -11,6 +11,7 @@ import {
   Put,
   Query,
   Sse,
+  StreamableFile,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
@@ -43,6 +44,8 @@ import {
   PreviewConfigSchema,
   RenameInput,
   RenameSchema,
+  SetIconInput,
+  SetIconSchema,
   SetBuildArgsInput,
   SetBuildArgsSchema,
   SetComposeFileInput,
@@ -344,6 +347,40 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(RenameSchema)) body: RenameInput,
   ) {
     await this.apps.rename(user.userId, id, body.name);
+    return { ok: true };
+  }
+
+  /**
+   * The app's custom icon as a raw PNG for an <img> tag (read-level; 404 when none). Served from our own
+   * origin, so it is locked down: a fixed image/png type, nosniff (no content-sniffing into HTML/script),
+   * and a restrictive CSP as defense-in-depth. The client appends ?v=<iconUpdatedAt> to cache-bust it.
+   */
+  @Get(":id/icon")
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=60")
+  async getIcon(@CurrentUser() user: AuthUser, @Param("id") id: string): Promise<StreamableFile> {
+    const icon = await this.apps.getIcon(user.userId, id);
+    return new StreamableFile(icon.data, { type: icon.mime });
+  }
+
+  @Put(":id/icon")
+  @HttpCode(200)
+  @ApiZodBody(SetIconSchema)
+  async setIcon(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIconSchema)) body: SetIconInput,
+  ) {
+    await this.apps.setIcon(user.userId, id, body.data);
+    return { ok: true };
+  }
+
+  @Delete(":id/icon")
+  @RequireScopes("write") // removing a cosmetic icon is a write op, not a destructive admin one (the DELETE default)
+  @HttpCode(200)
+  async deleteIcon(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.apps.deleteIcon(user.userId, id);
     return { ok: true };
   }
 

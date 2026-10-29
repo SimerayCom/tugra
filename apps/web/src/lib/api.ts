@@ -87,6 +87,13 @@ import type {
 // set, so every api.* method + SSE/download caller follows automatically.
 export const API_BASE = "/api/v1";
 
+/** Same-origin URL for an app's custom icon, for an <img> tag (the session cookie rides along). `v` is the
+ *  app's iconUpdatedAt — it cache-busts the image when the icon changes. Returns null when there is no icon. */
+export function appIconUrl(id: string, iconUpdatedAt: string | null): string | null {
+  if (!iconUpdatedAt) return null;
+  return `${API_BASE}/apps/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
+}
+
 // The hub's PUBLIC absolute origin — ONLY for URLs that hit the hub DIRECTLY (not through the SPA's
 // same-origin "/api" proxy): the terminal WebSocket upgrade and webhook URLs shown to paste externally.
 // Resolution: (1) a baked NEXT_PUBLIC_API_URL wins (explicit override; build-from-source installs set it);
@@ -1043,6 +1050,14 @@ export const api = {
   },
   renameApp(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
+  },
+  // Custom app icon: `data` is a base64 PNG (no data: prefix). The server validates it is a real square
+  // 32-512px PNG under 64KB. deleteAppIcon clears it (falls back to the template/source logo).
+  setAppIcon(id: string, data: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/icon`, { method: "PUT", body: JSON.stringify({ data }) });
+  },
+  deleteAppIcon(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/icon`, { method: "DELETE" });
   },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {

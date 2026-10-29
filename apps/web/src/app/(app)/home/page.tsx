@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes, ExternalLink, MoreVertical, Star } from "lucide-react";
-import { api } from "../../../lib/api";
+import { api, appIconUrl } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { launcherTiles, type LauncherTile } from "../../../lib/launcher";
 import { loadPins, savePins, togglePin, filterTiles, sortByPins } from "../../../lib/launcher-prefs";
@@ -142,7 +142,7 @@ function Tile({ tile, t, pinned, onManage, onExpose }: { tile: LauncherTile; t: 
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ width: 48, height: 48, borderRadius: 12, background: "color-mix(in srgb, var(--c-tx) 8%, transparent)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <AppLogo templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={26} />
+          <AppLogo iconUrl={appIconUrl(tile.id, tile.iconUpdatedAt)} templateSlug={tile.templateSlug} templateLogo={tile.templateLogo} source={tile.source} name={tile.name} size={26} />
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           {pinned && <Star size={13} color="var(--c-a)" fill="var(--c-a)" role="img" aria-label={t("home.pinned")} />}
