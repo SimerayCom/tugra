@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, type CSSProperties, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useEffect, useId, type CSSProperties, type ReactElement, type ReactNode } from "react";
 
 /** Shared control styling (was duplicated inline as `field` across pages). */
 export const fieldStyle: CSSProperties = {
@@ -39,12 +39,29 @@ export function Field({
   children: ReactNode;
   style?: CSSProperties;
 }) {
+  // Link the label to the control and wire hint/error for screen readers. When the field holds a single
+  // element we clone an id + aria-describedby + aria-invalid onto it, so callers don't have to thread ids
+  // by hand (controls that spread their rest props — input/TextInput — get this automatically).
+  const autoId = useId();
+  const controlId = htmlFor ?? `field-${autoId}`;
+  const hintId = hint && !error ? `hint-${autoId}` : undefined;
+  const errorId = error ? `err-${autoId}` : undefined;
+  const describedBy = [errorId, hintId].filter(Boolean).join(" ") || undefined;
+  const only = Children.count(children) === 1 ? Children.toArray(children)[0] : null;
+  const control =
+    only && isValidElement(only)
+      ? cloneElement(only as ReactElement<Record<string, unknown>>, {
+          id: controlId,
+          "aria-describedby": describedBy,
+          ...(error ? { "aria-invalid": true } : {}),
+        })
+      : children;
   return (
     <div style={{ display: "flex", flexDirection: "column", ...style }}>
-      <label htmlFor={htmlFor} style={labelStyle}>{label}</label>
-      {children}
-      {hint && !error && <span style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 4 }}>{hint}</span>}
-      {error && <span style={{ fontSize: 11, color: "var(--c-r)", marginTop: 4 }}>{error}</span>}
+      <label htmlFor={controlId} style={labelStyle}>{label}</label>
+      {control}
+      {hint && !error && <span id={hintId} style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 4 }}>{hint}</span>}
+      {error && <span id={errorId} role="alert" style={{ fontSize: 11, color: "var(--c-r)", marginTop: 4 }}>{error}</span>}
     </div>
   );
 }
