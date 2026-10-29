@@ -571,6 +571,19 @@ export interface ServerContainers {
   containers: ContainerInventoryRow[];
 }
 
+// Host-wide list INCLUDING stopped containers (live `docker ps -a`), so the Containers tab can show a
+// stopped container and offer Start. No stats — state is docker's own (running/exited/created/paused/…).
+export interface HostContainer {
+  name: string;
+  state: string;
+  kind: "app" | "db" | "system" | "other";
+  label: string;
+  resourceId?: string;
+}
+export interface HostContainers {
+  containers: HostContainer[];
+}
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;

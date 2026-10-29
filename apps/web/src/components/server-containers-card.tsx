@@ -6,11 +6,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { fmtBytes } from "../lib/fleet";
 import { metricTone } from "../lib/fleet-view";
-import type { ContainerInventoryRow } from "../lib/types";
+import type { ContainerInventoryRow, HostContainer } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, Spinner, Badge, Btn } from "./ui";
 import { MeterBar } from "./meter-bar";
-import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, RotateCw, Square, ScrollText, Trash2, type LucideIcon } from "lucide-react";
+import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, Play, RotateCw, Square, ScrollText, Trash2, type LucideIcon } from "lucide-react";
 import { Modal } from "./modal";
 import { LiveLogsCard } from "./live-logs-card";
 import { useToast } from "./toast";
@@ -29,25 +29,46 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
     queryFn: () => api.getServerContainers(id),
     refetchInterval: 5000,
   });
+  // Stopped containers don't report `docker stats`, so they're absent from the running-only inventory
+  // above. This live `docker ps -a` list surfaces them so a writer can Start them again. The endpoint is
+  // writer-gated, so only fetch it when the user can act (a viewer couldn't Start anyway).
+  const { data: allData } = useQuery({
+    queryKey: ["serverContainersAll", id],
+    queryFn: () => api.getServerContainersAll(id),
+    refetchInterval: 5000,
+    enabled: canWrite,
+  });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["serverContainers", id] });
+    qc.invalidateQueries({ queryKey: ["serverContainersAll", id] });
+  };
   const act = useMutation({
-    mutationFn: (v: { container: string; action: "restart" | "stop" | "remove"; confirmName?: string }) =>
+    mutationFn: (v: { container: string; action: "start" | "restart" | "stop" | "remove"; confirmName?: string }) =>
       api.containerAction(id, v.container, v.action, v.confirmName),
     onSuccess: (_data, v) => {
-      qc.invalidateQueries({ queryKey: ["serverContainers", id] });
+      invalidate();
       // Confirm the action landed — a stopped container also drops out of the running-only inventory,
       // so without this the row would just vanish with no sign it worked.
-      toast(t(v.action === "stop" ? "servers.containerStopped" : v.action === "restart" ? "servers.containerRestarted" : "servers.containerRemoved"), "success");
+      const key =
+        v.action === "stop" ? "servers.containerStopped"
+        : v.action === "start" ? "servers.containerStarted"
+        : v.action === "restart" ? "servers.containerRestarted"
+        : "servers.containerRemoved";
+      toast(t(key), "success");
     },
     onError: (e) => toast((e as Error).message, "error"),
   });
   const rows = data?.containers ?? [];
+  // Only the containers that are NOT currently running (so they aren't already in the stats table above).
+  const runningNames = new Set(rows.map((r) => r.name));
+  const stopped = (allData?.containers ?? []).filter((c) => c.state !== "running" && !runningNames.has(c.name));
 
   if (isLoading && rows.length === 0) {
     return <Card style={{ padding: 16, display: "flex", justifyContent: "center" }}><Spinner /></Card>;
   }
   // Gate the empty state on data ABSENCE only — a failed BACKGROUND poll keeps the last-good rows in
   // `data`, so keying on isError here would flash "no containers" over a populated table on any blip.
-  if (rows.length === 0) {
+  if (rows.length === 0 && stopped.length === 0) {
     return <Card style={{ padding: 16 }}><EmptyState>{t("servers.noContainers")}</EmptyState></Card>;
   }
 
@@ -75,6 +96,16 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
                 onLogs={() => setLogsFor(r.name)}
                 onAction={(action) => act.mutate({ container: r.name, action })}
                 onRemove={() => { setRemoveFor(r.name); setConfirmText(""); }}
+              />
+            ))}
+            {stopped.map((c) => (
+              <StoppedRow
+                key={c.name}
+                row={c}
+                canWrite={canWrite}
+                busy={act.isPending}
+                onStart={() => act.mutate({ container: c.name, action: "start" })}
+                onRemove={() => { setRemoveFor(c.name); setConfirmText(""); }}
               />
             ))}
           </tbody>
@@ -177,6 +208,47 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
   );
 }
 
+/** A container that exists but isn't running — no stats, just a state badge + a Start action. */
+function StoppedRow({ row, canWrite, busy, onStart, onRemove }: {
+  row: HostContainer;
+  canWrite: boolean;
+  busy: boolean;
+  onStart: () => void;
+  onRemove: () => void;
+}) {
+  const t = useT();
+  const href = row.resourceId ? (row.kind === "db" ? `/databases/${row.resourceId}` : `/apps/${row.resourceId}`) : null;
+  return (
+    <tr style={{ borderBottom: "1px solid var(--c-bd)", opacity: 0.8 }}>
+      <Td>
+        <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+          {href ? (
+            <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link>
+          ) : (
+            row.label
+          )}
+          {row.kind === "system" && <Badge tone="muted">system</Badge>}
+        </div>
+        <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
+      </Td>
+      <Td colSpan={4}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Badge tone="muted">{t("servers.stopped")}</Badge>
+          <span className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)" }}>{row.state}</span>
+        </span>
+      </Td>
+      {canWrite && (
+        <Td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+          <div style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end" }}>
+            {row.kind !== "system" && <Btn variant="ghost" icon={Play} onClick={onStart} disabled={busy}>{t("servers.containerStart")}</Btn>}
+            {row.kind === "other" && <Btn variant="dangerGhost" icon={Trash2} onClick={onRemove} disabled={busy}>{t("servers.containerRemove")}</Btn>}
+          </div>
+        </Td>
+      )}
+    </tr>
+  );
+}
+
 function Th({ children, icon: Icon }: { children: ReactNode; icon?: LucideIcon }) {
   return (
     <th style={{ padding: "10px 14px", fontWeight: 500, whiteSpace: "nowrap" }}>
@@ -187,6 +259,6 @@ function Th({ children, icon: Icon }: { children: ReactNode; icon?: LucideIcon }
     </th>
   );
 }
-function Td({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
-  return <td className={className} style={{ padding: "10px 14px", whiteSpace: "nowrap", ...style }}>{children}</td>;
+function Td({ children, className, style, colSpan }: { children: ReactNode; className?: string; style?: CSSProperties; colSpan?: number }) {
+  return <td className={className} colSpan={colSpan} style={{ padding: "10px 14px", whiteSpace: "nowrap", ...style }}>{children}</td>;
 }
