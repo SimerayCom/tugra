@@ -13,6 +13,7 @@ import {
   UseGuards,
   type MessageEvent,
 } from "@nestjs/common";
+import { z } from "zod";
 import { from, interval, map, merge, mergeMap, type Observable } from "rxjs";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
@@ -41,6 +42,8 @@ import {
   SetCapabilitiesInput,
   SetCapabilitiesSchema,
 } from "./dto/servers.schemas";
+
+const RenameServerSchema = z.object({ name: z.string().min(1).max(100) });
 
 @ApiTags("servers")
 @ApiSecurity("pat")
@@ -168,6 +171,18 @@ export class ServersController {
     @Body(new ZodValidationPipe(SetTagsSchema)) body: SetTagsInput,
   ) {
     await this.servers.setTags(user.userId, id, body.tags);
+    return { ok: true };
+  }
+
+  @Put(":id/name")
+  @HttpCode(200)
+  @ApiZodBody(RenameServerSchema)
+  async rename(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(RenameServerSchema)) body: z.infer<typeof RenameServerSchema>,
+  ) {
+    await this.servers.rename(user.userId, id, body.name);
     return { ok: true };
   }
 

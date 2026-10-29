@@ -347,6 +347,14 @@ export class ServersService {
     await this.audit.log({ actor: userId, action: "server.tags.update", target: id });
   }
 
+  async rename(userId: string, id: string, name: string): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
+    await this.prisma.server.update({ where: { id }, data: { name: name.trim() } });
+    await this.audit.log({ actor: userId, action: "server.rename", target: id });
+  }
+
   /** The set of agent capabilities the hub is allowed to sign commands for on this server.
    *  The stored set is enforced verbatim; [] = none (fail-safe). Legacy servers were backfilled
    *  to the full set by the migration, so [] never silently means "all". */
