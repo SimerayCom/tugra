@@ -1272,6 +1272,9 @@ export const api = {
   deleteEnvironment(envId: string) {
     return apiFetch<{ ok: true }>(`/projects/environments/${envId}`, { method: "DELETE" });
   },
+  renameEnvironment(envId: string, name: string) {
+    return apiFetch<{ ok: true }>(`/projects/environments/${envId}`, { method: "PUT", body: JSON.stringify({ name }) });
+  },
 
   // ── databases ──
   listDatabases() {
