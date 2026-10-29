@@ -39,15 +39,18 @@ export function Field({
   children: ReactNode;
   style?: CSSProperties;
 }) {
-  // Link the label to the control and wire hint/error for screen readers. When the field holds a single
-  // element we clone an id + aria-describedby + aria-invalid onto it, so callers don't have to thread ids
-  // by hand (controls that spread their rest props — input/TextInput — get this automatically).
+  // Link the label to the control and wire hint/error for screen readers. ONLY auto-wire (clone an id +
+  // aria-describedby + aria-invalid onto the single child) when the caller did NOT name the control with
+  // `htmlFor`. When `htmlFor` IS given, the caller owns the id on the real control
+  // (`<Field htmlFor="x"><TextInput id="x"/></Field>`), and the single child may be a WRAPPER (e.g. a colour
+  // swatch + input) — injecting the id there would land it on a non-labellable <div> and duplicate the id,
+  // breaking the label→control association. So trust the caller's htmlFor and leave the children untouched.
   const autoId = useId();
   const controlId = htmlFor ?? `field-${autoId}`;
   const hintId = hint && !error ? `hint-${autoId}` : undefined;
   const errorId = error ? `err-${autoId}` : undefined;
   const describedBy = [errorId, hintId].filter(Boolean).join(" ") || undefined;
-  const only = Children.count(children) === 1 ? Children.toArray(children)[0] : null;
+  const only = !htmlFor && Children.count(children) === 1 ? Children.toArray(children)[0] : null;
   const control =
     only && isValidElement(only)
       ? cloneElement(only as ReactElement<Record<string, unknown>>, {
