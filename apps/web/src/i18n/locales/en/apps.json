@@ -124,6 +124,8 @@
   "buildCommand": "Build cmd (e.g. npm run build)",
   "outputDir": "Output dir (dist)",
   "hostPort": "Host port (optional)",
+  "containerPort": "Container port",
+  "containerPortHint": "The port your app listens on inside the container (default 80). Set it to e.g. 3000 or 8080 so the proxy routes to the right port.",
   "domain": "Domain (optional, auto-SSL)",
   "open": "Open ↗",
   "create": "Create",
