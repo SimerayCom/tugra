@@ -843,6 +843,10 @@ model Application {
   constraintServerId String?   // system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
   name           String
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
+  // A user-uploaded custom icon lives in the sibling AppIcon table (bytes kept out of this hot row). This
+  // nullable marker is set to the upload time and cleared on removal: the app list reads it to know whether
+  // an icon exists and to cache-bust the icon URL, without ever fetching the image bytes.
+  iconUpdatedAt  DateTime?
   source         AppSource    @default(IMAGE)
   image          String?
   gitUrl         String?
@@ -916,10 +920,25 @@ model Application {
   scheduledTasks ScheduledTask[]
   domains        Domain[]
   databaseLinks AppDatabaseLink[]
+  icon          AppIcon?
   createdAt     DateTime     @default(now())
 
   @@index([environmentId])
   @@index([parentAppId])
+}
+
+// A per-app custom icon (user-uploaded PNG), stored inline in Postgres so it rides the normal DB backups —
+// no object store or host volume to manage. One row per app (appId is the PK, Cascade so it dies with the
+// app). The bytes are small (a square PNG, validated by signature/IHDR/IEND + 32-512px, capped at 64KB) but are
+// deliberately kept out of the hot Application row; Application.iconUpdatedAt is the list-view marker so the
+// app list never has to read these bytes.
+model AppIcon {
+  app        Application @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId      String      @id
+  mime       String      // always "image/png" (anything else is rejected at upload)
+  data       Bytes
+  sizeBytes  Int
+  updatedAt  DateTime    @updatedAt
 }
 
 // Attach a managed Database to an Application so its connection URI is auto-injected into the app's

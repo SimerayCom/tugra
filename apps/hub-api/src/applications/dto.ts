@@ -81,6 +81,13 @@ export const RenameSchema = z.object({
 });
 export type RenameInput = z.infer<typeof RenameSchema>;
 
+// A custom app icon: a base64-encoded PNG. The string cap (~96k chars ≈ 70KB decoded) keeps the JSON body
+// under Express's 100KB limit; the real PNG/square/size validation is server-side in ApplicationsService.
+export const SetIconSchema = z.object({
+  data: z.string().min(1).max(96_000),
+});
+export type SetIconInput = z.infer<typeof SetIconSchema>;
+
 export const SetDockerOptionsSchema = z.object({
   dockerOptions: z.string().max(2000).nullable(),
 });

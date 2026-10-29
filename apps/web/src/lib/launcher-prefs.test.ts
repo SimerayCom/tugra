@@ -3,7 +3,7 @@ import { togglePin, filterTiles, sortByPins } from "./launcher-prefs";
 import type { LauncherTile } from "./launcher";
 
 const tile = (id: string, name = id): LauncherTile =>
-  ({ id, name, url: null, status: "RUNNING", phase: "running", linkKind: "none", source: "IMAGE", templateSlug: null, templateLogo: null, exposeMode: "magic", domain: null, tunnelExposed: false, canWrite: true });
+  ({ id, name, url: null, status: "RUNNING", phase: "running", linkKind: "none", source: "IMAGE", templateSlug: null, templateLogo: null, iconUpdatedAt: null, exposeMode: "magic", domain: null, tunnelExposed: false, canWrite: true });
 
 describe("togglePin", () => {
   it("adds, then removes, returning a new set each time", () => {

@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../../lib/api";
+import { api, appIconUrl } from "../../../../lib/api";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
 import type { AppVolume, HostMount, Application, Deployment } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
@@ -130,6 +130,106 @@ function AppOverview({ app, deployments }: { app: Application; deployments: Depl
       </div>
       {app.canWrite && !last && <div style={{ marginTop: 14, fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.overviewHint")}</div>}
       {!app.canWrite && <div style={{ marginTop: 14, fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.readOnlyHint")}</div>}
+    </Card>
+  );
+}
+
+/** Center-crop an image file to a square PNG at the given side, returned as a base64 string (no data: prefix). */
+async function cropToPngBase64(file: File, side: number): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("decode"));
+      el.src = url;
+    });
+    const crop = Math.min(img.width, img.height);
+    if (!crop) throw new Error("empty");
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = side;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no-canvas");
+    ctx.imageSmoothingQuality = "high"; // the default "low" aliases badly downscaling a large photo to 128px
+    ctx.drawImage(img, (img.width - crop) / 2, (img.height - crop) / 2, crop, crop, 0, 0, side, side);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("encode");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Upload / replace / remove the app's custom icon. Crops client-side to a 128px square PNG (falling back to
+ *  smaller sides if the encoded image would exceed the server's 64KB budget) before sending. Writer-only. */
+function AppIconCard({ app, onChanged }: { app: Application; onChanged: () => void }) {
+  const t = useT();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [processing, setProcessing] = useState(false);
+  const hasIcon = !!app.iconUpdatedAt;
+
+  const save = useMutation({
+    mutationFn: (data: string) => api.setAppIcon(app.id, data),
+    onSuccess: () => { onChanged(); toast(t("apps.iconUploaded"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteAppIcon(app.id),
+    onSuccess: () => { onChanged(); toast(t("apps.iconRemoved"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
+  });
+
+  const onPick = async (file: File) => {
+    setProcessing(true);
+    try {
+      // Try 128px, then shrink if the PNG would blow the 64KB server cap (base64 ≈ 4/3 of the byte size).
+      let data = "";
+      for (const side of [128, 96, 64]) {
+        data = await cropToPngBase64(file, side);
+        if (data.length * 0.75 <= 64 * 1024) break;
+      }
+      if (data.length * 0.75 > 64 * 1024) { toast(t("apps.iconTooLarge"), "error"); return; }
+      save.mutate(data);
+    } catch {
+      toast(t("apps.iconReadFailed"), "error");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const busy = processing || save.isPending || remove.isPending;
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("apps.iconTitle")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 14, maxWidth: 520 }}>{t("apps.iconHint")}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <span style={{ width: 56, height: 56, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <AppLogo iconUrl={appIconUrl(app.id, app.iconUpdatedAt)} templateSlug={app.templateSlug} templateLogo={app.templateLogo} source={app.source} name={app.name} size={36} />
+        </span>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
+            {busy ? "…" : hasIcon ? t("apps.iconReplace") : t("apps.iconUpload")}
+          </Btn>
+          {hasIcon && (
+            <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{t("apps.iconRemove")}</Btn>
+          )}
+        </div>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = ""; // allow re-picking the same file
+          if (f) void onPick(f);
+        }}
+      />
     </Card>
   );
 }
@@ -351,7 +451,7 @@ export default function AppDetailPage() {
       <PageHeader
         breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
-        icon={<AppLogo templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
+        icon={<AppLogo iconUrl={appIconUrl(appData.id, appData.iconUpdatedAt)} templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
         status={headerStatus}
         badge={appData.isPreview ? <Badge tone="lapis">{t("apps.previewBadge", { n: appData.prNumber ?? "?" })}</Badge> : undefined}
         actions={
@@ -486,7 +586,7 @@ export default function AppDetailPage() {
               active={activeSection}
               onChange={setSection}
               groups={[
-                { key: "overview", label: t("apps.cfgGroupOverview"), icon: LayoutDashboard, content: overviewPanel },
+                { key: "overview", label: t("apps.cfgGroupOverview"), icon: LayoutDashboard, content: <>{overviewPanel}<AppIconCard app={appData} onChanged={() => { invalidate(); qc.invalidateQueries({ queryKey: ["apps"] }); }} /></> },
                 ...configGroups.map((g) => ({
                   key: g.key,
                   label: t(g.labelKey),

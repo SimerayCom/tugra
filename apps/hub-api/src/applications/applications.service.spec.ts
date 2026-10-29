@@ -3120,3 +3120,111 @@ describe("setDbNetwork + guards (S4d-4 managed-DB network link)", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe("ApplicationsService - custom icon", () => {
+  // A minimal buffer validatePngIcon accepts: the 8-byte PNG signature + a canonical IHDR + the canonical
+  // IEND terminator (validatePngIcon checks signature/IHDR/IEND + dims, not CRC/IDAT, so this suffices).
+  // `pad` inserts junk between IHDR and IEND to grow the buffer for the oversize test.
+  const IEND = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+  function pngHeader(w: number, h: number, pad = 0): Buffer {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0);
+    ihdr.write("IHDR", 4, "ascii");
+    ihdr.writeUInt32BE(w, 8);
+    ihdr.writeUInt32BE(h, 12);
+    return Buffer.concat([sig, ihdr, Buffer.alloc(pad), IEND]);
+  }
+  const b64 = (buf: Buffer) => buf.toString("base64");
+  const iconAccess = {
+    requirePermission: jest.fn().mockResolvedValue(undefined),
+    teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+  } as unknown as TeamAccessService;
+
+  function iconPrisma(icon: unknown = null) {
+    const upsert = jest.fn().mockResolvedValue({});
+    const update = jest.fn().mockResolvedValue({});
+    const deleteMany = jest.fn().mockResolvedValue({ count: icon ? 1 : 0 });
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app }), update },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(icon), upsert, deleteMany },
+      $transaction: (ops: unknown[]) => Promise.all(ops as Promise<unknown>[]),
+    } as unknown as PrismaService;
+    return { prisma, upsert, update, deleteMany };
+  }
+
+  it("stores a valid square PNG and stamps iconUpdatedAt", async () => {
+    const { prisma, upsert, update } = iconPrisma();
+    await make(prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(128, 128)));
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { appId: "app1" }, create: expect.objectContaining({ mime: "image/png" }) }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "app1" }, data: { iconUpdatedAt: expect.any(Date) } }));
+  });
+
+  it("rejects a non-PNG payload (e.g. an SVG)", async () => {
+    const { prisma, upsert } = iconPrisma();
+    await expect(make(prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(Buffer.from("<svg>hello this is not a png</svg>")))).rejects.toBeInstanceOf(BadRequestException);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-square PNG", async () => {
+    const { prisma } = iconPrisma();
+    await expect(make(prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(128, 64)))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("rejects dimensions outside 32-512px", async () => {
+    await expect(make(iconPrisma().prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(16, 16)))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(make(iconPrisma().prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(1024, 1024)))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("rejects an icon over 64KB", async () => {
+    const { prisma } = iconPrisma();
+    await expect(make(prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(128, 128, 64 * 1024)))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("rejects a PNG missing the IEND terminator (header-only / truncated / garbage tail)", async () => {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0);
+    ihdr.write("IHDR", 4, "ascii");
+    ihdr.writeUInt32BE(128, 8);
+    ihdr.writeUInt32BE(128, 12);
+    const noIend = Buffer.concat([sig, ihdr, Buffer.alloc(20)]); // valid header + junk, but no IEND chunk
+    const { prisma, upsert } = iconPrisma();
+    await expect(make(prisma, iconAccess, {} as AgentWsServer).setIcon("u1", "app1", b64(noIend))).rejects.toBeInstanceOf(BadRequestException);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns stored bytes, and 404 when there is no icon", async () => {
+    const stored = { mime: "image/png", data: pngHeader(64, 64), sizeBytes: 33 };
+    await expect(make(iconPrisma(stored).prisma, iconAccess, {} as AgentWsServer).getIcon("u1", "app1")).resolves.toEqual({ mime: "image/png", data: expect.any(Buffer) });
+    await expect(make(iconPrisma(null).prisma, iconAccess, {} as AgentWsServer).getIcon("u1", "app1")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("removes the icon and clears the marker", async () => {
+    const { prisma, deleteMany, update } = iconPrisma();
+    await make(prisma, iconAccess, {} as AgentWsServer).deleteIcon("u1", "app1");
+    expect(deleteMany).toHaveBeenCalledWith({ where: { appId: "app1" } });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
+  });
+
+  it("forbids upload without write permission", async () => {
+    const denied = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const { prisma, upsert } = iconPrisma();
+    await expect(make(prisma, denied, {} as AgentWsServer).setIcon("u1", "app1", b64(pngHeader(128, 128)))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("forbids reading an icon for a non-member of the team", async () => {
+    const denied = { teamRole: jest.fn().mockResolvedValue(null) } as unknown as TeamAccessService;
+    const stored = { mime: "image/png", data: pngHeader(64, 64), sizeBytes: 45 };
+    await expect(make(iconPrisma(stored).prisma, denied, {} as AgentWsServer).getIcon("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("forbids removing an icon without write permission", async () => {
+    const denied = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) } as unknown as TeamAccessService;
+    const { prisma, deleteMany } = iconPrisma();
+    await expect(make(prisma, denied, {} as AgentWsServer).deleteIcon("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deleteMany).not.toHaveBeenCalled();
+  });
+});
