@@ -64,7 +64,7 @@ export default function TeamsPage() {
 
       <Card style={{ padding: 16, marginBottom: 20 }}>
         <form onSubmit={(e) => { e.preventDefault(); if (name && !create.isPending) create.mutate(); }} style={{ display: "flex", gap: 8 }}>
-          <input style={{ ...field, flex: 1 }} placeholder={t("teams.name")} value={name} onChange={(e) => setName(e.target.value)} required />
+          <input style={{ ...field, flex: 1 }} placeholder={t("teams.name")} aria-label={t("teams.name")} value={name} onChange={(e) => setName(e.target.value)} required />
           <Btn type="submit" disabled={create.isPending || !name}>{t("teams.create")}</Btn>
         </form>
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}

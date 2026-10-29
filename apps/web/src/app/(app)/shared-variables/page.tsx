@@ -63,8 +63,8 @@ export default function SharedVariablesPage() {
         </div>
         {canWrite && (
           <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} style={{ display: "flex", gap: 8 }}>
-            <input style={{ ...field, width: 220 }} placeholder={t("shared.key")} value={key} onChange={(e) => setKey(e.target.value)} required />
-            <input style={{ ...field, flex: 1 }} type={reveal ? "text" : "password"} placeholder={t("shared.value")} value={value} onChange={(e) => setValue(e.target.value)} />
+            <input style={{ ...field, width: 220 }} placeholder={t("shared.key")} aria-label={t("shared.key")} value={key} onChange={(e) => setKey(e.target.value)} required />
+            <input style={{ ...field, flex: 1 }} type={reveal ? "text" : "password"} placeholder={t("shared.value")} aria-label={t("shared.value")} value={value} onChange={(e) => setValue(e.target.value)} />
             <Btn onClick={() => save.mutate()} disabled={save.isPending || !key || !activeTeam}>{t("shared.add")}</Btn>
           </form>
         )}

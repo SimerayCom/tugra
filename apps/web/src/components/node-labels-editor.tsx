@@ -36,8 +36,8 @@ export function NodeLabelsEditor({ clusterId, nodeId, labels }: { clusterId: str
           <button type="button" aria-label={t("clusters.nodeLabelRemove")} onClick={() => mut.mutate({ add: {}, remove: [k] })} style={{ cursor: "pointer", background: "none", border: "none", color: "var(--c-r)", padding: 0 }}>×</button>
         </span>
       ))}
-      <input style={{ ...field, width: 90 }} placeholder={t("clusters.nodeLabelKey")} value={key} onChange={(e) => setKey(e.target.value)} />
-      <input style={{ ...field, width: 90 }} placeholder={t("clusters.nodeLabelValue")} value={value} onChange={(e) => setValue(e.target.value)} />
+      <input style={{ ...field, width: 90 }} placeholder={t("clusters.nodeLabelKey")} aria-label={t("clusters.nodeLabelKey")} value={key} onChange={(e) => setKey(e.target.value)} />
+      <input style={{ ...field, width: 90 }} placeholder={t("clusters.nodeLabelValue")} aria-label={t("clusters.nodeLabelValue")} value={value} onChange={(e) => setValue(e.target.value)} />
       <Btn
         variant="ghost"
         style={{ fontSize: 11, padding: "4px 8px" }}

@@ -96,7 +96,7 @@ export default function ProjectDetailPage() {
       {project.canWrite && (
         <Card style={{ padding: 16, marginTop: 16 }}>
           <form onSubmit={(e) => { e.preventDefault(); addEnv.mutate(); }} style={{ display: "flex", gap: 8 }}>
-            <input style={{ ...field, flex: 1 }} placeholder={t("projects.environmentName")} value={envName} onChange={(e) => setEnvName(e.target.value)} required />
+            <input style={{ ...field, flex: 1 }} placeholder={t("projects.environmentName")} aria-label={t("projects.environmentName")} value={envName} onChange={(e) => setEnvName(e.target.value)} required />
             <Btn onClick={() => addEnv.mutate()} disabled={addEnv.isPending || !envName}>{t("projects.addEnvironment")}</Btn>
           </form>
         </Card>
@@ -196,7 +196,7 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder={t("projects.searchResources")}
+          placeholder={t("projects.searchResources")} aria-label={t("projects.searchResources")}
           style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", marginBottom: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit" }}
         />
       )}

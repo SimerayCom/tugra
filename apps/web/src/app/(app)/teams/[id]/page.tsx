@@ -96,7 +96,7 @@ export default function TeamDetailPage() {
       {canManage && (
         <Card style={{ padding: 16, marginBottom: 16 }}>
           <form onSubmit={(e) => { e.preventDefault(); rename.mutate(); }} style={{ display: "flex", gap: 8 }}>
-            <input style={{ ...field, flex: 1 }} placeholder={team.name} value={newName} onChange={(e) => setNewName(e.target.value)} />
+            <input style={{ ...field, flex: 1 }} placeholder={team.name} aria-label={t("teams.rename")} value={newName} onChange={(e) => setNewName(e.target.value)} />
             <Btn onClick={() => rename.mutate()} disabled={rename.isPending || !newName}>{t("teams.rename")}</Btn>
           </form>
         </Card>
@@ -155,7 +155,7 @@ export default function TeamDetailPage() {
         <Card style={{ padding: 16, marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("teams.invite")}</div>
           <form onSubmit={(e) => { e.preventDefault(); invite.mutate(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input style={{ ...field, flex: 1, minWidth: 180 }} type="email" placeholder={t("teams.inviteEmail")} value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input style={{ ...field, flex: 1, minWidth: 180 }} type="email" placeholder={t("teams.inviteEmail")} aria-label={t("teams.inviteEmail")} value={email} onChange={(e) => setEmail(e.target.value)} required />
             <select style={field} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)}>
               <option value="VIEWER">VIEWER</option>
               <option value="ADMIN">ADMIN</option>
@@ -233,7 +233,7 @@ function RolesCard({ teamId, roles, onChanged }: { teamId: string; roles: TeamRo
 
       <div style={{ borderTop: roles.length ? "1px solid var(--c-bd)" : "none", paddingTop: roles.length ? 12 : 0 }}>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{editing ? t("teams.editRole") : t("teams.addRole")}</div>
-        <input style={{ ...field, width: "100%", marginBottom: 10, boxSizing: "border-box" }} placeholder={t("teams.roleName")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={{ ...field, width: "100%", marginBottom: 10, boxSizing: "border-box" }} placeholder={t("teams.roleName")} aria-label={t("teams.roleName")} value={name} onChange={(e) => setName(e.target.value)} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6, marginBottom: 12 }}>
           {TEAM_PERMISSIONS.map((p) => (
             <label key={p} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)", cursor: "pointer" }}>
