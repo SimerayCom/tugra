@@ -49,7 +49,7 @@ export const FleetLatestRowSchema = z.object({
 // (type-to-confirm) and is only allowed on foreign containers (service-side guard).
 export const ContainerActionSchema = z.object({
   container: z.string().min(1).max(128),
-  action: z.enum(["restart", "stop", "remove"]),
+  action: z.enum(["start", "restart", "stop", "remove"]),
   confirmName: z.string().optional(),
 });
 export type ContainerActionInput = z.infer<typeof ContainerActionSchema>;

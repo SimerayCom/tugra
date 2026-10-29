@@ -44,6 +44,7 @@ import type {
   MetricsRange,
   AppContainerMetrics,
   ServerContainers,
+  HostContainers,
   DiscoveredContainer,
   CloudCredential,
   DnsCredential,
@@ -555,11 +556,15 @@ export const api = {
   getServerContainers(id: string) {
     return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);
   },
+  // Live host-wide list incl. stopped containers (for the Start action on a stopped container).
+  getServerContainersAll(id: string) {
+    return apiFetch<HostContainers>(`/servers/${id}/containers/all`);
+  },
   // Fleet overview: newest metrics sample for every server the caller can see, in one call.
   getFleetMetrics() {
     return apiFetch<FleetLatestRow[]>("/fleet/metrics/latest");
   },
-  containerAction(id: string, container: string, action: "restart" | "stop" | "remove", confirmName?: string) {
+  containerAction(id: string, container: string, action: "start" | "restart" | "stop" | "remove", confirmName?: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/containers/action`, {
       method: "POST",
       body: JSON.stringify({ container, action, confirmName }),

@@ -5,16 +5,29 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
-import { ContainerMetricsService } from "../metrics/container-metrics.service";
+import { ContainerMetricsService, resolveContainerLabel, type ContainerInventoryRow } from "../metrics/container-metrics.service";
 import { clampTail, normalizeSince, normalizeSearch } from "../common/log-filters";
 
 // A plain docker container name. The target is also matched against the server's live inventory before
 // use, so this is defence in depth against a name that would reach the shell-less docker/grep argv.
 const CONTAINER_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
-export type ContainerAction = "restart" | "stop" | "remove";
+export type ContainerAction = "start" | "restart" | "stop" | "remove";
 // `remove` force-removes (stop + rm) since the UI only exposes it for foreign, non-managed containers.
-const DOCKER_CMD: Record<ContainerAction, string> = { restart: "restart", stop: "stop", remove: "rm -f" };
+const DOCKER_CMD: Record<ContainerAction, string> = { start: "start", restart: "restart", stop: "stop", remove: "rm -f" };
+
+// Host-wide container listing INCLUDING stopped ones (docker stats — the metrics inventory — only sees
+// running containers, so a stopped container vanishes and can't be started again). State is docker's own:
+// running | exited | created | paused | restarting | dead.
+const HOST_PS_SCRIPT = "docker ps -a --format '{{.Names}}\\t{{.State}}'";
+
+export interface HostContainer {
+  name: string;
+  state: string;
+  kind: ContainerInventoryRow["kind"];
+  label: string;
+  resourceId?: string;
+}
 
 /**
  * View the logs of ANY container on a managed host (not just a Tugra app/db), from the server's
@@ -85,8 +98,47 @@ export class ContainerOpsService {
   }
 
   /**
-   * Lifecycle action on a container (restart / stop / remove). Writer-level (servers:ops), and the
-   * container is validated against the live inventory. Strong guards: Tugra's OWN control-plane stack
+   * Host-wide container inventory INCLUDING stopped containers (so the Containers tab can show a stopped
+   * container and offer Start — the metrics inventory is running-only). Writer-level (servers:ops), live
+   * `docker ps -a` over the agent. Each row carries docker's state + a friendly label/kind so the UI can
+   * decide Start vs Stop and which container is Tugra-managed vs foreign.
+   */
+  async list(userId: string, serverId: string): Promise<{ containers: HostContainer[] }> {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "servers:ops");
+    if (!this.agentWs.isOnline(serverId)) throw new ServiceUnavailableException("agent offline");
+    const containers = await this.liveInventory(serverId);
+    containers.sort((a, b) => a.label.localeCompare(b.label));
+    return { containers };
+  }
+
+  /** Live `docker ps -a` → rows with state + resolved label/kind. Throws if the agent can't list. */
+  private async liveInventory(serverId: string): Promise<HostContainer[]> {
+    const r = await this.agentWs.sendCommand(serverId, HOST_PS_SCRIPT, "bulk", 15_000);
+    if (r.exitCode !== 0) throw new ServiceUnavailableException(`could not list containers (exit ${r.exitCode})`);
+    const [apps, dbs] = await Promise.all([
+      this.prisma.application.findMany({ where: { serverId }, select: { id: true, name: true } }),
+      this.prisma.database.findMany({ where: { serverId }, select: { id: true, name: true } }),
+    ]);
+    const appsById = new Map(apps.map((a) => [a.id, a.name]));
+    const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
+    return r.output
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [name, state] = l.split("\t");
+        const friendly = resolveContainerLabel(name ?? "", appsById, dbsById);
+        return { name: name ?? "", state: state ?? "", kind: friendly.kind, label: friendly.label, resourceId: friendly.resourceId };
+      })
+      .filter((c) => c.name);
+  }
+
+  /**
+   * Lifecycle action on a container (start / restart / stop / remove). Writer-level (servers:ops), and the
+   * container is validated against the live `docker ps -a` inventory (NOT the running-only metrics list, so a
+   * stopped container can still be Started/Removed). Strong guards: Tugra's OWN control-plane stack
    * (hub / web / agent / postgres / redis / updater) can never be touched here; `remove` is allowed
    * ONLY on a foreign (non-Tugra-managed) container and ONLY with a matching name confirmation — a
    * managed app/database must be removed through its own delete so records + volumes are cleaned up.
@@ -97,8 +149,8 @@ export class ContainerOpsService {
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:ops");
     if (!this.agentWs.isOnline(serverId)) throw new ServiceUnavailableException("agent offline");
-    const inv = await this.containerMetrics.forServer(serverId);
-    const row = inv.containers.find((c) => c.name === container);
+    const inv = await this.liveInventory(serverId);
+    const row = inv.find((c) => c.name === container);
     if (!row) throw new BadRequestException("unknown container on this server");
     if (row.kind === "system") throw new BadRequestException("Tugra's own containers can't be managed here");
     if (action === "remove") {

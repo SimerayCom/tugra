@@ -78,7 +78,13 @@ export class ServerOpsController {
     return stream.pipe(map((event) => ({ data: JSON.stringify(event) }) as MessageEvent));
   }
 
-  /** Lifecycle action on a container (restart / stop / remove). Writer-only; strong guards service-side. */
+  /** Host-wide container list INCLUDING stopped ones (so the tab can offer Start). Writer-level service-side. */
+  @Get("containers/all")
+  listContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.containerOps.list(user.userId, id);
+  }
+
+  /** Lifecycle action on a container (start / restart / stop / remove). Writer-only; strong guards service-side. */
   @Post("containers/action")
   @RequireScopes("deploy")
   @HttpCode(200)
