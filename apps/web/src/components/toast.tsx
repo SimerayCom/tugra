@@ -45,6 +45,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <>
       {children}
       <div
+        // Persistent live region: it exists before any toast mounts, so screen readers reliably
+        // announce insertions (a live region created together with its content is often missed).
+        aria-live="polite"
+        aria-atomic="false"
         style={{ position: "fixed", top: 16, right: 16, zIndex: 100, display: "flex", flexDirection: "column", gap: 8, maxWidth: 360, pointerEvents: "none" }}
       >
         {toasts.map((t) => {
@@ -52,8 +56,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           return (
           <div
             key={t.id}
-            role={t.type === "error" ? "alert" : "status"}
-            aria-live={t.type === "error" ? "assertive" : "polite"}
+            // The container above is the polite live region; errors escalate to an assertive alert.
+            // No per-toast aria-live, to avoid a nested live region double-announcing.
+            role={t.type === "error" ? "alert" : undefined}
             style={{
               pointerEvents: "auto",
               display: "flex",
