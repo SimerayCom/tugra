@@ -28,7 +28,7 @@ export function Btn({
   style,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "ghost" | "danger";
+  variant?: "primary" | "ghost" | "danger" | "dangerGhost";
   // Optional leading lucide icon, rendered before the label (decorative, aria-hidden).
   icon?: LucideIcon;
 }) {
@@ -55,6 +55,14 @@ export function Btn({
       border: "1px solid var(--c-bd)",
     },
     danger: { background: "var(--c-r)", color: "#fff" },
+    // Quiet destructive: red label + icon (via currentColor) on the normal ghost chrome. For
+    // destructive actions in dense rows/toolbars where a solid-red fill would shout and sit
+    // dangerously next to a primary button. The real guard stays the confirm step.
+    dangerGhost: {
+      background: "var(--c-el)",
+      color: "var(--c-r)",
+      border: "1px solid var(--c-bd)",
+    },
   };
   return (
     <button type={type} style={{ ...base, ...variants[variant], ...style }} {...rest}>

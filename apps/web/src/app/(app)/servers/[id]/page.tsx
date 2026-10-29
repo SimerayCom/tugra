@@ -523,7 +523,7 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
     <Card style={{ padding: 16, marginTop: 20, borderColor: "var(--c-r)" }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("servers.deleteServer")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.deleteServerDesc")}</p>
-      <Btn variant="danger" onClick={() => { setDestroyVm(true); setConfirmName(""); setOpen(true); }}>{t("servers.deleteServer")}</Btn>
+      <Btn variant="dangerGhost" onClick={() => { setDestroyVm(true); setConfirmName(""); setOpen(true); }}>{t("servers.deleteServer")}</Btn>
       {open && (
         <Modal onClose={() => setOpen(false)} labelledBy="del-srv-title">
           <h3 id="del-srv-title" style={{ margin: "0 0 8px", fontSize: 15 }}>{t("servers.deleteServer")}</h3>
@@ -764,7 +764,7 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
           <>
             <Btn variant="ghost" icon={Play} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
             <Btn variant="ghost" icon={RotateCw} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
-            <Btn variant="ghost" icon={Square} onClick={() => stop.mutate()} disabled={busy}>{t("servers.proxyStop")}</Btn>
+            <Btn variant="dangerGhost" icon={Square} onClick={() => stop.mutate()} disabled={busy}>{t("servers.proxyStop")}</Btn>
           </>
         )}
       </div>
