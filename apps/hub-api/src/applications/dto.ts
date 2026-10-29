@@ -2,7 +2,16 @@ import { z } from "zod";
 // Cross-module dto import: reuse the label charset from the clusters domain so app placement rules and node
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
 import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
-import { ENV_KEY_RE, ENV_KEY_DENY } from "../common/env-key";
+import { isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
+
+// Every ingress for user-supplied env goes through this: it closes the `--env-file` line-injection
+// boundary (a key with '=', whitespace or a newline, or a value with a newline, would define an extra
+// variable) WITHOUT imposing the strict POSIX name regex, which would reject legitimate dotted/dashed
+// keys that migrated apps already use (see common/env-key).
+export const EnvRecordSchema = z
+  .record(z.string())
+  .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" })
+  .refine((env) => Object.values(env).every(isSafeEnvValue), { message: "environment value must not contain a newline" });
 
 export const CreateAppSchema = z
   .object({
@@ -30,7 +39,7 @@ export const CreateAppSchema = z
     buildCommand: z.string().min(1).optional(),
     outputDir: z.string().min(1).optional(),
     composeFile: z.string().min(1).optional(),
-    env: z.record(z.string()).optional(),
+    env: EnvRecordSchema.optional(),
     environmentId: z.string().min(1).optional(),
     deploy: z.boolean().optional(), // kick off a best-effort first deploy after create
     hostPort: z.number().int().min(1).max(65535).optional(),
@@ -56,13 +65,10 @@ export const CreateAppSchema = z
 export type CreateAppInput = z.infer<typeof CreateAppSchema>;
 
 export const SetEnvSchema = z.object({
-  // Validate keys like the MCP path (single source: common/env-key), so this REST endpoint can't inject
-  // an extra variable via a key with '=', a newline or whitespace, or set a reserved name.
-  env: z
-    .record(z.string())
-    .refine((env) => Object.keys(env).every((k) => ENV_KEY_RE.test(k) && !ENV_KEY_DENY.has(k)), {
-      message: "invalid environment variable name",
-    }),
+  // Reject only what actually corrupts the env file (key with '=', whitespace or newline; value with a
+  // newline) — not the strict POSIX name regex, which would lock a user out of editing env on any app that
+  // already holds a dotted/dashed key (common/env-key explains why that must not be retrofit).
+  env: EnvRecordSchema,
 });
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
@@ -321,7 +327,7 @@ export const FromTemplateSchema = z.object({
   deploy: z.boolean().optional(), // one-call install: create + best-effort deploy
   fields: z.record(z.string()).optional(), // user-entered install values (override generated defaults)
   composeOverride: z.string().min(1).optional(), // fork-free compose edit (validated for host-escape)
-  envOverride: z.record(z.string()).optional(), // extra/override env entries (encrypted, layered last)
+  envOverride: EnvRecordSchema.optional(), // extra/override env entries (encrypted, layered last)
 });
 export type FromTemplateInput = z.infer<typeof FromTemplateSchema>;
 

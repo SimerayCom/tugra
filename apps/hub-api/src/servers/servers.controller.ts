@@ -43,7 +43,8 @@ import {
   SetCapabilitiesSchema,
 } from "./dto/servers.schemas";
 
-const RenameServerSchema = z.object({ name: z.string().min(1).max(100) });
+// trim() first so a whitespace-only name fails min(1) instead of persisting a blank name.
+const RenameServerSchema = z.object({ name: z.string().trim().min(1).max(100) });
 
 @ApiTags("servers")
 @ApiSecurity("pat")
