@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { TriangleAlert, RefreshCw, LayoutDashboard, Activity, Boxes, PackageCheck, Waypoints, Wrench, Terminal, Plus } from "lucide-react";
+import { TriangleAlert, RefreshCw, LayoutDashboard, Activity, Boxes, PackageCheck, Waypoints, Wrench, Terminal, Plus, Play, RotateCw, Square, ScrollText } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -762,14 +762,14 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
         <div style={{ flex: 1 }} />
         {canWrite && (
           <>
-            <Btn variant="ghost" onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
-            <Btn variant="ghost" onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
-            <Btn variant="ghost" onClick={() => stop.mutate()} disabled={busy}>{t("servers.proxyStop")}</Btn>
+            <Btn variant="ghost" icon={Play} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
+            <Btn variant="ghost" icon={RotateCw} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
+            <Btn variant="ghost" icon={Square} onClick={() => stop.mutate()} disabled={busy}>{t("servers.proxyStop")}</Btn>
           </>
         )}
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.proxyDesc")}</p>
-      <Btn variant="ghost" onClick={() => viewLogs.mutate()} disabled={viewLogs.isPending}>
+      <Btn variant="ghost" icon={ScrollText} onClick={() => viewLogs.mutate()} disabled={viewLogs.isPending}>
         {viewLogs.isPending ? "…" : t("servers.proxyViewLogs")}
       </Btn>
       <button onClick={refresh} aria-label={t("servers.proxyViewLogs")} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}><RefreshCw size={13} /></button>
