@@ -708,7 +708,7 @@ function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: ()
   const { data, isLoading, isError } = useQuery({ queryKey: ["appContainers", id], queryFn: () => api.listAppContainers(id) });
   const containers = data?.containers ?? [];
   return (
-    <Modal onClose={onClose} width={480}>
+    <Modal onClose={onClose} width={480} ariaLabel={t("apps.selectContainer")}>
       <div style={{ fontWeight: 700, marginBottom: 10 }}>{t("apps.selectContainer")}</div>
       {isLoading ? (
         <Spinner />

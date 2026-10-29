@@ -22,7 +22,7 @@ export function RenameModal({
   const t = useT();
   const [name, setName] = useState(current);
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} ariaLabel={title}>
       <div style={{ fontWeight: 700, marginBottom: 10 }}>{title}</div>
       <input
         value={name}

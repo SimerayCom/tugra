@@ -128,7 +128,7 @@ export function InstallModal({ template, onClose }: { template: Template; onClos
     !!name.trim() && !!serverId && Object.keys(errors).length === 0 && !install.isPending && !manifestLoading;
 
   return (
-    <Modal onClose={onClose} width={520} cardStyle={{ maxHeight: "85vh", overflow: "auto" }}>
+    <Modal onClose={onClose} width={520} ariaLabel={t("home.installTitle", { name: template.name })} cardStyle={{ maxHeight: "85vh", overflow: "auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <span style={{ width: 40, height: 40, borderRadius: 10, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <TemplateLogo logo={template.logo} slug={template.slug} name={template.name} size={24} />

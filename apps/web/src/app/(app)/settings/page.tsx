@@ -397,7 +397,7 @@ function SudoPrompt({ kind, onClose, onDone }: { kind: "disable" | "regenerate";
     }
   };
   return (
-    <Modal onClose={onClose} zIndex={70}>
+    <Modal onClose={onClose} zIndex={70} ariaLabel={kind === "disable" ? t("settings.disable2fa") : t("settings.regenerate")}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{kind === "disable" ? t("settings.disable2fa") : t("settings.regenerate")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.sudoDesc")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -417,7 +417,7 @@ function SudoPrompt({ kind, onClose, onDone }: { kind: "disable" | "regenerate";
 function RecoveryCodesModal({ codes, onClose }: { codes: string[]; onClose: () => void }) {
   const t = useT();
   return (
-    <Modal onClose={onClose} zIndex={70}>
+    <Modal onClose={onClose} zIndex={70} ariaLabel={t("settings.recoveryCodesTitle")}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("settings.recoveryCodesTitle")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("settings.recoveryCodesDesc")}</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14 }}>

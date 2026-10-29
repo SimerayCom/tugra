@@ -212,7 +212,7 @@ export default function DatabaseDetailPage() {
         />
       )}
       {restoreToBackup && (
-        <Modal onClose={() => setRestoreToBackup(null)} width={420}>
+        <Modal onClose={() => setRestoreToBackup(null)} width={420} ariaLabel={t("databases.restoreToTitle")}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("databases.restoreToTitle")}</div>
           <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.restoreToConfirm")}</p>
           <Select

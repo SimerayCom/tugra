@@ -386,7 +386,7 @@ function ManageMembersModal({ cluster, onClose }: { cluster: ClusterDetail; onCl
   const toggle = (sid: string) => setSelected((prev) => { const n = new Set(prev); n.has(sid) ? n.delete(sid) : n.add(sid); return n; });
 
   return (
-    <Modal onClose={onClose} cardStyle={{ width: 460, maxWidth: "92vw" }}>
+    <Modal onClose={onClose} ariaLabel={t("clusters.manageMembers")} cardStyle={{ width: 460, maxWidth: "92vw" }}>
       <div style={{ fontWeight: 700, marginBottom: 12 }}>{t("clusters.manageMembers")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "50vh", overflowY: "auto" }}>
         {teamServers.map((s) => (
@@ -416,7 +416,7 @@ function RenameModal({ cluster, onClose }: { cluster: ClusterDetail; onClose: ()
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["cluster", cluster.id] }); qc.invalidateQueries({ queryKey: ["clusters"] }); onClose(); },
   });
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} ariaLabel={t("clusters.rename")}>
       <div style={{ fontWeight: 700, marginBottom: 12 }}>{t("clusters.rename")}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <TextInput value={name} onChange={(e) => setName(e.target.value)} autoFocus />
@@ -438,7 +438,7 @@ function ClusterRunModal({ cluster, memberIds, onClose }: { cluster: ClusterDeta
   const { data: allServers, isLoading, isError, refetch } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   if (isLoading || isError || !allServers) {
     return (
-      <Modal onClose={onClose}>
+      <Modal onClose={onClose} ariaLabel={t("clusters.runCommand")}>
         {isError ? <ErrorState onRetry={() => refetch()} /> : <Spinner />}
       </Modal>
     );
@@ -464,7 +464,7 @@ function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose:
     },
   });
   return (
-    <Modal onClose={onClose} cardStyle={{ width: 460, maxWidth: "92vw" }}>
+    <Modal onClose={onClose} ariaLabel={t("clusters.formSwarm")} cardStyle={{ width: 460, maxWidth: "92vw" }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("clusters.formSwarm")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("clusters.formSwarmHint")}</div>
       <label style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.swarmManager")}</label>
@@ -507,7 +507,7 @@ function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swa
     },
   });
   return (
-    <Modal onClose={onClose} cardStyle={{ width: 420, maxWidth: "92vw" }}>
+    <Modal onClose={onClose} ariaLabel={t("clusters.addNode")} cardStyle={{ width: 420, maxWidth: "92vw" }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("clusters.addNode")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("clusters.addNodeHint")}</div>
       <label style={{ fontSize: 12, fontWeight: 600 }}>{t("clusters.addNodeServer")}</label>
@@ -550,7 +550,7 @@ function AddManagerModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; 
   const errMsg = add.error instanceof Error ? add.error.message : add.isError ? t("clusters.addManagerFailed") : null;
   const evenBlocked = !!errMsg && /even manager count/i.test(errMsg);
   return (
-    <Modal onClose={onClose} cardStyle={{ width: 460, maxWidth: "92vw" }}>
+    <Modal onClose={onClose} ariaLabel={t("clusters.addManager")} cardStyle={{ width: 460, maxWidth: "92vw" }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("clusters.addManager")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 12 }}>{t("clusters.addManagerHint")}</div>
       {candidates.length === 0 ? (
