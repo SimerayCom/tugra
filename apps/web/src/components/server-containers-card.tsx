@@ -32,7 +32,12 @@ export function ServerContainersCard({ id, canWrite = false }: { id: string; can
   const act = useMutation({
     mutationFn: (v: { container: string; action: "restart" | "stop" | "remove"; confirmName?: string }) =>
       api.containerAction(id, v.container, v.action, v.confirmName),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["serverContainers", id] }),
+    onSuccess: (_data, v) => {
+      qc.invalidateQueries({ queryKey: ["serverContainers", id] });
+      // Confirm the action landed — a stopped container also drops out of the running-only inventory,
+      // so without this the row would just vanish with no sign it worked.
+      toast(t(v.action === "stop" ? "servers.containerStopped" : v.action === "restart" ? "servers.containerRestarted" : "servers.containerRemoved"), "success");
+    },
     onError: (e) => toast((e as Error).message, "error"),
   });
   const rows = data?.containers ?? [];
