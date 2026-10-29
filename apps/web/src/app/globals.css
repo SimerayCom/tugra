@@ -28,20 +28,21 @@
 }
 
 [data-theme="light"] {
-  /* Clean neutral light theme (no warm/beige cast): near-white surfaces + neutral-gray borders,
-     mirroring the dark theme's structure. Gold stays the accent only — never a background tint. */
-  --c-bg: #fafafa;
+  /* Clean neutral light theme (no warm/beige cast). A soft GREY canvas with WHITE cards gives the
+     surfaces real elevation — a near-white canvas (#fafafa) sat too close to #fff cards, so everything
+     read as one flat, over-bright sheet. Gold stays the accent only — never a background tint. */
+  --c-bg: #eef1f4; /* canvas — soft neutral grey so white cards clearly lift off it */
   --c-sb: #ffffff;
-  --c-sur: #f4f4f5;
+  --c-sur: #e6eaef; /* sunken/inset surface (a step below the canvas) */
   --c-el: #ffffff;
-  --c-bd: #e4e4e7;
+  --c-bd: #d7dce3; /* border — a touch deeper to define card edges on the grey canvas */
   --c-tx: #18181b;
   --c-tx2: #52525b;
-  --c-tx3: #6e6e78; /* muted — neutral gray, clears WCAG AA on #fafafa */
+  --c-tx3: #64646e; /* muted — neutral gray, clears WCAG AA on the canvas */
   --c-a: #7f6414; /* gold — darkened so it clears WCAG AA as TEXT on the light surface */
   --c-ad: rgba(127, 100, 20, 0.1);
   --c-on-a: #ffffff; /* text/icon on a gold fill (fill is dark-gold in light → white text) */
-  --c-tile: #f1f1f3; /* icon-tile surface (dark theme uses a translucent white wash) */
+  --c-tile: #eaedf2; /* icon-tile surface on white cards (dark theme uses a translucent white wash) */
   /* Status/accent colors re-tuned for the light surface — the dark-theme values (green #34c759,
      amber #f5a623, red #ff4d4f, blue #5588f5) fail WCAG AA badly on white (2–3.4:1). These 600/700
      shades clear AA (≥4.5:1) both as text (pills, links, errors) and as fills with white text. */
