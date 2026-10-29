@@ -26,16 +26,18 @@
 }
 
 [data-theme="light"] {
-  --c-bg: #f6f3ec;
+  /* Clean neutral light theme (no warm/beige cast): near-white surfaces + neutral-gray borders,
+     mirroring the dark theme's structure. Gold stays the accent only — never a background tint. */
+  --c-bg: #fafafa;
   --c-sb: #ffffff;
-  --c-sur: #efeae0;
+  --c-sur: #f4f4f5;
   --c-el: #ffffff;
-  --c-bd: #e3ddcd;
-  --c-tx: #1a1a1f;
-  --c-tx2: #4a4843;
-  --c-tx3: #6c6a61; /* muted — darkened to clear WCAG AA on light bg */
-  --c-a: #9a7b1e;
-  --c-ad: rgba(154, 123, 30, 0.12);
+  --c-bd: #e4e4e7;
+  --c-tx: #18181b;
+  --c-tx2: #52525b;
+  --c-tx3: #6e6e78; /* muted — neutral gray, clears WCAG AA on #fafafa */
+  --c-a: #9a7b1e; /* gold — the seal (brand), accent only */
+  --c-ad: rgba(154, 123, 30, 0.1);
 }
 
 * {
