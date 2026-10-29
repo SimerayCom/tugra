@@ -106,6 +106,9 @@ import { inferComposeWeb } from "../deploy/compose-web";
 import type { CreateAppInput } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
+// stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
+// easily exceeds the 20s default; give it headroom so a slow-but-successful restart isn't killed mid-way.
+const LIFECYCLE_TIMEOUT_MS = 120_000;
 const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
 // Default rolling health-gate timing (not yet configurable per app).
 const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
@@ -1379,12 +1382,17 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.clusterId) {
       // Swarm: scale the service to 0 (keeps the service definition so start can scale it back up).
-      await this.swarmDeploy.scale(app, 0);
+      const res = await this.swarmDeploy.scale(app, 0);
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`stop did not converge (exit ${res.exitCode}) — the app's status is unchanged`);
     } else {
+      // A non-zero exit means the command RAN but failed (compose project missing, etc.); an offline/transport
+      // failure rejects. Both used to be swallowed and the app was marked STOPPED anyway, so a failed stop
+      // reported success (HTTP 200 + audit + UI toast all lied). Pre-check online for a clean 503, then verify
+      // the command itself succeeded. (Classic stop ends `|| true` so it always exits 0 — this is a no-op there.)
+      if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
       const cmd = app.source === "COMPOSE" ? buildComposeStopScript(this.toSpec(app)) : buildStopScript(app);
-      // Let an offline agent / transport failure propagate. This used to be swallowed and the app was
-      // marked STOPPED anyway, so a failed stop reported success (HTTP 200 + audit + UI toast all lied).
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy");
+      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", LIFECYCLE_TIMEOUT_MS);
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`stop failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
     await this.prisma.application.update({
       where: { id },
@@ -1396,11 +1404,15 @@ export class ApplicationsService {
   async start(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.clusterId) {
-      await this.swarmDeploy.scale(app, Math.max(1, app.replicas ?? 1));
+      const res = await this.swarmDeploy.scale(app, Math.max(1, app.replicas ?? 1));
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`start did not converge (exit ${res.exitCode}) — the app's status is unchanged`);
     } else {
+      // `docker start`/`compose start` exit non-zero when the container/project is gone — verify instead of
+      // falsely reporting RUNNING (see stop()). Pre-check online for a clean 503 rather than an opaque 500.
+      if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
       const cmd = app.source === "COMPOSE" ? buildComposeStartScript(this.toSpec(app)) : buildStartScript(app);
-      // Propagate an offline/failed agent instead of falsely reporting RUNNING (see stop()).
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy");
+      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", LIFECYCLE_TIMEOUT_MS);
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`start failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
     await this.audit.log({ actor: userId, action: "app.start", target: id });
@@ -1410,11 +1422,15 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     if (app.clusterId) {
       // Swarm restart = a forced rolling recreation of all tasks (async; the builder polls to convergence).
-      await this.swarmDeploy.restart(app);
+      const res = await this.swarmDeploy.restart(app);
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`restart did not converge (exit ${res.exitCode}) — the app's status is unchanged`);
     } else {
+      // `docker restart`/`compose restart` exit non-zero when the container/project is gone — verify instead of
+      // falsely reporting RUNNING (see stop()). Pre-check online for a clean 503 rather than an opaque 500.
+      if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
       const cmd = app.source === "COMPOSE" ? buildComposeRestartScript(this.toSpec(app)) : buildRestartScript(app);
-      // Propagate an offline/failed agent instead of falsely reporting RUNNING (see stop()).
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy");
+      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", LIFECYCLE_TIMEOUT_MS);
+      if (res.exitCode !== 0) throw new ServiceUnavailableException(`restart failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
     await this.audit.log({ actor: userId, action: "app.restart", target: id });

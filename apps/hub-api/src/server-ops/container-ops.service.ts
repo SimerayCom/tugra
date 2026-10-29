@@ -105,7 +105,11 @@ export class ContainerOpsService {
       if (row.kind !== "other") throw new BadRequestException("delete the app or database instead to remove its container");
       if (confirmName !== container) throw new BadRequestException("confirmation name does not match");
     }
-    await this.agentWs.sendCommand(serverId, `docker ${DOCKER_CMD[action]} ${container}`, "bulk", 60_000);
+    // Verify the docker command actually succeeded. sendCommand resolves even on a non-zero exit (it rejects
+    // only on offline/timeout), and the container was just inventory-validated, so exitCode != 0 is a genuine
+    // failure — don't audit success or let the UI toast claim it worked.
+    const r = await this.agentWs.sendCommand(serverId, `docker ${DOCKER_CMD[action]} ${container}`, "bulk", 60_000);
+    if (r.exitCode !== 0) throw new ServiceUnavailableException(`docker ${action} failed (exit ${r.exitCode})`);
     await this.audit.log({ actor: userId, action: `server.container.${action}`, target: serverId, meta: { container } });
   }
 }

@@ -29,6 +29,27 @@ export function isValidEnvKey(k: string): boolean {
   return k.length > 0 && k.length <= ENV_KEY_MAX && ENV_KEY_RE.test(k) && !ENV_KEY_DENY.has(k);
 }
 
+/**
+ * The injection boundary for USER-supplied env (NOT the strict POSIX `ENV_KEY_RE`). The env file is
+ * `KEY=VALUE` lines joined by "\n", so the only key chars that actually corrupt it are `=` (splits the
+ * pair), any whitespace/control char (a newline injects a whole new var; others read as garbage) and NUL.
+ * Everything else printable — dots, dashes, colons — is a legitimate container env key (`spring.profiles.active`,
+ * `my-app.setting`) that migrated apps already use, so the strict POSIX regex must NOT be retrofit onto them.
+ */
+export function isValidUserEnvKey(k: string): boolean {
+  return (
+    k.length > 0 &&
+    k.length <= ENV_KEY_MAX &&
+    !/[\s=\u0000-\u001f\u007f]/.test(k) && // no whitespace (incl. newline), '=', control chars or NUL
+    !ENV_KEY_DENY.has(k)
+  );
+}
+
+/** A user-supplied env VALUE that can't inject a second `--env-file` line: no newline, carriage return or NUL. */
+export function isSafeEnvValue(v: string): boolean {
+  return !/[\n\r\u0000]/.test(v);
+}
+
 /** A name a database link is allowed to inject: valid, and not one that would hijack the runtime. */
 export function isLinkEnvKeyAllowed(k: string): boolean {
   if (!isValidEnvKey(k)) return false;

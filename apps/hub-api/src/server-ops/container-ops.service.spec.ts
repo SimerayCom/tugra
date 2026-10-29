@@ -84,6 +84,15 @@ describe("ContainerOpsService", () => {
     expect(sendCommand).toHaveBeenCalledWith("s1", "docker rm -f nginx", "bulk", expect.any(Number));
   });
 
+  it("THROWS and does not audit success when the docker command exits non-zero", async () => {
+    // sendCommand resolves even on a non-zero exit (the command ran but failed) — the action must not
+    // report success, or the 200 + UI toast would lie.
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 1, output: "Error response from daemon" });
+    (audit.log as jest.Mock).mockClear();
+    await expect(make({ sendCommand }).action("u1", "s1", "tugra_db_x", "restart")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
   it("refuses to remove a MANAGED (db/app) container — steer to resource delete", async () => {
     const sendCommand = jest.fn();
     await expect(make({ sendCommand }).action("u1", "s1", "tugra_db_x", "remove", "tugra_db_x")).rejects.toBeInstanceOf(BadRequestException);

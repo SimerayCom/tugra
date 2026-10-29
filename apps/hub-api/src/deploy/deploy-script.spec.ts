@@ -346,7 +346,7 @@ describe("deploy-script", () => {
         `docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc__rollout:3000/healthz'`,
       );
       // any HTTP response < 500 = reachable/serving (booted apps 404/401 on the probe path)
-      expect(s).toContain(`if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then healthy=1; break; fi`);
+      expect(s).toContain(`if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`);
       expect(s).toContain(`for i in $(seq 1 ${gate.retries}); do`);
       expect(s).toContain(`sleep ${gate.startPeriodSec}`);
     });

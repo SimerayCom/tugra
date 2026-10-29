@@ -133,7 +133,7 @@ function make(
     } as unknown as TemplateCatalogService,
     {
       deploy: jest.fn().mockResolvedValue({ exitCode: 0, output: "", digest: null, registryRef: null }),
-      scale: jest.fn().mockResolvedValue(undefined),
+      scale: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
       restart: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
       remove: jest.fn().mockResolvedValue(undefined),
       status: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }),
@@ -782,12 +782,46 @@ describe("ApplicationsService", () => {
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
-    const svc = make(prisma, access, { sendCommand } as unknown as AgentWsServer);
+    const isOnline = jest.fn().mockReturnValue(true);
+    const svc = make(prisma, access, { sendCommand, isOnline } as unknown as AgentWsServer);
     await svc.start("u1", "app1");
-    expect(sendCommand).toHaveBeenCalledWith("s1", "docker start tugra_app1", "deploy");
+    expect(sendCommand).toHaveBeenCalledWith("s1", "docker start tugra_app1", "deploy", 120_000);
     await svc.restart("u1", "app1");
-    expect(sendCommand).toHaveBeenCalledWith("s1", "docker restart tugra_app1", "deploy");
+    expect(sendCommand).toHaveBeenCalledWith("s1", "docker restart tugra_app1", "deploy", 120_000);
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "RUNNING" } }));
+  });
+
+  it("start/restart THROW and never mark RUNNING when the lifecycle command exits non-zero", async () => {
+    for (const action of ["start", "restart"] as const) {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(app), update },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      // sendCommand RESOLVES with a non-zero exit (the command ran but failed — e.g. the container was removed);
+      // the service must treat that as a failure, not a success.
+      const sendCommand = jest.fn().mockResolvedValue({ exitCode: 1, output: "No such container" });
+      const isOnline = jest.fn().mockReturnValue(true);
+      const svc = make(prisma, access, { sendCommand, isOnline } as unknown as AgentWsServer);
+      await expect(svc[action]("u1", "app1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("stop/start/restart throw ServiceUnavailableException (not an opaque 500) when the agent is offline", async () => {
+    for (const action of ["stop", "start", "restart"] as const) {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(app), update },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const sendCommand = jest.fn();
+      const isOnline = jest.fn().mockReturnValue(false);
+      const svc = make(prisma, access, { sendCommand, isOnline } as unknown as AgentWsServer);
+      await expect(svc[action]("u1", "app1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(sendCommand).not.toHaveBeenCalled(); // short-circuited on the pre-check
+      expect(update).not.toHaveBeenCalled();
+    }
   });
 
   it("listContainers parses the agent's docker ps output", async () => {
