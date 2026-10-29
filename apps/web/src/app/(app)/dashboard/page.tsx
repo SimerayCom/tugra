@@ -17,7 +17,7 @@ import { Skeleton, SkeletonCard, SkeletonStat, SkeletonTable } from "../../../co
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
 const logoBox: React.CSSProperties = {
-  width: 40, height: 40, borderRadius: 9, background: "rgba(255,255,255,0.06)",
+  width: 40, height: 40, borderRadius: 9, background: "var(--c-tile)",
   display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
 };
 const sectionTitle: React.CSSProperties = {

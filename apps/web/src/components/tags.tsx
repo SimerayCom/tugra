@@ -67,7 +67,7 @@ export function TagFilter({
               cursor: "pointer",
               fontFamily: "inherit",
               background: on ? "var(--c-a)" : "var(--c-el)",
-              color: on ? "#0d0d11" : "var(--c-tx2)",
+              color: on ? "var(--c-on-a)" : "var(--c-tx2)",
               borderColor: on ? "var(--c-a)" : "var(--c-bd)",
               fontWeight: on ? 700 : 400,
             }}

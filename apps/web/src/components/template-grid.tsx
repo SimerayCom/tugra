@@ -140,7 +140,7 @@ export function TemplateGrid({
                 flexShrink: 0, whiteSpace: "nowrap", // stay on one line inside the mobile scroll strip
                 border: "1px solid var(--c-bd)",
                 background: active ? "var(--c-a)" : "transparent",
-                color: active ? "#0d0d11" : "var(--c-tx3)",
+                color: active ? "var(--c-on-a)" : "var(--c-tx3)",
               }}
             >
               {c === "all" ? t("resources.allCategories") : t(`resources.cat_${c}`)}

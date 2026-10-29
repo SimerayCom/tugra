@@ -47,7 +47,7 @@ export function Btn({
     gap: 6,
   };
   const variants: Record<string, CSSProperties> = {
-    primary: { background: "var(--c-a)", color: "#0d0d11" },
+    primary: { background: "var(--c-a)", color: "var(--c-on-a)" },
     ghost: {
       background: "var(--c-el)",
       color: "var(--c-tx)",

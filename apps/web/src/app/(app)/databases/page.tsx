@@ -49,7 +49,7 @@ export default function DatabasesPage() {
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("databases.title")}</h1>
           <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: 0 }}>{t("databases.subtitle")}</p>
         </div>
-        <Link href="/resources/new?kind=database" style={{ background: "var(--c-a)", color: "#0d0d11", fontWeight: 600, fontSize: 13, padding: "9px 14px", borderRadius: "var(--r1)", textDecoration: "none" }}>
+        <Link href="/resources/new?kind=database" style={{ background: "var(--c-a)", color: "var(--c-on-a)", fontWeight: 600, fontSize: 13, padding: "9px 14px", borderRadius: "var(--r1)", textDecoration: "none" }}>
           {t("databases.newDatabase")}
         </Link>
       </div>
