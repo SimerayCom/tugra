@@ -394,7 +394,7 @@ describe("ServersService.authenticate (agentVersion refresh on reconnect)", () =
   it("writes the reported agentVersion into the reconnect update", async () => {
     const { prisma, update } = authPrisma();
     const ok = await svcWith(prisma).authenticate("s1", "nonce", "sig", "1.2.3.4", "0.2.0");
-    expect(ok).toBe(true);
+    expect(ok).toBe("ok");
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "s1" }, data: expect.objectContaining({ agentVersion: "0.2.0" }) }),
     );
@@ -405,6 +405,22 @@ describe("ServersService.authenticate (agentVersion refresh on reconnect)", () =
     await svcWith(prisma).authenticate("s1", "nonce", "sig", null);
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0].data).not.toHaveProperty("agentVersion");
+  });
+
+  it("returns 'unknown' when the server row is gone / never enrolled (→ agent re-enrolls)", async () => {
+    const findUnique = jest.fn().mockResolvedValue(null);
+    const prisma = { server: { findUnique, update: jest.fn() } } as unknown as PrismaService;
+    expect(await svcWith(prisma).authenticate("gone", "nonce", "sig", null)).toBe("unknown");
+  });
+
+  it("returns 'bad_signature' for a KNOWN server whose key does not verify (identity KEPT, no re-enroll)", async () => {
+    const authAuth = jest.requireMock("./agent-auth") as { verifyEd25519: jest.Mock };
+    authAuth.verifyEd25519.mockReturnValueOnce(false);
+    const update = jest.fn();
+    const findUnique = jest.fn().mockResolvedValue({ id: "s1", agentPublicKey: "k", ipSource: "observed" });
+    const prisma = { server: { findUnique, update } } as unknown as PrismaService;
+    expect(await svcWith(prisma).authenticate("s1", "nonce", "badsig", null)).toBe("bad_signature");
+    expect(update).not.toHaveBeenCalled(); // never marks online on a failed verify
   });
 });
 

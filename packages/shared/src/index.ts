@@ -243,6 +243,13 @@ export interface AuthOkMsg {
 export interface ErrorMsg {
   type: "error";
   message: string;
+  /**
+   * Optional machine-readable reason. "reenroll" is the ONLY authoritative signal that tells an
+   * already-enrolled agent its stored identity is gone (server row deleted / never enrolled) and a
+   * fresh enroll is the correct recovery. Absent on generic/transient rejections, which the agent must
+   * treat as "keep the identity and retry" so a transient failure can never brick a valid agent.
+   */
+  code?: "reenroll";
 }
 
 // ---- Agent -> Hub --------------------------------------------------------
