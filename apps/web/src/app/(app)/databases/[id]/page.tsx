@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -70,8 +70,10 @@ export default function DatabaseDetailPage() {
     onSuccess: () => { setRenameOpen(false); invalidate(); },
     onError: (e) => toast(errMsg(e), "error"),
   });
+  // Read at mutate() time via a stable ref so the keep-volume choice survives the async confirm handler.
+  const keepVolume = useRef(false);
   const del = useMutation({
-    mutationFn: () => api.deleteDatabase(id),
+    mutationFn: () => api.deleteDatabase(id, keepVolume.current),
     onSuccess: () => router.replace("/databases"),
     onError: (e) => toast(errMsg(e), "error"),
   });
@@ -182,7 +184,7 @@ export default function DatabaseDetailPage() {
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
-                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name })) del.mutate(); }}>{t("databases.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); keepVolume.current = false; if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name, checkbox: { label: t("databases.keepVolume"), ref: keepVolume } })) del.mutate(); }}>{t("databases.delete")}</Btn>
                   </div>
                 )}
               </div>

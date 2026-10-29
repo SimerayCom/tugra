@@ -239,9 +239,10 @@ export function buildDbStopScript(db: { id: string }): string {
 }
 
 /** Destroy: remove the container AND its volume (the data is intentionally dropped). */
-export function buildDbRemoveScript(db: { id: string }): string {
-  return [
-    `docker rm -f ${dbContainerName(db)} 2>/dev/null || true`,
-    `docker volume rm ${dbVolumeName(db)} 2>/dev/null || true`,
-  ].join("\n");
+export function buildDbRemoveScript(db: { id: string }, opts: { keepVolume?: boolean } = {}): string {
+  const lines = [`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`];
+  // keepVolume: leave the data volume on the host (recreate the DB over it later, or copy it off). Default
+  // removes it — a deleted database frees its disk, as before.
+  if (!opts.keepVolume) lines.push(`docker volume rm ${dbVolumeName(db)} 2>/dev/null || true`);
+  return lines.join("\n");
 }

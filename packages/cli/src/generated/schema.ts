@@ -9870,7 +9870,9 @@ export interface operations {
     };
     ApplicationsController_remove: {
         parameters: {
-            query?: never;
+            query: {
+                keepVolumes: string;
+            };
             header?: never;
             path: {
                 id: string;
@@ -17058,7 +17060,9 @@ export interface operations {
     };
     DatabasesController_remove: {
         parameters: {
-            query?: never;
+            query: {
+                keepVolume: string;
+            };
             header?: never;
             path: {
                 id: string;

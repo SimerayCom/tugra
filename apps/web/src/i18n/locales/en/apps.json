@@ -61,6 +61,7 @@
   "delete": "Delete",
   "deleteConfirm": "Delete this app and its container/volumes? This cannot be undone.",
   "deleteConfirmCompose": "Delete this compose app? Its containers AND its named volumes (all data) are removed. This cannot be undone — back up volumes first.",
+  "keepVolumes": "Keep volumes (don't delete this app's data)",
   "overviewHint": "Use Deploy to build and start this app. The sections on the left hold environment variables, limits, volumes and more.",
   "readOnlyHint": "You have read-only access to this app.",
   "iconTitle": "App icon",

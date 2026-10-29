@@ -10,6 +10,7 @@
   "version": "Version",
   "delete": "Delete",
   "deleteConfirm": "Delete this database and its volume? All data is lost. This cannot be undone.",
+  "keepVolume": "Keep the data volume (don't delete the data)",
   "tabOverview": "Overview",
   "tabLogs": "Logs",
   "tabMetrics": "Metrics",

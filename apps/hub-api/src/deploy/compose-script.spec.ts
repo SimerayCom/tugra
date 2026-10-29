@@ -199,6 +199,10 @@ describe("compose-script", () => {
     const down = buildComposeDownScript(base, { volumes: true });
     expect(down).toContain("down -v");
     expect(down).toContain("rm -rf /etc/tugra/compose/abc");
+    // keep-volumes path: plain `down` with no -v, so named volumes (data) survive the delete.
+    const downKeep = buildComposeDownScript(base, { volumes: false });
+    expect(downKeep).toContain("down 2>/dev/null");
+    expect(downKeep).not.toContain("down -v");
   });
 
   it("start/restart manage the whole compose stack", () => {
