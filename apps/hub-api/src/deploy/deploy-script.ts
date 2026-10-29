@@ -909,7 +909,7 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
     lines.push(
       `for i in $(seq 1 ${t.retries}); do`,
       `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 ${url} 2>/dev/null || echo 000)`,
-      `  if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`,
+      `  if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then healthy=1; break; fi`,
       `  sleep ${t.intervalSec}`,
       "done",
     );
