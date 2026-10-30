@@ -1,9 +1,14 @@
 {
   "title": "Log drains",
-  "desc": "Forward this server's container logs to an external HTTP sink (Axiom, Loki, custom). Logs are batched and POSTed continuously.",
+  "desc": "Forward this server's container logs to an external sink. Logs are batched and shipped continuously. Pick a target type: generic HTTP (Tugra batch JSON, e.g. Axiom/custom), Grafana Loki, or Datadog.",
   "name": "Name",
+  "type": "Type",
+  "type_http": "HTTP",
+  "type_loki": "Loki",
+  "type_datadog": "Datadog",
   "endpoint": "Endpoint URL",
   "token": "Bearer token (optional)",
+  "tokenKeep": "Token set — blank to keep",
   "add": "+ Add drain",
   "empty": "No log drains yet."
 }

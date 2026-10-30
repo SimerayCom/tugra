@@ -15,6 +15,7 @@
   "reveal": "Show value",
   "hide": "Hide value",
   "delete": "Delete",
+  "edit": "Edit",
   "remove": "Remove",
   "deleteConfirm": "This can't be undone.",
   "typeToConfirm": "Type {text} to confirm."
