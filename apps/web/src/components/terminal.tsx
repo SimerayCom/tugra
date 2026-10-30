@@ -26,8 +26,8 @@ export default function TerminalView({
   unavailableReason?: string;
 }) {
   const t = useT();
-  const closedText = useRef(t("terminal.closed"));
-  closedText.current = t("terminal.closed");
+  const tRef = useRef(t);
+  tRef.current = t;
   const ref = useRef<HTMLDivElement>(null);
   const tkey = "app" in target ? `app:${target.app}` : "database" in target ? `database:${target.database}` : `server:${target.server}`;
 
@@ -57,7 +57,18 @@ export default function TerminalView({
             onClose?.();
           }
         },
-        onClose: () => term.write(`\r\n${closedText.current}\r\n`),
+        onClose: (info) => {
+          // Surface the hub's close reason instead of a bare "connection closed". The most common cause
+          // is the server's "terminal" capability being off (least-privilege default) — give an actionable
+          // hint for that; otherwise echo the reason the hub sent, falling back to the generic message.
+          const reason = info?.reason?.trim();
+          const text = !reason
+            ? tRef.current("terminal.closed")
+            : /capability not granted/i.test(reason)
+              ? tRef.current("terminal.capabilityHint")
+              : tRef.current("terminal.closedReason", { reason });
+          term.write(`\r\n${text}\r\n`);
+        },
       },
       { fetchTicket: () => api.terminalTicket().then((r) => r.ticket) },
     );
