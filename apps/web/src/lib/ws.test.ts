@@ -8,6 +8,9 @@ import {
   decodeOutput,
   bytesToB64,
   connectTerminal,
+  connectTerminalWithRetry,
+  terminalQuery,
+  targetFromQuery,
 } from "./ws";
 
 describe("ws url helpers", () => {
@@ -72,7 +75,7 @@ class FakeWS {
   url: string;
   protocols: string | string[] | undefined;
   onopen: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev?: { code: number; reason: string }) => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   sent: string[] = [];
   closed = false;
@@ -136,5 +139,67 @@ describe("connectTerminal", () => {
     await vi.waitFor(() => expect(FakeWS.last).toBeDefined());
     FakeWS.last!.onmessage!({ data: "not json" });
     expect(events).toEqual([]);
+  });
+});
+
+describe("terminalQuery / targetFromQuery round-trip", () => {
+  it("round-trips every target shape", () => {
+    for (const tgt of [{ server: "s1" }, { database: "d1" }, { app: "a1" }, { app: "a1", container: "tugra_a1-web-1" }] as const) {
+      expect(targetFromQuery(new URLSearchParams(terminalQuery(tgt)))).toEqual(tgt);
+    }
+  });
+  it("returns null when no target param is present", () => {
+    expect(targetFromQuery(new URLSearchParams("foo=bar"))).toBeNull();
+  });
+});
+
+describe("connectTerminalWithRetry", () => {
+  beforeEach(() => { FakeWS.last = undefined; });
+  const openLatest = async () => { await vi.waitFor(() => expect(FakeWS.last).toBeDefined()); return FakeWS.last!; };
+
+  it("marks denied and does NOT retry on a 1008 policy close", async () => {
+    const statuses: string[] = [];
+    let tickets = 0;
+    const conn = connectTerminalWithRetry(
+      { server: "s1" },
+      { onEvent: () => {}, onStatus: (s) => statuses.push(s) },
+      { WS: FakeWSCtor, fetchTicket: async () => `t${++tickets}`, rand: () => 0 },
+    );
+    const ws = await openLatest();
+    ws.onclose!({ code: 1008, reason: "terminal capability not granted for this server" });
+    expect(statuses).toContain("denied");
+    expect(statuses).not.toContain("reconnecting");
+    expect(tickets).toBe(1); // never re-connected
+    conn.close();
+  });
+
+  it("does NOT retry on a clean 1000 exit", async () => {
+    const statuses: string[] = [];
+    const conn = connectTerminalWithRetry({ server: "s1" }, { onEvent: () => {}, onStatus: (s) => statuses.push(s) }, { WS: FakeWSCtor, fetchTicket: async () => "t", rand: () => 0 });
+    const ws = await openLatest();
+    ws.onclose!({ code: 1000, reason: "exited" });
+    expect(statuses).toContain("closed");
+    expect(statuses).not.toContain("reconnecting");
+    conn.close();
+  });
+
+  it("enters reconnecting on a transient (1006) drop", async () => {
+    const statuses: string[] = [];
+    const conn = connectTerminalWithRetry({ server: "s1" }, { onEvent: () => {}, onStatus: (s) => statuses.push(s) }, { WS: FakeWSCtor, fetchTicket: async () => "t", rand: () => 0 });
+    const ws = await openLatest();
+    ws.onclose!({ code: 1006, reason: "" });
+    expect(statuses).toContain("reconnecting");
+    conn.close(); // cancel the pending backoff timer
+  });
+
+  it("reports open and sends on the live socket", async () => {
+    const statuses: string[] = [];
+    const conn = connectTerminalWithRetry({ server: "s1" }, { onEvent: () => {}, onStatus: (s) => statuses.push(s) }, { WS: FakeWSCtor, fetchTicket: async () => "t", rand: () => 0 });
+    const ws = await openLatest();
+    ws.onopen!();
+    expect(statuses).toContain("open");
+    conn.send("x");
+    expect(ws.sent).toContain("x");
+    conn.close();
   });
 });

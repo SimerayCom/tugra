@@ -183,6 +183,18 @@ export class TerminalGateway
     ws.on("message", (raw) => this.onClientMessage(sessionId, serverId, raw.toString()));
     ws.on("close", () => this.endSession(sessionId, true));
     ws.on("error", () => this.endSession(sessionId, true));
+
+    // Keep the socket alive through idle-timeout proxies (Cloudflare/Traefik ~100s): a server-driven ping
+    // every 25s (the browser auto-replies pong). Two consecutive missed pongs ⇒ the peer is gone → terminate.
+    let pongMissed = 0;
+    ws.on("pong", () => { pongMissed = 0; });
+    const heartbeat = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return clearInterval(heartbeat);
+      if (pongMissed >= 2) { clearInterval(heartbeat); return ws.terminate(); }
+      pongMissed += 1;
+      ws.ping();
+    }, 25_000);
+    ws.on("close", () => clearInterval(heartbeat));
   }
 
   private onClientMessage(sessionId: string, serverId: string, raw: string): void {
