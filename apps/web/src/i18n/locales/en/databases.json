@@ -16,6 +16,7 @@
   "tabMetrics": "Metrics",
   "tabBackups": "Backups",
   "tabSettings": "Configuration",
+  "tabShell": "Terminal",
   "openShell": "Open shell",
   "connectionPending": "Connection details appear once the database is deployed.",
   "versionHint": "Optional — defaults to latest",
