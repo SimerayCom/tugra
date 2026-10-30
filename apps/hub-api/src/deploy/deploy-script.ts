@@ -73,6 +73,8 @@ export interface AppSpec {
   /** Host directories bind-mounted into the container (advanced; validated against the sensitive-path denylist). */
   hostMounts?: HostMount[] | null;
   gitToken?: string | null;
+  /** OpenSSH private deploy key for an ssh:// or git@ repo URL (decrypted); clones via GIT_SSH_COMMAND. */
+  gitSshKey?: string | null;
   registryAuth?: RegistryAuth | null;
   env: Record<string, string>;
   /** Build-time variables injected during image build (separate from runtime env). */
@@ -363,6 +365,15 @@ function b64(v: string): string {
 }
 
 /** Inject the `x-access-token` user into an https git URL (token itself stays out). */
+// Persistent known_hosts dir (bind-mounted from the host into the agent), so accept-new TOFU survives an
+// agent recreate/self-update and a changed host key then HARD-FAILS (MITM caught) rather than silently re-trusting.
+const SSH_DIR = "/etc/tugra/ssh";
+
+/** An SSH-form git URL: `ssh://…` or scp-style `user@host:path`. These clone with a deploy key, not a token. */
+export function isSshGitUrl(url: string): boolean {
+  return /^ssh:\/\//i.test(url) || /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/.test(url);
+}
+
 export function gitAuthUrl(gitUrl: string): string {
   return gitUrl.replace(/^https:\/\//i, "https://x-access-token@");
 }
@@ -550,9 +561,25 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     const bd = `/etc/tugra/builds/${app.id}`;
     const branch = app.gitBranch || "main";
     const url = app.gitUrl ?? "";
+    const ssh = isSshGitUrl(url);
+    const useSsh = !!app.gitSshKey && ssh;
     const useToken = !!app.gitToken && /^https:\/\//i.test(url);
     const steps = [`rm -rf ${bd} && mkdir -p ${bd}`];
-    if (useToken) {
+    if (useSsh) {
+      // Private SSH clone: the deploy key is written to a 0600 temp file (base64-piped, never in argv),
+      // and host keys are learned/pinned in a persistent known_hosts (accept-new TOFU).
+      steps.push(
+        ...secretsDirPrelude(),
+        `command -v ssh >/dev/null 2>&1 || { echo "TUGRA: this agent image has no ssh client — update the agent to clone over SSH"; exit 1; }`,
+        `printf %s ${shq(b64(app.gitSshKey!))} | base64 -d > "$sd/id"`,
+        'chmod 600 "$sd/id"',
+        `mkdir -p ${SSH_DIR}`,
+        `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${bd}`,
+      );
+    } else if (ssh) {
+      // An SSH repo URL but no deploy key configured — fail clearly instead of prompting / hanging.
+      steps.push(`echo "TUGRA: this is an SSH repo but no deploy key is set — generate one and add it to the repo"; exit 1`);
+    } else if (useToken) {
       // Private clone: token via GIT_ASKPASS (never in argv / URL / .git/config).
       steps.push(
         ...secretsDirPrelude(),

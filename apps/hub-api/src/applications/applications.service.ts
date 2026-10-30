@@ -45,6 +45,7 @@ import {
   buildImageRemoveScriptForTag,
   buildRemoveScript,
   buildCustomCertRemoveScript,
+  isSshGitUrl,
   buildRestartScript,
   buildRunScript,
   buildBuildOnlyScript,
@@ -68,6 +69,7 @@ import {
   type RegistryAuth,
 } from "../deploy/deploy-script";
 import { parseCustomCert, certCoversHost } from "./custom-cert";
+import { generateEd25519DeployKey } from "../git-sources/ssh-keygen";
 import { assertSafeDockerOptions, validateHostMounts } from "../deploy/docker-options-safety";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import {
@@ -158,6 +160,8 @@ export const AppViewSchema = z.object({
   // Whether this COMPOSE app has any editable config mounts (content fetched on demand, not here).
   hasConfigMounts: z.boolean(),
   hasGitToken: z.boolean(),
+  hasGitSshKey: z.boolean(),
+  gitSshPublicKey: z.string().nullable(),
   registryUrl: z.string().nullable(),
   registryUser: z.string().nullable(),
   registryId: z.string().nullable(),
@@ -242,6 +246,12 @@ export const CloneAppResultSchema = z.object({
   warnings: z.array(z.string()),
 });
 export type CloneAppResult = z.infer<typeof CloneAppResultSchema>;
+
+// Result of generating an SSH deploy key — the PUBLIC key + fingerprint only (the private key never leaves).
+export const GitSshKeyResultSchema = z.object({
+  publicKey: z.string(),
+  fingerprint: z.string(),
+});
 
 /** Capture the user's non-secret install choices (timezone, username, ...) for the record, but never
  *  persist a secret field's value — installConfig is bookkeeping, not a secret store (SPEC §8). */
@@ -483,6 +493,11 @@ export class ApplicationsService {
       source === "COMPOSE" ? (this.composeWeb({ templateSlug: dto.templateSlug, composeFile: dto.composeFile })?.service ?? null) : null;
     const expose = this.resolveExpose(dto, server, source, composeWebService);
 
+    // An ssh:// / git@ repo needs a deploy key the user adds to the repo first — generate it now and skip
+    // the first deploy (a clone would fail until the public key is added).
+    const sshAuto = source === "GIT" && isSshGitUrl(dto.gitUrl ?? "");
+    const sshKey = sshAuto ? generateEd25519DeployKey() : null;
+
     const app = await this.prisma.application.create({
       data: {
         name: dto.name,
@@ -502,6 +517,9 @@ export class ApplicationsService {
         teamId: server.teamId,
         env: {} as Prisma.InputJsonValue,
         envEnc: this.crypto.encrypt(JSON.stringify(dto.env ?? {})),
+        gitTokenEnc: dto.gitToken ? this.crypto.encrypt(dto.gitToken) : null,
+        gitSshKeyEnc: sshKey ? this.crypto.encrypt(sshKey.privateKeyOpenSsh) : null,
+        gitSshPublicKey: sshKey?.publicKey ?? null,
         hostPort: dto.hostPort ?? null,
         containerPort: dto.containerPort ?? 80,
         domain: expose.domain,
@@ -514,7 +532,8 @@ export class ApplicationsService {
         webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
       },
     });
-    return this.finishCreate(app, userId, server.teamId, dto.deploy, server.publicIp ?? server.publicIpv6);
+    // Skip the first deploy for an auto-keyed ssh repo — the user must add the public key to the repo first.
+    return this.finishCreate(app, userId, server.teamId, dto.deploy && !sshAuto, server.publicIp ?? server.publicIpv6);
   }
 
   /** Shared post-insert tail for both create() and createFromTemplate(): grant-on-create access,
@@ -623,6 +642,8 @@ export class ApplicationsService {
           configMounts: jsonOrNull(src.configMounts),
           // Encrypted blobs copy verbatim (one global key, no per-app binding) — same as the preview path.
           gitTokenEnc: src.gitTokenEnc,
+          gitSshKeyEnc: src.gitSshKeyEnc, // same repo → the same deploy key clones it
+          gitSshPublicKey: src.gitSshPublicKey,
           registryId: src.registryId,
           registryAuthEnc: src.registryAuthEnc,
           pushToRegistry: src.pushToRegistry,
@@ -676,6 +697,29 @@ export class ApplicationsService {
     const perms = await this.access.membershipPermissions(userId, src.teamId);
     const app = this.view(created, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, server.publicIp ?? server.publicIpv6);
     return { app, warnings };
+  }
+
+  /** Generate (or rotate) an ed25519 SSH deploy key for an ssh:// / git@ repo. Returns only the PUBLIC key
+   *  + fingerprint — the private key is encrypted at rest and never leaves the server. The operator adds the
+   *  public key to the repo as a read-only deploy key, then deploys. */
+  async generateGitSshKey(userId: string, id: string): Promise<{ publicKey: string; fingerprint: string }> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "GIT" || !isSshGitUrl(app.gitUrl ?? "")) {
+      throw new BadRequestException("a deploy key applies to a Git app with an ssh:// or git@ repository URL");
+    }
+    const key = generateEd25519DeployKey();
+    await this.prisma.application.update({
+      where: { id },
+      data: { gitSshKeyEnc: this.crypto.encrypt(key.privateKeyOpenSsh), gitSshPublicKey: key.publicKey },
+    });
+    await this.audit.log({ actor: userId, action: "app.git_ssh_key.generate", target: id });
+    return { publicKey: key.publicKey, fingerprint: key.fingerprint };
+  }
+
+  async removeGitSshKey(userId: string, id: string): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({ where: { id }, data: { gitSshKeyEnc: null, gitSshPublicKey: null } });
+    await this.audit.log({ actor: userId, action: "app.git_ssh_key.remove", target: id });
   }
 
   /** One-click template catalog (gallery metadata only). */
@@ -931,6 +975,8 @@ export class ApplicationsService {
           gpus: parent.gpus,
           volumes: (parent.volumes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           gitTokenEnc: parent.gitTokenEnc,
+          gitSshKeyEnc: parent.gitSshKeyEnc, // preview clones the same repo → reuse the parent's deploy key
+          gitSshPublicKey: parent.gitSshPublicKey,
           registryAuthEnc: parent.registryAuthEnc,
           env: {} as Prisma.InputJsonValue,
           envEnc: parent.envEnc,
@@ -2621,6 +2667,16 @@ export class ApplicationsService {
     }
   }
 
+  /** Decrypt the app's SSH deploy key for the deploy spec. Null when none is stored or the blob can't be read. */
+  private appGitSshKey(app: Application): string | null {
+    if (!app.gitSshKeyEnc) return null;
+    try {
+      return this.crypto.decrypt(app.gitSshKeyEnc);
+    } catch {
+      return null;
+    }
+  }
+
   private appRegistryAuth(app: Application): RegistryAuth | null {
     if (!app.registryAuthEnc) return null;
     try {
@@ -2762,6 +2818,7 @@ export class ApplicationsService {
       volumes: this.appVolumes(app),
       hostMounts: this.appHostMounts(app),
       gitToken: this.appGitToken(app),
+      gitSshKey: this.appGitSshKey(app),
       registryAuth: this.appRegistryAuth(app),
       env: this.appEnv(app),
       hostPort: app.hostPort,
@@ -2966,6 +3023,8 @@ export class ApplicationsService {
       hostMounts: this.appHostMounts(app),
       composeVolumes: this.composeVolumesView(app),
       hasGitToken: !!app.gitTokenEnc,
+      hasGitSshKey: !!app.gitSshKeyEnc,
+      gitSshPublicKey: app.gitSshPublicKey ?? null,
       registryUrl: this.appRegistryAuth(app)?.url ?? null,
       registryUser: this.appRegistryAuth(app)?.user ?? null,
       registryId: app.registryId,

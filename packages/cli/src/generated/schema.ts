@@ -1732,6 +1732,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/git-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ApplicationsController_generateGitSshKey"];
+        delete: operations["ApplicationsController_removeGitSshKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/clone": {
         parameters: {
             query?: never;
@@ -8904,6 +8920,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -9060,6 +9078,7 @@ export interface operations {
                     gitUrl?: string;
                     gitBranch?: string;
                     gitSourceId?: string;
+                    gitToken?: string;
                     /** @enum {string} */
                     buildType?: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                     dockerfilePath?: string;
@@ -9133,6 +9152,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -9476,6 +9497,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -9774,6 +9797,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -13403,6 +13428,139 @@ export interface operations {
             };
         };
     };
+    ApplicationsController_generateGitSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        publicKey: string;
+                        fingerprint: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_removeGitSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     ApplicationsController_clone: {
         parameters: {
             query?: never;
@@ -13472,6 +13630,8 @@ export interface operations {
                             }[];
                             hasConfigMounts: boolean;
                             hasGitToken: boolean;
+                            hasGitSshKey: boolean;
+                            gitSshPublicKey: string | null;
                             registryUrl: string | null;
                             registryUser: string | null;
                             registryId: string | null;
@@ -13699,6 +13859,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -13995,6 +14157,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -14347,6 +14511,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;
@@ -15370,6 +15536,8 @@ export interface operations {
                         }[];
                         hasConfigMounts: boolean;
                         hasGitToken: boolean;
+                        hasGitSshKey: boolean;
+                        gitSshPublicKey: string | null;
                         registryUrl: string | null;
                         registryUser: string | null;
                         registryId: string | null;

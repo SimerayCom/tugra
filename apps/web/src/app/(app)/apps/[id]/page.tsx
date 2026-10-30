@@ -394,7 +394,7 @@ export default function AppDetailPage() {
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
     credentials: () => (
-      <CredentialsCard id={id} source={appData.source} hasGitToken={appData.hasGitToken} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
+      <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
     ),
     env: () => <EnvCard id={id} clusterId={appData.clusterId} />,
     databaseLinks: () => <DatabaseLinksCard id={id} serverId={appData.serverId} canWrite={appData.canWrite} />,
@@ -1835,23 +1835,32 @@ function CustomCertCard({
 function CredentialsCard({
   id,
   source,
+  gitUrl,
   hasGitToken,
+  hasGitSshKey,
+  gitSshPublicKey,
   registryUrl,
   registryUser,
 }: {
   id: string;
   source: string;
+  gitUrl: string | null;
   hasGitToken: boolean;
+  hasGitSshKey: boolean;
+  gitSshPublicKey: string | null;
   registryUrl: string | null;
   registryUser: string | null;
 }) {
   const t = useT();
   const qc = useQueryClient();
   const isGit = source === "GIT";
+  // An ssh:// / git@ repo authenticates with a deploy key, not a token.
+  const sshRepo = isGit && !!gitUrl && /^(ssh:\/\/|[\w.-]+@[\w.-]+:)/.test(gitUrl);
   const [gitToken, setGitToken] = useState("");
   const [url, setUrl] = useState(registryUrl ?? "");
   const [user, setUser] = useState(registryUser ?? "");
   const [token, setToken] = useState("");
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["app", id] });
   const save = useMutation({
     mutationFn: () =>
       api.setAppCredentials(
@@ -1860,27 +1869,48 @@ function CredentialsCard({
           ? { gitToken: gitToken.trim() || null }
           : { registry: user.trim() && token.trim() ? { url: url.trim() || undefined, user: user.trim(), token } : null },
       ),
-    onSuccess: () => {
-      setGitToken("");
-      setToken("");
-      qc.invalidateQueries({ queryKey: ["app", id] });
-    },
+    onSuccess: () => { setGitToken(""); setToken(""); invalidate(); },
   });
+  const genKey = useMutation({ mutationFn: () => api.generateGitSshKey(id), onSuccess: invalidate });
+  const rmKey = useMutation({ mutationFn: () => api.removeGitSshKey(id), onSuccess: invalidate });
 
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.credentials")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.credentialsDesc")}</p>
-      {isGit ? (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            style={{ ...envField, flex: 1, minWidth: 200 }}
-            type="password"
-            placeholder={hasGitToken ? "•••••••• (set — replace)" : t("apps.gitToken")}
-            value={gitToken}
-            onChange={(e) => setGitToken(e.target.value)}
-          />
-          <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      {sshRepo ? (
+        gitSshPublicKey ? (
+          <div>
+            <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 6px" }}>{t("apps.deployKeyHint")}</p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input readOnly value={gitSshPublicKey} onFocus={(e) => e.currentTarget.select()} aria-label={t("apps.deployKey")} style={{ ...envField, flex: 1, minWidth: 200, fontFamily: "monospace", fontSize: 11 }} />
+              <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(gitSshPublicKey).catch(() => {})}>{t("apps.copy")}</Btn>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Btn variant="ghost" onClick={() => genKey.mutate()} disabled={genKey.isPending}>{t("apps.deployKeyRegen")}</Btn>
+              <Btn variant="dangerGhost" onClick={() => rmKey.mutate()} disabled={rmKey.isPending}>{t("apps.deployKeyRemove")}</Btn>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 8px" }}>{t("apps.deployKeyNone")}</p>
+            <Btn onClick={() => genKey.mutate()} disabled={genKey.isPending}>{t("apps.deployKeyGenerate")}</Btn>
+            {genKey.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{(genKey.error as Error).message}</div>}
+          </div>
+        )
+      ) : isGit ? (
+        <div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              style={{ ...envField, flex: 1, minWidth: 200 }}
+              type="password"
+              placeholder={hasGitToken ? "•••••••• (set — replace)" : t("apps.gitToken")}
+              value={gitToken}
+              onChange={(e) => setGitToken(e.target.value)}
+            />
+            <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+          </div>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "6px 0 0" }}>{t("apps.gitTokenHint")}</p>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
