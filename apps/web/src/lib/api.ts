@@ -648,7 +648,7 @@ export const api = {
   upgradeOne(id: string, pkg: string) {
     return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply/${pkg}`, { method: "POST" });
   },
-  setCleanupConfig(id: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; volumes?: boolean }) {
+  setCleanupConfig(id: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; thresholdPct?: number | null; volumes?: boolean }) {
     return apiFetch<{ ok: true }>(`/servers/${id}/cleanup-config`, {
       method: "PUT",
       body: JSON.stringify(cfg),
@@ -672,7 +672,7 @@ export const api = {
       body: JSON.stringify(cfg),
     });
   },
-  bulkSetCleanupConfig(serverIds: string[], cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; volumes?: boolean }) {
+  bulkSetCleanupConfig(serverIds: string[], cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; thresholdPct?: number | null; volumes?: boolean }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/cleanup-config`, {
       method: "POST",
       body: JSON.stringify({ serverIds, ...cfg }),

@@ -74,6 +74,7 @@ export class CleanupService {
         cleanupEnabled: cfg.enabled,
         cleanupIntervalHours: cfg.intervalHours ?? null,
         ...(cfg.cron !== undefined ? { cleanupCron: cfg.cron } : {}),
+        ...(cfg.thresholdPct !== undefined ? { cleanupThresholdPct: cfg.thresholdPct } : {}),
         ...(cfg.volumes !== undefined ? { cleanupVolumes: cfg.volumes } : {}),
       },
     });

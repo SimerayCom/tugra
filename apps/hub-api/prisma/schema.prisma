@@ -274,6 +274,7 @@ model Server {
   cleanupEnabled       Boolean      @default(false)
   cleanupIntervalHours Int?
   cleanupCron          String?      // optional 5-field cron; when set, overrides cleanupIntervalHours
+  cleanupThresholdPct  Int?         // scheduled cleanup only prunes when disk usage % is at/above this (manual always runs)
   cleanupVolumes       Boolean      @default(false)
   lastCleanupAt        DateTime?
   lastSeenAt           DateTime?

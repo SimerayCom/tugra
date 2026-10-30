@@ -364,6 +364,7 @@ export interface ServerView {
   cleanupEnabled: boolean;
   cleanupIntervalHours: number | null;
   cleanupCron: string | null;
+  cleanupThresholdPct: number | null;
   cleanupVolumes: boolean;
   lastCleanupAt: string | null;
   lastSeenAt: string | null;

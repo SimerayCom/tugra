@@ -8,6 +8,8 @@ export const CleanupConfigSchema = z.object({
   intervalHours: z.number().int().min(1).max(24 * 30).optional(),
   // When set, the cron expression drives the schedule and overrides intervalHours; null clears it.
   cron: cleanupCron.nullable().optional(),
+  // Scheduled runs only prune when disk usage % is at/above this; null clears it. Manual runs ignore it.
+  thresholdPct: z.number().int().min(1).max(100).nullable().optional(),
   volumes: z.boolean().optional(),
 });
 export type CleanupConfigInput = z.infer<typeof CleanupConfigSchema>;

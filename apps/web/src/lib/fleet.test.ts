@@ -35,6 +35,7 @@ const s = (
   cleanupEnabled: false,
   cleanupIntervalHours: null,
   cleanupCron: null,
+  cleanupThresholdPct: null,
   cleanupVolumes: false,
   lastCleanupAt: null,
   lastSeenAt: null,

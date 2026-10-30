@@ -30,6 +30,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   cleanupEnabled: false,
   cleanupIntervalHours: null,
   cleanupCron: null,
+  cleanupThresholdPct: null,
   cleanupVolumes: false,
   lastCleanupAt: null,
   lastSeenAt: null,

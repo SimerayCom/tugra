@@ -2992,6 +2992,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "cleanupThresholdPct": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "cleanupVolumes": {
                         "type": "boolean"
                       },
@@ -3071,6 +3075,7 @@
                       "cleanupEnabled",
                       "cleanupIntervalHours",
                       "cleanupCron",
+                      "cleanupThresholdPct",
                       "cleanupVolumes",
                       "lastCleanupAt",
                       "lastSeenAt",
@@ -3359,6 +3364,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "cleanupThresholdPct": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "cleanupVolumes": {
                       "type": "boolean"
                     },
@@ -3438,6 +3447,7 @@
                     "cleanupEnabled",
                     "cleanupIntervalHours",
                     "cleanupCron",
+                    "cleanupThresholdPct",
                     "cleanupVolumes",
                     "lastCleanupAt",
                     "lastSeenAt",
@@ -28576,6 +28586,12 @@
                     "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
                     "nullable": true
                   },
+                  "thresholdPct": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "nullable": true
+                  },
                   "volumes": {
                     "type": "boolean"
                   }
@@ -28896,6 +28912,12 @@
                   "cron": {
                     "type": "string",
                     "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
+                  },
+                  "thresholdPct": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
                     "nullable": true
                   },
                   "volumes": {
