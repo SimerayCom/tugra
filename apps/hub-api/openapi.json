@@ -15404,6 +15404,744 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/clone": {
+      "post": {
+        "operationId": "ApplicationsController_clone",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "app": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "IMAGE",
+                            "GIT",
+                            "COMPOSE"
+                          ]
+                        },
+                        "image": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "gitUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "gitBranch": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "buildType": {
+                          "type": "string",
+                          "enum": [
+                            "NIXPACKS",
+                            "DOCKERFILE",
+                            "STATIC",
+                            "RAILPACK",
+                            "HEROKU"
+                          ]
+                        },
+                        "buildCommand": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "outputDir": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "composeFile": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "healthCmd": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "healthCheckType": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "healthCheckPath": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "healthCheckPort": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "memoryMb": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "cpus": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "reserveMemoryMb": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "reserveCpus": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "gpus": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployTimeoutSec": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "dockerOptions": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "preDeployCommand": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "postDeployCommand": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "dbNetwork": {
+                          "type": "boolean"
+                        },
+                        "volumes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "path": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "path"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "hostMounts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "hostPath": {
+                                "type": "string"
+                              },
+                              "containerPath": {
+                                "type": "string"
+                              },
+                              "readOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "hostPath",
+                              "containerPath"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "composeVolumes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "browsable": {
+                                "type": "boolean"
+                              },
+                              "mounts": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "service": {
+                                      "type": "string"
+                                    },
+                                    "path": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "service",
+                                    "path"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "browsable",
+                              "mounts"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "hasConfigMounts": {
+                          "type": "boolean"
+                        },
+                        "hasGitToken": {
+                          "type": "boolean"
+                        },
+                        "registryUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "registryUser": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "registryId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "pushToRegistry": {
+                          "type": "boolean"
+                        },
+                        "buildServerId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "clusterId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "replicas": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "placement": {
+                          "type": "object",
+                          "properties": {
+                            "constraints": {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "hostname"
+                                        ]
+                                      },
+                                      "op": {
+                                        "type": "string",
+                                        "enum": [
+                                          "eq",
+                                          "ne"
+                                        ],
+                                        "default": "eq"
+                                      },
+                                      "value": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 253,
+                                        "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "value"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "nodeId"
+                                        ]
+                                      },
+                                      "op": {
+                                        "type": "string",
+                                        "enum": [
+                                          "eq",
+                                          "ne"
+                                        ],
+                                        "default": "eq"
+                                      },
+                                      "value": {
+                                        "type": "string",
+                                        "pattern": "^[a-z0-9]{5,50}$"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "value"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "role"
+                                        ]
+                                      },
+                                      "op": {
+                                        "type": "string",
+                                        "enum": [
+                                          "eq",
+                                          "ne"
+                                        ],
+                                        "default": "eq"
+                                      },
+                                      "value": {
+                                        "type": "string",
+                                        "enum": [
+                                          "manager",
+                                          "worker"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "value"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "label"
+                                        ]
+                                      },
+                                      "op": {
+                                        "type": "string",
+                                        "enum": [
+                                          "eq",
+                                          "ne"
+                                        ],
+                                        "default": "eq"
+                                      },
+                                      "key": {
+                                        "type": "string",
+                                        "pattern": "^[a-z0-9]([a-z0-9_.-]{0,62})?$"
+                                      },
+                                      "value": {
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z0-9]([A-Za-z0-9_.:/-]{0,62})?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "key",
+                                      "value"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              }
+                            },
+                            "spreadLabelKey": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "constraints",
+                            "spreadLabelKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "constraintServerId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployStrategy": {
+                          "type": "string"
+                        },
+                        "rollbackOnFailure": {
+                          "type": "boolean"
+                        },
+                        "zeroDowntime": {
+                          "type": "boolean"
+                        },
+                        "templateSlug": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "templateLogo": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "environmentId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "projectId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "projectName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "environmentName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "serverId": {
+                          "type": "string"
+                        },
+                        "teamId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "NEW",
+                            "RUNNING",
+                            "STOPPED",
+                            "FAILED"
+                          ]
+                        },
+                        "hostPort": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "containerPort": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "domain": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "domainRedirect": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "securityHeaders": {
+                          "type": "boolean"
+                        },
+                        "forwardAuth": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "https": {
+                          "type": "boolean"
+                        },
+                        "domainKind": {
+                          "type": "string"
+                        },
+                        "exposeMode": {
+                          "type": "string"
+                        },
+                        "tunnelExposed": {
+                          "type": "boolean"
+                        },
+                        "certType": {
+                          "type": "string"
+                        },
+                        "certDomains": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "certNotAfter": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "hasCustomCert": {
+                          "type": "boolean"
+                        },
+                        "url": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "webhookToken": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "webhookSecret": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "isPreview": {
+                          "type": "boolean"
+                        },
+                        "previewEnabled": {
+                          "type": "boolean"
+                        },
+                        "prNumber": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "parentAppId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "volumeBackupEnabled": {
+                          "type": "boolean"
+                        },
+                        "volumeBackupIntervalHours": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "volumeBackupRetention": {
+                          "type": "number"
+                        },
+                        "volumeBackupDestinationId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "envCount": {
+                          "type": "number"
+                        },
+                        "canWrite": {
+                          "type": "boolean"
+                        },
+                        "iconUpdatedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "source",
+                        "image",
+                        "gitUrl",
+                        "gitBranch",
+                        "buildType",
+                        "buildCommand",
+                        "outputDir",
+                        "composeFile",
+                        "healthCmd",
+                        "healthCheckType",
+                        "healthCheckPath",
+                        "healthCheckPort",
+                        "memoryMb",
+                        "cpus",
+                        "reserveMemoryMb",
+                        "reserveCpus",
+                        "gpus",
+                        "deployTimeoutSec",
+                        "dockerOptions",
+                        "preDeployCommand",
+                        "postDeployCommand",
+                        "dbNetwork",
+                        "volumes",
+                        "hostMounts",
+                        "composeVolumes",
+                        "hasConfigMounts",
+                        "hasGitToken",
+                        "registryUrl",
+                        "registryUser",
+                        "registryId",
+                        "pushToRegistry",
+                        "buildServerId",
+                        "clusterId",
+                        "replicas",
+                        "placement",
+                        "constraintServerId",
+                        "deployStrategy",
+                        "rollbackOnFailure",
+                        "zeroDowntime",
+                        "templateSlug",
+                        "templateLogo",
+                        "environmentId",
+                        "projectId",
+                        "projectName",
+                        "environmentName",
+                        "serverId",
+                        "teamId",
+                        "status",
+                        "hostPort",
+                        "containerPort",
+                        "domain",
+                        "domainRedirect",
+                        "securityHeaders",
+                        "forwardAuth",
+                        "https",
+                        "domainKind",
+                        "exposeMode",
+                        "tunnelExposed",
+                        "certType",
+                        "certDomains",
+                        "certNotAfter",
+                        "hasCustomCert",
+                        "url",
+                        "webhookToken",
+                        "webhookSecret",
+                        "isPreview",
+                        "previewEnabled",
+                        "prNumber",
+                        "parentAppId",
+                        "tags",
+                        "volumeBackupEnabled",
+                        "volumeBackupIntervalHours",
+                        "volumeBackupRetention",
+                        "volumeBackupDestinationId",
+                        "envCount",
+                        "canWrite",
+                        "iconUpdatedAt",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "app",
+                    "warnings"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/expose": {
       "put": {
         "operationId": "ApplicationsController_expose",

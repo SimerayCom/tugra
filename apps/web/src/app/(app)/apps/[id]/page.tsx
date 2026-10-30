@@ -15,6 +15,7 @@ import { AppFilesCard } from "../../../../components/app-files-card";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
 import { DatabaseLinksCard } from "../../../../components/database-links-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
+import { CloneAppModal } from "../../../../components/clone-app-modal";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
 import { Modal } from "../../../../components/modal";
@@ -44,7 +45,7 @@ import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
   RotateCw, Play, RefreshCw, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
-  Pencil, Trash2, Lock, ChevronRight, ExternalLink, ArrowDown, X, type LucideIcon,
+  Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, type LucideIcon,
 } from "lucide-react";
 
 // Icon per Configuration sub-nav group. Kept here (not in config-groups.ts) so that pure, tested file
@@ -329,6 +330,7 @@ export default function AppDetailPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [exposeOpen, setExposeOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   // Which deployment the Deployments tab has drilled into (Coolify-style). null ⇒ show the list.
   const [selDep, setSelDep] = useState<string | null>(null);
   const rename = useMutation({
@@ -494,6 +496,7 @@ export default function AppDetailPage() {
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
+                    <Btn icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("apps.clone")}</Btn>
                     <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); keepVolumes.current = false; if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: { label: t("apps.keepVolumes"), ref: keepVolumes } })) del.mutate(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
@@ -534,6 +537,9 @@ export default function AppDetailPage() {
         )}
       </PageHeader>
 
+      {cloneOpen && (
+        <CloneAppModal appId={id} defaultName={`${appData.name} (copy)`} onClose={() => setCloneOpen(false)} />
+      )}
       {renameOpen && (
         <RenameModal
           current={appData.name}

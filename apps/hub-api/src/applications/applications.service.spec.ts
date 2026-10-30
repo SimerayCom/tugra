@@ -3262,3 +3262,89 @@ describe("ApplicationsService - custom icon", () => {
     expect(deleteMany).not.toHaveBeenCalled();
   });
 });
+
+describe("ApplicationsService.clone", () => {
+  const server = { id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" };
+  const src = {
+    ...app,
+    id: "src1",
+    name: "shop",
+    source: "IMAGE",
+    image: "nginx",
+    domain: "shop.example.com",
+    domainKind: "custom",
+    exposeMode: "custom",
+    certType: "le-http",
+    certPem: "PEM",
+    certKeyEnc: "KEY",
+    isPreview: false,
+    envEnc: "ENVENC",
+    gitTokenEnc: "GITENC",
+    registryAuthEnc: null,
+    buildArgsEnc: null,
+    volumes: [{ name: "data", path: "/data" }],
+    hostMounts: null,
+    portMappings: null,
+    placement: null,
+    tags: ["x"],
+    webhookToken: "srctok",
+    hostPort: 8080,
+  };
+  const clonePrisma = (over: Record<string, unknown> = {}) => {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(src), create },
+      server: { findUnique: jest.fn().mockResolvedValue(server) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      ...over,
+    } as unknown as PrismaService;
+    return { prisma, create };
+  };
+
+  it("copies config + secrets verbatim, resets domain/cert/webhook/host-port, leaves status NEW", async () => {
+    const { prisma, create } = clonePrisma();
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    const data = create.mock.calls[0][0].data;
+    expect(data.name).toBe("shop (copy)");
+    expect(data.envEnc).toBe("ENVENC"); // encrypted blob copied verbatim
+    expect(data.gitTokenEnc).toBe("GITENC");
+    expect(data.webhookToken).toBeDefined();
+    expect(data.webhookToken).not.toBe("srctok"); // fresh webhook
+    expect(data.certPem).toBeUndefined(); // custom cert NOT copied (DB default null)
+    expect(data.domain).toBeNull(); // custom domain reset
+    expect(data.domainKind).toBe("none");
+    expect(data.status).toBeUndefined(); // DB default NEW — never deployed
+    expect(data.isPreview).toBeUndefined(); // DB default false
+    expect(data.hostPort).toBeNull(); // reset (would clash on the same server)
+    expect(data.volumes).toEqual([{ name: "data", path: "/data" }]); // definition copied (fresh volume via new id)
+    expect(res.warnings).toEqual(expect.arrayContaining(["domain_reset", "custom_cert_dropped", "host_port_reset"]));
+  });
+
+  it("rejects cloning a preview app", async () => {
+    const { prisma } = clonePrisma({ application: { findUnique: jest.fn().mockResolvedValue({ ...src, isPreview: true }), create: jest.fn() } });
+    await expect(make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {})).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("requires apps:config on the source (denied → Forbidden)", async () => {
+    const { prisma } = clonePrisma();
+    const denied = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) };
+    await expect(make(prisma, denied, {} as AgentWsServer).clone("u1", "src1", {})).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("copies scheduled tasks DISABLED", async () => {
+    const createMany = jest.fn();
+    const { prisma } = clonePrisma({
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([{ id: "t1", appId: "src1", name: "cron", schedule: "0 3 * * *", command: "echo hi", enabled: true }]), createMany },
+    });
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ appId: "clone1", enabled: false, command: "echo hi" })] });
+    expect(res.warnings).toContain("tasks_disabled");
+  });
+
+  it("honours a custom name (capped, no chaining)", async () => {
+    const { prisma, create } = clonePrisma();
+    await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { name: "staging" });
+    expect(create.mock.calls[0][0].data.name).toBe("staging");
+  });
+});

@@ -1732,6 +1732,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ApplicationsController_clone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/expose": {
         parameters: {
             query?: never;
@@ -13339,6 +13355,232 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_clone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        app: {
+                            id: string;
+                            name: string;
+                            /** @enum {string} */
+                            source: "IMAGE" | "GIT" | "COMPOSE";
+                            image: string | null;
+                            gitUrl: string | null;
+                            gitBranch: string | null;
+                            /** @enum {string} */
+                            buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
+                            buildCommand: string | null;
+                            outputDir: string | null;
+                            composeFile: string | null;
+                            healthCmd: string | null;
+                            healthCheckType: string | null;
+                            healthCheckPath: string | null;
+                            healthCheckPort: number | null;
+                            memoryMb: number | null;
+                            cpus: number | null;
+                            reserveMemoryMb: number | null;
+                            reserveCpus: number | null;
+                            gpus: string | null;
+                            deployTimeoutSec: number | null;
+                            dockerOptions: string | null;
+                            preDeployCommand: string | null;
+                            postDeployCommand: string | null;
+                            dbNetwork: boolean;
+                            volumes: {
+                                name: string;
+                                path: string;
+                            }[];
+                            hostMounts: {
+                                hostPath: string;
+                                containerPath: string;
+                                readOnly?: boolean;
+                            }[];
+                            composeVolumes: {
+                                key: string;
+                                browsable: boolean;
+                                mounts: {
+                                    service: string;
+                                    path: string;
+                                }[];
+                            }[];
+                            hasConfigMounts: boolean;
+                            hasGitToken: boolean;
+                            registryUrl: string | null;
+                            registryUser: string | null;
+                            registryId: string | null;
+                            pushToRegistry: boolean;
+                            buildServerId: string | null;
+                            clusterId: string | null;
+                            replicas: number | null;
+                            placement: {
+                                constraints: ({
+                                    /** @enum {string} */
+                                    type: "hostname";
+                                    /**
+                                     * @default eq
+                                     * @enum {string}
+                                     */
+                                    op: "eq" | "ne";
+                                    value: string;
+                                } | {
+                                    /** @enum {string} */
+                                    type: "nodeId";
+                                    /**
+                                     * @default eq
+                                     * @enum {string}
+                                     */
+                                    op: "eq" | "ne";
+                                    value: string;
+                                } | {
+                                    /** @enum {string} */
+                                    type: "role";
+                                    /**
+                                     * @default eq
+                                     * @enum {string}
+                                     */
+                                    op: "eq" | "ne";
+                                    /** @enum {string} */
+                                    value: "manager" | "worker";
+                                } | {
+                                    /** @enum {string} */
+                                    type: "label";
+                                    /**
+                                     * @default eq
+                                     * @enum {string}
+                                     */
+                                    op: "eq" | "ne";
+                                    key: string;
+                                    value: string;
+                                })[];
+                                spreadLabelKey: string | null;
+                            };
+                            constraintServerId: string | null;
+                            deployStrategy: string;
+                            rollbackOnFailure: boolean;
+                            zeroDowntime: boolean;
+                            templateSlug: string | null;
+                            templateLogo: string | null;
+                            environmentId: string | null;
+                            projectId: string | null;
+                            projectName: string | null;
+                            environmentName: string | null;
+                            serverId: string;
+                            teamId: string;
+                            /** @enum {string} */
+                            status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                            hostPort: number | null;
+                            containerPort: number | null;
+                            domain: string | null;
+                            domainRedirect: string | null;
+                            securityHeaders: boolean;
+                            forwardAuth: string | null;
+                            https: boolean;
+                            domainKind: string;
+                            exposeMode: string;
+                            tunnelExposed: boolean;
+                            certType: string;
+                            certDomains: string[];
+                            /** Format: date-time */
+                            certNotAfter: string | null;
+                            hasCustomCert: boolean;
+                            url: string | null;
+                            webhookToken: string | null;
+                            webhookSecret: string | null;
+                            isPreview: boolean;
+                            previewEnabled: boolean;
+                            prNumber: number | null;
+                            parentAppId: string | null;
+                            tags: string[];
+                            volumeBackupEnabled: boolean;
+                            volumeBackupIntervalHours: number | null;
+                            volumeBackupRetention: number;
+                            volumeBackupDestinationId: string | null;
+                            envCount: number;
+                            canWrite: boolean;
+                            /** Format: date-time */
+                            iconUpdatedAt: string | null;
+                            /** Format: date-time */
+                            createdAt: string;
+                        };
+                        warnings: string[];
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {
