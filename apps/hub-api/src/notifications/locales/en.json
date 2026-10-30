@@ -37,6 +37,18 @@
     "field": { "nodesReady": "Nodes ready" },
     "link": { "openCluster": "Open cluster" }
   },
+  "container": {
+    "crashed": {
+      "title": "Container crashed — {container}",
+      "summary": "{container} exited unexpectedly and was restarted."
+    },
+    "oom": {
+      "title": "Container out of memory — {container}",
+      "summary": "{container} was killed by the kernel for exceeding its memory limit (OOM)."
+    },
+    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind" },
+    "link": { "openApp": "Open app", "openDatabase": "Open database", "openServer": "Open server" }
+  },
   "volumeBackup": {
     "succeeded": { "title": "Volume backup succeeded — {app}", "summary": "The volume backup for {app} completed." },
     "failed": { "title": "Volume backup failed — {app}", "summary": "The volume backup for {app} failed." },

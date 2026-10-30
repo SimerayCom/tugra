@@ -15,11 +15,13 @@ import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
 import { ContainerOpsService } from "./container-ops.service";
 import { ContainerLogStreamGuard } from "./container-log-stream.guard";
+import { ContainerHealthRunnerService } from "./container-health.runner.service";
+import { ContainerHealthSchedulerService } from "./container-health.scheduler.service";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule],
   controllers: [ServerOpsController, FleetController],
-  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard],
+  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService],
 })
 export class ServerOpsModule implements OnModuleInit {
   constructor(

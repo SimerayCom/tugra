@@ -313,6 +313,7 @@ model Server {
   cloudCredentialId    String?
   metrics              Metric[]
   containerMetrics     ContainerMetric[]
+  containerStates      ContainerState[]
   metricRollups        MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
   logDrains            LogDrain[]
@@ -439,6 +440,32 @@ model ContainerMetric {
 
   @@index([serverId, containerName, ts])
   @@index([ts])
+}
+
+// Last-known lifecycle state of each container on a server, for crash/OOM TRANSITION detection by the
+// container-health poll (server-ops/container-health.*). One row per (server, containerName) — the stable
+// key, since containerId changes on recreate. Persisted (not in-memory) so a hub restart never re-seeds or
+// double-alerts. Rows for containers no longer present are deleted each tick (bounded).
+model ContainerState {
+  server               Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId             String
+  containerName        String
+  containerId          String
+  status               String // running | exited | restarting | dead | created | paused
+  exitCode             Int       @default(0)
+  oomKilled            Boolean   @default(false)
+  restartCount         Int       @default(0)
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  health               String? // healthy | unhealthy | starting | null (recorded, not alerted in v1)
+  lastEventTs          BigInt    @default(0) // newest docker-event epoch consumed → next tick's --since cursor
+  lastNotifiedKey      String? // `${containerId}:${restartCount}:${finishedAt}` of the last alerted death
+  lastNotifiedAt       DateTime?
+  restartCountAtNotify Int       @default(0)
+  updatedAt            DateTime  @updatedAt
+
+  @@id([serverId, containerName])
+  @@index([updatedAt])
 }
 
 // 1-minute rollup of host Metric rows (avg/max per bucket) — lets long-range charts survive past the

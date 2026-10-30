@@ -4861,7 +4861,9 @@
                         "scheduled_task_success",
                         "scheduled_task_failed",
                         "docker_cleanup_success",
-                        "docker_cleanup_failed"
+                        "docker_cleanup_failed",
+                        "container_crashed",
+                        "container_oom"
                       ]
                     }
                   },
@@ -5054,7 +5056,9 @@
                         "scheduled_task_success",
                         "scheduled_task_failed",
                         "docker_cleanup_success",
-                        "docker_cleanup_failed"
+                        "docker_cleanup_failed",
+                        "container_crashed",
+                        "container_oom"
                       ]
                     }
                   },

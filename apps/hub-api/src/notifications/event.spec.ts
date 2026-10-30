@@ -326,4 +326,22 @@ describe("renderEvent — typed per-event templates", () => {
     const m = render("deploy_success", { appName: "a" }); // no appId, no url
     expect(m.links).toEqual([]);
   });
+
+  it("container_crashed: failure + critical, app deep-link, exit code + restarts", () => {
+    const m = render("container_crashed", { label: "Shop", serverName: "box", kind: "app", resourceId: "app1", serverId: "s1", exitCode: 1, restartDelta: 3 });
+    expect(m.event).toBe("container_crashed");
+    expect(m.level).toBe("failure");
+    expect(m.critical).toBe(true);
+    expect(m.title).toBe("Container crashed — Shop");
+    expect(fieldVal(m, "Exit code")).toBe("1");
+    expect(fieldVal(m, "Restarts")).toBe("3");
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+  });
+
+  it("container_oom: OOM exit label + server deep-link fallback for a foreign container", () => {
+    const m = render("container_oom", { label: "redis", serverName: "box", kind: "other", serverId: "s1", exitCode: 137, restartDelta: 1 });
+    expect(m.title).toBe("Container out of memory — redis");
+    expect(fieldVal(m, "Exit code")).toBe("OOM");
+    expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/s1");
+  });
 });

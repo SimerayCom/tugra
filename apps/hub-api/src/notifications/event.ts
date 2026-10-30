@@ -15,6 +15,7 @@ import { monitorTemplate } from "./templates/monitor";
 import { volumeBackupTemplate } from "./templates/volume-backup";
 import { scheduledTaskTemplate } from "./templates/scheduled-task";
 import { dockerCleanupTemplate } from "./templates/docker-cleanup";
+import { containerTemplate } from "./templates/container";
 import { genericTemplate, testTemplate } from "./templates/generic";
 
 /** A locale-bound translator: resolves a dotted key with `{param}` interpolation (NotifI18nService). */
@@ -114,6 +115,8 @@ const REGISTRY: Record<string, EventTemplate> = {
   scheduled_task_failed: scheduledTaskTemplate,
   docker_cleanup_success: dockerCleanupTemplate,
   docker_cleanup_failed: dockerCleanupTemplate,
+  container_crashed: containerTemplate,
+  container_oom: containerTemplate,
   monitor_up: monitorTemplate,
   monitor_down: monitorTemplate,
   test: testTemplate,
