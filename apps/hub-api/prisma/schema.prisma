@@ -888,6 +888,10 @@ model Application {
   buildCommand   String?
   outputDir      String?
   composeFile    String?
+  // COMPOSE-from-git: when set (with source=COMPOSE + gitUrl), the compose file lives in the cloned repo at
+  // this repo-relative path instead of being pasted/stored in composeFile. The two are mutually exclusive;
+  // composePath != null is the discriminator for a git-sourced compose stack.
+  composePath    String?
   healthCmd      String?
   healthCheckType String?                          // null = auto | "NONE" | "HTTP" | "CMD" — deploy-gate health policy
   healthCheckPath String?                          // HTTP check path (default "/")

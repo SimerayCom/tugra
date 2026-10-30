@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
@@ -3685,5 +3686,157 @@ describe("ApplicationsService.clone", () => {
     const { prisma, create } = clonePrisma();
     await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { name: "staging" });
     expect(create.mock.calls[0][0].data.name).toBe("staging");
+  });
+});
+
+describe("ApplicationsService — COMPOSE-from-git", () => {
+  const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+  const gitComposeApp = {
+    ...app,
+    source: "COMPOSE",
+    composeFile: null,
+    composePath: "docker-compose.yml",
+    gitUrl: "https://github.com/u/r.git",
+    gitBranch: "main",
+    domain: null,
+    clusterId: null,
+    tunnelExposed: false,
+    certType: "le-http",
+    certPem: null,
+    certKeyEnc: null,
+    certDomains: [],
+    extraDomains: [],
+    templateSlug: null,
+  };
+  /** The render script's marker block for a given rendered compose (+ a deployed-commit marker). */
+  const renderOutput = (compose: string) =>
+    `Cloning into src...\nTUGRA_COMMIT=${"a".repeat(40)}\nTUGRA_COMMIT_MSG_B64=\nTUGRA_COMPOSE_RENDERED_B64=${b64(compose)}\nTUGRA_COMPOSE_SHA=${createHash("sha256").update(compose, "utf8").digest("hex")}\n`;
+
+  function deployDeps(renderCompose: string) {
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(gitComposeApp), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const calls: { cmd: string; cap: string }[] = [];
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        calls.push({ cmd, cap });
+        // The render call runs `docker compose … config`; everything else is the up.
+        if (cmd.includes("config 2>/dev/null")) return Promise.resolve({ exitCode: 0, output: renderOutput(renderCompose) });
+        return Promise.resolve({ exitCode: 0, output: `TUGRA_COMMIT=${"a".repeat(40)}\nup ok` });
+      }),
+    } as unknown as AgentWsServer;
+    return { prisma, access, agentWs, depUpdate, appUpdate, calls };
+  }
+
+  it("renders on the agent, validates on the hub, then runs the sha-locked up", async () => {
+    const compose = "services:\n  web:\n    image: nginx\n";
+    const d = deployDeps(compose);
+    await make(d.prisma, d.access, d.agentWs).deploy("u1", "app1");
+    await flushMicrotasks();
+    // Two agent calls: render (clone + `docker compose config`) then up.
+    const deployCalls = d.calls.filter((c) => c.cap === "deploy");
+    expect(deployCalls).toHaveLength(2);
+    expect(deployCalls[0].cmd).toContain("git clone --depth 1 --branch 'main'");
+    expect(deployCalls[0].cmd).toContain("config 2>/dev/null");
+    // The up re-clones, re-renders and refuses unless the sha matches what the hub validated.
+    const sha = createHash("sha256").update(compose, "utf8").digest("hex");
+    expect(deployCalls[1].cmd).toContain(`[ "$TUGRA_SHA" = '${sha}' ]`);
+    expect(deployCalls[1].cmd).toContain("up -d --build");
+    expect(d.depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", commitSha: "a".repeat(40) }) }),
+    );
+  });
+
+  it("refuses to run when the rendered stack would escape the host (FAILED, no up)", async () => {
+    // A rendered compose that binds the docker socket must be rejected by assertSafeCompose → FAILED, and the
+    // up script must never be sent (only the render call happened).
+    const d = deployDeps("services:\n  web:\n    image: nginx\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n");
+    await make(d.prisma, d.access, d.agentWs).deploy("u1", "app1");
+    await flushMicrotasks();
+    const deployCalls = d.calls.filter((c) => c.cap === "deploy");
+    expect(deployCalls).toHaveLength(1); // render only — the up was never issued
+    expect(deployCalls[0].cmd).toContain("config 2>/dev/null");
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("fails cleanly when the repo yields no rendered compose (bad path / invalid file)", async () => {
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(gitComposeApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const calls: string[] = [];
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        if (cap === "deploy") calls.push(cmd);
+        return Promise.resolve({ exitCode: 0, output: "no markers here" }); // render produced nothing parseable
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    await flushMicrotasks();
+    expect(calls).toHaveLength(1); // render only
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("create persists composePath + gitUrl for a git compose and leaves composeFile null", async () => {
+    const create = jest.fn().mockResolvedValue({ ...gitComposeApp });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", {
+      name: "stack",
+      serverId: "s1",
+      source: "COMPOSE",
+      gitUrl: "https://github.com/u/r.git",
+      composePath: "deploy/docker-compose.yml",
+    });
+    expect(create.mock.calls[0][0].data).toEqual(
+      expect.objectContaining({ source: "COMPOSE", gitUrl: "https://github.com/u/r.git", composePath: "deploy/docker-compose.yml", composeFile: null }),
+    );
+  });
+
+  it("create defaults composePath to docker-compose.yml when omitted", async () => {
+    const create = jest.fn().mockResolvedValue({ ...gitComposeApp });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
+    } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).create("u1", {
+      name: "stack",
+      serverId: "s1",
+      source: "COMPOSE",
+      gitUrl: "https://github.com/u/r.git",
+    });
+    expect(create.mock.calls[0][0].data.composePath).toBe("docker-compose.yml");
   });
 });

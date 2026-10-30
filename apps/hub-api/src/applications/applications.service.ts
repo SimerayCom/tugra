@@ -101,6 +101,12 @@ import { publicManifest, toManifest, validateConfigMountServiceName, validateCon
 import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts, substituteSelfUrls } from "../templates/install-compose";
 import { assertSafeCompose } from "../deploy/compose-safety";
+import {
+  buildComposeGitRenderScript,
+  buildComposeGitUpScript,
+  parseRenderedCompose,
+  composeGitCloneDir,
+} from "../deploy/compose-git";
 import { PortAllocatorService } from "./port-allocator.service";
 import { probeSsl } from "./ssl-probe";
 import { AiService } from "./ai.service";
@@ -137,6 +143,7 @@ export const AppViewSchema = z.object({
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
+  composePath: z.string().nullable(), // COMPOSE-from-git: repo-relative path to the compose file (null = pasted compose)
   healthCmd: z.string().nullable(),
   healthCheckType: z.string().nullable(),
   healthCheckPath: z.string().nullable(),
@@ -495,6 +502,10 @@ export class ApplicationsService {
     }
 
     const source = dto.source ?? "IMAGE";
+    // COMPOSE is either pasted (composeFile) or sourced from git (gitUrl + composePath) — the DTO guarantees
+    // exactly one. A git-compose stack has no stored YAML to validate here; it is cloned, rendered and
+    // validated (assertSafeCompose over the rendered config) at deploy time instead.
+    const isGitCompose = source === "COMPOSE" && !!dto.gitUrl;
     // A user-pasted compose at create was never validated (only setComposeFile + the importer ran the guard),
     // so a privileged/host-escaping stack could be installed. Validate it here too; curated templates are
     // trusted (they install through a different, server-controlled path) so they skip this.
@@ -503,9 +514,9 @@ export class ApplicationsService {
       source === "COMPOSE" ? (this.composeWeb({ templateSlug: dto.templateSlug, composeFile: dto.composeFile })?.service ?? null) : null;
     const expose = this.resolveExpose(dto, server, source, composeWebService);
 
-    // An ssh:// / git@ repo needs a deploy key the user adds to the repo first — generate it now and skip
-    // the first deploy (a clone would fail until the public key is added).
-    const sshAuto = source === "GIT" && isSshGitUrl(dto.gitUrl ?? "");
+    // An ssh:// / git@ repo (GIT build OR git-compose) needs a deploy key the user adds to the repo first —
+    // generate it now and skip the first deploy (a clone would fail until the public key is added).
+    const sshAuto = (source === "GIT" || isGitCompose) && isSshGitUrl(dto.gitUrl ?? "");
     const sshKey = sshAuto ? generateEd25519DeployKey() : null;
 
     const app = await this.prisma.application.create({
@@ -524,6 +535,7 @@ export class ApplicationsService {
         buildCommand: dto.buildCommand ?? null,
         outputDir: dto.outputDir ?? null,
         composeFile: dto.composeFile ?? null,
+        composePath: isGitCompose ? dto.composePath ?? "docker-compose.yml" : null,
         serverId: dto.serverId,
         teamId: server.teamId,
         env: {} as Prisma.InputJsonValue,
@@ -633,6 +645,7 @@ export class ApplicationsService {
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
           composeFile: src.composeFile,
+          composePath: src.composePath, // keep a cloned git-compose app git-sourced
           healthCmd: src.healthCmd,
           healthCheckType: src.healthCheckType,
           healthCheckPath: src.healthCheckPath,
@@ -1229,6 +1242,10 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       const isCompose = app.source === "COMPOSE";
+      // COMPOSE-from-git: the compose file is cloned + rendered + validated on the agent rather than read from
+      // a stored composeFile. It routes only through explicit per-service domains (there is no stored YAML to
+      // infer a web service from), so composeWeb(app) is null for it.
+      const isGitCompose = isCompose && !!app.composePath && !!app.gitUrl;
       const serviceDomains = isCompose ? await this.loadServiceDomains(app.id) : [];
       // A compose app also needs the proxy when its web service is routable (magic) OR it has per-service domains.
       const composeRoutable = isCompose && (!!this.composeWeb(app) || serviceDomains.length > 0);
@@ -1239,8 +1256,8 @@ export class ApplicationsService {
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
       await this.hydrateCertSpec(app, spec);
-      // Private repo via a GitHub App: mint a fresh installation token for the clone.
-      if (app.gitSourceId && app.source === "GIT") {
+      // Private repo via a GitHub App: mint a fresh installation token for the clone (GIT build or git-compose).
+      if (app.gitSourceId && (app.source === "GIT" || isGitCompose)) {
         spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
       }
       // Push the built image to the app's team registry (build-time), if configured.
@@ -1332,10 +1349,42 @@ export class ApplicationsService {
         spec.registryPull = { auth: spec.registryPush.auth, ref: spec.registryPush.tag };
         spec.registryPush = null;
       }
-      const command = isCompose
-        ? buildComposeUpScript(spec, noCache)
-        : rolling
-          ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), ...ROLLING_GATE })
+      // COMPOSE-from-git: clone + render the stack on the agent, then VALIDATE the rendered config on the hub
+      // (assertSafeCompose, with the clone as the allowed root) BEFORE running anything. The up script re-clones
+      // and refuses to run unless the stack still renders to the exact digest we validated (a TOCTOU lock).
+      let gitComposeUp: string | null = null;
+      if (isGitCompose) {
+        this.deployLogs.push(app.id, "Validating compose from the repository...\n");
+        const rr = await this.agentWs.sendCommand(
+          app.serverId,
+          buildComposeGitRenderScript(spec),
+          "deploy",
+          this.deployTimeoutMs(app),
+          (chunk) => this.deployLogs.push(app.id, chunk),
+        );
+        if (rr.exitCode !== 0) throw new Error(`could not clone/render the compose from the repository\n${rr.output}`);
+        const rendered = parseRenderedCompose(rr.output);
+        if (!rendered) throw new Error("could not read the rendered compose from the repository — check the compose path and that the file is valid");
+        // Throws BadRequestException (→ FAILED) if the rendered stack would escape the host; the clone dir is
+        // the allowed root for build contexts and bind sources.
+        assertSafeCompose(rendered.compose, { gitCloneRoot: composeGitCloneDir(spec) });
+        // Route only services that actually exist in the rendered stack; drop (and note) any stale rows.
+        if (spec.serviceDomains?.length) {
+          const present = new Set(composeServiceNames(rendered.compose));
+          const kept = spec.serviceDomains.filter((row) => present.has(row.service));
+          for (const row of spec.serviceDomains) {
+            if (!present.has(row.service)) this.deployLogs.push(app.id, `TUGRA: service "${row.service}" is not in the compose — its domain ${row.hostname} will not be routed\n`);
+          }
+          spec.serviceDomains = kept;
+        }
+        gitComposeUp = buildComposeGitUpScript(spec, rendered.sha, noCache);
+      }
+      const command = isGitCompose
+        ? gitComposeUp!
+        : isCompose
+          ? buildComposeUpScript(spec, noCache)
+          : rolling
+            ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), ...ROLLING_GATE })
           : recreate
             ? buildRecreateDeployScript(spec, dep.id, {
                 build: true,
@@ -1374,9 +1423,9 @@ export class ApplicationsService {
       // The IMAGE prep steps echo the digest marker; for a build-server deploy those steps run on the
       // BUILD server (buildLog), not the deploy server (r.output), so parse the COMBINED output.
       const combinedOutput = buildLog ? `${buildLog}\n${r.output}` : r.output;
-      // GIT deploys echo the deployed commit right after the clone; gate on GIT so an IMAGE/COMPOSE build
-      // (or a hook) can't forge a marker — no real one is emitted there.
-      const cc = app.source === "GIT" ? parseCommit(combinedOutput) : null;
+      // GIT (and git-compose) deploys echo the deployed commit right after the clone; gate on those so a
+      // pasted-IMAGE/COMPOSE build (or a hook) can't forge a marker — no real one is emitted there.
+      const cc = app.source === "GIT" || isGitCompose ? parseCommit(combinedOutput) : null;
       await this.prisma.deployment.update({
         where: { id: dep.id },
         data: {
@@ -1438,9 +1487,11 @@ export class ApplicationsService {
           .catch(() => undefined);
       }
     } catch (e) {
-      // Best-effort: a build-server failure throws with the build output, which may still carry the commit
-      // marker. GIT-only, so an IMAGE/COMPOSE failure message can't forge one.
-      const cc = app.source === "GIT" && e instanceof Error ? parseCommit(e.message) : null;
+      // Best-effort: a build-server / git-compose failure throws with output that may still carry the commit
+      // marker. GIT or git-compose only, so a pasted-IMAGE/COMPOSE failure message can't forge one. (isGitCompose
+      // lives in the try scope, so the discriminator is inlined here.)
+      const gitSourced = app.source === "GIT" || (app.source === "COMPOSE" && !!app.composePath && !!app.gitUrl);
+      const cc = gitSourced && e instanceof Error ? parseCommit(e.message) : null;
       await this.prisma.deployment.update({
         where: { id: dep.id },
         data: {
@@ -3149,6 +3200,7 @@ export class ApplicationsService {
       buildCommand: app.buildCommand,
       outputDir: app.outputDir,
       composeFile: app.composeFile,
+      composePath: app.composePath,
       healthCmd: app.healthCmd,
       healthCheckType: app.healthCheckType,
       healthCheckPath: app.healthCheckPath,
@@ -3361,6 +3413,7 @@ export class ApplicationsService {
       baseDirectory: app.baseDirectory,
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
+      composePath: app.composePath,
       hasConfigMounts: this.appConfigMounts(app).length > 0,
       healthCmd: app.healthCmd,
       healthCheckType: app.healthCheckType,

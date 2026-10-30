@@ -1024,6 +1024,7 @@ export const api = {
     buildCommand?: string;
     outputDir?: string;
     composeFile?: string;
+    composePath?: string;
     hostPort?: number;
     containerPort?: number;
     domain?: string;

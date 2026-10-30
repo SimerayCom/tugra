@@ -98,6 +98,9 @@ function Wizard() {
   const [buildCommand, setBuildCommand] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [composeFile, setComposeFile] = useState("");
+  // Docker Compose source: paste the YAML, or point at a compose file in a git repo (composePath).
+  const [composeMode, setComposeMode] = useState<"paste" | "git">("paste");
+  const [composePath, setComposePath] = useState("docker-compose.yml");
   const [hostPort, setHostPort] = useState("");
   const [containerPort, setContainerPort] = useState("");
   const [domain, setDomain] = useState("");
@@ -168,7 +171,11 @@ function Wizard() {
         return done("db", d.id, provisioning);
       }
       if (sel?.group === "service") {
-        const a = await api.createApp({ name, serverId, source: "COMPOSE", composeFile, environmentId, deploy });
+        const a = await api.createApp(
+          composeMode === "git"
+            ? { name, serverId, source: "COMPOSE", gitUrl, gitBranch: gitBranch || undefined, composePath: composePath || undefined, gitSourceId: gitSourceId || undefined, environmentId, deploy }
+            : { name, serverId, source: "COMPOSE", composeFile, environmentId, deploy },
+        );
         return done("app", a.id, deploy);
       }
       // app
@@ -455,10 +462,36 @@ function Wizard() {
                     </>
                   )}
                   {sel.group === "service" && (
-                    <Field label={t("apps.compose")} style={{ gridColumn: "1 / -1" }}>
-                      <textarea value={composeFile} onChange={(e) => setComposeFile(e.target.value)} placeholder={t("apps.composeFile")} required
-                        style={{ width: "100%", minHeight: 140, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "var(--font-mono, monospace)", resize: "vertical", boxSizing: "border-box" }} />
-                    </Field>
+                    <>
+                      <Field label={t("apps.composeSource")} style={{ gridColumn: "1 / -1" }}>
+                        <Select
+                          value={composeMode}
+                          onChange={(v) => setComposeMode(v as "paste" | "git")}
+                          options={[
+                            { value: "paste", label: t("apps.composePaste") },
+                            { value: "git", label: t("apps.composeFromGit") },
+                          ]}
+                        />
+                      </Field>
+                      {composeMode === "paste" ? (
+                        <Field label={t("apps.compose")} style={{ gridColumn: "1 / -1" }}>
+                          <textarea value={composeFile} onChange={(e) => setComposeFile(e.target.value)} placeholder={t("apps.composeFile")} required
+                            style={{ width: "100%", minHeight: 140, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "var(--font-mono, monospace)", resize: "vertical", boxSizing: "border-box" }} />
+                        </Field>
+                      ) : (
+                        <>
+                          <Field label={t("apps.gitUrl")} style={{ gridColumn: "1 / -1" }}>
+                            <TextInput value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git" required />
+                          </Field>
+                          <Field label={t("apps.branch")}>
+                            <TextInput value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder="main" />
+                          </Field>
+                          <Field label={t("apps.composePath")} hint={t("apps.composePathHint")}>
+                            <TextInput value={composePath} onChange={(e) => setComposePath(e.target.value)} placeholder="docker-compose.yml" />
+                          </Field>
+                        </>
+                      )}
+                    </>
                   )}
                   {sel.group === "db" && (() => {
                     const versions = engineVersions(sel.engine);

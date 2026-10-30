@@ -1,4 +1,4 @@
-import { assertSafeCompose } from "./compose-safety";
+import { assertSafeCompose, isUnderRoot } from "./compose-safety";
 
 const wrap = (svcBody: string) => `services:\n  app:\n    image: nginx\n${svcBody}\n`;
 
@@ -189,5 +189,86 @@ describe("assertSafeCompose", () => {
 
   it("rejects malformed YAML rather than passing it through", () => {
     expect(() => assertSafeCompose("services:\n  app:\n  - broken: : :")).toThrow();
+  });
+});
+
+describe("isUnderRoot", () => {
+  const root = "/etc/tugra/compose-git/app1/src";
+  it("accepts the root itself and paths inside it", () => {
+    for (const p of [root, `${root}/`, `${root}/app`, `${root}/a/b/c`, `${root}//app`, `${root}/./app`]) {
+      expect(isUnderRoot(p, root)).toBe(true);
+    }
+  });
+  it("rejects escapes, siblings, parents and non-absolute inputs", () => {
+    for (const p of ["/etc", "/etc/tugra/compose-git/app1/.env", "/etc/tugra/compose-git/app2/src/x", `${root}/../../x`, "./app", "mydata", "${VAR}/x", ""]) {
+      expect(isUnderRoot(p, root)).toBe(false);
+    }
+    // a prefix that is not a path boundary must not match (srcx is not under src)
+    expect(isUnderRoot("/etc/tugra/compose-git/app1/srcx", root)).toBe(false);
+  });
+});
+
+describe("assertSafeCompose — git mode (gitCloneRoot)", () => {
+  const root = "/etc/tugra/compose-git/app1/src";
+  const git = (c: string) => () => assertSafeCompose(c, { gitCloneRoot: root });
+
+  it("allows a build whose context stays inside the clone (rendered absolute form + short form)", () => {
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}/app\n      dockerfile: Dockerfile\n`)).not.toThrow();
+    expect(git(`services:\n  app:\n    build: ${root}\n`)).not.toThrow();
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}\n      args:\n        FOO: bar\n`)).not.toThrow();
+  });
+
+  it("rejects a build context outside the clone", () => {
+    expect(git(`services:\n  app:\n    build:\n      context: /etc\n`)).toThrow(/build context outside/);
+    expect(git(`services:\n  app:\n    build: /srv/other\n`)).toThrow(/build context outside/);
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}/../../elsewhere\n`)).toThrow(/build context outside/);
+  });
+
+  it("rejects the host-reaching build features (secrets, ssh, additional_contexts, network host)", () => {
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}\n      secrets:\n        - host_secret\n`)).toThrow(/build\.secrets/);
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}\n      ssh:\n        - default\n`)).toThrow(/build\.ssh/);
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}\n      additional_contexts:\n        - foo=/etc\n`)).toThrow(/build\.additional_contexts/);
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}\n      network: host\n`)).toThrow(/build\.network host/);
+    // a non-host build network name is fine
+    expect(git(`services:\n  app:\n    build:\n      context: ${root}\n      network: none\n`)).not.toThrow();
+  });
+
+  it("forbids build in the DEFAULT (pasted override) mode, unchanged", () => {
+    expect(() => assertSafeCompose(`services:\n  app:\n    build: .\n`)).toThrow(/disallowed directive: build/);
+  });
+
+  it("allows a bind whose source is inside the clone (even read-write) and named volumes", () => {
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - "${root}/data:/data"\n`)).not.toThrow();
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - type: bind\n        source: ${root}/conf\n        target: /conf\n`)).not.toThrow();
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - "mydata:/var/lib/x"\n`)).not.toThrow();
+  });
+
+  it("rejects a bind that reaches outside the clone, an unresolved relative/\\${VAR} source, and the docker socket", () => {
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - "/etc:/host"\n`)).toThrow(/outside the build directory/);
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - "${root}/../../etc:/host"\n`)).toThrow(/outside the build directory/);
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - "./data:/data"\n`)).toThrow(/outside the build directory/); // unresolved relative in rendered output
+    expect(git(`services:\n  app:\n    image: x\n    volumes:\n      - "/var/run/docker.sock:/var/run/docker.sock"\n`)).toThrow(/docker socket/);
+  });
+
+  it("STILL rejects every service-level host escape in git mode (privileged, namespaces, devices, caps, security_opt)", () => {
+    expect(git(wrap("    privileged: true"))).toThrow(/privileged/);
+    expect(git(wrap("    network_mode: host"))).toThrow(/network_mode/);
+    expect(git(wrap("    pid: host"))).toThrow(/pid/);
+    expect(git(wrap('    devices:\n      - "/dev/sda:/dev/sda"'))).toThrow(/devices/);
+    expect(git(wrap("    cap_add:\n      - SYS_ADMIN"))).toThrow(/cap_add/);
+    expect(git(wrap("    security_opt:\n      - seccomp=unconfined"))).toThrow(/confinement/);
+    expect(git(wrap("    container_name: tugra-proxy"))).toThrow(/reserved/);
+  });
+
+  it("checks a top-level volume driver_opts device against the clone (not the host sensitive-path rules)", () => {
+    const vol = (dev: string) =>
+      `services:\n  app:\n    image: x\nvolumes:\n  d:\n    driver: local\n    driver_opts:\n      type: none\n      o: bind\n      device: ${dev}\n`;
+    expect(git(vol(`${root}/data`))).not.toThrow(); // inside the clone — fine
+    expect(git(vol("/etc"))).toThrow(/outside the build directory/); // host path — rejected
+  });
+
+  it("still rejects top-level secrets/configs in git mode", () => {
+    expect(git(`services:\n  app:\n    image: x\nsecrets:\n  s:\n    file: /etc/host-secret\n`)).toThrow(/top-level secrets/);
+    expect(git(`services:\n  app:\n    image: x\nconfigs:\n  c:\n    file: /etc/host-config\n`)).toThrow(/top-level configs/);
   });
 });

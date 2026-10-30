@@ -597,6 +597,8 @@ export default function AppDetailPage() {
         const overviewPanel =
           appData.source === "COMPOSE" && appData.composeFile ? (
             <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />
+          ) : appData.source === "COMPOSE" && appData.composePath ? (
+            <GitComposeSourceCard app={appData} />
           ) : (
             <AppOverview app={appData} deployments={deployments} />
           );
@@ -765,6 +767,31 @@ function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: ()
         </div>
       )}
     </Modal>
+  );
+}
+
+/** Read-only summary for a COMPOSE-from-git app: where the stack is cloned from. The compose file lives in
+ *  the repo (not stored here), so there is no in-place editor — it is cloned, validated and run on deploy. */
+function GitComposeSourceCard({ app }: { app: Application }) {
+  const t = useT();
+  const rows: { label: string; value: string }[] = [
+    { label: t("apps.gitUrl"), value: app.gitUrl ?? "—" },
+    { label: t("apps.branch"), value: app.gitBranch ?? "main" },
+    { label: t("apps.composePath"), value: app.composePath ?? "docker-compose.yml" },
+  ];
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("apps.composeFromGit")}</div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{ display: "flex", gap: 12, fontSize: 13 }}>
+            <span style={{ color: "var(--c-tx3)", minWidth: 120 }}>{r.label}</span>
+            <span className="mono" style={{ color: "var(--c-tx)", wordBreak: "break-all" }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10 }}>{t("apps.composePathHint")}</div>
+    </Card>
   );
 }
 

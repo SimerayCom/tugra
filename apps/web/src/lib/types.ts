@@ -1041,6 +1041,7 @@ export interface Application {
   baseDirectory: string | null;
   outputDir: string | null;
   composeFile: string | null;
+  composePath: string | null;
   healthCmd: string | null;
   healthCheckType: string | null;
   healthCheckPath: string | null;

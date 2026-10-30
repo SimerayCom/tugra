@@ -354,3 +354,25 @@ describe("interpolateMountContent", () => {
     expect(interpolateMountContent("${PASS}", { PASSWORD: "x" })).toBe("${PASS}"); // PASS ≠ PASSWORD
   });
 });
+
+describe("lifecycle ops target the right compose file (pasted vs git)", () => {
+  const pasted: AppSpec = { ...base };
+  const git: AppSpec = { ...base, composeFile: null, composePath: "deploy/stack.yaml", gitUrl: "https://github.com/u/r.git", gitBranch: "main" };
+
+  it("a pasted-compose app uses the stored compose dir", () => {
+    expect(buildComposeStopScript(pasted)).toContain("-f /etc/tugra/compose/abc/docker-compose.yml stop");
+    expect(buildLogsScript(pasted)).toContain("-f /etc/tugra/compose/abc/docker-compose.yml logs");
+    expect(buildComposeDownScript(pasted)).toContain("rm -rf /etc/tugra/compose/abc");
+  });
+
+  it("a git-compose app targets the clone path + removes the git working dir on down", () => {
+    expect(buildComposeStopScript(git)).toContain("-f /etc/tugra/compose-git/abc/src/deploy/stack.yaml stop");
+    expect(buildComposeStartScript(git)).toContain("-f /etc/tugra/compose-git/abc/src/deploy/stack.yaml start");
+    expect(buildComposeRestartScript(git)).toContain("-f /etc/tugra/compose-git/abc/src/deploy/stack.yaml restart");
+    expect(buildLogsScript(git)).toContain("-f /etc/tugra/compose-git/abc/src/deploy/stack.yaml logs");
+    expect(buildComposeDownScript(git)).toContain("-f /etc/tugra/compose-git/abc/src/deploy/stack.yaml down");
+    expect(buildComposeDownScript(git)).toContain("rm -rf /etc/tugra/compose-git/abc");
+    // containers are still listed by project label (no compose file needed), unchanged for both
+    expect(buildContainersScript(git)).toContain("label=com.docker.compose.project=tugra_abc");
+  });
+});
