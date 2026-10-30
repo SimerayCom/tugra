@@ -190,6 +190,7 @@ export const AppViewSchema = z.object({
   hostPort: z.number().nullable(),
   containerPort: z.number().nullable(),
   domain: z.string().nullable(),
+  extraDomains: z.array(z.string()), // additional alias hostnames routed to the same container
   domainRedirect: z.string().nullable(),
   securityHeaders: z.boolean(),
   forwardAuth: z.string().nullable(),
@@ -2653,13 +2654,57 @@ export class ApplicationsService {
     // default and silently drop the app to plain HTTP).
     const data: Prisma.ApplicationUpdateInput = domain
       ? { domain, domainKind: "custom", certType: "le-http", https: true }
-      : { domain: null, domainKind: "none" };
+      : { domain: null, domainKind: "none", extraDomains: [] }; // no primary → alias domains are meaningless
     await this.clearCertIfLeavingCustom(app, data);
     await this.prisma.application.update({ where: { id }, data });
     await this.syncMonitor(id).catch(() => undefined); // keep the auto uptime monitor's target in step
     // A tunnel-exposed app's CF ingress rule keys off its hostname — rebuild it when the domain changes/clears.
     if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
     await this.audit.log({ actor: userId, action: "app.domain.update", target: id });
+  }
+
+  /**
+   * Replace an app's additional alias hostnames — extra domains served alongside the primary `domain`, each
+   * on its own HTTPS router (HTTP-01), applied on the next deploy. Classic/compose only. Each host must be
+   * free: not the control-panel domain, not the primary (or its www/bare counterpart), not claimed by another
+   * app (as a primary or an alias), and — for an uploaded custom cert — covered by it. A replace-set (the
+   * passed list becomes the complete set), mirroring Coolify's domain-list replace.
+   */
+  async setExtraDomains(userId: string, id: string, domains: string[]): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (!app.domain) throw new BadRequestException("set a primary domain before adding extra domains");
+    // Swarm stale-label removal on `docker service update` isn't wired yet → extras are classic/compose only.
+    if (app.clusterId) throw new BadRequestException("extra domains aren't supported for clustered (swarm) apps yet");
+    // A tunnel-exposed app has no public HTTP-01 reachability (its ingress keys off the single primary host).
+    if (app.tunnelExposed) throw new BadRequestException("extra domains aren't supported for a tunnel-exposed app");
+    const hosts = Array.from(new Set(domains.map((h) => h.trim().replace(/\.+$/, "").toLowerCase()))).filter(Boolean);
+    const base = app.domain.replace(/^www\./i, "");
+    for (const h of hosts) {
+      await this.assertDomainNotReserved(h); // never let an alias steal the control-panel hostname
+      if (h === app.domain.toLowerCase() || h === base.toLowerCase() || h === `www.${base.toLowerCase()}`) {
+        throw new BadRequestException(`${h} is already served by the primary domain`);
+      }
+    }
+    // Uploaded custom cert: an alias is served by SNI from the shared cert store, so the cert MUST cover it
+    // (otherwise Traefik would hand out its default cert for that host).
+    if (app.certType === "custom" && app.certPem) {
+      for (const h of hosts) {
+        if (!certCoversHost(app.certDomains, h)) {
+          throw new BadRequestException(`the uploaded certificate does not cover ${h}`);
+        }
+      }
+    }
+    // Cross-app claim: no other app may already use any of these hosts as its primary or an alias. Generic
+    // message so another team's app name isn't leaked.
+    if (hosts.length) {
+      const clash = await this.prisma.application.findFirst({
+        where: { id: { not: id }, OR: [{ domain: { in: hosts, mode: "insensitive" } }, { extraDomains: { hasSome: hosts } }] },
+        select: { id: true },
+      });
+      if (clash) throw new BadRequestException("one of those hostnames is already in use by another application");
+    }
+    await this.prisma.application.update({ where: { id }, data: { extraDomains: hosts } });
+    await this.audit.log({ actor: userId, action: "app.extra_domains.update", target: id, meta: { count: hosts.length } });
   }
 
   /**
@@ -2741,6 +2786,12 @@ export class ApplicationsService {
       throw new BadRequestException(
         `the certificate does not cover ${app.domain} (it is valid for: ${info.domains.join(", ") || "no domains"})`,
       );
+    }
+    // Alias hostnames are served from the SAME shared cert store by SNI, so the cert must cover them too.
+    for (const h of app.extraDomains ?? []) {
+      if (!certCoversHost(info.domains, h)) {
+        throw new BadRequestException(`the certificate does not cover the extra domain ${h} (valid for: ${info.domains.join(", ") || "no domains"})`);
+      }
     }
     await this.prisma.application.update({
       where: { id },
@@ -3063,6 +3114,7 @@ export class ApplicationsService {
       hostPort: app.hostPort,
       containerPort: web?.port ?? app.containerPort,
       domain: app.domain,
+      extraDomains: app.extraDomains ?? [],
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
@@ -3298,6 +3350,7 @@ export class ApplicationsService {
       hostPort: app.hostPort,
       containerPort: app.containerPort,
       domain: app.domain,
+      extraDomains: app.extraDomains ?? [],
       domainRedirect: app.domainRedirect,
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,

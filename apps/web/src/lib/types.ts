@@ -1085,6 +1085,7 @@ export interface Application {
   hostPort: number | null;
   containerPort: number | null;
   domain: string | null;
+  extraDomains: string[];
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   forwardAuth: string | null;

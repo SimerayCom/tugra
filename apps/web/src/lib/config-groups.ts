@@ -37,6 +37,7 @@ export type ConfigCardId =
   | "databaseLinks"
   | "expose"
   | "domain"
+  | "extraDomains"
   | "domainOptions"
   | "customCert"
   | "volumes"
@@ -92,6 +93,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // Domains & Network
   { id: "expose", group: "domains", visible: (a) => a.canWrite && !a.isPreview },
   { id: "domain", group: "domains", visible: (a) => a.canWrite && !a.isPreview && a.domainKind === "custom" },
+  // Extra alias hostnames: needs a primary domain + write access, classic/compose only (no swarm), not a preview.
+  { id: "extraDomains", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain && !a.clusterId },
   { id: "domainOptions", group: "domains", visible: (a) => !!a.domain },
   // Upload a custom TLS cert for this app's domain (served statically, no ACME). Needs a domain + write access.
   { id: "customCert", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain },

@@ -130,6 +130,14 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("build");
   });
 
+  it("extraDomains needs a primary domain, write access, non-preview and a non-clustered app", () => {
+    expect(group(facts(), "domains")!.cardIds).toContain("extraDomains");
+    expect(group(facts({ domain: null }), "domains")?.cardIds ?? []).not.toContain("extraDomains");
+    expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("extraDomains");
+    expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("extraDomains");
+    expect(group(facts({ clusterId: "c1" }), "domains")!.cardIds).not.toContain("extraDomains");
+  });
+
   it("domain card needs a custom domainKind", () => {
     expect(group(facts(), "domains")!.cardIds).toContain("domain");
     expect(group(facts({ domainKind: "auto" }), "domains")!.cardIds).not.toContain("domain");

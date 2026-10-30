@@ -1043,6 +1043,57 @@ describe("ApplicationsService", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  describe("setExtraDomains", () => {
+    const domApp = { ...app, domain: "x.com", clusterId: null, tunnelExposed: false, certType: "le-http", certPem: null, certDomains: [], extraDomains: [] };
+    function svcFor(appOver: Record<string, unknown>, findFirst = jest.fn().mockResolvedValue(null)) {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...domApp, ...appOver }), findFirst, update } } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      return { svc: make(prisma, access, {} as AgentWsServer), update, findFirst };
+    }
+
+    it("persists lowercased, deduped hosts and audits", async () => {
+      const { svc, update } = svcFor({});
+      await svc.setExtraDomains("u1", "app1", ["B.com", "b.com", "api.x.net"]);
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { extraDomains: ["b.com", "api.x.net"] } }));
+    });
+
+    it("requires a primary domain", async () => {
+      await expect(svcFor({ domain: null }).svc.setExtraDomains("u1", "app1", ["b.com"])).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects clustered (swarm) apps", async () => {
+      await expect(svcFor({ clusterId: "c1" }).svc.setExtraDomains("u1", "app1", ["b.com"])).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a tunnel-exposed app", async () => {
+      await expect(svcFor({ tunnelExposed: true }).svc.setExtraDomains("u1", "app1", ["b.com"])).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a host equal to the primary or its www/bare counterpart", async () => {
+      await expect(svcFor({ domain: "x.com" }).svc.setExtraDomains("u1", "app1", ["www.x.com"])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor({ domain: "www.x.com" }).svc.setExtraDomains("u1", "app1", ["x.com"])).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a host already claimed by another app", async () => {
+      const { svc } = svcFor({}, jest.fn().mockResolvedValue({ id: "other" }));
+      await expect(svc.setExtraDomains("u1", "app1", ["b.com"])).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects an alias the uploaded custom cert does not cover", async () => {
+      const { svc } = svcFor({ certType: "custom", certPem: "PEM", certDomains: ["x.com"] });
+      await expect(svc.setExtraDomains("u1", "app1", ["b.com"])).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("clearing the primary domain also clears the extras", async () => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...domApp, extraDomains: ["b.com"] }), update } } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      await make(prisma, access, {} as AgentWsServer).setDomain("u1", "app1", null);
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ domain: null, extraDomains: [] }) }));
+    });
+  });
+
   it("setComposeFile rejects a non-compose app before any write", async () => {
     const update = jest.fn();
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
@@ -2266,7 +2317,7 @@ describe("ApplicationsService", () => {
       data: { domain: "app.example.com", domainKind: "custom", certType: "le-http", https: true },
     });
     await svc.setDomain("u1", "app1", null);
-    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null, domainKind: "none" } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { domain: null, domainKind: "none", extraDomains: [] } });
   });
 
   it("setDomain rejects the control-panel's own hostname (lockout guard) and writes nothing", async () => {
