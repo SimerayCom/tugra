@@ -28,6 +28,8 @@ export const CreateAppSchema = z
       .optional(),
     gitBranch: z.string().min(1).optional(),
     gitSourceId: z.string().min(1).optional(),
+    // Personal access token for a private https repo (GitLab/Gitea/self-hosted/GitHub). Stored encrypted.
+    gitToken: z.string().min(1).optional(),
     buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]).optional(),
     // relative path inside the repo, no `..` traversal and no shell metacharacters (it is spliced into
     // the `docker build -f` command; the deploy script also shell-quotes it as defense-in-depth)

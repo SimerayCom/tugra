@@ -948,6 +948,12 @@ export const api = {
   cloneApp(id: string, body: { name?: string }) {
     return apiFetch<{ app: Application; warnings: string[] }>(`/apps/${id}/clone`, { method: "POST", body: JSON.stringify(body) });
   },
+  generateGitSshKey(id: string) {
+    return apiFetch<{ publicKey: string; fingerprint: string }>(`/apps/${id}/git-ssh-key`, { method: "POST" });
+  },
+  removeGitSshKey(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/git-ssh-key`, { method: "DELETE" });
+  },
 
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {

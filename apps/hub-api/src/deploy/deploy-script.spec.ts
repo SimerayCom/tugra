@@ -36,6 +36,7 @@ import {
   dockerOptionsArgs,
   buildCustomCertYaml,
   buildCustomCertRemoveScript,
+  isSshGitUrl,
   type AppSpec,
 } from "./deploy-script";
 
@@ -46,6 +47,33 @@ const base: AppSpec = {
   hostPort: null,
   containerPort: 80,
 };
+
+describe("SSH deploy-key git clone", () => {
+  const KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETKEYMATERIAL\n-----END OPENSSH PRIVATE KEY-----\n";
+  const sshApp: AppSpec = { ...base, source: "GIT", gitUrl: "git@github.com:acme/app.git", buildType: "DOCKERFILE", gitSshKey: KEY };
+
+  it("isSshGitUrl recognises scp-style and ssh:// URLs, not https", () => {
+    expect(isSshGitUrl("git@github.com:acme/app.git")).toBe(true);
+    expect(isSshGitUrl("ssh://git@host:22/acme/app.git")).toBe(true);
+    expect(isSshGitUrl("https://github.com/acme/app.git")).toBe(false);
+  });
+
+  it("clones with GIT_SSH_COMMAND (accept-new), key written 0600 via base64 — never in argv or the URL", () => {
+    const s = buildRunScript(sshApp, "v1", true);
+    expect(s).toContain("GIT_SSH_COMMAND=");
+    expect(s).toContain("StrictHostKeyChecking=accept-new");
+    expect(s).toContain('chmod 600 "$sd/id"');
+    expect(s).toContain("base64 -d > \"$sd/id\"");
+    expect(s).not.toContain("SECRETKEYMATERIAL"); // raw key never literal — only base64
+    expect(s).toMatch(/git clone --depth 1 --branch '?main'? -- 'git@github\.com:acme\/app\.git'/);
+  });
+
+  it("an ssh repo with NO key fails clearly instead of cloning", () => {
+    const s = buildRunScript({ ...sshApp, gitSshKey: null }, "v1", true);
+    expect(s).toContain("no deploy key is set");
+    expect(s).not.toContain("git clone");
+  });
+});
 
 describe("custom uploaded cert (certType custom + certPem/certKey)", () => {
   const cert: AppSpec = {

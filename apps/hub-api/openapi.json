@@ -7468,6 +7468,13 @@
                       "hasGitToken": {
                         "type": "boolean"
                       },
+                      "hasGitSshKey": {
+                        "type": "boolean"
+                      },
+                      "gitSshPublicKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "registryUrl": {
                         "type": "string",
                         "nullable": true
@@ -7834,6 +7841,8 @@
                       "composeVolumes",
                       "hasConfigMounts",
                       "hasGitToken",
+                      "hasGitSshKey",
+                      "gitSshPublicKey",
                       "registryUrl",
                       "registryUser",
                       "registryId",
@@ -7986,6 +7995,10 @@
                     "minLength": 1
                   },
                   "gitSourceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "gitToken": {
                     "type": "string",
                     "minLength": 1
                   },
@@ -8269,6 +8282,13 @@
                     },
                     "hasGitToken": {
                       "type": "boolean"
+                    },
+                    "hasGitSshKey": {
+                      "type": "boolean"
+                    },
+                    "gitSshPublicKey": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "registryUrl": {
                       "type": "string",
@@ -8636,6 +8656,8 @@
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
+                    "hasGitSshKey",
+                    "gitSshPublicKey",
                     "registryUrl",
                     "registryUser",
                     "registryId",
@@ -9155,6 +9177,13 @@
                     "hasGitToken": {
                       "type": "boolean"
                     },
+                    "hasGitSshKey": {
+                      "type": "boolean"
+                    },
+                    "gitSshPublicKey": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "registryUrl": {
                       "type": "string",
                       "nullable": true
@@ -9521,6 +9550,8 @@
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
+                    "hasGitSshKey",
+                    "gitSshPublicKey",
                     "registryUrl",
                     "registryUser",
                     "registryId",
@@ -10044,6 +10075,13 @@
                     "hasGitToken": {
                       "type": "boolean"
                     },
+                    "hasGitSshKey": {
+                      "type": "boolean"
+                    },
+                    "gitSshPublicKey": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "registryUrl": {
                       "type": "string",
                       "nullable": true
@@ -10410,6 +10448,8 @@
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
+                    "hasGitSshKey",
+                    "gitSshPublicKey",
                     "registryUrl",
                     "registryUser",
                     "registryId",
@@ -15404,6 +15444,180 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/git-ssh-key": {
+      "post": {
+        "operationId": "ApplicationsController_generateGitSshKey",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "publicKey": {
+                      "type": "string"
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "publicKey",
+                    "fingerprint"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "delete": {
+        "operationId": "ApplicationsController_removeGitSshKey",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/clone": {
       "post": {
         "operationId": "ApplicationsController_clone",
@@ -15634,6 +15848,13 @@
                         },
                         "hasGitToken": {
                           "type": "boolean"
+                        },
+                        "hasGitSshKey": {
+                          "type": "boolean"
+                        },
+                        "gitSshPublicKey": {
+                          "type": "string",
+                          "nullable": true
                         },
                         "registryUrl": {
                           "type": "string",
@@ -16001,6 +16222,8 @@
                         "composeVolumes",
                         "hasConfigMounts",
                         "hasGitToken",
+                        "hasGitSshKey",
+                        "gitSshPublicKey",
                         "registryUrl",
                         "registryUser",
                         "registryId",
@@ -16383,6 +16606,13 @@
                     "hasGitToken": {
                       "type": "boolean"
                     },
+                    "hasGitSshKey": {
+                      "type": "boolean"
+                    },
+                    "gitSshPublicKey": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "registryUrl": {
                       "type": "string",
                       "nullable": true
@@ -16749,6 +16979,8 @@
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
+                    "hasGitSshKey",
+                    "gitSshPublicKey",
                     "registryUrl",
                     "registryUser",
                     "registryId",
@@ -17201,6 +17433,13 @@
                       "hasGitToken": {
                         "type": "boolean"
                       },
+                      "hasGitSshKey": {
+                        "type": "boolean"
+                      },
+                      "gitSshPublicKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "registryUrl": {
                         "type": "string",
                         "nullable": true
@@ -17567,6 +17806,8 @@
                       "composeVolumes",
                       "hasConfigMounts",
                       "hasGitToken",
+                      "hasGitSshKey",
+                      "gitSshPublicKey",
                       "registryUrl",
                       "registryUser",
                       "registryId",
@@ -18089,6 +18330,13 @@
                     "hasGitToken": {
                       "type": "boolean"
                     },
+                    "hasGitSshKey": {
+                      "type": "boolean"
+                    },
+                    "gitSshPublicKey": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "registryUrl": {
                       "type": "string",
                       "nullable": true
@@ -18455,6 +18703,8 @@
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
+                    "hasGitSshKey",
+                    "gitSshPublicKey",
                     "registryUrl",
                     "registryUser",
                     "registryId",
@@ -20002,6 +20252,13 @@
                     "hasGitToken": {
                       "type": "boolean"
                     },
+                    "hasGitSshKey": {
+                      "type": "boolean"
+                    },
+                    "gitSshPublicKey": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "registryUrl": {
                       "type": "string",
                       "nullable": true
@@ -20368,6 +20625,8 @@
                     "composeVolumes",
                     "hasConfigMounts",
                     "hasGitToken",
+                    "hasGitSshKey",
+                    "gitSshPublicKey",
                     "registryUrl",
                     "registryUser",
                     "registryId",

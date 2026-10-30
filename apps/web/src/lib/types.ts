@@ -1058,6 +1058,8 @@ export interface Application {
   composeVolumes: { key: string; browsable: boolean; mounts: { service: string; path: string }[] }[];
   hasConfigMounts: boolean;
   hasGitToken: boolean;
+  hasGitSshKey: boolean;
+  gitSshPublicKey: string | null;
   registryUrl: string | null;
   registryUser: string | null;
   registryId: string | null;
