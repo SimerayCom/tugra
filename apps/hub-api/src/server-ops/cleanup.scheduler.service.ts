@@ -43,9 +43,16 @@ export class CleanupSchedulerService
       { connection },
     );
     const servers = await this.prisma.server.findMany({
-      where: { cleanupEnabled: true, cleanupIntervalHours: { not: null } },
+      where: {
+        cleanupEnabled: true,
+        OR: [{ cleanupIntervalHours: { not: null } }, { cleanupCron: { not: null } }],
+      },
     });
-    for (const s of servers) await this.schedule(s.id, (s.cleanupIntervalHours ?? 24) * 3600);
+    for (const s of servers) {
+      // A cron expression wins over the plain interval when both are set.
+      if (s.cleanupCron) await this.scheduleCron(s.id, s.cleanupCron);
+      else await this.schedule(s.id, (s.cleanupIntervalHours ?? 24) * 3600);
+    }
     this.logger.log(`scheduled ${servers.length} docker cleanup(s)`);
   }
 
@@ -53,6 +60,13 @@ export class CleanupSchedulerService
     if (!this.queue) return;
     await this.unschedule(serverId);
     await this.queue.add(`cleanup:${serverId}`, { serverId }, { repeat: { every: intervalSec * 1000 } });
+  }
+
+  /** Schedule cleanup on a cron pattern (e.g. "0 3 * * *" — 03:00 daily) instead of a fixed interval. */
+  async scheduleCron(serverId: string, cron: string): Promise<void> {
+    if (!this.queue) return;
+    await this.unschedule(serverId);
+    await this.queue.add(`cleanup:${serverId}`, { serverId }, { repeat: { pattern: cron } });
   }
 
   async unschedule(serverId: string): Promise<void> {

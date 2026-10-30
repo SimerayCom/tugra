@@ -273,6 +273,7 @@ model Server {
   bootTime             DateTime?
   cleanupEnabled       Boolean      @default(false)
   cleanupIntervalHours Int?
+  cleanupCron          String?      // optional 5-field cron; when set, overrides cleanupIntervalHours
   cleanupVolumes       Boolean      @default(false)
   lastCleanupAt        DateTime?
   lastSeenAt           DateTime?

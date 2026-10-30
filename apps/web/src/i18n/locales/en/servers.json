@@ -144,6 +144,8 @@
   "cleaning": "Cleaning…",
   "cleanupSchedule": "Scheduled",
   "cleanupEvery": "Every (hours)",
+  "cleanupCron": "Or cron",
+  "cleanupCronHint": "A cron expression (minute hour day month weekday) runs cleanup at a fixed time and overrides the hourly interval. Example: 0 3 * * * runs at 03:00 daily.",
   "cleanupVolumes": "Also unused volumes",
   "lastCleanup": "Last",
   "cancel": "Cancel",

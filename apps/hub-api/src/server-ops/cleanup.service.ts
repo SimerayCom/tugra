@@ -73,10 +73,14 @@ export class CleanupService {
       data: {
         cleanupEnabled: cfg.enabled,
         cleanupIntervalHours: cfg.intervalHours ?? null,
+        ...(cfg.cron !== undefined ? { cleanupCron: cfg.cron } : {}),
         ...(cfg.volumes !== undefined ? { cleanupVolumes: cfg.volumes } : {}),
       },
     });
-    if (server.cleanupEnabled && server.cleanupIntervalHours) {
+    // A cron expression drives the schedule when set; otherwise fall back to the plain interval.
+    if (server.cleanupEnabled && server.cleanupCron) {
+      await this.scheduler.scheduleCron(serverId, server.cleanupCron);
+    } else if (server.cleanupEnabled && server.cleanupIntervalHours) {
       await this.scheduler.schedule(serverId, server.cleanupIntervalHours * 3600);
     } else {
       await this.scheduler.unschedule(serverId);

@@ -34,6 +34,7 @@ const s = (
   uptimeSeconds: null,
   cleanupEnabled: false,
   cleanupIntervalHours: null,
+  cleanupCron: null,
   cleanupVolumes: false,
   lastCleanupAt: null,
   lastSeenAt: null,

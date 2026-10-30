@@ -75,6 +75,18 @@ describe("CleanupService", () => {
     expect(scheduler.schedule).toHaveBeenCalledWith("s1", 12 * 3600);
   });
 
+  it("a cron expression overrides the interval (scheduleCron, not schedule)", async () => {
+    const update = jest.fn().mockResolvedValue({ ...server, cleanupEnabled: true, cleanupIntervalHours: 12, cleanupCron: "0 3 * * *" });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(server), update },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), scheduleCron: jest.fn(), unschedule: jest.fn() } as unknown as CleanupSchedulerService;
+    await make(prisma, access, {}, scheduler).setConfig("u1", "s1", { enabled: true, intervalHours: 12, cron: "0 3 * * *" });
+    expect(scheduler.scheduleCron).toHaveBeenCalledWith("s1", "0 3 * * *");
+    expect(scheduler.schedule).not.toHaveBeenCalled();
+  });
+
   it("setConfigBulk applies to writable servers and skips the rest (role-gated, cross-team)", async () => {
     const update = jest.fn().mockResolvedValue({ cleanupEnabled: true, cleanupIntervalHours: 24 });
     const prisma = {
