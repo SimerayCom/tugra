@@ -1,6 +1,8 @@
 {
   "close": "Close",
   "closed": "Connection closed.",
+  "closedReason": "Connection closed: {reason}",
+  "capabilityHint": "Terminal access isn't enabled for this server. Grant the \"terminal\" capability under the server's Maintenance → Capabilities, then try again.",
   "containerTitle": "Container shell · {name}",
   "hostTitle": "Host shell · {name}"
 }

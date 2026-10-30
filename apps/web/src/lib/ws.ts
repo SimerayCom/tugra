@@ -80,7 +80,7 @@ export interface TerminalConn {
  */
 export function connectTerminal(
   target: TerminalTarget,
-  handlers: { onEvent: (e: TerminalEvent) => void; onOpen?: () => void; onClose?: () => void },
+  handlers: { onEvent: (e: TerminalEvent) => void; onOpen?: () => void; onClose?: (info?: { code: number; reason: string }) => void },
   opts: { fetchTicket?: () => Promise<string>; WS?: typeof WebSocket } = {},
 ): TerminalConn {
   const WS = opts.WS ?? WebSocket;
@@ -94,7 +94,9 @@ export function connectTerminal(
       if (closed) return;
       ws = new WS(terminalUrl(target), ["tugra.bearer", ticket]);
       ws.onopen = () => handlers.onOpen?.();
-      ws.onclose = () => handlers.onClose?.();
+      // Pass the close code + reason through — the hub sends an actionable reason (e.g. "terminal
+      // capability not granted for this server") that the UI must surface instead of a generic "closed".
+      ws.onclose = (ev: CloseEvent) => handlers.onClose?.({ code: ev.code, reason: ev.reason });
       ws.onmessage = (ev: MessageEvent) => {
         try {
           handlers.onEvent(JSON.parse(String(ev.data)) as TerminalEvent);
