@@ -29,5 +29,15 @@ export class DeploymentReconcileService implements OnApplicationBootstrap {
     if (count > 0) {
       this.logger.warn(`reaped ${count} deployment(s) left RUNNING by a hub restart (marked FAILED)`);
     }
+    // Drop any deploys still QUEUED from before the restart: agents haven't reconnected at bootstrap, so
+    // draining them now would just fail with "agent offline". The operator re-deploys. (Re-adopting a queue
+    // across restarts is deferred.)
+    const dropped = await this.prisma.deployment.updateMany({
+      where: { status: "QUEUED" },
+      data: { status: "CANCELLED", exitCode: -1, logs: "Queued deploy dropped: the hub restarted before it started. Re-deploy." },
+    });
+    if (dropped.count > 0) {
+      this.logger.warn(`dropped ${dropped.count} QUEUED deployment(s) left by a hub restart (marked CANCELLED)`);
+    }
   }
 }

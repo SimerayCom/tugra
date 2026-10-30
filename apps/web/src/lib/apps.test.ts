@@ -13,6 +13,8 @@ describe("app helpers", () => {
     expect(deploymentColor("SUCCESS")).toContain("--c-g");
     expect(deploymentColor("FAILED")).toContain("--c-r");
     expect(deploymentColor("RUNNING")).toContain("--c-am");
+    expect(deploymentColor("QUEUED")).toContain("--c-am"); // waiting to start
+    expect(deploymentColor("CANCELLED")).toContain("--c-tx3"); // muted — never ran
   });
 
   it("builds the app url from domain + https", () => {

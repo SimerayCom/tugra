@@ -105,6 +105,37 @@ function make(
       ...(prisma as { server?: object }).server,
     },
   } as unknown as Partial<PrismaService>;
+  // Deploy-queue defaults: existing deploy tests stub only the old runDeploy shape (create/update/findUnique/
+  // findFirst). submitDeploy→claimNext now also needs count/updateMany/$queryRaw and must be able to CLAIM the
+  // just-created QUEUED row. Model a faithful 1-row queue here so those tests exercise submit→claim→execute→
+  // drain unchanged: remember the row create() made, hand it to claimNext's findFirst(QUEUED) until the claim
+  // CAS (updateMany → RUNNING) consumes it. Multi-row queue + cancel races get their own stateful-store tests.
+  const providedDep = ((prisma as { deployment?: Record<string, jest.Mock> }).deployment ?? {}) as Record<string, jest.Mock>;
+  if (providedDep.create) {
+    let pending: { id: string } | null = null;
+    (withServerDefaults as { deployment?: object }).deployment = {
+      count: jest.fn().mockResolvedValue(0),
+      ...providedDep,
+      create: jest.fn(async (args: { data?: { status?: string } }) => {
+        const r = (await providedDep.create(args)) as { id: string };
+        if (args?.data?.status === "QUEUED") pending = r; // only a queue submission is claimable (rollback writes RUNNING directly)
+        return r;
+      }),
+      findFirst: jest.fn(async (args: { where?: { status?: string } }) => {
+        // The wrapper OWNS QUEUED lookups (claimNext); a test's own findFirst is for the RUNNING/SUCCESS
+        // queries (ensureNoActiveDeploy, prev-success rollback) and must never answer a QUEUED claim.
+        if (args?.where?.status === "QUEUED") return pending;
+        return providedDep.findFirst ? await providedDep.findFirst(args) : null;
+      }),
+      updateMany: jest.fn(async (args: { where?: { id?: string }; data?: { status?: string } }) => {
+        if (providedDep.updateMany) await providedDep.updateMany(args);
+        if (args?.data?.status === "RUNNING" && pending && args?.where?.id === pending.id) pending = null; // claimed
+        return { count: 1 };
+      }),
+    };
+  }
+  (withServerDefaults as { $queryRaw?: unknown }).$queryRaw =
+    (prisma as { $queryRaw?: unknown }).$queryRaw ?? jest.fn().mockResolvedValue([]);
   // createFromTemplate v2 runs allocate+insert in a $transaction; default it to run the callback
   // against the same stub (tx === prisma) unless a test supplies its own.
   (withServerDefaults as { $transaction?: unknown }).$transaction =
@@ -205,33 +236,33 @@ describe("ApplicationsService", () => {
     } as unknown as TeamAccessService;
     return { prisma, access };
   }
-  type WithRunDeploy = { runDeploy: (...a: unknown[]) => Promise<unknown> };
+  type WithSubmitDeploy = { submitDeploy: (...a: unknown[]) => Promise<unknown> };
 
   it("fires a best-effort deploy when deploy:true", async () => {
     const { prisma, access } = createDeps();
     const svc = make(prisma, access, {} as AgentWsServer);
-    const runDeploy = jest
-      .spyOn(svc as unknown as WithRunDeploy, "runDeploy")
+    const submitDeploy = jest
+      .spyOn(svc as unknown as WithSubmitDeploy, "submitDeploy")
       .mockResolvedValue(undefined);
     await svc.create("u1", { name: "web", serverId: "s1", image: "nginx", deploy: true });
-    expect(runDeploy).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), "u1");
+    expect(submitDeploy).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), "u1");
   });
 
   it("does not deploy when the deploy flag is absent", async () => {
     const { prisma, access } = createDeps();
     const svc = make(prisma, access, {} as AgentWsServer);
-    const runDeploy = jest
-      .spyOn(svc as unknown as WithRunDeploy, "runDeploy")
+    const submitDeploy = jest
+      .spyOn(svc as unknown as WithSubmitDeploy, "submitDeploy")
       .mockResolvedValue(undefined);
     await svc.create("u1", { name: "web", serverId: "s1", image: "nginx" });
-    expect(runDeploy).not.toHaveBeenCalled();
+    expect(submitDeploy).not.toHaveBeenCalled();
   });
 
   it("still creates successfully when the best-effort deploy fails (agent offline)", async () => {
     const { prisma, access } = createDeps();
     const svc = make(prisma, access, {} as AgentWsServer);
     jest
-      .spyOn(svc as unknown as WithRunDeploy, "runDeploy")
+      .spyOn(svc as unknown as WithSubmitDeploy, "submitDeploy")
       .mockRejectedValue(new Error("agent offline"));
     const view = await svc.create("u1", { name: "web", serverId: "s1", image: "nginx", deploy: true });
     expect(view.id).toBe("app1");
@@ -707,15 +738,100 @@ describe("ApplicationsService", () => {
     expect(list[0].rollbackable).toBe(false);
   });
 
-  it("refuses a second deploy while one is already running (409)", async () => {
+  it("queues a second deploy while one is already running (no 409 — returns a QUEUED row, no agent command)", async () => {
+    const created = { id: "q1", status: "QUEUED", appId: "app1" };
+    const sendCommand = jest.fn();
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
-      deployment: { findFirst: jest.fn().mockResolvedValue({ id: "running", status: "RUNNING" }) },
+      deployment: {
+        // one deploy already RUNNING → claimNext must NOT claim; the new row stays QUEUED
+        count: jest.fn().mockImplementation(({ where }: { where: { status: string } }) => Promise.resolve(where.status === "RUNNING" ? 1 : 0)),
+        create: jest.fn().mockResolvedValue(created),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue(created),
+      },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-    await expect(make(prisma, access, {} as AgentWsServer).deploy("u1", "app1")).rejects.toThrow(
-      /already running/,
+    const dep = await make(prisma, access, { sendCommand } as unknown as AgentWsServer).deploy("u1", "app1");
+    expect(dep?.status).toBe("QUEUED");
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects a submit when the per-app queue is full (409)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: {
+        count: jest.fn().mockImplementation(({ where }: { where: { status: string } }) => Promise.resolve(where.status === "QUEUED" ? 10 : 0)),
+        create: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).deploy("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.deployment.create as jest.Mock).not.toHaveBeenCalled(); // capped before creating a row
+  });
+
+  it("a webhook submit supersedes older still-QUEUED webhook deploys for the same app", async () => {
+    const supersede = jest.fn().mockResolvedValue({ count: 2 });
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        count: jest.fn().mockResolvedValue(0),
+        create: jest.fn().mockResolvedValue({ id: "w1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: supersede,
+        findUnique: jest.fn().mockResolvedValue({ id: "w1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "ok" }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deployFromWebhook("app1");
+    expect(supersede).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ appId: "app1", status: "QUEUED", trigger: "webhook" }),
+        data: expect.objectContaining({ status: "CANCELLED" }),
+      }),
     );
+  });
+
+  describe("cancelDeployment", () => {
+    function svcFor(updateCount: number, row: unknown, opts?: { denied?: boolean }) {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ id: "app1", teamId: "t1" }) },
+        deployment: {
+          updateMany: jest.fn().mockResolvedValue({ count: updateCount }),
+          findFirst: jest.fn().mockResolvedValue(row),
+          findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "CANCELLED" }),
+        },
+      } as unknown as PrismaService;
+      const access = {
+        requirePermission: opts?.denied ? jest.fn().mockRejectedValue(new ForbiddenException("nope")) : jest.fn().mockResolvedValue(undefined),
+      } as unknown as TeamAccessService;
+      return make(prisma, access, {} as AgentWsServer);
+    }
+
+    it("cancels a QUEUED deploy (CAS hit) and returns the CANCELLED row", async () => {
+      const r = await svcFor(1, null).cancelDeployment("u1", "app1", "d1");
+      expect((r as { status: string }).status).toBe("CANCELLED");
+    });
+
+    it("409s when the deploy is already RUNNING (can't cancel yet)", async () => {
+      await expect(svcFor(0, { id: "d1", status: "RUNNING" }).cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("409s when the deploy already finished", async () => {
+      await expect(svcFor(0, { id: "d1", status: "SUCCESS" }).cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("404s when the deployment is not found or belongs to another app (CAS scoped by appId)", async () => {
+      await expect(svcFor(0, null).cancelDeployment("u1", "app1", "dX")).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("forbids a caller without apps:deploy", async () => {
+      await expect(svcFor(1, null, { denied: true }).cancelDeployment("u1", "app1", "d1")).rejects.toThrow(/nope/);
+    });
   });
 
   it("finishes the log stream as FAILED when the agent errors mid-deploy", async () => {

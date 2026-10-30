@@ -290,6 +290,11 @@ export default function AppDetailPage() {
     mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
     onSuccess: invalidate,
   });
+  const cancelDeploy = useMutation({
+    mutationFn: (deploymentId: string) => api.cancelDeployment(id, deploymentId),
+    onSuccess: invalidate,
+    meta: { successMessage: t("apps.deployCancelled") },
+  });
   const tags = useMutation({
     mutationFn: (next: string[]) => api.setAppTags(id, next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
@@ -642,14 +647,17 @@ export default function AppDetailPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {deployments.map((d) => {
                 const sum = d.logs ? summarizeDeployLog(d.logs) : null;
+                // A QUEUED deploy hasn't started — offer Cancel (a RUNNING one can't be cancelled yet). The
+                // Cancel button sits OUTSIDE the drill-in row button (no nested buttons).
+                const cancellable = d.status === "QUEUED" && appData.canWrite;
                 // The whole row is the click target: it drills into the deployment (full log lives there).
                 return (
+                  <div key={d.id} style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
                   <button
-                    key={d.id}
                     type="button"
                     className="dep-row"
                     onClick={() => setSelDep(d.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", width: "100%", textAlign: "left", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", transition: "background .12s, border-color .12s" }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0, textAlign: "left", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", transition: "background .12s, border-color .12s" }}
                   >
                     <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
                     {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
@@ -669,6 +677,17 @@ export default function AppDetailPage() {
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
                     <ChevronRight size={15} aria-hidden style={{ color: "var(--c-tx3)", flexShrink: 0 }} />
                   </button>
+                  {cancellable && (
+                    <button
+                      type="button"
+                      onClick={() => cancelDeploy.mutate(d.id)}
+                      disabled={cancelDeploy.isPending}
+                      style={{ flexShrink: 0, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "transparent", color: "var(--c-r)", fontSize: 12, cursor: "pointer", padding: "0 14px", font: "inherit" }}
+                    >
+                      {t("apps.cancel")}
+                    </button>
+                  )}
+                  </div>
                 );
               })}
               {deployments.length === 0 && (
