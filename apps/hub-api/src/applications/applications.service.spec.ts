@@ -1065,7 +1065,7 @@ describe("ApplicationsService", () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile" });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", buildCommand: null, outputDir: null } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", buildCommand: null, outputDir: null, baseDirectory: null } }));
   });
 
   it("setBuild STATIC sets command/output and clears the dockerfile path", async () => {
@@ -1073,7 +1073,18 @@ describe("ApplicationsService", () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "DOCKERFILE", dockerfilePath: "Dockerfile" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "STATIC", buildCommand: "npm run build", outputDir: "build" });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, buildCommand: "npm run build", outputDir: "build" } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, buildCommand: "npm run build", outputDir: "build", baseDirectory: null } }));
+  });
+
+  it("setBuild persists the monorepo baseDirectory and clears it when omitted (replace semantics)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(gitApp), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setBuild("u1", "app1", { buildType: "NIXPACKS", baseDirectory: "apps/api" });
+    expect(update.mock.calls[0][0].data).toMatchObject({ buildType: "NIXPACKS", baseDirectory: "apps/api" });
+    await svc.setBuild("u1", "app1", { buildType: "NIXPACKS" });
+    expect(update.mock.calls[1][0].data.baseDirectory).toBeNull(); // omitted -> cleared
   });
 
   it("setConfigMountContent rejects a non-compose app before any write", async () => {
