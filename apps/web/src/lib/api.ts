@@ -974,6 +974,12 @@ export const api = {
   setAppExtraDomains(id: string, domains: string[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/extra-domains`, { method: "PUT", body: JSON.stringify({ domains }) });
   },
+  getServiceDomains(id: string) {
+    return apiFetch<{ service: string; hostname: string; port: number }[]>(`/apps/${id}/service-domains`);
+  },
+  setServiceDomains(id: string, domains: { service: string; hostname: string; port: number }[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/service-domains`, { method: "PUT", body: JSON.stringify({ domains }) });
+  },
   generateGitSshKey(id: string) {
     return apiFetch<{ publicKey: string; fingerprint: string }>(`/apps/${id}/git-ssh-key`, { method: "POST" });
   },

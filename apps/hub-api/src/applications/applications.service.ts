@@ -88,6 +88,7 @@ import {
   buildLogsScript,
   composeProject,
   composeVolumes,
+  composeServiceNames,
   parseContainers,
 } from "../deploy/compose-script";
 import {
@@ -494,6 +495,10 @@ export class ApplicationsService {
     }
 
     const source = dto.source ?? "IMAGE";
+    // A user-pasted compose at create was never validated (only setComposeFile + the importer ran the guard),
+    // so a privileged/host-escaping stack could be installed. Validate it here too; curated templates are
+    // trusted (they install through a different, server-controlled path) so they skip this.
+    if (source === "COMPOSE" && dto.composeFile && !dto.templateSlug) assertSafeCompose(dto.composeFile);
     const composeWebService =
       source === "COMPOSE" ? (this.composeWeb({ templateSlug: dto.templateSlug, composeFile: dto.composeFile })?.service ?? null) : null;
     const expose = this.resolveExpose(dto, server, source, composeWebService);
@@ -1224,11 +1229,13 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       const isCompose = app.source === "COMPOSE";
-      // A compose app also needs the proxy when its web service is routable (magic).
-      const composeRoutable = isCompose && !!this.composeWeb(app);
+      const serviceDomains = isCompose ? await this.loadServiceDomains(app.id) : [];
+      // A compose app also needs the proxy when its web service is routable (magic) OR it has per-service domains.
+      const composeRoutable = isCompose && (!!this.composeWeb(app) || serviceDomains.length > 0);
       // Swarm apps route through the cluster's swarm-mode Traefik (Phase B), not the per-server classic proxy.
-      if (app.domain && !app.clusterId && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
+      if ((app.domain || serviceDomains.length > 0) && !app.clusterId && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
+      if (isCompose && serviceDomains.length > 0) spec.serviceDomains = serviceDomains;
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
       await this.hydrateCertSpec(app, spec);
@@ -1508,6 +1515,7 @@ export class ApplicationsService {
       // container actually being deployed — else a domain-routed app's Traefik override/labels would
       // point at the CURRENT version's service/port against the old container (silent 502 / phantom service).
       const spec = this.toSpec(isCompose ? { ...app, composeFile: composeFile! } : app);
+      if (isCompose) spec.serviceDomains = await this.loadServiceDomains(app.id); // keep per-service routes on rollback
       spec.env = await this.resolvedEnv(app);
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
       // A rollback re-runs a PRIOR image; never re-run deploy hooks (e.g. a migration) against it — a
@@ -2705,6 +2713,60 @@ export class ApplicationsService {
     }
     await this.prisma.application.update({ where: { id }, data: { extraDomains: hosts } });
     await this.audit.log({ actor: userId, action: "app.extra_domains.update", target: id, meta: { count: hosts.length } });
+  }
+
+  /** The per-service domains of a COMPOSE app (service → hostname + port), for the deploy spec + the UI. */
+  async listServiceDomains(userId: string, id: string): Promise<{ service: string; hostname: string; port: number }[]> {
+    await this.requireWrite(userId, id);
+    return this.loadServiceDomains(id);
+  }
+
+  private async loadServiceDomains(appId: string): Promise<{ service: string; hostname: string; port: number }[]> {
+    const rows = await this.prisma.appServiceDomain.findMany({ where: { applicationId: appId }, orderBy: { createdAt: "asc" } });
+    return rows.map((r) => ({ service: r.service, hostname: r.hostname, port: r.port }));
+  }
+
+  /**
+   * Replace a COMPOSE app's per-service domains — each routes a named compose service (on a port) to its own
+   * hostname, applied on the next deploy. Validated like extra domains (panel/primary/cross-app/cert), plus
+   * the service must exist in the stored compose YAML (for a git compose the deploy's render step checks it).
+   */
+  async setServiceDomains(userId: string, id: string, rows: { service: string; hostname: string; port: number }[]): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE") throw new BadRequestException("service domains apply only to compose apps");
+    if (app.clusterId) throw new BadRequestException("service domains aren't supported for clustered apps");
+    if (app.tunnelExposed) throw new BadRequestException("service domains aren't supported for a tunnel-exposed app");
+    const hosts = rows.map((r) => r.hostname);
+    const base = app.domain ? app.domain.replace(/^www\./i, "").toLowerCase() : null;
+    const services = app.composeFile ? new Set(composeServiceNames(app.composeFile)) : null;
+    for (const row of rows) {
+      await this.assertDomainNotReserved(row.hostname);
+      if (base && (row.hostname === app.domain!.toLowerCase() || row.hostname === base || row.hostname === `www.${base}`)) {
+        throw new BadRequestException(`${row.hostname} is already served by the primary domain`);
+      }
+      if ((app.extraDomains ?? []).map((h) => h.toLowerCase()).includes(row.hostname)) {
+        throw new BadRequestException(`${row.hostname} is already an extra domain of this app`);
+      }
+      if (services && !services.has(row.service)) {
+        throw new BadRequestException(`compose service "${row.service}" is not defined in the compose file`);
+      }
+      if (app.certType === "custom" && app.certPem && !certCoversHost(app.certDomains, row.hostname)) {
+        throw new BadRequestException(`the uploaded certificate does not cover ${row.hostname}`);
+      }
+    }
+    // Cross-app claim across every app's primary domain, its aliases, and other apps' service domains.
+    if (hosts.length) {
+      const [appClash, svcClash] = await Promise.all([
+        this.prisma.application.findFirst({ where: { id: { not: id }, OR: [{ domain: { in: hosts, mode: "insensitive" } }, { extraDomains: { hasSome: hosts } }] }, select: { id: true } }),
+        this.prisma.appServiceDomain.findFirst({ where: { applicationId: { not: id }, hostname: { in: hosts } }, select: { id: true } }),
+      ]);
+      if (appClash || svcClash) throw new BadRequestException("one of those hostnames is already in use by another application");
+    }
+    await this.prisma.$transaction([
+      this.prisma.appServiceDomain.deleteMany({ where: { applicationId: id } }),
+      this.prisma.appServiceDomain.createMany({ data: rows.map((r) => ({ applicationId: id, service: r.service, hostname: r.hostname, port: r.port })) }),
+    ]);
+    await this.audit.log({ actor: userId, action: "app.service_domains.update", target: id, meta: { count: rows.length } });
   }
 
   /**

@@ -1,4 +1,22 @@
-import { SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetSourceSchema } from "./dto";
+import { SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema } from "./dto";
+
+describe("SetServiceDomainsSchema — per-service compose domains", () => {
+  const ok = (domains: unknown[]) => SetServiceDomainsSchema.safeParse({ domains });
+  it("accepts {service,hostname,port} rows and normalizes the host", () => {
+    const r = ok([{ service: "api", hostname: "API.example.com.", port: 4000 }]);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.domains[0].hostname).toBe("api.example.com");
+    expect(ok([]).success).toBe(true);
+  });
+  it("rejects bad service names, ports, IP hosts, dup hosts, over-cap, unknown keys", () => {
+    expect(ok([{ service: "a b", hostname: "x.com", port: 80 }]).success).toBe(false); // space in service
+    expect(ok([{ service: "api", hostname: "x.com", port: 0 }]).success).toBe(false); // port range
+    expect(ok([{ service: "api", hostname: "1.2.3.4", port: 80 }]).success).toBe(false); // IP literal
+    expect(ok([{ service: "a", hostname: "x.com", port: 80 }, { service: "b", hostname: "x.com", port: 81 }]).success).toBe(false); // dup host
+    expect(ok(Array.from({ length: 21 }, (_, i) => ({ service: "s", hostname: `h${i}.com`, port: 80 }))).success).toBe(false); // >20
+    expect(SetServiceDomainsSchema.safeParse({ domains: [{ service: "api", hostname: "x.com", port: 80, foo: 1 }] }).success).toBe(false); // strict row
+  });
+});
 
 describe("SetExtraDomainsSchema — multi-domain aliases", () => {
   const ok = (domains: string[]) => SetExtraDomainsSchema.safeParse({ domains });

@@ -13,6 +13,7 @@ import {
   registryLoginPrelude,
   registryLogoutSteps,
   traefikLabels,
+  serviceDomainLabels,
   certPreludeFor,
   PROXY_NETWORK,
   type AppSpec,
@@ -75,6 +76,21 @@ export function composeVolumes(app: { id: string; composeFile?: string | null })
     }
   }
   return [...out.values()];
+}
+
+/** The service names declared in a COMPOSE app's YAML (best-effort; [] on parse error). Used to validate a
+ *  per-service domain targets a real service when the YAML is stored on the hub. */
+export function composeServiceNames(composeFile: string | null | undefined): string[] {
+  if (!composeFile) return [];
+  let doc: unknown;
+  try {
+    doc = parse(composeFile, { merge: true });
+  } catch {
+    return [];
+  }
+  const services = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as { services?: unknown }).services : null;
+  if (!services || typeof services !== "object" || Array.isArray(services)) return [];
+  return Object.keys(services as Record<string, unknown>);
 }
 
 /** Host dir + file path for a materialized config mount (sibling of the compose file, so the app's
@@ -145,13 +161,24 @@ export function composeOverride(app: AppSpec): string {
     (map.get(name) ?? map.set(name, []).get(name)!).push(line);
   };
 
+  const rows = app.serviceDomains ?? [];
+  const joinProxy = (name: string) => {
+    // Keep on `default` AND join the proxy (declaring `networks:` drops implicit default membership → the
+    // service would lose reach to its DB/siblings). Set once per service.
+    if (!networks.has(name)) networks.set(name, ["      - default", `      - ${PROXY_NETWORK}`]);
+  };
   if (magic && app.composeWebService) {
-    // The web service is kept on `default` AND joined to the proxy (declaring `networks:` drops the
-    // implicit default membership → it would lose reach to its DB/siblings). Values JSON-quoted.
     const name = app.composeWebService;
-    touch(name);
-    networks.set(name, ["      - default", `      - ${PROXY_NETWORK}`]);
-    for (const l of traefikLabels(app)) add(labels, name, `      - ${JSON.stringify(l)}`);
+    joinProxy(name);
+    // When a per-service domain also targets the web service, the container has >1 Traefik service → the
+    // primary router must name its service explicitly (byte-identical when there are no such rows).
+    const primaryExplicit = rows.some((row) => row.service === name);
+    for (const l of traefikLabels(app, primaryExplicit ? { explicitService: true } : {})) add(labels, name, `      - ${JSON.stringify(l)}`);
+  }
+  // Per-service domains: each row gets its own HTTPS router on its named service + port.
+  for (const row of rows) {
+    joinProxy(row.service);
+    for (const l of serviceDomainLabels(app, row)) add(labels, row.service, `      - ${JSON.stringify(l)}`);
   }
   mounts.forEach((m, i) => {
     add(binds, m.serviceName, `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`);
@@ -169,7 +196,7 @@ export function composeOverride(app: AppSpec): string {
     const b = binds.get(name);
     if (b && b.length) lines.push("    volumes:", ...b); // ONE volumes: key, all binds appended
   }
-  if (magic) lines.push("networks:", `  ${PROXY_NETWORK}:`, "    external: true");
+  if (magic || rows.length) lines.push("networks:", `  ${PROXY_NETWORK}:`, "    external: true");
   lines.push("");
   return lines.join("\n");
 }
@@ -207,8 +234,9 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const magic = !!(app.domain && app.composeWebService);
   const mounts = app.configMounts ?? [];
   const overridePath = composeOverridePath(app);
-  // The Tugra override carries the proxy labels AND/OR the config-mount binds — write it for either.
-  const writeOverride = magic || mounts.length > 0;
+  // The Tugra override carries the proxy labels (primary and/or per-service domains) AND/OR the config-mount
+  // binds — write it for any of them.
+  const writeOverride = magic || mounts.length > 0 || (app.serviceDomains?.length ?? 0) > 0;
 
   const lines = [
     "set -e",

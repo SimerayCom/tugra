@@ -371,6 +371,26 @@ export const SetExtraDomainsSchema = z
   .refine((d) => new Set(d.domains).size === d.domains.length, { message: "duplicate domains" });
 export type SetExtraDomainsInput = z.infer<typeof SetExtraDomainsSchema>;
 
+// Per-service domains for a COMPOSE app: route a named service (on a container port) to its own hostname.
+// `service` is written as a raw YAML key + hashed into a router name, so the charset is load-bearing (no
+// spaces/colons/quotes/newlines). Hostnames reuse the alias rules; no duplicate hostnames; capped at 20.
+const COMPOSE_SERVICE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+export const SetServiceDomainsSchema = z
+  .object({
+    domains: z
+      .array(
+        z.object({
+          service: z.string().trim().regex(COMPOSE_SERVICE_RE, "invalid compose service name"),
+          hostname: ALIAS_HOST,
+          port: z.number().int().min(1).max(65535),
+        }).strict(),
+      )
+      .max(20, "at most 20 service domains"),
+  })
+  .strict()
+  .refine((d) => new Set(d.domains.map((x) => x.hostname)).size === d.domains.length, { message: "duplicate hostnames" });
+export type SetServiceDomainsInput = z.infer<typeof SetServiceDomainsSchema>;
+
 // One-click custom-domain DNS auto-setup (Cloudflare). `dryRun` returns the plan without writing. `overwrite`
 // is required before any pre-existing record pointing elsewhere is touched. Records are always DNS-only
 // (proxied=false) — proxying is not exposed in v1 because a proxied record + Flexible SSL causes a redirect loop.

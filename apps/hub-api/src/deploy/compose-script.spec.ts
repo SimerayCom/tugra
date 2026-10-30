@@ -8,6 +8,7 @@ import {
   buildLogsScript,
   composeProject,
   composeVolumes,
+  composeServiceNames,
   interpolateMountContent,
   parseContainers,
 } from "./compose-script";
@@ -236,6 +237,63 @@ describe("compose-script", () => {
     expect(buildLogsScript(img, 50)).toBe("docker logs --tail 50 tugra_abc 2>&1");
     expect(buildLogsScript(img, 0)).toContain("--tail 1");
     expect(buildLogsScript(img, 99999)).toContain("--tail 2000");
+  });
+});
+
+describe("per-service domains (compose)", () => {
+  const overrideYaml = (s: string): string => {
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/docker-compose\.tugra\.yml/);
+    return m ? Buffer.from(m[1], "base64").toString() : "";
+  };
+
+  it("no rows (undefined/empty) → byte-identical to today (no override written)", () => {
+    expect(buildComposeUpScript({ ...base, serviceDomains: [] })).toBe(buildComposeUpScript(base));
+    expect(buildComposeUpScript({ ...base, serviceDomains: undefined })).toBe(buildComposeUpScript(base));
+    expect(buildComposeUpScript(base)).not.toContain("docker-compose.tugra.yml");
+  });
+
+  it("one row routes its service over HTTPS on its port with an explicit Traefik service", () => {
+    const s = buildComposeUpScript({ ...base, serviceDomains: [{ service: "api", hostname: "api.example.com", port: 4000 }] });
+    const yaml = overrideYaml(s);
+    const doc = parseYaml(yaml);
+    expect(doc.services.api).toBeTruthy();
+    expect(yaml).toContain("Host(`api.example.com`)");
+    expect(yaml).toContain("loadbalancer.server.port=4000");
+    expect(yaml).toContain("entrypoints=websecure");
+    expect(yaml).toContain("certresolver=le");
+    expect(yaml).toMatch(/routers\.[^.]+\.service=/); // explicit .service= (multi-service container)
+    expect(yaml).toContain("- tugra-proxy"); // joined the proxy network
+    expect(yaml).toContain("tugra-proxy:\n    external: true");
+  });
+
+  it("two rows on one service produce valid YAML (single labels/networks key) with distinct routers", () => {
+    const s = buildComposeUpScript({ ...base, serviceDomains: [
+      { service: "api", hostname: "a.example.com", port: 4000 },
+      { service: "api", hostname: "b.example.com", port: 4000 },
+    ] });
+    const doc = parseYaml(overrideYaml(s)); // throws if duplicate mapping keys → asserts single labels/networks
+    expect(doc.services.api).toBeTruthy();
+    expect(overrideYaml(s)).toContain("Host(`a.example.com`)");
+    expect(overrideYaml(s)).toContain("Host(`b.example.com`)");
+    // Each row emits a main HTTPS router + its `-web` redirect twin → 2 rows = 4 distinct router names.
+    const routers = new Set((overrideYaml(s).match(/routers\.([^.]+)\.rule=/g) ?? []));
+    expect(routers.size).toBe(4);
+  });
+
+  it("a row ON the primary web service forces the primary router to name its service explicitly", () => {
+    const s = buildComposeUpScript({ ...base, domain: "x.com", composeWebService: "web", certType: "http", serviceDomains: [{ service: "web", hostname: "api.x.com", port: 8080 }] });
+    const yaml = overrideYaml(s);
+    expect(yaml).toContain("routers.tugra_abc.service=tugra_abc"); // primary router now names its service explicitly
+    expect(yaml).toContain("Host(`api.x.com`)"); // the per-service row is present too
+  });
+});
+
+describe("composeServiceNames", () => {
+  it("lists declared services; [] on empty or malformed", () => {
+    expect(composeServiceNames("services:\n  web:\n    image: nginx\n  db:\n    image: postgres")).toEqual(["web", "db"]);
+    expect(composeServiceNames(null)).toEqual([]);
+    expect(composeServiceNames("::: not yaml :::")).toEqual([]);
+    expect(composeServiceNames("version: '3'")).toEqual([]);
   });
 });
 

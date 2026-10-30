@@ -68,6 +68,8 @@ import {
   SetDomainSchema,
   SetExtraDomainsInput,
   SetExtraDomainsSchema,
+  SetServiceDomainsInput,
+  SetServiceDomainsSchema,
   AutoSetupDomainSchema,
   AutoSetupDomainInput,
   ExposeInput,
@@ -633,6 +635,24 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetExtraDomainsSchema)) body: SetExtraDomainsInput,
   ) {
     await this.apps.setExtraDomains(user.userId, id, body.domains);
+    return { ok: true };
+  }
+
+  // Per-service domains for a COMPOSE app (service → hostname + port). Applied on the next deploy.
+  @Get(":id/service-domains")
+  listServiceDomains(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.listServiceDomains(user.userId, id);
+  }
+
+  @Put(":id/service-domains")
+  @HttpCode(200)
+  @ApiZodBody(SetServiceDomainsSchema)
+  async setServiceDomains(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetServiceDomainsSchema)) body: SetServiceDomainsInput,
+  ) {
+    await this.apps.setServiceDomains(user.userId, id, body.domains);
     return { ok: true };
   }
 

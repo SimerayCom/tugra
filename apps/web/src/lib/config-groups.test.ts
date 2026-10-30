@@ -70,7 +70,7 @@ describe("visibleConfigGroups", () => {
     expect(group(f, "general")!.cardIds).toEqual(["environment", "tags"]);
     expect(group(f, "build")!.cardIds).toEqual(["credentials"]);
     expect(group(f, "environment")!.cardIds).toEqual(["env"]);
-    expect(group(f, "domains")!.cardIds).toEqual(["expose"]);
+    expect(group(f, "domains")!.cardIds).toEqual(["expose", "serviceDomains"]); // compose gains per-service domains
   });
 
   it("a locked-down COMPOSE preview app collapses to general, build, environment", () => {
@@ -136,6 +136,13 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("extraDomains");
     expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("extraDomains");
     expect(group(facts({ clusterId: "c1" }), "domains")!.cardIds).not.toContain("extraDomains");
+  });
+
+  it("serviceDomains is COMPOSE-only (+ write, non-preview, non-clustered)", () => {
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "domains")!.cardIds).toContain("serviceDomains");
+    expect(group(facts(), "domains")?.cardIds ?? []).not.toContain("serviceDomains"); // GIT app
+    expect(group(facts({ source: "COMPOSE", isPreview: true, domain: null, domainKind: null, volumes: [] }), "domains")?.cardIds ?? []).not.toContain("serviceDomains");
+    expect(group(facts({ source: "COMPOSE", clusterId: "c1", domain: null, domainKind: null, volumes: [] }), "domains")?.cardIds ?? []).not.toContain("serviceDomains");
   });
 
   it("domain card needs a custom domainKind", () => {

@@ -123,6 +123,9 @@ export interface AppSpec {
   /** For a COMPOSE app: the service to attach the Traefik router to (magic domain).
    *  When set, buildComposeUpScript writes a label-only override joining it to the proxy. */
   composeWebService?: string | null;
+  /** For a COMPOSE app: additional per-service domains — route a named compose service (on a given
+   *  container port) to its own hostname. Each row becomes its own HTTPS Traefik router in the override. */
+  serviceDomains?: { service: string; hostname: string; port: number }[] | null;
   /** For a COMPOSE app: template config files to materialize on the host and bind-mount read-only
    *  into their service. buildComposeUpScript writes each under the app's compose dir + adds the bind
    *  to the Tugra override. */
@@ -410,9 +413,12 @@ function secretsDirPrelude(): string[] {
   ];
 }
 
-export function traefikLabels(app: AppSpec): string[] {
+export function traefikLabels(app: AppSpec, opts: { router?: string; explicitService?: boolean } = {}): string[] {
   if (!app.domain) return [];
-  const r = containerName(app);
+  // `router` overrides the router/service/middleware name prefix (per-service compose domains pass a hashed
+  // one); `explicitService` emits `routers.*.service=` so routing stays unambiguous once a container carries
+  // more than one Traefik service. Both default to today's single-router behaviour (byte-identical).
+  const r = opts.router ?? containerName(app);
   const port = app.containerPort ?? 80;
   const redirect = app.domainRedirect ?? null;
   const base = app.domain.replace(/^www\./i, "");
@@ -460,6 +466,13 @@ export function traefikLabels(app: AppSpec): string[] {
         `traefik.http.routers.${r}.tls.domains[0].sans=${app.wildcardDomain}`,
       );
     }
+  }
+  // Pin the router→service link once a container defines more than one Traefik service (a compose service
+  // that is both the primary web service and carries a per-service domain, or has several). With one service
+  // Traefik auto-links, so this is emitted only on request → byte-identical for the common case.
+  if (opts.explicitService) {
+    labels.push(`traefik.http.routers.${r}.service=${r}`);
+    if (!httpOnly) labels.push(`traefik.http.routers.${r}-web.service=${r}`);
   }
 
   // Rolling deploy only: an active Traefik load-balancer health check so the not-yet-
@@ -547,6 +560,31 @@ export function traefikLabels(app: AppSpec): string[] {
  *  -sec/-fa names. */
 export function extraRouterName(r: string, host: string): string {
   return `${r}-d${createHash("sha1").update(host.toLowerCase()).digest("hex").slice(0, 8)}`;
+}
+
+/** Router/service name for a per-service compose domain. Hashed on service+hostname so adding/removing/
+ *  reordering rows never renames the others; the `-s` prefix can't collide with the primary's suffixes. */
+export function serviceRouterName(r: string, service: string, host: string): string {
+  return `${r}-s${createHash("sha1").update(`${service}\n${host.toLowerCase()}`).digest("hex").slice(0, 8)}`;
+}
+
+/** Traefik labels for ONE per-service compose domain row — its own HTTPS router (HTTP-01, or the app's
+ *  uploaded cert), on the row's port, reusing the app's forward-auth/security-headers chain but never the
+ *  le-dns wildcard or the www/bare canonical redirect. Built via traefikLabels on a derived spec. */
+export function serviceDomainLabels(app: AppSpec, row: { service: string; hostname: string; port: number }): string[] {
+  const r = serviceRouterName(containerName(app), row.service, row.hostname);
+  const derived: AppSpec = {
+    ...app,
+    domain: row.hostname,
+    containerPort: row.port,
+    extraDomains: [],
+    domainRedirect: null,
+    rollingHealthPath: null,
+    wildcardDomain: null,
+    // le-dns wildcard doesn't cover an arbitrary service host → force per-host HTTP-01 (keep an uploaded cert).
+    certType: app.certType === "custom" ? "custom" : "le-http",
+  };
+  return traefikLabels(derived, { router: r, explicitService: true });
 }
 
 /** Generated Dockerfile for a STATIC site: optional node build stage, then nginx. */
