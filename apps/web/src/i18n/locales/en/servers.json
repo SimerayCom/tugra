@@ -25,6 +25,7 @@
   "tabDrains": "Log Drains",
   "tabMaintenance": "Maintenance",
   "tabActivity": "Activity",
+  "tabShell": "Terminal",
   "activityDesc": "Every action taken on this server — who did what, newest first.",
   "proxy": "Traefik Proxy",
   "proxyDesc": "The reverse proxy that routes traffic and manages SSL for apps with a domain.",

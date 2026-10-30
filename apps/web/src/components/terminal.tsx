@@ -35,6 +35,7 @@ export default function TerminalView({
   const tRef = useRef(t);
   tRef.current = t;
   const ref = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
   const tkey = "app" in target ? `app:${target.app}` : "database" in target ? `database:${target.database}` : `server:${target.server}`;
 
   useEffect(() => {
@@ -62,6 +63,7 @@ export default function TerminalView({
         brightBlue: "#93c5fd", brightMagenta: "#d8b4fe", brightCyan: "#67e8f9", brightWhite: "#ffffff",
       },
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -134,6 +136,7 @@ export default function TerminalView({
       dataSub.dispose();
       conn.close();
       term.dispose();
+      termRef.current = null;
     };
     // Reconnect only when the target or font size changes, not on unrelated parent re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,5 +149,7 @@ export default function TerminalView({
       </div>
     );
   }
-  return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
+  // Clicking anywhere in the terminal re-focuses it, so keystrokes always reach the shell (not a toolbar
+  // button that happened to hold focus).
+  return <div ref={ref} onMouseDown={() => termRef.current?.focus()} style={{ width: "100%", height: "100%" }} />;
 }

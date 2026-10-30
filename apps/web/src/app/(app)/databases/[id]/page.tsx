@@ -20,7 +20,7 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { TagsCard } from "../../../../components/tags";
 import { RenameModal } from "../../../../components/rename-modal";
-import { TerminalModal } from "../../../../components/terminal-modal";
+import { TerminalPanel } from "../../../../components/terminal-panel";
 import { useConfirm } from "../../../../components/confirm";
 import { useToast } from "../../../../components/toast";
 import { Modal } from "../../../../components/modal";
@@ -64,7 +64,6 @@ export default function DatabaseDetailPage() {
   const provision = useMutation({ mutationFn: () => api.provisionDatabase(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
   const stop = useMutation({ mutationFn: () => api.stopDatabase(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
   const [renameOpen, setRenameOpen] = useState(false);
-  const [shellOpen, setShellOpen] = useState(false);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameDatabase(id, name),
     onSuccess: () => { setRenameOpen(false); invalidate(); },
@@ -142,7 +141,7 @@ export default function DatabaseDetailPage() {
     ...(db?.canWrite && db?.status !== "NEW" ? [{ key: "logs", label: t("databases.tabLogs"), icon: ScrollText }] : []),
     ...(db?.status !== "NEW" ? [{ key: "metrics", label: t("databases.tabMetrics"), icon: Activity }] : []),
     { key: "backups", label: t("databases.tabBackups"), icon: DatabaseBackup },
-    ...(db?.canWrite ? [{ key: "settings", label: t("databases.tabSettings"), icon: Settings2 }] : []),
+    ...(db?.canWrite ? [{ key: "settings", label: t("databases.tabSettings"), icon: Settings2 }, { key: "shell", label: t("databases.tabShell"), icon: Terminal }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
 
@@ -167,15 +166,7 @@ export default function DatabaseDetailPage() {
                   : t("databases.provision")}
               </Btn>
               <Btn icon={Square} variant="dangerGhost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
-              <Btn
-                icon={Terminal}
-                variant="ghost"
-                onClick={() => setShellOpen(true)}
-                disabled={db.status !== "RUNNING"}
-                title={db.status !== "RUNNING" ? t("databases.shellDisabledHint") : undefined}
-              >
-                {t("databases.openShell")}
-              </Btn>
+              <Btn icon={Terminal} variant="ghost" onClick={() => setTab("shell")}>{t("databases.openShell")}</Btn>
               <div style={{ position: "relative" }}>
                 <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("databases.more")}><Ellipsis size={16} /></Btn>
                 {moreOpen && (
@@ -206,13 +197,6 @@ export default function DatabaseDetailPage() {
           onSave={(name) => rename.mutate(name)}
         />
       )}
-      {shellOpen && (
-        <TerminalModal
-          target={{ database: id }}
-          title={t("terminal.containerTitle", { name: db.name })}
-          onClose={() => setShellOpen(false)}
-        />
-      )}
       {restoreToBackup && (
         <Modal onClose={() => setRestoreToBackup(null)} width={420} ariaLabel={t("databases.restoreToTitle")}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("databases.restoreToTitle")}</div>
@@ -233,6 +217,14 @@ export default function DatabaseDetailPage() {
       )}
 
       <Tabs active={tab} onChange={setTab} tabs={tabDefs} />
+
+      {tab === "shell" && db.canWrite && (
+        <TerminalPanel
+          target={{ database: id }}
+          unavailableReason={db.status !== "RUNNING" ? t("databases.shellDisabledHint") : undefined}
+          height={520}
+        />
+      )}
 
       {tab === "overview" && (
         provision.isPending || (isDbTransitional(db.status) && !db.connectionUri && db.status !== "NEW") ? (

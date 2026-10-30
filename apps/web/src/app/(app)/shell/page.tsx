@@ -95,6 +95,8 @@ function TBtn({ onClick, label, children }: { onClick: () => void; label: string
   return (
     <button
       onClick={onClick}
+      // Don't take focus away from the terminal on click — keystrokes must keep reaching the shell.
+      onMouseDown={(e) => e.preventDefault()}
       title={label}
       aria-label={label}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 30, height: 28, background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", cursor: "pointer" }}

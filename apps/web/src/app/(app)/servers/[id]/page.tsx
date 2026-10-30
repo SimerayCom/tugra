@@ -23,7 +23,7 @@ import { LiveGauges } from "../../../../components/live-gauges";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
 import { fieldStyle } from "../../../../components/form";
-import { TerminalModal } from "../../../../components/terminal-modal";
+import { TerminalPanel } from "../../../../components/terminal-panel";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
 import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
@@ -60,7 +60,6 @@ export default function ServerDetailPage() {
     queryFn: () => (live ? api.getMetrics(id, 60) : api.getServerMetricsRange(id, range as MetricsRange)),
     refetchInterval: live ? 30000 : false, // live: slow heal/fallback (SSE below); history: static
   });
-  const [shellOpen, setShellOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameServer(id, name),
@@ -74,7 +73,7 @@ export default function ServerDetailPage() {
     { key: "overview", label: t("servers.tabOverview"), icon: LayoutDashboard },
     { key: "monitoring", label: t("servers.tabMonitoring"), icon: Activity },
     { key: "containers", label: t("servers.tabContainers"), icon: Boxes },
-    ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates"), icon: PackageCheck }, { key: "drains", label: t("servers.tabDrains"), icon: Waypoints }] : []),
+    ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates"), icon: PackageCheck }, { key: "drains", label: t("servers.tabDrains"), icon: Waypoints }, { key: "shell", label: t("servers.tabShell"), icon: Terminal }] : []),
     { key: "maintenance", label: t("servers.tabMaintenance"), icon: Wrench },
     { key: "activity", label: t("servers.tabActivity"), icon: ScrollText },
   ];
@@ -115,7 +114,7 @@ export default function ServerDetailPage() {
         actions={server.canWrite ? (
           <>
             <Link href={`/resources/new?server=${id}`}><Btn icon={Plus}>{t("servers.addResource")}</Btn></Link>
-            <Btn icon={Terminal} variant="ghost" onClick={() => setShellOpen(true)}>{t("servers.openHostShell")}</Btn>
+            <Btn icon={Terminal} variant="ghost" onClick={() => setTab("shell")}>{t("servers.openHostShell")}</Btn>
             <Btn icon={Pencil} variant="ghost" onClick={() => setRenaming(true)}>{t("servers.rename")}</Btn>
           </>
         ) : undefined}
@@ -227,6 +226,14 @@ export default function ServerDetailPage() {
       )}
 
       {tab === "activity" && <ServerAuditCard id={id} />}
+
+      {tab === "shell" && server.canWrite && (
+        <TerminalPanel
+          target={{ server: id }}
+          unavailableReason={server.status !== "ONLINE" ? t("servers.waiting") : undefined}
+          height={540}
+        />
+      )}
       </>
       )}
 
@@ -237,13 +244,6 @@ export default function ServerDetailPage() {
           onClose={() => setRenaming(false)}
           onSave={(n) => rename.mutate(n)}
           pending={rename.isPending}
-        />
-      )}
-      {shellOpen && (
-        <TerminalModal
-          target={{ server: id }}
-          title={t("terminal.hostTitle", { name: server.name })}
-          onClose={() => setShellOpen(false)}
         />
       )}
     </div>
