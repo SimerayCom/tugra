@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { NAV, DESTS } from "./shell";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
+import { translate } from "../i18n/translate";
+import en from "../i18n/locales/en";
 
 describe("sidebar NAV", () => {
   it("defines an icon for every nav item (no bare text entries)", () => {
@@ -50,5 +52,13 @@ describe("command palette destinations", () => {
     const hrefs = DESTS.map((d) => d.href);
     expect(hrefs).toContain("/apps");
     expect(hrefs).toContain("/databases");
+  });
+
+  it("has unique hrefs (no duplicate palette rows) and resolvable i18n labels", () => {
+    const hrefs = DESTS.map((d) => d.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+    for (const d of DESTS) {
+      expect(translate(en, d.labelKey), `${d.labelKey} has no en string`).not.toBe(d.labelKey);
+    }
   });
 });
