@@ -1034,8 +1034,10 @@ export interface Application {
   image: string | null;
   gitUrl: string | null;
   gitBranch: string | null;
+  gitSourceId: string | null;
   buildType: BuildType;
   buildCommand: string | null;
+  dockerfilePath: string | null;
   outputDir: string | null;
   composeFile: string | null;
   healthCmd: string | null;

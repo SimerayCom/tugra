@@ -296,6 +296,43 @@ export const CloneAppSchema = z
   .strict();
 export type CloneAppInput = z.infer<typeof CloneAppSchema>;
 
+// --- Edit source/build settings after create (day-2 config) ---
+const GIT_URL_RE = /^(https:\/\/|git@|ssh:\/\/)/;
+const BUILD_TYPES = ["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"] as const;
+// A git branch: safe chars, no "..", no leading "-", capped.
+const BRANCH = z.string().min(1).max(255).regex(/^[A-Za-z0-9._#/-]+$/).refine((b) => !b.includes("..") && !b.startsWith("-"), "invalid branch");
+// A docker image ref: no whitespace, no leading "-" (option injection), capped.
+const IMAGE = z.string().min(1).max(512).refine((s) => !/\s/.test(s) && !s.startsWith("-"), "invalid image reference");
+// A relative path inside the repo (dockerfile location / static output dir): no absolute, no "..".
+const REPO_PATH = z.string().min(1).max(512).regex(/^(?!\/)(?!.*\.\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$/, "must be a relative path without ..");
+// A build command injected into a generated Dockerfile — reject newlines/NUL (which would add instructions).
+const BUILD_CMD = z.string().min(1).max(1000).refine((s) => !/[\r\n\0]/.test(s), "must be a single line");
+
+// Change where the app's code/image comes from (same source TYPE only — the service enforces by app.source).
+export const SetSourceSchema = z
+  .object({
+    gitUrl: z.string().min(1).regex(GIT_URL_RE, "git URL must be https:// or ssh").optional(),
+    gitBranch: BRANCH.optional(),
+    gitSourceId: z.string().min(1).nullable().optional(), // null = unlink the GitHub App
+    image: IMAGE.optional(),
+  })
+  .strict()
+  .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field to change" });
+export type SetSourceInput = z.infer<typeof SetSourceSchema>;
+
+// Change the build strategy (GIT apps only). Fields not valid for the chosen type must be absent.
+export const SetBuildSchema = z
+  .object({
+    buildType: z.enum(BUILD_TYPES),
+    dockerfilePath: REPO_PATH.nullable().optional(),
+    buildCommand: BUILD_CMD.nullable().optional(),
+    outputDir: REPO_PATH.nullable().optional(),
+  })
+  .strict()
+  .refine((d) => d.buildType === "DOCKERFILE" || d.dockerfilePath == null, { message: "dockerfilePath applies only to the DOCKERFILE build type" })
+  .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" });
+export type SetBuildInput = z.infer<typeof SetBuildSchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({

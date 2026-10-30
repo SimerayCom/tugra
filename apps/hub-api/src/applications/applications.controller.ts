@@ -50,6 +50,10 @@ import {
   SetBuildArgsSchema,
   SetComposeFileInput,
   SetComposeFileSchema,
+  SetSourceInput,
+  SetSourceSchema,
+  SetBuildInput,
+  SetBuildSchema,
   SetConfigMountContentInput,
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
@@ -421,6 +425,29 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetComposeFileSchema)) body: SetComposeFileInput,
   ) {
     await this.apps.setComposeFile(user.userId, id, body.composeFile);
+    return { ok: true };
+  }
+
+  @Put(":id/source")
+  @HttpCode(200)
+  @ApiZodBody(SetSourceSchema)
+  setSource(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetSourceSchema)) body: SetSourceInput,
+  ) {
+    return this.apps.setSource(user.userId, id, body);
+  }
+
+  @Put(":id/build")
+  @HttpCode(200)
+  @ApiZodBody(SetBuildSchema)
+  async setBuild(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetBuildSchema)) body: SetBuildInput,
+  ) {
+    await this.apps.setBuild(user.userId, id, body);
     return { ok: true };
   }
 

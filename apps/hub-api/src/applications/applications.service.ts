@@ -46,6 +46,7 @@ import {
   buildRemoveScript,
   buildCustomCertRemoveScript,
   isSshGitUrl,
+  gitUrlHost,
   buildRestartScript,
   buildRunScript,
   buildBuildOnlyScript,
@@ -107,7 +108,7 @@ import { normalizeTags } from "../common/tags";
 import { appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
-import type { CreateAppInput } from "./dto";
+import type { CreateAppInput, SetSourceInput, SetBuildInput } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 // stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
@@ -128,8 +129,10 @@ export const AppViewSchema = z.object({
   image: z.string().nullable(),
   gitUrl: z.string().nullable(),
   gitBranch: z.string().nullable(),
+  gitSourceId: z.string().nullable(), // linked GitHub App installation (private-repo token minting), if any
   buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
   buildCommand: z.string().nullable(),
+  dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   healthCmd: z.string().nullable(),
@@ -2047,6 +2050,118 @@ export class ApplicationsService {
     });
   }
 
+  /**
+   * Edit WHERE the app's code/image comes from, after create (day-2). The source TYPE is fixed:
+   * a GIT app edits repo URL / branch / GitHub-App link; an IMAGE app edits its image ref; a COMPOSE
+   * app uses setComposeFile instead. Applies on the NEXT deploy (no auto-deploy).
+   *
+   * SECURITY: a stored git credential is scoped to one host. Changing the repo URL to a different host —
+   * or switching an https (token) repo to ssh — must never carry that credential to the new host, or an
+   * attacker-controlled URL would exfiltrate it via the clone's GIT_ASKPASS / x-access-token injection.
+   * So a host change clears the HTTPS token and unlinks any GitHub App; switching to ssh clears the token
+   * and mints a fresh deploy key; and a GitHub App (github.com-only) can never pair with a non-github host.
+   * Returns the credential side effects as `warnings` so the UI can tell the operator what was reset.
+   */
+  async setSource(userId: string, id: string, input: SetSourceInput): Promise<{ warnings: string[] }> {
+    const app = await this.requireWrite(userId, id);
+    if (app.isPreview) throw new BadRequestException("a preview app's source is controlled by its parent");
+    if (app.source === "COMPOSE") throw new BadRequestException("edit a compose app's source with the compose-file endpoint");
+    const warnings: string[] = [];
+    const data: Prisma.ApplicationUncheckedUpdateInput = {};
+
+    if (app.source === "IMAGE") {
+      if (input.gitUrl !== undefined || input.gitBranch !== undefined || input.gitSourceId !== undefined) {
+        throw new BadRequestException("this app deploys a prebuilt image — only `image` can be changed (the source type is fixed at create)");
+      }
+      if (input.image === undefined) throw new BadRequestException("provide an image reference");
+      data.image = input.image;
+    } else {
+      // GIT
+      if (input.image !== undefined) throw new BadRequestException("this app builds from Git — `image` does not apply (the source type is fixed at create)");
+
+      const nextUrl = input.gitUrl !== undefined ? input.gitUrl : app.gitUrl ?? "";
+      const prevHost = gitUrlHost(app.gitUrl ?? "");
+      const nextHost = gitUrlHost(nextUrl);
+      if (input.gitUrl !== undefined && !nextHost) throw new BadRequestException("could not parse the git URL host");
+      const hostChanged = input.gitUrl !== undefined && nextHost !== prevHost;
+      const wasSsh = isSshGitUrl(app.gitUrl ?? "");
+      const nowSsh = isSshGitUrl(nextUrl);
+
+      // Resolve the GitHub-App link requested in THIS call (team-scoped), so the host guard sees final state.
+      let nextSourceId: string | null | undefined;
+      if (input.gitSourceId !== undefined) {
+        if (input.gitSourceId === null) nextSourceId = null;
+        else {
+          const gs = await this.prisma.gitSource.findUnique({ where: { id: input.gitSourceId } });
+          if (!gs || gs.teamId !== app.teamId) throw new BadRequestException("git source not found in this team");
+          nextSourceId = input.gitSourceId;
+        }
+      }
+
+      if (input.gitUrl !== undefined) data.gitUrl = input.gitUrl;
+      if (input.gitBranch !== undefined) data.gitBranch = input.gitBranch;
+      if (nextSourceId !== undefined) data.gitSourceId = nextSourceId;
+
+      // A host change (or https->ssh) must drop the old host's credentials.
+      if (hostChanged || (nowSsh && !wasSsh)) {
+        if (app.gitTokenEnc) { data.gitTokenEnc = null; warnings.push("git_token_cleared"); }
+        // Unlink the GitHub App unless the caller is re-linking it in this same call.
+        if (app.gitSourceId && nextSourceId === undefined) { data.gitSourceId = null; nextSourceId = null; warnings.push("git_source_unlinked"); }
+      }
+      const effectiveSourceId = nextSourceId !== undefined ? nextSourceId : app.gitSourceId;
+
+      if (nowSsh) {
+        // ssh authenticates with a deploy key, never a token or GitHub App.
+        if (effectiveSourceId) throw new BadRequestException("unlink the GitHub App before switching to an ssh repository (ssh clones with a deploy key, not an app token)");
+        if (app.gitTokenEnc && data.gitTokenEnc === undefined) { data.gitTokenEnc = null; warnings.push("git_token_cleared"); }
+        if (!wasSsh || hostChanged || !app.gitSshKeyEnc) {
+          const key = generateEd25519DeployKey();
+          data.gitSshKeyEnc = this.crypto.encrypt(key.privateKeyOpenSsh);
+          data.gitSshPublicKey = key.publicKey;
+          warnings.push("ssh_key_generated"); // add this public key to the repo before deploying
+        }
+      } else if (wasSsh && !nowSsh) {
+        // https now — a stored deploy key is dead weight; drop it so the UI shows no stale key.
+        data.gitSshKeyEnc = null;
+        data.gitSshPublicKey = null;
+      }
+
+      // A GitHub App installation token only authenticates github.com — it must never be injected into
+      // a clone of any other host.
+      if (effectiveSourceId && !nowSsh && nextHost && nextHost !== "github.com") {
+        throw new BadRequestException("the linked GitHub App only authenticates github.com repositories — unlink it or point the repo at github.com");
+      }
+    }
+
+    await this.ensureNoActiveDeploy(id);
+    await this.prisma.application.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "app.source.update", target: id, meta: { warnings } });
+    return { warnings };
+  }
+
+  /**
+   * Edit HOW a Git app is built, after create (day-2): the build type and the one set of fields that
+   * applies to it. Replace semantics — the fields that don't apply to the chosen type are cleared, so a
+   * stale dockerfilePath/buildCommand can't leak into a Nixpacks build. GIT apps only (IMAGE deploys a
+   * prebuilt image; COMPOSE builds from its compose file). Applies on the next deploy.
+   */
+  async setBuild(userId: string, id: string, input: SetBuildInput): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.isPreview) throw new BadRequestException("a preview app's build is controlled by its parent");
+    if (app.source !== "GIT") throw new BadRequestException("build settings apply only to Git apps");
+    await this.ensureNoActiveDeploy(id);
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        buildType: input.buildType,
+        dockerfilePath: input.buildType === "DOCKERFILE" ? input.dockerfilePath ?? null : null,
+        buildCommand: input.buildType === "STATIC" ? input.buildCommand ?? null : null,
+        outputDir: input.buildType === "STATIC" ? input.outputDir ?? null : null,
+      },
+    });
+    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType } });
+  }
+
   /** Config mounts (serviceName/target/mode + current content) of a COMPOSE app, for the editor UI.
    *  Content holds `${KEY}` placeholders at rest (resolved only at deploy) but can also hold literal
    *  text a user typed, so the route is gated `read:secrets`. Empty when the app declares none. */
@@ -2999,8 +3114,10 @@ export class ApplicationsService {
       image: app.image,
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
+      gitSourceId: app.gitSourceId,
       buildType: app.buildType,
       buildCommand: app.buildCommand,
+      dockerfilePath: app.dockerfilePath,
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       hasConfigMounts: this.appConfigMounts(app).length > 0,
