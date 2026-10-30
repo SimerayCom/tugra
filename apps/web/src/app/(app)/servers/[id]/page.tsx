@@ -653,10 +653,12 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
   const qc = useQueryClient();
   const [enabled, setEnabled] = useState(false);
   const [interval, setIntervalH] = useState("24");
+  const [cron, setCron] = useState("");
   const [volumes, setVolumes] = useState(false);
   useEffect(() => {
     setEnabled(server.cleanupEnabled);
     setIntervalH(String(server.cleanupIntervalHours ?? 24));
+    setCron(server.cleanupCron ?? "");
     setVolumes(server.cleanupVolumes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
@@ -664,7 +666,8 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["server", id] });
   const clean = useMutation({ mutationFn: () => api.cleanupServer(id), onSuccess: invalidate });
   const save = useMutation({
-    mutationFn: () => api.setCleanupConfig(id, { enabled, intervalHours: Number(interval) || 24, volumes }),
+    // A cron expression (when given) overrides the plain interval server-side; blank clears it.
+    mutationFn: () => api.setCleanupConfig(id, { enabled, intervalHours: Number(interval) || 24, cron: cron.trim() || null, volumes }),
     onSuccess: invalidate,
   });
 
@@ -685,9 +688,13 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           {t("servers.cleanupSchedule")}
         </label>
-        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+        <label style={{ fontSize: 12, color: cron.trim() ? "var(--c-tx4, var(--c-tx3))" : "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6, opacity: cron.trim() ? 0.5 : 1 }}>
           {t("servers.cleanupEvery")}
-          <input style={cleanupField} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} />
+          <input style={cleanupField} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} disabled={!!cron.trim()} />
+        </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+          {t("servers.cleanupCron")}
+          <input style={{ ...cleanupField, width: 130 }} placeholder="0 3 * * *" value={cron} onChange={(e) => setCron(e.target.value)} aria-label={t("servers.cleanupCron")} />
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
           <input type="checkbox" checked={volumes} onChange={(e) => setVolumes(e.target.checked)} />
@@ -695,6 +702,8 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
         </label>
         <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       </div>
+      {cron.trim() && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("servers.cleanupCronHint")}</p>}
+      {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{(save.error as Error).message}</div>}
     </Card>
   );
 }

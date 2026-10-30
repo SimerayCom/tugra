@@ -6189,6 +6189,7 @@ export interface operations {
                         uptimeSeconds: number | null;
                         cleanupEnabled: boolean;
                         cleanupIntervalHours: number | null;
+                        cleanupCron: string | null;
                         cleanupVolumes: boolean;
                         /** Format: date-time */
                         lastCleanupAt: string | null;
@@ -6358,6 +6359,7 @@ export interface operations {
                         uptimeSeconds: number | null;
                         cleanupEnabled: boolean;
                         cleanupIntervalHours: number | null;
+                        cleanupCron: string | null;
                         cleanupVolumes: boolean;
                         /** Format: date-time */
                         lastCleanupAt: string | null;
@@ -21068,6 +21070,7 @@ export interface operations {
                 "application/json": {
                     enabled: boolean;
                     intervalHours?: number;
+                    cron?: string | null;
                     volumes?: boolean;
                 };
             };
@@ -21236,6 +21239,7 @@ export interface operations {
                 "application/json": {
                     enabled: boolean;
                     intervalHours?: number;
+                    cron?: string | null;
                     volumes?: boolean;
                     serverIds: string[];
                 };

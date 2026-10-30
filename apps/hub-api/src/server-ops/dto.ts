@@ -1,8 +1,13 @@
 import { z } from "zod";
 
+// 5-field cron (minute hour day-of-month month day-of-week) — same shape the scheduled-tasks DTO accepts.
+const cleanupCron = z.string().regex(/^\s*(\S+\s+){4}\S+\s*$/, "must be a 5-field cron expression");
+
 export const CleanupConfigSchema = z.object({
   enabled: z.boolean(),
   intervalHours: z.number().int().min(1).max(24 * 30).optional(),
+  // When set, the cron expression drives the schedule and overrides intervalHours; null clears it.
+  cron: cleanupCron.nullable().optional(),
   volumes: z.boolean().optional(),
 });
 export type CleanupConfigInput = z.infer<typeof CleanupConfigSchema>;

@@ -2988,6 +2988,10 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "cleanupCron": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "cleanupVolumes": {
                         "type": "boolean"
                       },
@@ -3066,6 +3070,7 @@
                       "uptimeSeconds",
                       "cleanupEnabled",
                       "cleanupIntervalHours",
+                      "cleanupCron",
                       "cleanupVolumes",
                       "lastCleanupAt",
                       "lastSeenAt",
@@ -3350,6 +3355,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "cleanupCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "cleanupVolumes": {
                       "type": "boolean"
                     },
@@ -3428,6 +3437,7 @@
                     "uptimeSeconds",
                     "cleanupEnabled",
                     "cleanupIntervalHours",
+                    "cleanupCron",
                     "cleanupVolumes",
                     "lastCleanupAt",
                     "lastSeenAt",
@@ -28561,6 +28571,11 @@
                     "minimum": 1,
                     "maximum": 720
                   },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
+                  },
                   "volumes": {
                     "type": "boolean"
                   }
@@ -28877,6 +28892,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 720
+                  },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
                   },
                   "volumes": {
                     "type": "boolean"

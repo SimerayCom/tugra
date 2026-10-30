@@ -78,6 +78,7 @@ export const ServerViewSchema = z.object({
   uptimeSeconds: z.number().nullable(), // derived from bootTime
   cleanupEnabled: z.boolean(),
   cleanupIntervalHours: z.number().nullable(),
+  cleanupCron: z.string().nullable(),
   cleanupVolumes: z.boolean(),
   lastCleanupAt: z.date().nullable(),
   lastSeenAt: z.date().nullable(),
@@ -646,6 +647,7 @@ export class ServersService {
       bootTime?: Date | null;
       cleanupEnabled?: boolean;
       cleanupIntervalHours?: number | null;
+      cleanupCron?: string | null;
       cleanupVolumes?: boolean;
       lastCleanupAt?: Date | null;
       lastSeenAt: Date | null;
@@ -689,6 +691,7 @@ export class ServersService {
         : null,
       cleanupEnabled: s.cleanupEnabled ?? false,
       cleanupIntervalHours: s.cleanupIntervalHours ?? null,
+      cleanupCron: s.cleanupCron ?? null,
       cleanupVolumes: s.cleanupVolumes ?? false,
       lastCleanupAt: s.lastCleanupAt ?? null,
       lastSeenAt: s.lastSeenAt,
