@@ -84,6 +84,42 @@ describe("SSH deploy-key git clone", () => {
   });
 });
 
+describe("monorepo base directory (build context/root = bd/baseDirectory)", () => {
+  const BD = "/etc/tugra/builds/abc";
+  const gitBase: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/acme/app.git", gitBranch: "main" };
+
+  it("null baseDirectory is byte-identical to today (no guard, context = bd) for every build type", () => {
+    const df = buildRunScript({ ...gitBase, buildType: "DOCKERFILE" }, "t", true);
+    expect(df).not.toContain("TUGRA_BASE"); // no containment guard when there is no base
+    expect(df).toContain(`-f '${BD}/Dockerfile' ${BD}`);
+    expect(buildRunScript({ ...gitBase, buildType: "STATIC" }, "t", true)).toContain(`-f ${BD}/Dockerfile.tugra ${BD}`);
+    expect(buildRunScript({ ...gitBase, buildType: "RAILPACK" }, "t", true)).toContain(`railpack build ${BD} --name`);
+    expect(buildRunScript({ ...gitBase, buildType: "HEROKU" }, "t", true)).toContain(`--path ${BD} --builder`);
+    expect(buildRunScript({ ...gitBase, buildType: "NIXPACKS" }, "t", true)).toMatch(/^nixpacks build .* \/etc\/tugra\/builds\/abc$/m); // root = bd (not the .plan.json path)
+  });
+
+  it("a base directory moves the build context/root and adds a symlink-containment guard", () => {
+    const s = buildRunScript({ ...gitBase, buildType: "DOCKERFILE", baseDirectory: "apps/api" }, "t", true);
+    // guard: resolve + stay inside the clone
+    expect(s).toContain(`TUGRA_BASE=$(cd '${BD}/apps/api' 2>/dev/null && pwd -P)`);
+    expect(s).toContain(`case "$TUGRA_BASE/" in "$TUGRA_BD"/*) ;;`);
+    // build context + Dockerfile both under the subdirectory
+    expect(s).toContain(`-f '${BD}/apps/api/Dockerfile' ${BD}/apps/api`);
+    // clone + commit markers stay on the repo root
+    expect(s).toContain(`git clone --depth 1 --branch 'main' -- 'https://github.com/acme/app.git' ${BD}`);
+    expect(s).toContain(`git -C ${BD} rev-parse HEAD`);
+  });
+
+  it("base directory applies to STATIC / RAILPACK / HEROKU / NIXPACKS roots", () => {
+    expect(buildRunScript({ ...gitBase, buildType: "STATIC", baseDirectory: "web" }, "t", true)).toContain(`-f ${BD}/web/Dockerfile.tugra ${BD}/web`);
+    expect(buildRunScript({ ...gitBase, buildType: "RAILPACK", baseDirectory: "svc/api" }, "t", true)).toContain(`railpack build ${BD}/svc/api --name`);
+    expect(buildRunScript({ ...gitBase, buildType: "HEROKU", baseDirectory: "svc/api" }, "t", true)).toContain(`--path ${BD}/svc/api --builder`);
+    const nx = buildRunScript({ ...gitBase, buildType: "NIXPACKS", baseDirectory: "apps/api" }, "t", true);
+    expect(nx).toMatch(/^nixpacks build .* \/etc\/tugra\/builds\/abc\/apps\/api$/m); // root moved to the subdir
+    expect(nx).toContain(`${BD}.plan.json`); // the plan file stays OUTSIDE bd, unchanged
+  });
+});
+
 describe("custom uploaded cert (certType custom + certPem/certKey)", () => {
   const cert: AppSpec = {
     ...base,

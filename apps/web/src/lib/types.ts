@@ -1038,6 +1038,7 @@ export interface Application {
   buildType: BuildType;
   buildCommand: string | null;
   dockerfilePath: string | null;
+  baseDirectory: string | null;
   outputDir: string | null;
   composeFile: string | null;
   healthCmd: string | null;

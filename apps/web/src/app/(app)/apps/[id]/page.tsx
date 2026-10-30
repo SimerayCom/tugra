@@ -388,7 +388,7 @@ export default function AppDetailPage() {
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
     source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} image={appData.image} />,
-    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} buildCommand={appData.buildCommand} outputDir={appData.outputDir} />,
+    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} />,
     buildConfig: () => (
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
     ),
@@ -1207,18 +1207,29 @@ const BUILD_TYPE_LABEL: Record<BuildType, string> = {
 
 // Edit HOW a Git app is built, after create: the build pack and the fields that apply to it. Changing the
 // pack clears the other packs' fields server-side. Applies on the next deploy.
-function BuildSettingsCard({ id, buildType, dockerfilePath, buildCommand, outputDir }: { id: string; buildType: BuildType; dockerfilePath: string | null; buildCommand: string | null; outputDir: string | null }) {
+// Monorepo base directory: trim, strip a leading "./" or "/" and a trailing "/", and map "", "." and "/"
+// to null (repo root). The server stays strict; this just lets a user type a Coolify-style "/apps/api".
+function normalizeBaseDir(s: string): string | null {
+  let v = s.trim().replace(/^\.?\/+/, "").replace(/\/+$/, "");
+  if (v === "" || v === ".") v = "";
+  return v || null;
+}
+
+function BuildSettingsCard({ id, buildType, dockerfilePath, baseDirectory, buildCommand, outputDir }: { id: string; buildType: BuildType; dockerfilePath: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const [type, setType] = useState<BuildType>(buildType);
   const [dockerfile, setDockerfile] = useState(dockerfilePath ?? "");
+  const [base, setBase] = useState(baseDirectory ?? "");
   const [cmd, setCmd] = useState(buildCommand ?? "");
   const [out, setOut] = useState(outputDir ?? "");
   const save = useMutation({
     mutationFn: () =>
       api.setAppBuild(id, {
         buildType: type,
+        // Always sent (replace semantics): a monorepo base applies to every build type.
+        baseDirectory: normalizeBaseDir(base),
         ...(type === "DOCKERFILE" ? { dockerfilePath: dockerfile.trim() || null } : {}),
         ...(type === "STATIC" ? { buildCommand: cmd.trim() || null, outputDir: out.trim() || null } : {}),
       }),
@@ -1237,6 +1248,8 @@ function BuildSettingsCard({ id, buildType, dockerfilePath, buildCommand, output
             <option key={v} value={v}>{t(`apps.${BUILD_TYPE_LABEL[v]}`)}</option>
           ))}
         </select>
+        {/* Monorepo base directory — applies to every build type, so it sits before the type-specific inputs. */}
+        <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.buildBaseDirectory")} value={base} onChange={(e) => setBase(e.target.value)} aria-label={t("apps.buildBaseDirectory")} />
         {type === "DOCKERFILE" && (
           <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.buildDockerfilePath")} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} aria-label={t("apps.buildDockerfilePath")} />
         )}

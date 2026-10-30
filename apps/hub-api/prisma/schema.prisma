@@ -855,6 +855,7 @@ model Application {
   gitBranch      String?      @default("main")
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
+  baseDirectory  String? // monorepo: repo-relative subdirectory used as the build context/root (GIT apps)
   buildCommand   String?
   outputDir      String?
   composeFile    String?

@@ -7327,6 +7327,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "baseDirectory": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "outputDir": {
                         "type": "string",
                         "nullable": true
@@ -7830,6 +7834,7 @@
                       "buildType",
                       "buildCommand",
                       "dockerfilePath",
+                      "baseDirectory",
                       "outputDir",
                       "composeFile",
                       "healthCmd",
@@ -8027,6 +8032,12 @@
                     "minLength": 1,
                     "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$"
                   },
+                  "baseDirectory": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+                  },
                   "buildCommand": {
                     "type": "string",
                     "minLength": 1
@@ -8149,6 +8160,10 @@
                       "nullable": true
                     },
                     "dockerfilePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "baseDirectory": {
                       "type": "string",
                       "nullable": true
                     },
@@ -8655,6 +8670,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "baseDirectory",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -9056,6 +9072,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "baseDirectory": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -9559,6 +9579,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "baseDirectory",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -9964,6 +9985,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "baseDirectory": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -10467,6 +10492,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "baseDirectory",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -13199,6 +13225,13 @@
                     "nullable": true
                   },
                   "outputDir": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+                    "nullable": true
+                  },
+                  "baseDirectory": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 512,
@@ -16004,6 +16037,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "baseDirectory": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "outputDir": {
                           "type": "string",
                           "nullable": true
@@ -16507,6 +16544,7 @@
                         "buildType",
                         "buildCommand",
                         "dockerfilePath",
+                        "baseDirectory",
                         "outputDir",
                         "composeFile",
                         "healthCmd",
@@ -16768,6 +16806,10 @@
                       "nullable": true
                     },
                     "dockerfilePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "baseDirectory": {
                       "type": "string",
                       "nullable": true
                     },
@@ -17274,6 +17316,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "baseDirectory",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -17605,6 +17648,10 @@
                         "nullable": true
                       },
                       "dockerfilePath": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "baseDirectory": {
                         "type": "string",
                         "nullable": true
                       },
@@ -18111,6 +18158,7 @@
                       "buildType",
                       "buildCommand",
                       "dockerfilePath",
+                      "baseDirectory",
                       "outputDir",
                       "composeFile",
                       "healthCmd",
@@ -18512,6 +18560,10 @@
                       "nullable": true
                     },
                     "dockerfilePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "baseDirectory": {
                       "type": "string",
                       "nullable": true
                     },
@@ -19018,6 +19070,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "baseDirectory",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -20447,6 +20500,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "baseDirectory": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -20950,6 +21007,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "baseDirectory",
                     "outputDir",
                     "composeFile",
                     "healthCmd",

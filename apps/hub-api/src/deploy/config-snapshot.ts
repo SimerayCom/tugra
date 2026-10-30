@@ -14,6 +14,7 @@ export interface ConfigSnapshot {
   gitBranch?: string | null;
   buildType?: string;
   dockerfilePath?: string | null;
+  baseDirectory?: string | null;
   buildCommand?: string | null;
   outputDir?: string | null;
   composeFile?: string | null;
@@ -54,6 +55,7 @@ const SCALAR_FIELDS = [
   "gitBranch",
   "buildType",
   "dockerfilePath",
+  "baseDirectory",
   "buildCommand",
   "outputDir",
   "composeFile",
@@ -84,6 +86,7 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     gitBranch: spec.gitBranch ?? null,
     buildType: spec.buildType,
     dockerfilePath: spec.dockerfilePath ?? null,
+    baseDirectory: spec.baseDirectory ?? null,
     buildCommand: spec.buildCommand ?? null,
     outputDir: spec.outputDir ?? null,
     composeFile: spec.composeFile ?? null,

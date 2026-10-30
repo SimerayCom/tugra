@@ -8919,6 +8919,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -9116,6 +9117,7 @@ export interface operations {
                     /** @enum {string} */
                     buildType?: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                     dockerfilePath?: string;
+                    baseDirectory?: string;
                     buildCommand?: string;
                     outputDir?: string;
                     composeFile?: string;
@@ -9153,6 +9155,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -9500,6 +9503,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -9802,6 +9806,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -11911,6 +11916,7 @@ export interface operations {
                     dockerfilePath?: string | null;
                     buildCommand?: string | null;
                     outputDir?: string | null;
+                    baseDirectory?: string | null;
                 };
             };
         };
@@ -13802,6 +13808,7 @@ export interface operations {
                             buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                             buildCommand: string | null;
                             dockerfilePath: string | null;
+                            baseDirectory: string | null;
                             outputDir: string | null;
                             composeFile: string | null;
                             healthCmd: string | null;
@@ -14033,6 +14040,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -14333,6 +14341,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -14689,6 +14698,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -15716,6 +15726,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;

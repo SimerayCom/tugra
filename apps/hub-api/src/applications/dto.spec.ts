@@ -33,6 +33,24 @@ describe("SetSourceSchema — edit source after create", () => {
   });
 });
 
+describe("BASE_DIR / baseDirectory — monorepo build root", () => {
+  it("accepts clean relative subdirectories", () => {
+    for (const ok of ["apps/api", "packages/web-app", "a", "a.b/c-d"]) {
+      expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", baseDirectory: ok }).success).toBe(true);
+    }
+  });
+  it("rejects absolute, traversal and non-canonical forms", () => {
+    for (const bad of ["/abs", "../x", "a/../b", ".", "./a", "a/", "a//b", "x/.git", "a b", "a;b", "$(x)", "a".repeat(513)]) {
+      expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", baseDirectory: bad }).success).toBe(false);
+    }
+  });
+  it("is valid for every build type and clearable with null", () => {
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerfilePath: "Dockerfile", baseDirectory: "apps/api" }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist", baseDirectory: "web" }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "HEROKU", baseDirectory: null }).success).toBe(true);
+  });
+});
+
 describe("SetBuildSchema — edit build pack after create", () => {
   it("gates each build type's fields", () => {
     expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS" }).success).toBe(true);

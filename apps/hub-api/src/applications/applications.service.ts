@@ -133,6 +133,7 @@ export const AppViewSchema = z.object({
   buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
   buildCommand: z.string().nullable(),
   dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
+  baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   healthCmd: z.string().nullable(),
@@ -513,6 +514,7 @@ export class ApplicationsService {
         gitSourceId: dto.gitSourceId ?? null,
         buildType: dto.buildType ?? "NIXPACKS",
         dockerfilePath: dto.dockerfilePath ?? null,
+        baseDirectory: source === "GIT" ? dto.baseDirectory ?? null : null, // monorepo root; GIT-only
         buildCommand: dto.buildCommand ?? null,
         outputDir: dto.outputDir ?? null,
         composeFile: dto.composeFile ?? null,
@@ -621,6 +623,7 @@ export class ApplicationsService {
           gitSourceId: src.gitSourceId,
           buildType: src.buildType,
           dockerfilePath: src.dockerfilePath,
+          baseDirectory: src.baseDirectory,
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
           composeFile: src.composeFile,
@@ -964,6 +967,7 @@ export class ApplicationsService {
           gitBranch: headRef,
           buildType: parent.buildType,
           dockerfilePath: parent.dockerfilePath,
+          baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
           buildCommand: parent.buildCommand,
           outputDir: parent.outputDir,
           composeFile: parent.composeFile,
@@ -2140,10 +2144,11 @@ export class ApplicationsService {
   }
 
   /**
-   * Edit HOW a Git app is built, after create (day-2): the build type and the one set of fields that
-   * applies to it. Replace semantics — the fields that don't apply to the chosen type are cleared, so a
-   * stale dockerfilePath/buildCommand can't leak into a Nixpacks build. GIT apps only (IMAGE deploys a
-   * prebuilt image; COMPOSE builds from its compose file). Applies on the next deploy.
+   * Edit HOW a Git app is built, after create (day-2): the build type, the one set of fields that applies
+   * to it, and the monorepo base directory. Replace semantics — the fields that don't apply to the chosen
+   * type are cleared (so a stale dockerfilePath/buildCommand can't leak into a Nixpacks build) and an
+   * omitted baseDirectory clears it (back to the repo root). GIT apps only (IMAGE deploys a prebuilt image;
+   * COMPOSE builds from its compose file). Applies on the next deploy.
    */
   async setBuild(userId: string, id: string, input: SetBuildInput): Promise<void> {
     const app = await this.requireWrite(userId, id);
@@ -2157,9 +2162,11 @@ export class ApplicationsService {
         dockerfilePath: input.buildType === "DOCKERFILE" ? input.dockerfilePath ?? null : null,
         buildCommand: input.buildType === "STATIC" ? input.buildCommand ?? null : null,
         outputDir: input.buildType === "STATIC" ? input.outputDir ?? null : null,
+        // The monorepo base directory applies to every build type, so it sits outside the per-type ternaries.
+        baseDirectory: input.baseDirectory ?? null,
       },
     });
-    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType } });
+    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null } });
   }
 
   /** Config mounts (serviceName/target/mode + current content) of a COMPOSE app, for the editor UI.
@@ -2909,6 +2916,7 @@ export class ApplicationsService {
       gitBranch: app.gitBranch,
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
+      baseDirectory: app.baseDirectory,
       buildCommand: app.buildCommand,
       outputDir: app.outputDir,
       composeFile: app.composeFile,
@@ -3118,6 +3126,7 @@ export class ApplicationsService {
       buildType: app.buildType,
       buildCommand: app.buildCommand,
       dockerfilePath: app.dockerfilePath,
+      baseDirectory: app.baseDirectory,
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       hasConfigMounts: this.appConfigMounts(app).length > 0,
