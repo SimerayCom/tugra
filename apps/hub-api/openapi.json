@@ -7343,6 +7343,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "composePath": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "healthCmd": {
                         "type": "string",
                         "nullable": true
@@ -7847,6 +7851,7 @@
                       "baseDirectory",
                       "outputDir",
                       "composeFile",
+                      "composePath",
                       "healthCmd",
                       "healthCheckType",
                       "healthCheckPath",
@@ -8061,6 +8066,12 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "composePath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+                  },
                   "env": {
                     "type": "object",
                     "additionalProperties": {
@@ -8183,6 +8194,10 @@
                       "nullable": true
                     },
                     "composeFile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -8690,6 +8705,7 @@
                     "baseDirectory",
                     "outputDir",
                     "composeFile",
+                    "composePath",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -9102,6 +9118,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "healthCmd": {
                       "type": "string",
                       "nullable": true
@@ -9606,6 +9626,7 @@
                     "baseDirectory",
                     "outputDir",
                     "composeFile",
+                    "composePath",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -10022,6 +10043,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "healthCmd": {
                       "type": "string",
                       "nullable": true
@@ -10526,6 +10551,7 @@
                     "baseDirectory",
                     "outputDir",
                     "composeFile",
+                    "composePath",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -16485,6 +16511,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "composePath": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "healthCmd": {
                           "type": "string",
                           "nullable": true
@@ -16989,6 +17019,7 @@
                         "baseDirectory",
                         "outputDir",
                         "composeFile",
+                        "composePath",
                         "healthCmd",
                         "healthCheckType",
                         "healthCheckPath",
@@ -17261,6 +17292,10 @@
                       "nullable": true
                     },
                     "composeFile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -17768,6 +17803,7 @@
                     "baseDirectory",
                     "outputDir",
                     "composeFile",
+                    "composePath",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -18110,6 +18146,10 @@
                         "nullable": true
                       },
                       "composeFile": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "composePath": {
                         "type": "string",
                         "nullable": true
                       },
@@ -18617,6 +18657,7 @@
                       "baseDirectory",
                       "outputDir",
                       "composeFile",
+                      "composePath",
                       "healthCmd",
                       "healthCheckType",
                       "healthCheckPath",
@@ -19029,6 +19070,10 @@
                       "nullable": true
                     },
                     "composeFile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -19536,6 +19581,7 @@
                     "baseDirectory",
                     "outputDir",
                     "composeFile",
+                    "composePath",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",
@@ -20976,6 +21022,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "healthCmd": {
                       "type": "string",
                       "nullable": true
@@ -21480,6 +21530,7 @@
                     "baseDirectory",
                     "outputDir",
                     "composeFile",
+                    "composePath",
                     "healthCmd",
                     "healthCheckType",
                     "healthCheckPath",

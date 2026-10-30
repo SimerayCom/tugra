@@ -27,6 +27,10 @@ export const SAFE_CAPS = new Set([
 // (borrow another container's mounts/network), secrets/configs (file: binds a host file — see below),
 // uts (`uts: host` shares the host UTS namespace).
 const FORBIDDEN_SERVICE_KEYS = ["build", "extends", "volumes_from", "external_links", "secrets", "configs"];
+// COMPOSE-from-git only: `build` IS legitimate (the stack builds its own checked-out source), so it is
+// lifted out of the forbidden set and validated by checkBuild instead. The rest stay forbidden — and a
+// rendered config never carries `extends` (compose inlines it) anyway.
+const FORBIDDEN_SERVICE_KEYS_GIT = FORBIDDEN_SERVICE_KEYS.filter((k) => k !== "build");
 // Tugra's own containers are named `tugra-<infra>` (tugra-proxy/agent/patch/cfd) and `tugra_<id>`
 // (managed apps/DBs). A tenant compose that sets `container_name` to one of these could collide with — or
 // impersonate — a Tugra-managed container (e.g. DoS the one-shot `tugra-patch` host-patch helper, or get a
@@ -64,6 +68,18 @@ function toArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : v == null ? [] : [v];
 }
 
+/** True when `child` (an absolute path) resolves inside `root` (absolute). Canonicalizes both the way the
+ *  kernel does (collapse `//`, resolve `.`/`..`) before the prefix test, so neither trailing slashes nor a
+ *  `..` escape fools it. Non-absolute inputs (a named volume, a `${VAR}` that never rendered) are never
+ *  "under" a root → the caller rejects them. */
+export function isUnderRoot(child: string, root: string): boolean {
+  const norm = (s: string) => posix.normalize(s.trim().replace(/\/{2,}/g, "/")).replace(/\/+$/, "") || "/";
+  const c = norm(child);
+  const r = norm(root);
+  if (!posix.isAbsolute(c) || !posix.isAbsolute(r)) return false;
+  return c === r || c.startsWith(`${r}/`);
+}
+
 export function isSensitivePath(raw: string): boolean {
   const src = raw.trim();
   // An env-interpolated source (`${VAR}` / `$VAR`) could smuggle a sensitive path via envOverride at
@@ -86,7 +102,7 @@ export function isSensitivePath(raw: string): boolean {
   return SENSITIVE_PREFIXES.some((pre) => p === pre || p.startsWith(`${pre}/`));
 }
 
-function checkVolume(v: unknown): void {
+function checkVolume(v: unknown, gitCloneRoot: string | null): void {
   let source: unknown;
   if (typeof v === "string") {
     // Short syntax with NO colon is an ANONYMOUS volume (the string is the CONTAINER path, e.g.
@@ -103,10 +119,40 @@ function checkVolume(v: unknown): void {
   if (source === "/var/run/docker.sock" || source === "/run/docker.sock" || /(^|\/)docker\.sock$/.test(source)) {
     throw disallowed("docker socket bind");
   }
+  if (gitCloneRoot) {
+    // Rendered git-compose: a bind may only reach the stack's OWN checked-out files, i.e. a path inside the
+    // clone. A bare name (no leading `/` or `.`) is a docker-managed named volume → fine. Anything else — an
+    // absolute path outside the clone, or an unresolved relative/`${VAR}` source — is a host reach → reject.
+    if (!source.startsWith("/") && !source.startsWith(".")) return;
+    if (isUnderRoot(source, gitCloneRoot)) return;
+    throw disallowed(`bind of a path outside the build directory (${source})`);
+  }
   if (isSensitivePath(source)) throw disallowed(`bind of sensitive host path ${source}`);
 }
 
-function checkService(svc: Record<string, unknown>): void {
+/** COMPOSE-from-git only: validate a service `build:` (rendered config normalizes it to an object with an
+ *  absolute `context`). The context must stay inside the clone, and the build features that reach the host
+ *  or its credentials (build secrets, ssh-agent forwarding, extra named contexts, the host build network)
+ *  are refused — an untrusted stack builds only its own source, nothing more. */
+function checkBuild(build: unknown, gitCloneRoot: string): void {
+  if (build == null) return;
+  if (typeof build === "string") {
+    if (!isUnderRoot(build, gitCloneRoot)) throw disallowed(`build context outside the build directory (${build})`);
+    return;
+  }
+  if (typeof build !== "object" || Array.isArray(build)) throw disallowed("build (unexpected shape)");
+  const b = build as Record<string, unknown>;
+  const ctx = b.context;
+  if (typeof ctx === "string" && ctx !== "" && !isUnderRoot(ctx, gitCloneRoot)) {
+    throw disallowed(`build context outside the build directory (${ctx})`);
+  }
+  if (b.secrets != null) throw disallowed("build.secrets (host build-secret mount)");
+  if (b.ssh != null) throw disallowed("build.ssh (host ssh-agent forwarding)");
+  if (b.additional_contexts != null) throw disallowed("build.additional_contexts (host/arbitrary context)");
+  if (isDangerousNamespace(b.network)) throw disallowed("build.network host");
+}
+
+function checkService(svc: Record<string, unknown>, gitCloneRoot: string | null): void {
   if (isTrue(svc.privileged)) throw disallowed("privileged: true");
   if (typeof svc.container_name === "string" && RESERVED_CONTAINER_NAME.test(svc.container_name)) {
     throw disallowed(`container_name "${svc.container_name}" (the tugra-/tugra_ prefix is reserved for Tugra-managed containers)`);
@@ -124,9 +170,10 @@ function checkService(svc: Record<string, unknown>): void {
   // device_cgroup_rules rewrites the container's device-cgroup allowlist; with Docker's default
   // CAP_MKNOD a rule like "a *:* rwm" / "b 8:0 rwm" lets the container mknod + read the host's raw disk.
   if (toArray(svc.device_cgroup_rules).length > 0) throw disallowed("device_cgroup_rules (host device access)");
-  for (const key of FORBIDDEN_SERVICE_KEYS) {
+  for (const key of gitCloneRoot ? FORBIDDEN_SERVICE_KEYS_GIT : FORBIDDEN_SERVICE_KEYS) {
     if (svc[key] != null) throw disallowed(key);
   }
+  if (gitCloneRoot) checkBuild(svc.build, gitCloneRoot);
   for (const c of toArray(svc.cap_add)) {
     if (!SAFE_CAPS.has(String(c).toUpperCase().replace(/^CAP_/, ""))) {
       throw disallowed(`cap_add of a non-allowlisted capability ${String(c)}`);
@@ -139,11 +186,22 @@ function checkService(svc: Record<string, unknown>): void {
       throw disallowed("security_opt disabling confinement");
     }
   }
-  for (const v of toArray(svc.volumes)) checkVolume(v);
+  for (const v of toArray(svc.volumes)) checkVolume(v, gitCloneRoot);
 }
 
-/** Throw BadRequestException if a user-supplied compose override contains a host-escaping directive. */
-export function assertSafeCompose(compose: string): void {
+/** Options for assertSafeCompose. */
+export interface SafeComposeOpts {
+  /** COMPOSE-from-git: the absolute clone directory the rendered config was produced in. When set, the
+   *  input is treated as a rendered git stack — `build:` is allowed (its context must stay inside the clone)
+   *  and bind SOURCES are confined to the clone instead of the host sensitive-path rules; when unset (a
+   *  pasted/stored override) `build` is forbidden and binds are checked against the host rules. */
+  gitCloneRoot?: string | null;
+}
+
+/** Throw BadRequestException if a user-supplied compose (override, or a rendered git stack) contains a
+ *  host-escaping directive. */
+export function assertSafeCompose(compose: string, opts: SafeComposeOpts = {}): void {
+  const gitCloneRoot = opts.gitCloneRoot ?? null;
   let doc: unknown;
   try {
     // `merge: true` resolves YAML merge keys (`<<: *anchor`) the way docker-compose does, so a merged-in
@@ -159,7 +217,7 @@ export function assertSafeCompose(compose: string): void {
   const services = (doc as { services?: unknown }).services;
   if (services && typeof services === "object" && !Array.isArray(services)) {
     for (const svc of Object.values(services)) {
-      if (svc && typeof svc === "object" && !Array.isArray(svc)) checkService(svc as Record<string, unknown>);
+      if (svc && typeof svc === "object" && !Array.isArray(svc)) checkService(svc as Record<string, unknown>, gitCloneRoot);
     }
   }
   // Top-level secrets/configs with `file:` bind a host file into the container (compose-go implements
@@ -168,11 +226,16 @@ export function assertSafeCompose(compose: string): void {
   if (d.secrets != null) throw disallowed("top-level secrets (host file bind)");
   if (d.configs != null) throw disallowed("top-level configs (host file bind)");
   // A top-level named volume can bind a host path via driver_opts (type: none, o: bind, device: /etc).
+  // Git mode: the clone root itself lives under /etc/tugra, so the host sensitive-path rules can't apply —
+  // the device must simply resolve inside the clone (anything else is a host reach).
   const volumes = (doc as { volumes?: unknown }).volumes;
   if (volumes && typeof volumes === "object" && !Array.isArray(volumes)) {
     for (const vol of Object.values(volumes)) {
       const device = (vol as { driver_opts?: { device?: unknown } } | null)?.driver_opts?.device;
-      if (typeof device === "string" && isSensitivePath(device)) {
+      if (typeof device !== "string") continue;
+      if (gitCloneRoot) {
+        if (!isUnderRoot(device, gitCloneRoot)) throw disallowed(`bind of a path outside the build directory (${device})`);
+      } else if (isSensitivePath(device)) {
         throw disallowed(`bind of sensitive host path ${device}`);
       }
     }

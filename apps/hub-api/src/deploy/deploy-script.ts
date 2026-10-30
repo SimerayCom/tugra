@@ -123,6 +123,10 @@ export interface AppSpec {
   /** For a COMPOSE app: the service to attach the Traefik router to (magic domain).
    *  When set, buildComposeUpScript writes a label-only override joining it to the proxy. */
   composeWebService?: string | null;
+  /** For a COMPOSE-from-git app: the repo-relative path to the compose file inside the clone (e.g.
+   *  `docker-compose.yml`). When set (with gitUrl), the stack is cloned + rendered + run from the repo
+   *  rather than from a stored composeFile. Mutually exclusive with composeFile. */
+  composePath?: string | null;
   /** For a COMPOSE app: additional per-service domains — route a named compose service (on a given
    *  container port) to its own hostname. Each row becomes its own HTTPS Traefik router in the override. */
   serviceDomains?: { service: string; hostname: string; port: number }[] | null;
@@ -621,6 +625,59 @@ export function staticNginxConf(): string {
   ].join("\n");
 }
 
+/**
+ * Clone the app's git repo into `dir` and echo the deployed-commit markers (TUGRA_COMMIT /
+ * TUGRA_COMMIT_MSG_B64). Shared by the GIT build path (prepSteps) and the COMPOSE-from-git
+ * render/up scripts so both authenticate the clone identically (ssh deploy key / https token via
+ * GIT_ASKPASS / public) and record provenance. The caller supplies `set -e` and any surrounding prelude.
+ */
+export function gitCloneSteps(app: AppSpec, dir: string): string[] {
+  const branch = app.gitBranch || "main";
+  const url = app.gitUrl ?? "";
+  const ssh = isSshGitUrl(url);
+  const useSsh = !!app.gitSshKey && ssh;
+  const useToken = !!app.gitToken && /^https:\/\//i.test(url);
+  const steps = [`rm -rf ${dir} && mkdir -p ${dir}`];
+  if (useSsh) {
+    // Private SSH clone: the deploy key is written to a 0600 temp file (base64-piped, never in argv),
+    // and host keys are learned/pinned in a persistent known_hosts (accept-new TOFU).
+    steps.push(
+      ...secretsDirPrelude(),
+      `command -v ssh >/dev/null 2>&1 || { echo "TUGRA: this agent image has no ssh client — update the agent to clone over SSH"; exit 1; }`,
+      `printf %s ${shq(b64(app.gitSshKey!))} | base64 -d > "$sd/id"`,
+      'chmod 600 "$sd/id"',
+      `mkdir -p ${SSH_DIR}`,
+      `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${dir}`,
+    );
+  } else if (ssh) {
+    // An SSH repo URL but no deploy key configured — fail clearly instead of prompting / hanging.
+    steps.push(`echo "TUGRA: this is an SSH repo but no deploy key is set — generate one and add it to the repo"; exit 1`);
+  } else if (useToken) {
+    // Private clone: token via GIT_ASKPASS (never in argv / URL / .git/config).
+    steps.push(
+      ...secretsDirPrelude(),
+      `printf %s ${shq(b64(app.gitToken!))} | base64 -d > "$sd/token"`,
+      'chmod 600 "$sd/token"',
+      `printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`,
+      'chmod 700 "$sd/askpass"',
+      `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${dir}`,
+    );
+  } else {
+    steps.push(`git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${dir}`);
+  }
+  // Record the deployed commit right after the clone and BEFORE any build output — build/user output is
+  // noisy (could push a late marker past the agent's 64KB head-capped buffer) and could print a fake
+  // `TUGRA_COMMIT=` line (parseCommit takes the first anchored, hex-validated match, so earliest wins).
+  // All best-effort + set-e-safe via `|| true`; the subject is base64-transported (never raw on a marker).
+  steps.push(
+    `TUGRA_C=$(git -C ${dir} rev-parse HEAD 2>/dev/null || true)`,
+    `echo "TUGRA_COMMIT=$TUGRA_C"`,
+    `TUGRA_CM=$(git -C ${dir} log -1 --format=%s 2>/dev/null | head -c 300 | base64 | tr -d '\\n' || true)`,
+    `echo "TUGRA_COMMIT_MSG_B64=$TUGRA_CM"`,
+  );
+  return steps;
+}
+
 /** Build the prep steps (clone+build, or pull) that produce `tugra_<appId>:<version>`. */
 function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   const tag = runTag(app, version);
@@ -653,49 +710,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     // BASE_DIR (no leading `/`, no `..`, charset bars spaces/metachars), so it is safe unquoted — and when it
     // is null `base === bd`, keeping every build command byte-identical to the pre-monorepo output.
     const base = app.baseDirectory ? `${bd}/${app.baseDirectory}` : bd;
-    const branch = app.gitBranch || "main";
-    const url = app.gitUrl ?? "";
-    const ssh = isSshGitUrl(url);
-    const useSsh = !!app.gitSshKey && ssh;
-    const useToken = !!app.gitToken && /^https:\/\//i.test(url);
-    const steps = [`rm -rf ${bd} && mkdir -p ${bd}`];
-    if (useSsh) {
-      // Private SSH clone: the deploy key is written to a 0600 temp file (base64-piped, never in argv),
-      // and host keys are learned/pinned in a persistent known_hosts (accept-new TOFU).
-      steps.push(
-        ...secretsDirPrelude(),
-        `command -v ssh >/dev/null 2>&1 || { echo "TUGRA: this agent image has no ssh client — update the agent to clone over SSH"; exit 1; }`,
-        `printf %s ${shq(b64(app.gitSshKey!))} | base64 -d > "$sd/id"`,
-        'chmod 600 "$sd/id"',
-        `mkdir -p ${SSH_DIR}`,
-        `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${bd}`,
-      );
-    } else if (ssh) {
-      // An SSH repo URL but no deploy key configured — fail clearly instead of prompting / hanging.
-      steps.push(`echo "TUGRA: this is an SSH repo but no deploy key is set — generate one and add it to the repo"; exit 1`);
-    } else if (useToken) {
-      // Private clone: token via GIT_ASKPASS (never in argv / URL / .git/config).
-      steps.push(
-        ...secretsDirPrelude(),
-        `printf %s ${shq(b64(app.gitToken!))} | base64 -d > "$sd/token"`,
-        'chmod 600 "$sd/token"',
-        `printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`,
-        'chmod 700 "$sd/askpass"',
-        `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${bd}`,
-      );
-    } else {
-      steps.push(`git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${bd}`);
-    }
-    // Record the deployed commit right after the clone and BEFORE any build output — build/user output is
-    // noisy (could push a late marker past the agent's 64KB head-capped buffer) and could print a fake
-    // `TUGRA_COMMIT=` line (parseCommit takes the first anchored, hex-validated match, so earliest wins).
-    // All best-effort + set-e-safe via `|| true`; the subject is base64-transported (never raw on a marker).
-    steps.push(
-      `TUGRA_C=$(git -C ${bd} rev-parse HEAD 2>/dev/null || true)`,
-      `echo "TUGRA_COMMIT=$TUGRA_C"`,
-      `TUGRA_CM=$(git -C ${bd} log -1 --format=%s 2>/dev/null | head -c 300 | base64 | tr -d '\\n' || true)`,
-      `echo "TUGRA_COMMIT_MSG_B64=$TUGRA_CM"`,
-    );
+    const steps = gitCloneSteps(app, bd);
     if (app.baseDirectory) {
       // The clone is untrusted: a `baseDirectory` like `apps/api` could be a symlink to `/` or `/etc`, which
       // docker/nixpacks would then use as the build context and `COPY . .` would bake host files into the

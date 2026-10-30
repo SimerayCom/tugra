@@ -148,9 +148,11 @@ export class WebhooksService {
   ): Promise<WebhookResult> {
     const payload = this.parseBody(rawBody);
     const ref = parseRef(payload);
-    // Only deploy when the pushed branch matches the app's tracked branch.
-    // A ping event (no ref) or a push to another branch is acknowledged but ignored.
-    if (app.source === "GIT" && app.gitBranch) {
+    // Only deploy when the pushed branch matches the app's tracked branch. This applies to a GIT build AND
+    // a git-sourced compose (source=COMPOSE + gitUrl); a ping (no ref) or a push to another branch is
+    // acknowledged but ignored.
+    const gitSourced = app.source === "GIT" || (app.source === "COMPOSE" && !!app.gitUrl);
+    if (gitSourced && app.gitBranch) {
       if (!ref) return { deployed: false, reason: "no ref (ignored)" };
       if (!refMatchesBranch(ref, app.gitBranch)) {
         return { deployed: false, reason: "branch mismatch (ignored)" };

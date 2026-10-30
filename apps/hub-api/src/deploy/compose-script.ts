@@ -206,6 +206,31 @@ export function composeProject(app: { id: string }): string {
   return `tugra_${app.id}`;
 }
 
+// --- COMPOSE-from-git paths (shared with compose-git.ts) ---
+export const COMPOSE_GIT_DIR = "/etc/tugra/compose-git";
+/** Per-app working dir for a git-compose stack (holds `src/`, `.env`, `override.yml`). */
+export function composeGitDir(app: { id: string }): string {
+  return `${COMPOSE_GIT_DIR}/${app.id}`;
+}
+/** The clone root — the containment boundary for every build context and bind source. */
+export function composeGitCloneDir(app: { id: string }): string {
+  return `${composeGitDir(app)}/src`;
+}
+/** True for a COMPOSE app whose compose file lives in a git repo (vs a stored/pasted composeFile). */
+export function isGitCompose(app: AppSpec): boolean {
+  return !!app.composePath && !!app.gitUrl;
+}
+/** The compose file to pass to `-f` for any lifecycle op (logs/stop/start/restart/down): the clone path for a
+ *  git-compose app (persisted across deploys until a `down`), else the stored compose file. composePath is
+ *  REPO_PATH-validated at the DTO boundary (no spaces/metachars), so it is safe unquoted here as the rest. */
+export function composeOpFile(app: AppSpec): string {
+  return isGitCompose(app) ? `${composeGitCloneDir(app)}/${(app.composePath as string).replace(/^\/+/, "")}` : composeFilePath(app);
+}
+/** The per-app dir a `down` removes — the git-compose working dir, else the stored compose dir. */
+export function composeOpDir(app: AppSpec): string {
+  return isGitCompose(app) ? composeGitDir(app) : composeDir(app);
+}
+
 function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
@@ -282,15 +307,15 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
 }
 
 export function buildComposeStopScript(app: AppSpec): string {
-  return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} stop`;
+  return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} stop`;
 }
 
 export function buildComposeStartScript(app: AppSpec): string {
-  return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} start`;
+  return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} start`;
 }
 
 export function buildComposeRestartScript(app: AppSpec): string {
-  return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} restart`;
+  return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} restart`;
 }
 
 export interface ContainerInfo {
@@ -324,7 +349,7 @@ export function parseContainers(output: string): ContainerInfo[] {
 export function buildLogsScript(app: AppSpec, tail = 200): string {
   const n = Math.max(1, Math.min(2000, Math.floor(tail)));
   if (app.source === "COMPOSE") {
-    return `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} logs --no-color --tail ${n} 2>&1`;
+    return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} logs --no-color --tail ${n} 2>&1`;
   }
   return `docker logs --tail ${n} ${containerName(app)} 2>&1`;
 }
@@ -335,7 +360,7 @@ export function buildComposeDownScript(
 ): string {
   const vol = opts.volumes ? " -v" : "";
   return [
-    `docker compose -p ${composeProject(app)} -f ${composeFilePath(app)} down${vol} 2>/dev/null || true`,
-    `rm -rf ${composeDir(app)} 2>/dev/null || true`,
+    `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} down${vol} 2>/dev/null || true`,
+    `rm -rf ${composeOpDir(app)} 2>/dev/null || true`,
   ].join("\n");
 }

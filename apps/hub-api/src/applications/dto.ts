@@ -23,6 +23,9 @@ export const BASE_DIR = REPO_PATH.refine(
   (s) => s !== "." && !s.endsWith("/") && !s.split("/").some((seg) => seg === "" || seg === "." || seg.toLowerCase() === ".git"),
   "must be a clean relative subdirectory (no ./, trailing /, or .git)",
 );
+// COMPOSE-from-git: repo-relative path to the compose file in the clone (REPO_PATH charset — no leading /,
+// no `..`, no shell metacharacters) that must name a YAML file. Defaulted to docker-compose.yml server-side.
+export const COMPOSE_PATH = REPO_PATH.refine((s) => /\.ya?ml$/i.test(s), "compose path must end in .yml or .yaml");
 
 export const CreateAppSchema = z
   .object({
@@ -54,6 +57,9 @@ export const CreateAppSchema = z
     buildCommand: z.string().min(1).optional(),
     outputDir: z.string().min(1).optional(),
     composeFile: z.string().min(1).optional(),
+    // COMPOSE-from-git: with source=COMPOSE + gitUrl, the compose file lives in the repo at this path
+    // (default docker-compose.yml) instead of being pasted into composeFile. The two are exclusive.
+    composePath: COMPOSE_PATH.optional(),
     env: EnvRecordSchema.optional(),
     environmentId: z.string().min(1).optional(),
     deploy: z.boolean().optional(), // kick off a best-effort first deploy after create
@@ -67,16 +73,21 @@ export const CreateAppSchema = z
   .refine(
     (d) =>
       d.source === "COMPOSE"
-        ? !!d.composeFile
+        ? // COMPOSE is either pasted (composeFile) or from git (gitUrl) — exactly one, never both.
+          (!!d.composeFile || !!d.gitUrl) && !(d.composeFile && d.gitUrl)
         : d.source === "GIT"
           ? !!d.gitUrl
           : !!d.image,
     {
       message:
-        "image (IMAGE), gitUrl (GIT) or composeFile (COMPOSE) is required for the chosen source",
+        "image (IMAGE), gitUrl (GIT) or composeFile/gitUrl (COMPOSE) is required for the chosen source, and a COMPOSE app can't set both composeFile and gitUrl",
       path: ["source"],
     },
-  );
+  )
+  .refine((d) => !d.composePath || (d.source === "COMPOSE" && !!d.gitUrl), {
+    message: "composePath is only valid for a COMPOSE app sourced from git (gitUrl)",
+    path: ["composePath"],
+  });
 export type CreateAppInput = z.infer<typeof CreateAppSchema>;
 
 export const SetEnvSchema = z.object({

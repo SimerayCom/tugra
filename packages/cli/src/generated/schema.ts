@@ -9050,6 +9050,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -9250,6 +9251,7 @@ export interface operations {
                     buildCommand?: string;
                     outputDir?: string;
                     composeFile?: string;
+                    composePath?: string;
                     env?: {
                         [key: string]: string;
                     };
@@ -9287,6 +9289,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -9636,6 +9639,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -9940,6 +9944,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -14234,6 +14239,7 @@ export interface operations {
                             baseDirectory: string | null;
                             outputDir: string | null;
                             composeFile: string | null;
+                            composePath: string | null;
                             healthCmd: string | null;
                             healthCheckType: string | null;
                             healthCheckPath: string | null;
@@ -14467,6 +14473,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -14769,6 +14776,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -15127,6 +15135,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;
@@ -16156,6 +16165,7 @@ export interface operations {
                         baseDirectory: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
+                        composePath: string | null;
                         healthCmd: string | null;
                         healthCheckType: string | null;
                         healthCheckPath: string | null;

@@ -1,4 +1,30 @@
-import { SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema } from "./dto";
+import { CreateAppSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema } from "./dto";
+
+describe("CreateAppSchema — COMPOSE source (pasted vs git)", () => {
+  const compose = (over: Record<string, unknown>) =>
+    CreateAppSchema.safeParse({ name: "x", serverId: "s1", source: "COMPOSE", ...over });
+
+  it("accepts a pasted compose (composeFile) and a git compose (gitUrl [+ composePath])", () => {
+    expect(compose({ composeFile: "services: {}" }).success).toBe(true);
+    expect(compose({ gitUrl: "https://github.com/u/r.git" }).success).toBe(true); // composePath defaulted server-side
+    expect(compose({ gitUrl: "https://github.com/u/r.git", composePath: "deploy/docker-compose.yml" }).success).toBe(true);
+    expect(compose({ gitUrl: "git@github.com:u/r.git", composePath: "stack.yaml" }).success).toBe(true);
+  });
+
+  it("requires exactly one of composeFile / gitUrl for a COMPOSE app", () => {
+    expect(compose({}).success).toBe(false); // neither
+    expect(compose({ composeFile: "services: {}", gitUrl: "https://github.com/u/r.git" }).success).toBe(false); // both
+  });
+
+  it("rejects a non-YAML or traversing composePath, and composePath without git", () => {
+    expect(compose({ gitUrl: "https://github.com/u/r.git", composePath: "Dockerfile" }).success).toBe(false); // not .yml/.yaml
+    expect(compose({ gitUrl: "https://github.com/u/r.git", composePath: "../escape.yml" }).success).toBe(false); // traversal
+    expect(compose({ gitUrl: "https://github.com/u/r.git", composePath: "/abs/docker-compose.yml" }).success).toBe(false); // absolute
+    // composePath only valid for a COMPOSE app sourced from git
+    expect(CreateAppSchema.safeParse({ name: "x", serverId: "s1", source: "GIT", gitUrl: "https://github.com/u/r.git", composePath: "docker-compose.yml" }).success).toBe(false);
+    expect(compose({ composeFile: "services: {}", composePath: "docker-compose.yml" }).success).toBe(false); // pasted + path
+  });
+});
 
 describe("SetServiceDomainsSchema — per-service compose domains", () => {
   const ok = (domains: unknown[]) => SetServiceDomainsSchema.safeParse({ domains });
