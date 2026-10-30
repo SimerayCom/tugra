@@ -8,6 +8,17 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// The webhook endpoint returns 202 before its fire-and-forget work runs (a preview even chains
+// upsert-preview -> deploy -> clone), so a fixed sleep raced that chain on a slow CI runner. Poll the
+// shared `commands` buffer (filled by the mock agent) until the expected script lands instead.
+const waitForCommand = async (commands: string[], needle: string, timeoutMs = 8000): Promise<void> => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (commands.join("\n").includes(needle)) return;
+    await sleep(25);
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for a command containing ${JSON.stringify(needle)}`);
+};
 
 describe("Webhooks / auto-deploy (e2e)", () => {
   let app: INestApplication;
@@ -199,7 +210,9 @@ describe("Webhooks / auto-deploy (e2e)", () => {
         .send(body)
         .expect(202);
       expect(res.body.deployed).toBe(true);
-      await sleep(400);
+      // The clone command can only fire after the async chain has created the preview app, so waiting for
+      // it also guarantees the preview record is persisted before the assertions below (no fixed-sleep race).
+      await waitForCommand(commands, "git clone");
 
       const previews = await request(app.getHttpServer())
         .get(`/apps/${pvId}/previews`)
