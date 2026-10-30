@@ -35,10 +35,26 @@ export default function TerminalView({
     const host = ref.current;
     if (!host || unavailableReason) return;
     const term = new Terminal({
-      fontSize: 13,
-      fontFamily: "var(--font-geist-mono, ui-monospace, monospace)",
+      fontSize: 14,
+      lineHeight: 1.2,
+      // A real monospace stack (xterm renders to a canvas, so it needs concrete faces, not just a CSS var).
+      fontFamily: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
       cursorBlink: true,
-      theme: { background: "#0b0b0c" },
+      cursorStyle: "bar",
+      scrollback: 5000,
+      // Full 16-colour ANSI theme so `ls --color`, prompts and TUIs render like a real terminal; cursor in
+      // Tugra gold, surfaces matched to the dark panel.
+      theme: {
+        background: "#0b0b0c",
+        foreground: "#e4e4e7",
+        cursor: "#d4af6a",
+        cursorAccent: "#0b0b0c",
+        selectionBackground: "#33343b",
+        black: "#2b2b2b", red: "#f87171", green: "#4ade80", yellow: "#fbbf24",
+        blue: "#60a5fa", magenta: "#c084fc", cyan: "#22d3ee", white: "#e4e4e7",
+        brightBlack: "#6b7280", brightRed: "#fca5a5", brightGreen: "#86efac", brightYellow: "#fde68a",
+        brightBlue: "#93c5fd", brightMagenta: "#d8b4fe", brightCyan: "#67e8f9", brightWhite: "#ffffff",
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
