@@ -474,6 +474,22 @@ export interface FleetPatchApplyResult {
   skipped: string[];
 }
 
+// Signed, digest-pinned self-update of the Go agent (one server or a fleet). The target version/image/sha256
+// come only from the hub's ed25519-verified release manifest — never the request.
+export interface AgentUpdateItem {
+  serverId: string;
+  status: "sent" | "offline" | "skipped"; // sent = dispatched; the new version shows once the agent reconnects
+  reason?: string; // skip reason: already-current | no-digest-for-arch | capability-not-granted | not-permitted
+}
+export interface AgentUpdateResponse {
+  status: "ok" | "unconfigured" | "error"; // unconfigured = no signed manifest; error = couldn't verify it
+  total: number;
+  sent: number;
+  offline: number;
+  skipped: number;
+  results: AgentUpdateItem[];
+}
+
 // Migrator discover/adopt: a foreign (non-Tugra) container found on a server.
 export interface DiscoveredPort {
   host: number | null; // published host port, or null when only exposed

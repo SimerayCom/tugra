@@ -14,7 +14,7 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { humanizeRateSeries } from "../../../../lib/metrics";
-import type { MetricsRange, ServerStatus, ServerView } from "../../../../lib/types";
+import type { MetricsRange, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
@@ -202,7 +202,12 @@ export default function ServerDetailPage() {
 
       {tab === "containers" && <ServerContainersCard id={id} canWrite={server.canWrite} />}
 
-      {tab === "updates" && server.canWrite && <PatchCard id={id} />}
+      {tab === "updates" && server.canWrite && (
+        <>
+          <AgentUpdateCard id={id} version={server.agentVersion} />
+          <PatchCard id={id} />
+        </>
+      )}
 
       {tab === "drains" && server.canWrite && <LogDrainCard id={id} />}
 
@@ -340,6 +345,57 @@ function ServerInstallCard({ id }: { id: string }) {
         </>
       )}
       {reissue.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(reissue.error as Error).message}</div>}
+    </Card>
+  );
+}
+
+// Signed, digest-pinned self-update of the Tugra Go agent. The hub picks the target from its ed25519-verified
+// release manifest (the request can't name a version/image), so this is a safe one-click op; the new version
+// shows in overview once the recreated agent reconnects.
+function AgentUpdateCard({ id, version }: { id: string; version: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [msg, setMsg] = useState<{ tone: "ok" | "warn" | "err"; text: string } | null>(null);
+  const buildMsg = (r: AgentUpdateResponse): { tone: "ok" | "warn" | "err"; text: string } => {
+    if (r.status === "unconfigured") return { tone: "err", text: t("patching.agentUnconfigured") };
+    if (r.status === "error") return { tone: "err", text: t("patching.agentError") };
+    const item = r.results[0];
+    if (!item) return { tone: "warn", text: t("patching.agentSkipped") };
+    if (item.status === "sent") return { tone: "ok", text: t("patching.agentSent") };
+    if (item.status === "offline") return { tone: "warn", text: t("patching.agentOffline") };
+    const reasons: Record<string, string> = {
+      "already-current": "patching.agentCurrentAlready",
+      "no-digest-for-arch": "patching.agentNoDigest",
+      "capability-not-granted": "patching.agentCapability",
+      "not-permitted": "patching.agentNotPermitted",
+    };
+    return { tone: "warn", text: t(reasons[item.reason ?? ""] ?? "patching.agentSkipped") };
+  };
+  const update = useMutation({
+    mutationFn: () => api.updateAgent(id),
+    onSuccess: (r) => {
+      setMsg(buildMsg(r));
+      qc.invalidateQueries({ queryKey: ["server", id] });
+    },
+    onError: (e) => setMsg({ tone: "err", text: (e as Error).message }),
+  });
+  const run = async () => {
+    if (await confirm({ body: t("patching.agentConfirm") })) update.mutate();
+  };
+  const toneColor = msg?.tone === "ok" ? "var(--c-g)" : msg?.tone === "warn" ? "var(--c-am)" : "var(--c-r)";
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>{t("patching.agentTitle")}</div>
+        <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{version ?? "—"}</span>
+        <Btn variant="ghost" onClick={run} disabled={update.isPending}>
+          {update.isPending ? t("patching.agentUpdating") : t("patching.agentUpdate")}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: msg ? "0 0 8px" : 0 }}>{t("patching.agentDesc")}</p>
+      {msg && <div style={{ fontSize: 13, color: toneColor }}>{msg.text}</div>}
     </Card>
   );
 }
