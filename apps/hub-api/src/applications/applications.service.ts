@@ -236,6 +236,13 @@ export const DomainViewSchema = z.object({
 });
 export type DomainView = z.infer<typeof DomainViewSchema>;
 
+// Clone result: the new app + machine-readable warning keys the UI localizes (domain_reset, etc.).
+export const CloneAppResultSchema = z.object({
+  app: AppViewSchema,
+  warnings: z.array(z.string()),
+});
+export type CloneAppResult = z.infer<typeof CloneAppResultSchema>;
+
 /** Capture the user's non-secret install choices (timezone, username, ...) for the record, but never
  *  persist a secret field's value — installConfig is bookkeeping, not a secret store (SPEC §8). */
 function redactInstallConfig(
@@ -533,6 +540,142 @@ export class ApplicationsService {
     }
     const perms = await this.access.membershipPermissions(userId, teamId);
     return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, serverIp);
+  }
+
+  /** Name for a cloned app: the override (capped), else the source name + " (copy)" (not chained). */
+  private cloneName(src: string, override?: string): string {
+    if (override && override.trim()) return override.trim().slice(0, 100);
+    return `${src.replace(/ \(copy\)$/, "").trim()} (copy)`.slice(0, 100);
+  }
+
+  /**
+   * Clone an app into a new one on the SAME server + environment: an allow-listed copy of its config (never
+   * a spread — a future column must be copied deliberately), with the domain, custom cert, webhook and host
+   * ports NOT carried over, secrets copied as encrypted blobs (same key), scheduled tasks copied DISABLED,
+   * the custom icon copied, and status left NEW (the user deploys it). Returns the view + machine-readable
+   * warning keys the UI localizes. Cross-server / env moves, volume-data copy and port re-allocation are
+   * deliberate follow-ups.
+   */
+  async clone(userId: string, id: string, input: { name?: string }): Promise<{ app: AppView; warnings: string[] }> {
+    const src = await this.require(userId, id);
+    if (src.isPreview) throw new BadRequestException("a preview app can't be cloned");
+    await this.access.requirePermission(userId, src.teamId, "apps:config");
+    const server = await this.prisma.server.findUnique({ where: { id: src.serverId } });
+    if (!server) throw new NotFoundException("server not found");
+
+    const warnings: string[] = [];
+    const name = this.cloneName(src.name, input.name);
+    const composeWebService = src.source === "COMPOSE" ? (this.composeWeb(src)?.service ?? null) : null;
+    // Fresh exposure — the domain is NEVER copied (two apps on one host = a Traefik router clash); a custom
+    // domain clones to none, magic clones to a new magic domain on this server.
+    const expose = this.resolveExpose({ name, exposeMode: src.exposeMode === "custom" ? "none" : src.exposeMode }, server, src.source, composeWebService);
+
+    if (src.domainKind === "custom") warnings.push("domain_reset");
+    if (src.certPem) warnings.push("custom_cert_dropped");
+    if (src.hostPort != null) warnings.push("host_port_reset");
+    if (Array.isArray(src.portMappings) && src.portMappings.length > 0) warnings.push("port_mappings_copied");
+
+    const icon = await this.prisma.appIcon.findUnique({ where: { appId: src.id } });
+    const jsonOrNull = (v: unknown) => (v == null ? Prisma.JsonNull : (v as Prisma.InputJsonValue));
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const app = await tx.application.create({
+        data: {
+          name,
+          teamId: src.teamId,
+          serverId: src.serverId,
+          environmentId: src.environmentId,
+          buildServerId: src.buildServerId,
+          // Same server → keep the stateful swarm pin; a cross-server clone (follow-up) would reset these.
+          clusterId: src.clusterId,
+          replicas: src.replicas,
+          placement: jsonOrNull(src.placement),
+          constraintServerId: src.constraintServerId,
+          templateSlug: src.templateSlug,
+          source: src.source,
+          image: src.image,
+          gitUrl: src.gitUrl,
+          gitBranch: src.gitBranch,
+          gitSourceId: src.gitSourceId,
+          buildType: src.buildType,
+          dockerfilePath: src.dockerfilePath,
+          buildCommand: src.buildCommand,
+          outputDir: src.outputDir,
+          composeFile: src.composeFile,
+          healthCmd: src.healthCmd,
+          healthCheckType: src.healthCheckType,
+          healthCheckPath: src.healthCheckPath,
+          healthCheckPort: src.healthCheckPort,
+          memoryMb: src.memoryMb,
+          cpus: src.cpus,
+          reserveMemoryMb: src.reserveMemoryMb,
+          reserveCpus: src.reserveCpus,
+          gpus: src.gpus,
+          deployTimeoutSec: src.deployTimeoutSec,
+          preDeployCommand: src.preDeployCommand,
+          postDeployCommand: src.postDeployCommand,
+          // Volume DEFINITIONS copy, but the docker volume name derives from the new app id → fresh empty
+          // volumes, no data shared (structural). Data copy is a follow-up.
+          volumes: jsonOrNull(src.volumes),
+          hostMounts: jsonOrNull(src.hostMounts),
+          portMappings: jsonOrNull(src.portMappings),
+          installConfig: jsonOrNull(src.installConfig),
+          configMounts: jsonOrNull(src.configMounts),
+          // Encrypted blobs copy verbatim (one global key, no per-app binding) — same as the preview path.
+          gitTokenEnc: src.gitTokenEnc,
+          registryId: src.registryId,
+          registryAuthEnc: src.registryAuthEnc,
+          pushToRegistry: src.pushToRegistry,
+          env: {} as Prisma.InputJsonValue,
+          envEnc: src.envEnc,
+          buildArgsEnc: src.buildArgsEnc,
+          dockerOptions: src.dockerOptions,
+          dbNetwork: src.dbNetwork,
+          // A copied host port would clash on the same server; cleared (re-allocation is a follow-up).
+          hostPort: null,
+          containerPort: src.containerPort,
+          domain: expose.domain,
+          https: expose.https,
+          exposeMode: expose.exposeMode,
+          domainKind: expose.domainKind,
+          certType: expose.certType,
+          domainRedirect: src.domainRedirect,
+          securityHeaders: src.securityHeaders,
+          forwardAuth: src.forwardAuth,
+          deployStrategy: src.deployStrategy,
+          rollbackOnFailure: src.rollbackOnFailure,
+          tags: src.tags,
+          iconUpdatedAt: icon ? new Date() : null,
+          // A fresh webhook (the token is unique; sharing it would double-trigger + collide on the unique index).
+          webhookToken: generateWebhookToken(),
+          webhookSecret: this.crypto.encrypt(generateWebhookSecret()),
+          volumeBackupIntervalHours: src.volumeBackupIntervalHours,
+          volumeBackupRetention: src.volumeBackupRetention,
+          volumeBackupDestinationId: src.volumeBackupDestinationId,
+          // Defaults left as-is: status NEW (not deployed), isPreview/previewEnabled false, cert* null,
+          // tunnelExposed false, volumeBackupEnabled false.
+        },
+      });
+      if (icon) {
+        await tx.appIcon.create({ data: { appId: app.id, mime: icon.mime, data: icon.data, sizeBytes: icon.sizeBytes } });
+      }
+      const tasks = await tx.scheduledTask.findMany({ where: { appId: src.id } });
+      if (tasks.length > 0) {
+        // Copied DISABLED, so the clone never double-runs the source's crons until the user enables them.
+        await tx.scheduledTask.createMany({
+          data: tasks.map((t) => ({ appId: app.id, name: t.name, schedule: t.schedule, command: t.command, enabled: false })),
+        });
+        warnings.push("tasks_disabled");
+      }
+      return app;
+    });
+
+    await this.access.grantResourceAccess(userId, src.teamId, created.id);
+    await this.monitors.createForApp(created).catch(() => undefined);
+    await this.audit.log({ actor: userId, action: "app.clone", target: created.id, meta: { sourceId: src.id } });
+    const perms = await this.access.membershipPermissions(userId, src.teamId);
+    const app = this.view(created, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, server.publicIp ?? server.publicIpv6);
+    return { app, warnings };
   }
 
   /** One-click template catalog (gallery metadata only). */

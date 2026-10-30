@@ -287,6 +287,13 @@ export const SetCustomCertSchema = z.object({
 });
 export type SetCustomCertInput = z.infer<typeof SetCustomCertSchema>;
 
+// Clone an app into a new one (same server + environment). Only the new name is operator-settable; the
+// domain/cert/webhook/host-ports are reset server-side, not carried over.
+export const CloneAppSchema = z
+  .object({ name: z.string().trim().min(1).max(100).optional() })
+  .strict();
+export type CloneAppInput = z.infer<typeof CloneAppSchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({

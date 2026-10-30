@@ -945,6 +945,9 @@ export const api = {
   clearAppCert(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/cert`, { method: "DELETE" });
   },
+  cloneApp(id: string, body: { name?: string }) {
+    return apiFetch<{ app: Application; warnings: string[] }>(`/apps/${id}/clone`, { method: "POST", body: JSON.stringify(body) });
+  },
 
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {

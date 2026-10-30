@@ -28,7 +28,7 @@ import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.intercept
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
-import { ApplicationsService, AppViewSchema, DomainViewSchema } from "./applications.service";
+import { ApplicationsService, AppViewSchema, CloneAppResultSchema, DomainViewSchema } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
 import {
@@ -70,6 +70,8 @@ import {
   SetDomainOptionsSchema,
   SetCustomCertInput,
   SetCustomCertSchema,
+  CloneAppInput,
+  CloneAppSchema,
   SetEnvironmentInput,
   SetEnvironmentSchema,
   SetLimitsInput,
@@ -669,6 +671,20 @@ export class ApplicationsController {
   async clearCustomCert(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.apps.clearCustomCert(user.userId, id);
     return { ok: true };
+  }
+
+  // Clone an app into a new one (same server + environment; domain/cert/webhook/host-ports reset). Writer-only.
+  @Post(":id/clone")
+  @HttpCode(201)
+  @RequireScopes("write")
+  @ApiZodBody(CloneAppSchema)
+  @ApiZodResponse(CloneAppResultSchema, { status: 201 })
+  clone(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(CloneAppSchema)) body: CloneAppInput,
+  ) {
+    return this.apps.clone(user.userId, id, body);
   }
 
   @Put(":id/expose")
