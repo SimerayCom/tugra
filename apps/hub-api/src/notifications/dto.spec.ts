@@ -14,6 +14,12 @@ describe("notification channel schemas — event types", () => {
     expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["swarm_degraded"] })).not.toThrow();
   });
 
+  it("accepts the container crash/OOM alerts", () => {
+    expect(EVENT_TYPES).toContain("container_crashed");
+    expect(EVENT_TYPES).toContain("container_oom");
+    expect(() => CreateChannelSchema.parse({ ...base, eventTypes: ["container_crashed", "container_oom"] })).not.toThrow();
+  });
+
   it("accepts the operation-coverage events (backup/server-online/volume-backup/scheduled-task/cleanup)", () => {
     const events = [
       "backup_success", "server_online", "volume_backup_success", "volume_backup_failed",

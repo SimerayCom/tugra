@@ -34,6 +34,8 @@
   "eventScheduledTaskFailed": "Scheduled task failed",
   "eventDockerCleanupSuccess": "Docker cleanup succeeded",
   "eventDockerCleanupFailed": "Docker cleanup failed",
+  "eventContainerCrashed": "Container crashed",
+  "eventContainerOom": "Container out of memory",
   "f_url": "Webhook URL",
   "f_webhookUrl": "Webhook URL",
   "f_botToken": "Bot token",
