@@ -189,11 +189,14 @@ export class TerminalGateway
     let pongMissed = 0;
     ws.on("pong", () => { pongMissed = 0; });
     const heartbeat = setInterval(() => {
-      if (ws.readyState !== WebSocket.OPEN) return clearInterval(heartbeat);
+      // Self-clear when the socket is gone or the ws impl has no ping (test mocks) — so a dangling 25s
+      // timer never fires ws.ping() on a non-ws object and never keeps a jest worker alive.
+      if (typeof ws.ping !== "function" || ws.readyState !== WebSocket.OPEN) return clearInterval(heartbeat);
       if (pongMissed >= 2) { clearInterval(heartbeat); return ws.terminate(); }
       pongMissed += 1;
       ws.ping();
     }, 25_000);
+    heartbeat.unref?.();
     ws.on("close", () => clearInterval(heartbeat));
   }
 
