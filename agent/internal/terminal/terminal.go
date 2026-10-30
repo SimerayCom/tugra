@@ -1,16 +1,28 @@
 // Package terminal runs interactive PTY sessions (web shell) the hub asks for.
-// A session wraps either a host shell (`sh`) or a container shell
-// (`docker exec -it <name> sh`) attached to a pseudo-terminal so stdin, resize
-// and ANSI output all work like a real terminal.
+// A session wraps either a host shell or a container shell
+// (`docker exec -it <name> …`) attached to a pseudo-terminal so stdin, resize
+// and ANSI output all work like a real terminal. It prefers an interactive bash
+// when one exists (so Ctrl+A/E/R line-editing and history work), else POSIX sh.
 package terminal
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sync"
 
 	"github.com/creack/pty"
 )
+
+// A container target must be a plain docker name/id: an alphanumeric first char, then [A-Za-z0-9_.-].
+// This blocks a leading "-" (which `docker exec` would parse as a flag → option injection) and any
+// shell-ish metacharacter. The host shell uses target=="" and skips this.
+var targetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
+// Prefer an interactive bash when the shell has one (emacs line-editing: Ctrl+A/E/R + history), else fall
+// back to POSIX sh. `exec` replaces the process so signals and the PTY attach to the real shell.
+const shellCmd = "command -v bash >/dev/null 2>&1 && exec bash || exec sh"
 
 // Session is a single live PTY-backed shell.
 type Session struct {
@@ -21,15 +33,19 @@ type Session struct {
 	exitCode  int
 }
 
-// Start launches a shell on a PTY. target=="" runs the host `sh`; otherwise it
-// runs `docker exec -it <target> sh` for that container. onData receives raw
-// output bytes as they arrive; onExit fires exactly once when the shell ends.
+// Start launches a shell on a PTY. target=="" runs a host shell; otherwise it
+// execs into that container (target is validated against targetRe first). The
+// shell prefers bash and falls back to sh. onData receives raw output bytes as
+// they arrive; onExit fires exactly once when the shell ends.
 func Start(target string, cols, rows int, onData func([]byte), onExit func(exitCode int)) (*Session, error) {
 	var cmd *exec.Cmd
 	if target == "" {
-		cmd = exec.Command("sh")
+		cmd = exec.Command("sh", "-c", shellCmd)
 	} else {
-		cmd = exec.Command("docker", "exec", "-i", "-t", target, "sh")
+		if !targetRe.MatchString(target) {
+			return nil, fmt.Errorf("invalid container target %q", target)
+		}
+		cmd = exec.Command("docker", "exec", "-i", "-t", target, "sh", "-c", shellCmd)
 	}
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 

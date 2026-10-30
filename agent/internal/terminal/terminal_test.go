@@ -66,6 +66,18 @@ func TestHostShellRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRejectsUnsafeContainerTarget(t *testing.T) {
+	// A leading "-" (docker-exec option injection) and shell metacharacters must be refused before exec.
+	for _, bad := range []string{"-it", "--privileged", "a b", "a;b", "a$(x)", "a|b", ""} {
+		if bad == "" {
+			continue // "" is the host shell, handled separately
+		}
+		if _, err := Start(bad, 80, 24, func([]byte) {}, nil); err == nil {
+			t.Fatalf("expected Start(%q) to be rejected", bad)
+		}
+	}
+}
+
 func TestResizeAppliesToPty(t *testing.T) {
 	out := &collector{}
 	s, err := Start("", 80, 24, out.add, nil)
