@@ -413,6 +413,10 @@ export default function AppDetailPage() {
       appData.domain ? (
         <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} />
       ) : null,
+    customCert: () =>
+      appData.domain ? (
+        <CustomCertCard id={id} hasCustomCert={appData.hasCustomCert} certDomains={appData.certDomains} certNotAfter={appData.certNotAfter} />
+      ) : null,
     volumes: () => <VolumesCard id={id} volumes={appData.volumes} />,
     hostMounts: () => <HostMountsCard id={id} hostMounts={appData.hostMounts} />,
     volumeBackups: () => (
@@ -1750,6 +1754,74 @@ function DomainOptionsCard({
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.forwardAuthDesc")}</p>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </Card>
+  );
+}
+
+// Upload an operator-supplied TLS cert for this app's domain (certType "custom"). The cert is served
+// statically by Traefik (no ACME) and applied on the next deploy. The private key never comes back from
+// the server — the card only shows the covered domains + expiry once a cert is stored.
+function CustomCertCard({
+  id,
+  hasCustomCert,
+  certDomains,
+  certNotAfter,
+}: {
+  id: string;
+  hasCustomCert: boolean;
+  certDomains: string[];
+  certNotAfter: string | null;
+}) {
+  const t = useT();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [cert, setCert] = useState("");
+  const [key, setKey] = useState("");
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["app", id] });
+  const upload = useMutation({
+    mutationFn: () => api.setAppCert(id, cert, key),
+    onSuccess: () => { setCert(""); setKey(""); invalidate(); },
+    meta: { successMessage: t("apps.certUploaded") },
+  });
+  const clear = useMutation({
+    mutationFn: () => api.clearAppCert(id),
+    onSuccess: invalidate,
+    meta: { successMessage: t("apps.certCleared") },
+  });
+  const ta: React.CSSProperties = { ...envField, width: "100%", minHeight: 88, fontFamily: "monospace", fontSize: 12, resize: "vertical" };
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.customCert")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.customCertDesc")}</p>
+      {hasCustomCert && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <span className="mono" style={{ fontSize: 12, color: "var(--c-tx2)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "2px 8px" }}>
+            {certDomains.length ? certDomains.join(", ") : "—"}
+          </span>
+          {certNotAfter && (
+            <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.certExpires", { date: new Date(certNotAfter).toLocaleDateString() })}</span>
+          )}
+          <Btn
+            variant="dangerGhost"
+            disabled={clear.isPending}
+            onClick={async () => { if (await confirm({ body: t("apps.certClearConfirm"), danger: true })) clear.mutate(); }}
+          >
+            {t("apps.certRemove")}
+          </Btn>
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <textarea style={ta} placeholder={t("apps.certPemPlaceholder")} value={cert} onChange={(e) => setCert(e.target.value)} aria-label={t("apps.certPem")} spellCheck={false} autoComplete="off" />
+        <textarea style={ta} placeholder={t("apps.certKeyPlaceholder")} value={key} onChange={(e) => setKey(e.target.value)} aria-label={t("apps.certKey")} spellCheck={false} autoComplete="off" />
+        <div>
+          <Btn onClick={() => upload.mutate()} disabled={upload.isPending || !cert.trim() || !key.trim()}>
+            {hasCustomCert ? t("apps.certReplace") : t("apps.certUpload")}
+          </Btn>
+        </div>
+      </div>
+      {upload.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{(upload.error as Error).message}</div>}
+      {(upload.isSuccess || clear.isSuccess) && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );
 }

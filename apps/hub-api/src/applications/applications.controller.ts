@@ -68,6 +68,8 @@ import {
   ExposeSchema,
   SetDomainOptionsInput,
   SetDomainOptionsSchema,
+  SetCustomCertInput,
+  SetCustomCertSchema,
   SetEnvironmentInput,
   SetEnvironmentSchema,
   SetLimitsInput,
@@ -646,6 +648,26 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDomainOptionsSchema)) body: SetDomainOptionsInput,
   ) {
     await this.apps.setDomainOptions(user.userId, id, body);
+    return { ok: true };
+  }
+
+  // Upload an operator-supplied custom TLS cert (certType "custom"). Validated + key-matched server-side;
+  // applied on the next deploy. Writer-only (requireWrite in the service).
+  @Put(":id/cert")
+  @HttpCode(200)
+  @ApiZodBody(SetCustomCertSchema)
+  setCustomCert(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetCustomCertSchema)) body: SetCustomCertInput,
+  ) {
+    return this.apps.setCustomCert(user.userId, id, body.cert, body.key);
+  }
+
+  @Delete(":id/cert")
+  @HttpCode(200)
+  async clearCustomCert(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.apps.clearCustomCert(user.userId, id);
     return { ok: true };
   }
 

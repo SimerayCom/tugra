@@ -36,6 +36,7 @@ export type ConfigCardId =
   | "expose"
   | "domain"
   | "domainOptions"
+  | "customCert"
   | "volumes"
   | "hostMounts"
   | "volumeBackups"
@@ -86,6 +87,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "expose", group: "domains", visible: (a) => a.canWrite && !a.isPreview },
   { id: "domain", group: "domains", visible: (a) => a.canWrite && !a.isPreview && a.domainKind === "custom" },
   { id: "domainOptions", group: "domains", visible: (a) => !!a.domain },
+  // Upload a custom TLS cert for this app's domain (served statically, no ACME). Needs a domain + write access.
+  { id: "customCert", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain },
   // Storage
   { id: "volumes", group: "storage", visible: notCompose },
   // Host folder bind-mounts (e.g. a media library) — docker-run apps only; a COMPOSE stack declares its own.

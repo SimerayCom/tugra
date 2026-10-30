@@ -44,6 +44,7 @@ import {
   buildImageRemoveScript,
   buildImageRemoveScriptForTag,
   buildRemoveScript,
+  buildCustomCertRemoveScript,
   buildRestartScript,
   buildRunScript,
   buildBuildOnlyScript,
@@ -66,6 +67,7 @@ import {
   type AppConfigMount,
   type RegistryAuth,
 } from "../deploy/deploy-script";
+import { parseCustomCert, certCoversHost } from "./custom-cert";
 import { assertSafeDockerOptions, validateHostMounts } from "../deploy/docker-options-safety";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import {
@@ -188,6 +190,11 @@ export const AppViewSchema = z.object({
   exposeMode: z.string(),
   tunnelExposed: z.boolean(),
   certType: z.string(),
+  // Operator-uploaded custom cert (certType "custom"): the domains it covers + its expiry, for display.
+  // `hasCustomCert` says a cert is stored; the PEM/key bytes are NEVER carried in this view.
+  certDomains: z.array(z.string()),
+  certNotAfter: z.date().nullable(),
+  hasCustomCert: z.boolean(),
   url: z.string().nullable(),
   webhookToken: z.string().nullable(),
   webhookSecret: z.string().nullable(),
@@ -792,7 +799,10 @@ export class ApplicationsService {
           // "http" default and being served over plain HTTP by the certType-aware labels.
           domainKind: parent.domainKind,
           exposeMode: parent.exposeMode,
-          certType: parent.certType,
+          // A preview gets its own subdomain and never inherits the parent's uploaded cert bytes, so a
+          // "custom"-cert parent downgrades to le-http (ACME for the preview host) instead of a dead
+          // "custom" with no cert.
+          certType: parent.certType === "custom" ? "le-http" : parent.certType,
           // Preview-specific: no webhook of its own (parent owns the trigger).
           isPreview: true,
           parentAppId: parent.id,
@@ -1449,6 +1459,11 @@ export class ApplicationsService {
           ? buildComposeDownScript(this.toSpec(app), { volumes: !opts.keepVolumes })
           : buildRemoveScript(app, opts.keepVolumes ? [] : this.appVolumes(app));
       await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    }
+    // Drop the app's uploaded custom cert from the proxy's /dynamic (best-effort; classic apps only — a
+    // clustered app's cert lives on the manager's swarm proxy, a separate path).
+    if (app.certPem && !app.clusterId) {
+      await this.agentWs.sendCommand(app.serverId, buildCustomCertRemoveScript(app.id), "deploy").catch(() => undefined);
     }
     await this.monitors.removeForApp(id).catch(() => undefined);
     // Best-effort: remove the Cloudflare records Tugra auto-created for this app BEFORE the Domain rows cascade
@@ -2212,6 +2227,7 @@ export class ApplicationsService {
     const data: Prisma.ApplicationUpdateInput = domain
       ? { domain, domainKind: "custom", certType: "le-http", https: true }
       : { domain: null, domainKind: "none" };
+    await this.clearCertIfLeavingCustom(app, data);
     await this.prisma.application.update({ where: { id }, data });
     await this.syncMonitor(id).catch(() => undefined); // keep the auto uptime monitor's target in step
     // A tunnel-exposed app's CF ingress rule keys off its hostname — rebuild it when the domain changes/clears.
@@ -2241,17 +2257,18 @@ export class ApplicationsService {
       app.source,
       composeWebService,
     );
-    await this.prisma.application.update({
-      where: { id },
-      data: { domain: e.domain, https: e.https, exposeMode: e.exposeMode, domainKind: e.domainKind, certType: e.certType },
-    });
+    const data: Prisma.ApplicationUpdateInput = { domain: e.domain, https: e.https, exposeMode: e.exposeMode, domainKind: e.domainKind, certType: e.certType };
+    await this.clearCertIfLeavingCustom(app, data); // drop a stale custom cert when re-exposing off "custom"
+    await this.prisma.application.update({ where: { id }, data });
     await this.syncMonitor(id).catch(() => undefined);
     // Rebuild tunnel ingress when the app is routed through a tunnel and its hostname just changed/cleared.
     if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
     await this.audit.log({ actor: userId, action: "app.expose.update", target: id, meta: { mode: input.mode } });
     const perms = await this.access.membershipPermissions(userId, app.teamId);
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
-    return this.view({ ...app, ...e }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null);
+    // Reflect a cleared custom cert in the returned view (data.certPem is nulled when it was dropped).
+    const certCleared = data.certPem === null ? { certPem: null, certKeyEnc: null, certDomains: [], certNotAfter: null } : {};
+    return this.view({ ...app, ...e, ...certCleared }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null);
   }
 
   async setDomainOptions(
@@ -2266,6 +2283,77 @@ export class ApplicationsService {
     if (opts.forwardAuth !== undefined) data.forwardAuth = opts.forwardAuth;
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
+  }
+
+  /**
+   * Upload an operator-supplied custom TLS cert for this app (certType → "custom"). The cert/key pair is
+   * validated + matched here (parseCustomCert) so a broken pair is rejected before anything is stored; the
+   * key is encrypted at rest and never returned. Takes effect on the next deploy, when the deploy script
+   * writes the cert into the proxy's /dynamic and the router serves it statically by SNI (no ACME).
+   */
+  async setCustomCert(userId: string, id: string, certPem: string, keyPem: string): Promise<{ domains: string[]; notAfter: string }> {
+    const app = await this.requireWrite(userId, id);
+    if (!app.domain || app.domainKind !== "custom") {
+      throw new BadRequestException("a custom certificate applies to a custom domain — set one on this app first");
+    }
+    // A clustered app is fronted by the manager's swarm-Traefik; the per-server /dynamic cert write isn't on
+    // that path, so a custom cert there would silently serve Traefik's default cert. Refuse rather than lie.
+    if (app.clusterId) {
+      throw new BadRequestException("custom certificates aren't supported for clustered (swarm) apps yet");
+    }
+    let info: { domains: string[]; notAfter: Date };
+    try {
+      info = parseCustomCert(certPem, keyPem);
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
+    // The cert lands in the server's SHARED Traefik cert store (matched by SNI), so it must actually cover
+    // this app's own host — otherwise a writer could install a cert for a domain they don't control, or just
+    // break their own HTTPS (Traefik would find no SNI match and serve its default cert).
+    if (!certCoversHost(info.domains, app.domain)) {
+      throw new BadRequestException(
+        `the certificate does not cover ${app.domain} (it is valid for: ${info.domains.join(", ") || "no domains"})`,
+      );
+    }
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        certType: "custom",
+        certPem,
+        certKeyEnc: this.crypto.encrypt(keyPem),
+        certDomains: info.domains,
+        certNotAfter: info.notAfter,
+      },
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "app.cert.upload",
+      target: id,
+      meta: { domains: info.domains, notAfter: info.notAfter.toISOString() },
+    });
+    return { domains: info.domains, notAfter: info.notAfter.toISOString() };
+  }
+
+  /** Remove the uploaded custom cert and revert certType (le-http for a real domain, else http). Best-effort
+   *  deletes the cert from the proxy's /dynamic so it stops being served; the router label reverts on the
+   *  next deploy. */
+  async clearCustomCert(userId: string, id: string): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (!app.certPem && app.certType !== "custom") return; // nothing stored
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        certPem: null,
+        certKeyEnc: null,
+        certDomains: [],
+        certNotAfter: null,
+        certType: app.domainKind === "custom" ? "le-http" : "http",
+      },
+    });
+    if (!app.clusterId) {
+      await this.agentWs.sendCommand(app.serverId, buildCustomCertRemoveScript(id), "deploy").catch(() => undefined);
+    }
+    await this.audit.log({ actor: userId, action: "app.cert.clear", target: id });
   }
 
   /**
@@ -2448,6 +2536,34 @@ export class ApplicationsService {
    * both runDeploy AND rollback must set them or the rolled-back container loses its
    * wildcard cert labels. No-op for http/le-http apps.
    */
+  /** When an app that carries an uploaded custom cert is moved OFF certType "custom" (a domain or expose
+   *  change), drop the stored cert + key from the row AND remove it from the proxy's /dynamic, so no stale
+   *  cert or private key lingers (and the old SNI stops being served). Mutates `data` in place; call BEFORE
+   *  the prisma update. No-op for an app without a stored cert. */
+  private async clearCertIfLeavingCustom(app: Application, data: Prisma.ApplicationUpdateInput): Promise<void> {
+    if (!app.certPem) return;
+    if (data.certType === "custom") return; // staying custom — keep it
+    data.certPem = null;
+    data.certKeyEnc = null;
+    data.certDomains = [];
+    data.certNotAfter = null;
+    if (data.certType === undefined) data.certType = "http"; // domainless app: don't leave certType "custom"
+    if (!app.clusterId) {
+      await this.agentWs.sendCommand(app.serverId, buildCustomCertRemoveScript(app.id), "deploy").catch(() => undefined);
+    }
+  }
+
+  /** Decrypt an app's uploaded custom-cert private key for the deploy spec. Null when none is stored or the
+   *  stored ciphertext can't be read (never write a broken key into the proxy). */
+  private appCertKey(app: Application): string | null {
+    if (!app.certKeyEnc) return null;
+    try {
+      return this.crypto.decrypt(app.certKeyEnc);
+    } catch {
+      return null;
+    }
+  }
+
   private async hydrateCertSpec(app: Application, spec: AppSpec): Promise<void> {
     if (app.certType !== "le-dns" && app.certType !== "custom") return;
     // A clustered app is fronted by the manager's swarm-Traefik, so its wildcard / custom resolver
@@ -2512,6 +2628,11 @@ export class ApplicationsService {
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
       certType: app.certType,
+      // A clustered app deploys on the swarm manager's proxy, where the per-server /dynamic cert write never
+      // runs — so never feed it a custom cert (it would relabel to tls=true with no cert and serve the
+      // default). Classic apps only. setCustomCert also refuses clustered apps up front.
+      certPem: app.clusterId ? null : app.certPem,
+      certKey: app.clusterId ? null : this.appCertKey(app),
       composeWebService: web?.service ?? null,
       // Config mounts are a template (COMPOSE) feature only — never for a docker-run app.
       configMounts: app.source === "COMPOSE" ? this.appConfigMounts(app) : null,
@@ -2739,6 +2860,9 @@ export class ApplicationsService {
       exposeMode: app.exposeMode,
       tunnelExposed: app.tunnelExposed,
       certType: app.certType,
+      certDomains: app.certDomains,
+      certNotAfter: app.certNotAfter,
+      hasCustomCert: !!app.certPem,
       // A domainless COMPOSE app is reachable via its portMappings, not the always-null scalar
       // hostPort — derive the effective port (only when needed) so the URL is never null.
       url: appUrl(

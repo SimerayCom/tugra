@@ -279,6 +279,14 @@ export const SetDomainOptionsSchema = z
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 
+// Upload a custom TLS cert (certType "custom"). The 64 KiB cap mirrors parseCustomCert's; the real
+// validation (PEM shape, key-to-cert match, domains/expiry) happens server-side in the service.
+export const SetCustomCertSchema = z.object({
+  cert: z.string().min(1).max(65536),
+  key: z.string().min(1).max(65536),
+});
+export type SetCustomCertInput = z.infer<typeof SetCustomCertSchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({

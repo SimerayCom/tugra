@@ -896,6 +896,13 @@ model Application {
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"
   tunnelExposed  Boolean      @default(false)   // per-app opt-in: route this app's hostname through the server's Cloudflare Tunnel
   certType       String       @default("http")  // "http" | "none" | "le-http" | "le-dns" | "custom"
+  // Operator-uploaded custom TLS cert (certType "custom"): Traefik serves it statically by SNI (no ACME).
+  // certPem is the public chain; certKeyEnc is the encrypted private key; certDomains/certNotAfter are
+  // parsed at upload for display. All null unless a custom cert was uploaded.
+  certPem        String?
+  certKeyEnc     String?
+  certDomains    String[]     @default([])
+  certNotAfter   DateTime?
   deployStrategy String       @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
   rollbackOnFailure Boolean   @default(true)      // auto-rollback to the previous version on a failed health gate
   status         AppStatus    @default(NEW)

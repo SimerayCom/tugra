@@ -105,8 +105,13 @@ export interface AppSpec {
   certType?: string;
   /** Server's wildcard root (e.g. apps.example.com) — for a le-dns wildcard cert. */
   wildcardDomain?: string | null;
-  /** Server's custom Traefik resolver name — for certType "custom". */
+  /** Server's custom Traefik resolver name — for certType "custom" WITHOUT an uploaded cert (legacy
+   *  operator-defined resolver). Superseded by an uploaded cert when `certPem` is present. */
   customCertResolver?: string | null;
+  /** Operator-uploaded custom cert (certType "custom"): the public PEM chain + its private key. When set,
+   *  the router serves this static cert by SNI (no ACME) and the deploy writes it into the proxy's /dynamic. */
+  certPem?: string | null;
+  certKey?: string | null;
   /** Rolling deploy only: when set, emit a Traefik LB health check on this path so the
    *  unready rollout backend stays out of rotation until it's live (zero-downtime). */
   rollingHealthPath?: string | null;
@@ -398,6 +403,9 @@ export function traefikLabels(app: AppSpec): string[] {
 
   // HTTPS cert resolver: DNS-01 wildcard (le-dns), a custom operator resolver, or
   // the default HTTP-01 (le) for le-http / any other HTTPS mode.
+  // An operator-uploaded cert (certType "custom" + certPem) is served statically: the router gets TLS with
+  // NO certresolver, so Traefik matches the cert we wrote into /dynamic by SNI instead of asking ACME.
+  const uploadedCert = app.certType === "custom" && !!app.certPem && !!app.certKey;
   const resolver =
     app.certType === "le-dns" ? "le-dns" : app.certType === "custom" ? app.customCertResolver || "le" : "le";
 
@@ -410,7 +418,9 @@ export function traefikLabels(app: AppSpec): string[] {
   } else {
     labels.push(
       `traefik.http.routers.${r}.entrypoints=websecure`,
-      `traefik.http.routers.${r}.tls.certresolver=${resolver}`,
+      uploadedCert
+        ? `traefik.http.routers.${r}.tls=true`
+        : `traefik.http.routers.${r}.tls.certresolver=${resolver}`,
       `traefik.http.services.${r}.loadbalancer.server.port=${port}`,
       `traefik.http.routers.${r}-web.rule=${rule}`,
       `traefik.http.routers.${r}-web.entrypoints=web`,
@@ -691,6 +701,53 @@ function dbNetPreludeFor(app: AppSpec): string[] {
   return app.dbNetwork ? [`docker network create ${DB_NET} 2>/dev/null || true`] : [];
 }
 
+/** Host dir for operator-uploaded custom certs, UNDER PROXY_DYNAMIC_DIR so the proxy (which mounts that
+ *  dir read-only at /dynamic) can read them without a second mount. */
+const PROXY_CERT_DIR = `${PROXY_DYNAMIC_DIR}/certs`;
+
+/** Traefik file-provider YAML registering one app's uploaded cert. The paths are CONTAINER paths
+ *  (/dynamic/...), which is where the proxy reads them from inside its read-only mount. The appId is a
+ *  system-generated id (safe to embed). */
+export function buildCustomCertYaml(appId: string): string {
+  return [
+    "tls:",
+    "  certificates:",
+    `    - certFile: /dynamic/certs/${appId}.crt`,
+    `      keyFile: /dynamic/certs/${appId}.key`,
+    "",
+  ].join("\n");
+}
+
+/** Remove one app's uploaded cert (yaml + cert + key) from the proxy's /dynamic. Used by the service when
+ *  the cert is cleared, certType leaves "custom", or the app is deleted — removal is NOT in the deploy
+ *  script so non-custom deploys stay byte-identical. */
+export function buildCustomCertRemoveScript(appId: string): string {
+  return [
+    "set -e",
+    `rm -f ${PROXY_DYNAMIC_DIR}/tls-${appId}.yml ${PROXY_CERT_DIR}/${appId}.crt ${PROXY_CERT_DIR}/${appId}.key`,
+  ].join("\n");
+}
+
+/** Write an uploaded custom cert into the proxy's /dynamic (atomic temp→mv; key file 0600). Empty for every
+ *  app NOT serving an uploaded cert, so default deploy scripts remain byte-identical. Exported so the
+ *  compose deploy path writes the same cert files as the docker-run path. */
+export function certPreludeFor(app: AppSpec): string[] {
+  if (app.certType !== "custom" || !app.certPem || !app.certKey) return [];
+  const id = app.id;
+  return [
+    // 0700 dir + a umask-077 subshell for the key write, so the private key is never world-readable — not
+    // even in the brief window between creating the temp file and the mv (chmod-after-write would leave it
+    // 0644 until the chmod ran).
+    `mkdir -p -m 700 ${PROXY_CERT_DIR}`,
+    `printf %s ${shq(b64(app.certPem))} | base64 -d > ${PROXY_CERT_DIR}/.${id}.crt.tmp`,
+    `mv ${PROXY_CERT_DIR}/.${id}.crt.tmp ${PROXY_CERT_DIR}/${id}.crt`,
+    `(umask 077; printf %s ${shq(b64(app.certKey))} | base64 -d > ${PROXY_CERT_DIR}/.${id}.key.tmp)`,
+    `mv ${PROXY_CERT_DIR}/.${id}.key.tmp ${PROXY_CERT_DIR}/${id}.key`,
+    `printf %s ${shq(b64(buildCustomCertYaml(id)))} | base64 -d > ${PROXY_DYNAMIC_DIR}/.tls-${id}.yml.tmp`,
+    `mv ${PROXY_DYNAMIC_DIR}/.tls-${id}.yml.tmp ${PROXY_DYNAMIC_DIR}/tls-${id}.yml`,
+  ];
+}
+
 /** The `docker run -d --name <name> ...` line shared by every deploy strategy —
  *  identical flags (net/labels/env/limits/volumes/image) regardless of the container
  *  name, so a rolling container gets the exact same routing as the canonical one. */
@@ -835,6 +892,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     ...(build ? prepSteps(app, version, noCache) : []),
     ...envPreludeFor(app),
     ...dbNetPreludeFor(app),
+    ...certPreludeFor(app),
     ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${name} 2>/dev/null || true`,
     runContainerArgs(app, version, name),
@@ -959,6 +1017,7 @@ export function buildRollingDeployScript(
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
     ...dbNetPreludeFor(app),
+    ...certPreludeFor(app),
     ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${rollout} 2>/dev/null || true`, // clear any stale rollout
     runContainerArgs(rApp, version, rollout),
@@ -1007,6 +1066,7 @@ export function buildRecreateDeployScript(
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
     ...dbNetPreludeFor(app),
+    ...certPreludeFor(app),
     ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${canonical} 2>/dev/null || true`, // stop old (brief downtime begins)
     "set +e", // from here a start/health failure must reach the rollback branch, not abort

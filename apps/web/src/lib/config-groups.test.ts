@@ -98,6 +98,13 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ domain: null }), "domains")?.cardIds ?? []).not.toContain("domainOptions");
   });
 
+  it("customCert needs a domain, write access and a non-preview app", () => {
+    expect(group(facts(), "domains")!.cardIds).toContain("customCert");
+    expect(group(facts({ domain: null }), "domains")?.cardIds ?? []).not.toContain("customCert");
+    expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("customCert");
+    expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("customCert");
+  });
+
   it("volumeBackups appears only when there is at least one volume", () => {
     expect(group(facts(), "storage")!.cardIds).toContain("volumeBackups");
     expect(group(facts({ volumes: [] }), "storage")!.cardIds).not.toContain("volumeBackups");

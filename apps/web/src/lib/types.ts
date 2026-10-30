@@ -1086,6 +1086,9 @@ export interface Application {
   exposeMode: string;
   tunnelExposed: boolean;
   certType: string;
+  certDomains: string[];
+  certNotAfter: string | null;
+  hasCustomCert: boolean;
   url: string | null;
   webhookToken: string | null;
   webhookSecret: string | null;

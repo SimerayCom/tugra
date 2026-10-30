@@ -34,6 +34,8 @@ import {
   staticNginxConf,
   traefikLabels,
   dockerOptionsArgs,
+  buildCustomCertYaml,
+  buildCustomCertRemoveScript,
   type AppSpec,
 } from "./deploy-script";
 
@@ -44,6 +46,60 @@ const base: AppSpec = {
   hostPort: null,
   containerPort: 80,
 };
+
+describe("custom uploaded cert (certType custom + certPem/certKey)", () => {
+  const cert: AppSpec = {
+    ...base,
+    domain: "shop.example.com",
+    certType: "custom",
+    certPem: "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----",
+    certKey: "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----",
+  };
+
+  it("router gets tls=true with NO certresolver (Traefik serves the static cert by SNI)", () => {
+    const labels = traefikLabels(cert);
+    expect(labels).toContain("traefik.http.routers.tugra_abc.tls=true");
+    expect(labels.join("\n")).not.toContain("tls.certresolver");
+  });
+
+  it("deploy writes the cert, key (0600) and tls yaml atomically into /dynamic", () => {
+    const s = buildRunScript(cert, "v1");
+    expect(s).toContain("mkdir -p -m 700 /etc/tugra/proxy-dynamic/certs");
+    expect(s).toContain("/etc/tugra/proxy-dynamic/certs/abc.crt");
+    // key written privately from birth (umask 077), never world-readable before the mv
+    expect(s).toContain("(umask 077; printf %s");
+    expect(s).toContain("/etc/tugra/proxy-dynamic/certs/abc.key");
+    expect(s).toContain("/etc/tugra/proxy-dynamic/tls-abc.yml");
+  });
+
+  it("falls back to an ACME resolver (no cert files) when the key is missing — never a broken tls=true", () => {
+    const noKey: AppSpec = { ...cert, certKey: null };
+    const labels = traefikLabels(noKey);
+    expect(labels.join("\n")).toContain("tls.certresolver");
+    expect(labels.join("\n")).not.toContain("tls=true");
+    expect(buildRunScript(noKey, "v1")).not.toContain("proxy-dynamic/certs");
+  });
+
+  it("a non-custom app is byte-identical — no cert files, keeps its resolver", () => {
+    const le: AppSpec = { ...base, domain: "shop.example.com", certType: "le-http" };
+    const s = buildRunScript(le, "v1");
+    expect(s).not.toContain("proxy-dynamic/certs");
+    expect(traefikLabels(le).join("\n")).toContain("tls.certresolver=le");
+  });
+
+  it("buildCustomCertYaml references the container-side cert/key paths", () => {
+    const y = buildCustomCertYaml("abc");
+    expect(y).toContain("certFile: /dynamic/certs/abc.crt");
+    expect(y).toContain("keyFile: /dynamic/certs/abc.key");
+  });
+
+  it("buildCustomCertRemoveScript removes the yaml + cert + key", () => {
+    const s = buildCustomCertRemoveScript("abc");
+    expect(s).toContain("rm -f /etc/tugra/proxy-dynamic/tls-abc.yml");
+    expect(s).toContain("/etc/tugra/proxy-dynamic/certs/abc.crt");
+    expect(s).toContain("/etc/tugra/proxy-dynamic/certs/abc.key");
+  });
+});
 
 describe("dockerOptionsArgs (shell-injection guard)", () => {
   it("preserves legitimate flags as separate shell-quoted argv tokens", () => {
