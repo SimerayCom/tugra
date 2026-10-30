@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useT } from "../i18n/provider";
 import { Modal } from "./modal";
 import { Spinner } from "./ui";
-import type { TerminalTarget } from "../lib/ws";
+import { terminalQuery, type TerminalTarget } from "../lib/ws";
 
 const TerminalView = dynamic(() => import("./terminal"), {
   ssr: false,
@@ -37,6 +37,14 @@ export function TerminalModal({
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--c-bd)" }}>
         <span className="mono" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{title}</span>
         <span style={{ flex: 1 }} />
+        {!unavailableReason && (
+          <button
+            onClick={() => { window.open(`/shell?${terminalQuery(target)}`, "_blank", "noopener"); onClose(); }}
+            style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", fontSize: 12, cursor: "pointer", padding: "2px 10px", fontFamily: "inherit", marginRight: 8 }}
+          >
+            {t("terminal.expand")}
+          </button>
+        )}
         <button
           onClick={onClose}
           style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", fontSize: 12, cursor: "pointer", padding: "2px 10px", fontFamily: "inherit" }}

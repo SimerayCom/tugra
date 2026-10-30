@@ -40,6 +40,7 @@ import {
   Settings,
   Store,
   Sun,
+  Terminal,
   Users,
   Variable,
   type LucideIcon,
@@ -72,6 +73,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "appStore", href: "/app-store", icon: Store, home: true },
       { key: "servers", href: "/servers", icon: Server },
       { key: "clusters", href: "/clusters", icon: Boxes },
+      { key: "terminal", href: "/shell", icon: Terminal },
       { key: "import", href: "/import", icon: DownloadCloud },
       { key: "sources", href: "/sources", icon: GitBranch },
       { key: "registries", href: "/registries", icon: Package },
@@ -392,6 +394,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        // Don't steal Ctrl+K from a focused terminal (readline kill-line / nano cut).
+        if ((e.target as HTMLElement | null)?.closest?.(".xterm")) return;
         e.preventDefault();
         setPalette((p) => !p);
       }
