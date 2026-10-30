@@ -9,5 +9,19 @@
   "checkFailed": "The update check couldn't complete — a package repository may be unreachable or misconfigured. This is not the same as being up to date.",
   "unsupported": "Automatic patching needs one of apt, dnf, yum or apk on the server.",
   "rebootRequired": "A reboot is required to finish applying updates.",
-  "count": "{n} package(s) can be upgraded"
+  "count": "{n} package(s) can be upgraded",
+  "agentTitle": "Tugra agent",
+  "agentDesc": "Update the Tugra agent to the latest signed release. The hub picks a digest-pinned image from its verified release manifest; the agent reconnects on the new version.",
+  "agentUpdate": "Update agent",
+  "agentUpdating": "Updating…",
+  "agentConfirm": "Update the Tugra agent on this server? It restarts on the new signed version and reconnects automatically.",
+  "agentSent": "Update dispatched — the agent reconnects on the new version shortly.",
+  "agentOffline": "The agent is offline — try again once it reconnects.",
+  "agentCurrentAlready": "Already on the latest version.",
+  "agentNoDigest": "No signed image is available for this server's architecture.",
+  "agentCapability": "The deploy capability isn't granted to this server's agent.",
+  "agentNotPermitted": "You don't have permission to update this server's agent.",
+  "agentSkipped": "Skipped.",
+  "agentUnconfigured": "Agent updates aren't configured on this hub (no signed release manifest).",
+  "agentError": "Couldn't verify the latest signed release."
 }

@@ -57,6 +57,7 @@ import type {
   PatchInfo,
   FleetPatchCheckResult,
   FleetPatchApplyResult,
+  AgentUpdateResponse,
   ProxyStatus,
   PublicUser,
   Project,
@@ -684,6 +685,15 @@ export const api = {
   },
   bulkUpgradeAll(serverIds: string[]) {
     return apiFetch<FleetPatchApplyResult>(`/fleet/updates/apply`, {
+      method: "POST",
+      body: JSON.stringify({ serverIds }),
+    });
+  },
+  updateAgent(id: string) {
+    return apiFetch<AgentUpdateResponse>(`/servers/${id}/agent-update`, { method: "POST" });
+  },
+  bulkUpdateAgent(serverIds: string[]) {
+    return apiFetch<AgentUpdateResponse>(`/fleet/agent-update`, {
       method: "POST",
       body: JSON.stringify({ serverIds }),
     });
