@@ -10,7 +10,7 @@ import { Observable } from "rxjs";
 import { createHash } from "node:crypto";
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
-import { Application, AppStatus, Prisma, Role } from "@prisma/client";
+import { Application, AppStatus, Deployment, Prisma, Role } from "@prisma/client";
 import type { FsEntry, TeamPermission } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
@@ -560,7 +560,7 @@ export class ApplicationsService {
       // Best-effort: kick off the first deploy so a one-click install actually runs. Fire-and-forget
       // — the build can take minutes, and a missing/offline agent must not fail creation. RBAC is
       // already enforced by requirePermission("apps:config") at the create site.
-      void this.runDeploy(app, userId).catch(() => undefined);
+      void this.submitDeploy(app, userId).catch(() => undefined);
     }
     const perms = await this.access.membershipPermissions(userId, teamId);
     return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, serverIp);
@@ -909,16 +909,33 @@ export class ApplicationsService {
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }) {
     const app = await this.requireWrite(userId, id, "apps:deploy");
-    await this.ensureNoActiveDeploy(id);
-    return this.runDeploy(app, userId, opts?.noCache ?? false);
+    // No 409 on a busy app any more: submitDeploy queues it and runs it when the current deploy finishes.
+    return this.submitDeploy(app, userId, opts?.noCache ?? false);
   }
 
-  /** One deploy per app at a time — keeps the live-log stream unambiguous. */
+  /** One RUNNING deploy per app at a time (keeps the live-log stream unambiguous). Still used by rollback and
+   *  the config-edit guards; the deploy queue enforces the same invariant via claimNext + the partial index. */
   private async ensureNoActiveDeploy(appId: string): Promise<void> {
     const running = await this.prisma.deployment.findFirst({
       where: { appId, status: "RUNNING" },
     });
     if (running) throw new ConflictException("a deployment is already running");
+  }
+
+  /** Create the RUNNING row for a rollback. Rollback doesn't go through the deploy queue, so it relies on the
+   *  one-running-per-app partial unique index as the backstop — map its violation (a deploy claimed RUNNING
+   *  in the race after ensureNoActiveDeploy) to a clean 409 instead of a raw Prisma error. */
+  private async createRollbackDeployment(appId: string): Promise<Deployment> {
+    try {
+      return await this.prisma.deployment.create({
+        data: { appId, status: "RUNNING", kind: "ROLLBACK", trigger: "rollback", startedAt: new Date() },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        throw new ConflictException("a deployment is already running");
+      }
+      throw e;
+    }
   }
 
   /**
@@ -929,7 +946,8 @@ export class ApplicationsService {
   async deployFromWebhook(appId: string) {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new NotFoundException("application not found");
-    return this.runDeploy(app, "webhook");
+    // Queued if a deploy is already running (a push during a deploy no longer starts a second concurrent run).
+    return this.submitDeploy(app, "webhook");
   }
 
   // ── Preview deployments (B6) ──
@@ -1012,7 +1030,7 @@ export class ApplicationsService {
       target: preview.id,
       meta: { parentAppId: parent.id, prNumber, headRef },
     });
-    return this.runDeploy(preview, "webhook:pr");
+    return this.submitDeploy(preview, "webhook:pr");
   }
 
   /** Tear down the preview for a closed/merged PR (no-op if none exists). */
@@ -1093,10 +1111,12 @@ export class ApplicationsService {
     );
   }
 
-  /** Wall-clock metadata stamped onto every terminal deploy/rollback update: ms from the row's creation
-   *  to now, clamped ≥ 0 (createdAt is the DB clock, finish is the hub clock, so skew can't go negative). */
-  private finishStamp(dep: { createdAt?: Date | string | null }): { durationMs: number } {
-    const started = dep.createdAt ? new Date(dep.createdAt).getTime() : NaN;
+  /** Wall-clock metadata stamped onto every terminal deploy/rollback update: ms from when the run actually
+   *  STARTED (startedAt — QUEUED->RUNNING) to now, clamped ≥ 0 so queue wait time is not counted as build
+   *  time. Falls back to createdAt for rollback rows (which never queue) and legacy rows. */
+  private finishStamp(dep: { createdAt?: Date | string | null; startedAt?: Date | string | null }): { durationMs: number } {
+    const from = dep.startedAt ?? dep.createdAt;
+    const started = from ? new Date(from).getTime() : NaN;
     return { durationMs: Number.isFinite(started) ? Math.max(0, Date.now() - started) : 0 };
   }
 
@@ -1106,11 +1126,100 @@ export class ApplicationsService {
     return actor === "webhook:pr" ? "preview" : actor === "webhook" ? "webhook" : "manual";
   }
 
-  /** Core deploy: build/run on the agent and record the Deployment. */
-  private async runDeploy(app: Application, actor: string, noCache = false) {
+  /**
+   * Enqueue a deploy and, if the app is idle, run it inline. One RUNNING deploy per app: a submit for a busy
+   * app returns a QUEUED row at once (HTTP 200) instead of the old 409, and the queue drains FIFO as each
+   * deploy finishes. A webhook submit supersedes older still-QUEUED webhook deploys for the same app (a newer
+   * push wins; manual/preview rows are kept). Returns the row to report: the finished row if it ran inline,
+   * else the QUEUED row.
+   */
+  private async submitDeploy(app: Application, actor: string, noCache = false) {
+    const QUEUE_CAP = 10; // max QUEUED deploys per app (Coolify caps per server at 25)
+    const trigger = this.triggerOf(actor);
+    if ((await this.prisma.deployment.count({ where: { appId: app.id, status: "QUEUED" } })) >= QUEUE_CAP) {
+      throw new ConflictException("deploy queue is full — wait for queued deploys to run");
+    }
     const dep = await this.prisma.deployment.create({
-      data: { appId: app.id, status: "RUNNING", trigger: this.triggerOf(actor) },
+      data: { appId: app.id, status: "QUEUED", trigger, requestedBy: actor, noCache },
     });
+    if (trigger === "webhook") {
+      await this.prisma.deployment.updateMany({
+        where: { appId: app.id, status: "QUEUED", trigger: "webhook", id: { not: dep.id } },
+        data: { status: "CANCELLED", exitCode: -1, logs: "Superseded by a newer push" },
+      });
+    }
+    const claimed = await this.claimNext(app.id);
+    // We own the claim only if OUR row was promoted to RUNNING — run it inline + await so the idle-path
+    // contract (caller gets the finished deployment) holds. The app we were handed is freshly fetched, so
+    // pass it straight through. Otherwise our row stays QUEUED and drains later (with a reloaded app).
+    if (claimed?.id === dep.id) return this.executeDeploy(claimed, app, actor, noCache);
+    return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  /**
+   * Atomically promote the oldest QUEUED deploy for an app to RUNNING, unless one is already RUNNING. A row
+   * lock on the Application (SELECT ... FOR UPDATE) serializes concurrent submits/drains so only one can claim.
+   * The CAS (updateMany WHERE status=QUEUED) also loses safely to a racing cancel — it just tries the next row.
+   * Returns the newly-RUNNING row, or null when a deploy is already running or the queue is empty.
+   */
+  private async claimNext(appId: string): Promise<Deployment | null> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Application" WHERE id = ${appId} FOR UPDATE`;
+      if (await tx.deployment.count({ where: { appId, status: "RUNNING" } })) return null;
+      const tried: string[] = []; // rows whose CAS lost to a cancel — skip them so the loop always terminates
+      for (;;) {
+        const next = await tx.deployment.findFirst({
+          where: { appId, status: "QUEUED", id: { notIn: tried } },
+          orderBy: { createdAt: "asc" },
+        });
+        if (!next) return null;
+        const { count } = await tx.deployment.updateMany({
+          where: { id: next.id, status: "QUEUED" },
+          data: { status: "RUNNING", startedAt: new Date() },
+        });
+        if (count === 1) return tx.deployment.findUnique({ where: { id: next.id } });
+        tried.push(next.id); // count 0 → a cancel won the race for this row; try the next-oldest QUEUED row
+      }
+    });
+  }
+
+  /** Start the next queued deploy for an app, if one is queued and none is running. Reloads the app fresh so a
+   *  deploy that waited in the queue builds the current config. Fire-and-forget: executeDeploy records its own
+   *  terminal status and chains the next drain in its finally, so errors never surface here. */
+  private async drain(appId: string): Promise<void> {
+    const next = await this.claimNext(appId).catch(() => null);
+    if (!next) return;
+    const app = await this.prisma.application.findUnique({ where: { id: next.appId } });
+    if (!app) return; // app deleted while queued — its deployments cascade away, nothing to run
+    void this.executeDeploy(next, app, next.requestedBy ?? "system", next.noCache).catch(() => undefined);
+  }
+
+  /**
+   * Cancel a QUEUED deploy — a compare-and-set on status=QUEUED. A RUNNING deploy can't be cancelled yet
+   * (that needs an agent-side process kill — a separate step), so a RUNNING or already-terminal row 409s.
+   * Scoped by the already-authorized appId, so a depId belonging to another app can't be cancelled (no IDOR).
+   */
+  async cancelDeployment(userId: string, appId: string, depId: string): Promise<Deployment | null> {
+    await this.requireWrite(userId, appId, "apps:deploy");
+    const { count } = await this.prisma.deployment.updateMany({
+      where: { id: depId, appId, status: "QUEUED" },
+      data: { status: "CANCELLED", exitCode: -1, logs: "Cancelled by user" },
+    });
+    if (count === 1) {
+      await this.audit.log({ actor: userId, action: "app.deploy.cancel", target: appId });
+      return this.prisma.deployment.findUnique({ where: { id: depId } });
+    }
+    const row = await this.prisma.deployment.findFirst({ where: { id: depId, appId } });
+    if (!row) throw new NotFoundException("deployment not found");
+    if (row.status === "RUNNING") throw new ConflictException("a running deployment can't be cancelled yet");
+    throw new ConflictException("deployment already finished");
+  }
+
+  /** Execute one already-CLAIMED (RUNNING) deploy: build/run on the agent and record the result. The caller
+   *  supplies a FRESH app (submitDeploy passes the just-fetched one for the inline path; drain reloads it, so
+   *  config edited while the deploy sat QUEUED is picked up). On EVERY exit path it drains the app's queue
+   *  (starts the next QUEUED deploy), so deploys for one app run one-at-a-time, FIFO. */
+  private async executeDeploy(dep: Deployment, app: Application, actor: string, noCache: boolean) {
     this.deployLogs.begin(app.id);
     try {
       const isCompose = app.source === "COMPOSE";
@@ -1340,6 +1449,10 @@ export class ApplicationsService {
       });
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
       this.notifyDeploy(app, dep, "deploy_failed").catch(() => {});
+    } finally {
+      // Whatever happened (success, failure, or the early swarm return), start the next queued deploy for
+      // this app. The row is already terminal here, so claimNext's RUNNING-count check won't see this one.
+      void this.drain(app.id);
     }
     await this.audit.log({ actor, action: "app.deploy", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
@@ -1385,9 +1498,7 @@ export class ApplicationsService {
         throw new NotFoundException("the image for this deployment is no longer available locally and cannot be pulled from a registry");
       }
     }
-    const dep = await this.prisma.deployment.create({
-      data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK", trigger: "rollback" },
-    });
+    const dep = await this.createRollbackDeployment(app.id);
     this.deployLogs.begin(app.id);
     try {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
@@ -1467,6 +1578,9 @@ export class ApplicationsService {
         data: { status: AppStatus.FAILED },
       });
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+    } finally {
+      // Rollback occupied the single RUNNING slot; resume any deploys that queued behind it.
+      void this.drain(app.id);
     }
     await this.audit.log({
       actor: userId,
@@ -1506,7 +1620,7 @@ export class ApplicationsService {
       ref = target.imageDigest!;
       auth = this.appRegistryAuth(app) ?? null;
     }
-    const dep = await this.prisma.deployment.create({ data: { appId: app.id, status: "RUNNING", kind: "ROLLBACK", trigger: "rollback" } });
+    const dep = await this.createRollbackDeployment(app.id);
     this.deployLogs.begin(app.id);
     try {
       const spec = this.toSpec(app);
@@ -1537,6 +1651,8 @@ export class ApplicationsService {
       await this.prisma.deployment.update({ where: { id: dep.id }, data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed", ...this.finishStamp(dep) } });
       await this.prisma.application.update({ where: { id: app.id }, data: { status: AppStatus.FAILED } });
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+    } finally {
+      void this.drain(app.id); // resume deploys queued behind the rollback
     }
     await this.audit.log({ actor: userId, action: "app.rollback", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
@@ -3055,7 +3171,7 @@ export class ApplicationsService {
   /** Build the typed deploy-event ctx (project/env names, app URL, duration) and fire it. */
   private async notifyDeploy(
     app: Application,
-    dep: { id: string; createdAt: Date },
+    dep: { id: string; createdAt?: Date | string | null; startedAt?: Date | string | null },
     event: string,
   ): Promise<void> {
     const [pctx, serverIp] = await Promise.all([
@@ -3084,7 +3200,9 @@ export class ApplicationsService {
       url: url ?? "",
       projectName: pctx.projectName,
       environmentName: pctx.environmentName,
-      durationMs: Date.now() - dep.createdAt.getTime(),
+      // Measure from when the deploy started (startedAt), falling back to createdAt; never let a missing
+      // timestamp throw and drop the whole notification.
+      durationMs: this.finishStamp(dep).durationMs,
     });
   }
 

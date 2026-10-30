@@ -6,7 +6,7 @@ function tool(name: string) {
   return t;
 }
 
-const LIFECYCLE_TOOLS = ["deploy_application", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
+const LIFECYCLE_TOOLS = ["deploy_application", "cancel_deployment", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
 const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply"];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var", "import_connect"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback"];
@@ -24,7 +24,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(47);
+    expect(MCP_TOOLS).toHaveLength(48);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });

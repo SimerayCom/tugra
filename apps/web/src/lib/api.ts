@@ -949,6 +949,9 @@ export const api = {
   cloneApp(id: string, body: { name?: string }) {
     return apiFetch<{ app: Application; warnings: string[] }>(`/apps/${id}/clone`, { method: "POST", body: JSON.stringify(body) });
   },
+  cancelDeployment(id: string, deploymentId: string) {
+    return apiFetch<Deployment>(`/apps/${id}/deployments/${deploymentId}/cancel`, { method: "POST" });
+  },
   generateGitSshKey(id: string) {
     return apiFetch<{ publicKey: string; fingerprint: string }>(`/apps/${id}/git-ssh-key`, { method: "POST" });
   },

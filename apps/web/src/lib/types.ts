@@ -1126,7 +1126,7 @@ export interface VolumeBackup {
   completedAt: string | null;
 }
 
-export type DeploymentStatus = "RUNNING" | "SUCCESS" | "FAILED";
+export type DeploymentStatus = "QUEUED" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
 
 export interface ConfigChange {
   field: string;

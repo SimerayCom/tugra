@@ -11,7 +11,8 @@ export function appColor(s: AppStatus): string {
 export function deploymentColor(s: DeploymentStatus): string {
   if (s === "SUCCESS") return "var(--c-g)";
   if (s === "FAILED") return "var(--c-r)";
-  return "var(--c-am)";
+  if (s === "CANCELLED") return "var(--c-tx3)"; // muted — the deploy never ran / was dropped
+  return "var(--c-am)"; // RUNNING / QUEUED — in progress / waiting to start
 }
 
 export function appUrl(app: { domain: string | null; https: boolean }): string | null {

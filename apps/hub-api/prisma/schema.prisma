@@ -772,9 +772,11 @@ enum BuildType {
 }
 
 enum DeploymentStatus {
+  QUEUED // waiting for the app's in-flight deploy to finish (one RUNNING deploy per app at a time)
   RUNNING
   SUCCESS
   FAILED
+  CANCELLED // a QUEUED deploy dropped before it started (by the user, a newer push, or a hub restart)
 }
 
 enum DbEngine {
@@ -1031,13 +1033,20 @@ model Deployment {
   imageDigest String?     // resolved upstream digest of the pulled IMAGE (nginx@sha256:…) — provenance + byte-exact rollback
   // Redacted config snapshot this deploy ran with (secrets fingerprinted, not stored).
   configSnapshot Json?
-  durationMs    Int?           // wall-clock ms from row creation to terminal status; null for legacy/RUNNING rows
+  durationMs    Int?           // wall-clock ms from start (startedAt) to terminal status; null for legacy/queued/running rows
   trigger       String?        // what initiated this run: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
+  noCache       Boolean  @default(false) // queued deploys carry their --no-cache choice until they start
+  requestedBy   String?        // actor that enqueued this deploy (userId | "webhook" | "webhook:pr"); drives trigger + audit
+  startedAt     DateTime?      // when the row moved QUEUED -> RUNNING; null while queued (durationMs measures from here)
   commitSha     String?        // deployed git commit (GIT source only); null otherwise
   commitMessage String?        // first line of the deployed commit's message (GIT source only), capped + sanitized
   createdAt   DateTime         @default(now())
 
+  // NOTE: a partial unique index `deployment_one_running_per_app ON Deployment(appId) WHERE status='RUNNING'`
+  // enforces one RUNNING deploy per app at the DB level (Prisma can't model partial indexes — see the
+  // 20261030170000_deploy_queue migration). It is the backstop for the queue's SELECT ... FOR UPDATE claim.
   @@index([appId])
+  @@index([appId, status])
 }
 
 model Database {

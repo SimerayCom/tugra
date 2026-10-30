@@ -301,10 +301,17 @@ export const MCP_TOOLS: McpTool[] = [
   // read-only token can neither see nor call these. All five are reversible / idempotent (single-resource).
   {
     name: "deploy_application",
-    description: "Redeploy an application using its currently-stored config (image/git ref). Blocks until the deploy finishes; returns the deployment metadata (build logs + config snapshot are stripped). Does not take a new image/version.",
+    description: "Redeploy an application using its currently-stored config (image/git ref). If the app is idle this blocks until the deploy finishes; if a deploy is already running the new one is QUEUED and this returns immediately with status 'QUEUED'. Returns the deployment metadata (build logs + config snapshot are stripped). Does not take a new image/version.",
     scope: "deploy",
     inputSchema: idSchema,
     execute: async (d, userId, a) => ({ ok: true, action: "deploy", deployment: stripDeployment(await d.apps.deploy(userId, reqStr(a, "id"))) }),
+  },
+  {
+    name: "cancel_deployment",
+    description: "Cancel a QUEUED deployment of an application (one that has not started yet). A deployment that is already RUNNING cannot be cancelled. Returns the cancelled deployment metadata.",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, deploymentId: { type: "string" } }, required: ["id", "deploymentId"] },
+    execute: async (d, userId, a) => ({ ok: true, action: "cancel_deployment", deployment: stripDeployment(await d.apps.cancelDeployment(userId, reqStr(a, "id"), reqStr(a, "deploymentId"))) }),
   },
   {
     name: "restart_application",

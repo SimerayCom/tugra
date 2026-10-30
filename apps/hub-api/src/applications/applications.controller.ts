@@ -297,6 +297,14 @@ export class ApplicationsController {
     return this.apps.deploy(user.userId, id, body);
   }
 
+  // Cancel a QUEUED deploy (one that hasn't started). A RUNNING deploy can't be cancelled yet (409).
+  @Post(":id/deployments/:depId/cancel")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  cancelDeployment(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("depId") depId: string) {
+    return this.apps.cancelDeployment(user.userId, id, depId);
+  }
+
   @Get(":id/env")
   @RequireScopes("read:secrets")
   getEnv(@CurrentUser() user: AuthUser, @Param("id") id: string) {
