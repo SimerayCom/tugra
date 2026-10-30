@@ -420,7 +420,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
       {/* In Home mode, ⌘K only offers Home-allowed destinations (a fleet route would just bounce to /home). */}
-      {palette && <CommandPalette dests={isHome ? DESTS.filter((d) => isHomeAllowed(d.href)) : DESTS} onClose={() => setPalette(false)} />}
+      {palette && <CommandPalette dests={isHome ? DESTS.filter((d) => isHomeAllowed(d.href)) : DESTS} fleet={!isHome} onClose={() => setPalette(false)} />}
     </div>
   );
 }

@@ -32,5 +32,16 @@
   "settings": "Settings",
   "logout": "Log out",
   "search": "Search…",
-  "addServer": "Add Server"
+  "addServer": "Add Server",
+  "paletteActions": "Actions",
+  "paletteNavigate": "Go to",
+  "paletteApps": "Apps",
+  "paletteDatabases": "Databases",
+  "paletteServers": "Servers",
+  "paletteDomains": "Domains",
+  "paletteNoResults": "No results for “{q}”",
+  "paletteLoading": "Loading…",
+  "paletteCount": "{n} results",
+  "paletteListLabel": "Search results",
+  "paletteHint": "↑↓ navigate · ↵ open · esc close"
 }
