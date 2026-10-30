@@ -169,16 +169,21 @@ function gpgDecrypt(dest: DestinationSpec): string {
   return `gpg --batch --yes --passphrase ${shq(dest.encryption.key)} --decrypt`;
 }
 
-export function buildBackupScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
+/**
+ * Shared dump→gzip→(gpg)→sink pipeline, decoupled from the managed-DB shape so the HUB's own Postgres backup
+ * can reuse it. `dumpCmd` writes the raw dump to stdout; `nsId` is the storage namespace (the S3 object prefix
+ * / local subdir, e.g. a database id or "hub"); `prelude` lines (a readiness/existence check) run first. The
+ * encrypted/plain object is streamed straight to the destination — only a size line comes back.
+ */
+export function buildDumpUploadScript(dumpCmd: string, nsId: string, filename: string, dest: DestinationSpec, prelude?: string | null): string {
   const lines = ["set -e", "set -o pipefail"];
-  const prelude = readinessPrelude(db.engine, dbContainerName(db), db.credentials);
   if (prelude) lines.push(prelude);
-  const pipe = [dumpToStdout(db), "gzip"];
+  const pipe = [dumpCmd, "gzip"];
   if (dest.encryption.enabled) pipe.push(gpgEncrypt(dest));
 
   if (dest.type === "S3" && dest.s3) {
     lines.push(MC_INSTALL);
-    const target = mcTarget(dest.s3, db.id, filename);
+    const target = mcTarget(dest.s3, nsId, filename);
     // bash -o pipefail (NOT plain `sh -c`): the inner shell must fail the whole command when the DUMP
     // stage fails — otherwise `mc pipe` still exits 0 after uploading a truncated/empty object and the
     // backup is recorded SUCCESS (silent data loss). The outer script's pipefail does not reach this subshell.
@@ -186,13 +191,18 @@ export function buildBackupScript(db: DbSpec, filename: string, dest: Destinatio
     // size of the uploaded object
     lines.push(`${mcHostEnv(dest.s3)} mc stat --json ${target}`);
   } else {
-    const dir = backupDir(db.id);
-    const file = backupPath(db.id, filename);
+    const dir = backupDir(nsId);
+    const file = backupPath(nsId, filename);
     lines.push(`mkdir -p ${dir}`);
     lines.push(`${pipe.join(" | ")} > ${file}`);
     lines.push(`stat -c %s ${file}`);
   }
   return lines.join("\n");
+}
+
+export function buildBackupScript(db: DbSpec, filename: string, dest: DestinationSpec): string {
+  const prelude = readinessPrelude(db.engine, dbContainerName(db), db.credentials);
+  return buildDumpUploadScript(dumpToStdout(db), db.id, filename, dest, prelude);
 }
 
 export function buildRestoreScript(

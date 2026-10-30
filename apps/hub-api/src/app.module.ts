@@ -27,6 +27,7 @@ import { AgentUpdateModule } from "./agent-update/agent-update.module";
 import { ApplicationsModule } from "./applications/applications.module";
 import { DatabasesModule } from "./databases/databases.module";
 import { BackupsModule } from "./backups/backups.module";
+import { HubBackupModule } from "./hub-backup/hub-backup.module";
 import { VolumeBackupsModule } from "./volume-backups/volume-backups.module";
 import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
@@ -92,6 +93,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     ApplicationsModule,
     DatabasesModule,
     BackupsModule,
+    HubBackupModule,
     VolumeBackupsModule,
     DestinationsModule,
     ServerOpsModule,

@@ -198,7 +198,7 @@ export class BackupRunnerService {
  * The backup script's last line is the size: `stat -c %s` (a number) for LOCAL,
  * or `mc stat --json` (a JSON object with a numeric `size`) for S3.
  */
-function parseSize(output: string): bigint | null {
+export function parseSize(output: string): bigint | null {
   const text = output.trim();
   const m = text.match(/"size"\s*:\s*(\d+)/);
   if (m) return BigInt(m[1]);

@@ -14,6 +14,7 @@ import { SsoConfigCard } from "./sso-config-card";
 import { TelemetryCard } from "./telemetry-card";
 import { BrandingCard } from "./branding-card";
 import { PanelTlsCard } from "./panel-tls-card";
+import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
@@ -94,6 +95,7 @@ export default function SettingsPage() {
         <SettingsGrid hint={t("settings.sectionInstanceHint")}>
           <LicenseCard />
           <PanelTlsCard />
+          <HubBackupCard />
           <BrandingCard />
           <InstanceApiAccessCard />
           <UpdatesCard />

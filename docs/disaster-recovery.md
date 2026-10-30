@@ -76,8 +76,14 @@ migrates forward automatically.
 
 ## Keep a recovery copy (scheduled)
 
-For recurring offsite backups, a logical dump is the right tool (version/arch independent, smaller). Run it
-from the install directory without stopping Tugra:
+**In-app (recommended):** Settings → Instance → **Control-plane backup** schedules a dump of Tugra's own
+database to a destination (this server's disk, or an S3 bucket) and prunes to a retention count. It runs on
+the local agent and is **always gpg-encrypted** with a key derived from `SECRETS_ENCRYPTION_KEY` — so the
+dump is safe to ship to S3, but it **can only be decrypted with your `.env`** (keep it offsite). Restoring an
+in-app backup: decrypt first (see below). The `.env` is deliberately never bundled.
+
+Or do it yourself with a plain `pg_dump` (version/arch independent, smaller), from the install directory
+without stopping Tugra:
 
 ```sh
 docker compose --env-file .env -f deploy/docker-compose.yml exec -T postgres \
@@ -106,6 +112,16 @@ Automate with cron (daily, keep 14 days) and **copy each dump + your `.env` offs
 3. Start the rest (`… up -d`). `prisma migrate deploy` runs on boot, so an older-schema dump is migrated
    forward automatically.
 4. Cut over DNS / agents as in the move checklist above.
+
+**Restoring an in-app (gpg-encrypted) backup.** The in-app backups are `tugra-hub-<ts>.dump.gz.gpg`. Decrypt
+and decompress them into `pg_restore`, deriving the passphrase from the same `.env`:
+
+```sh
+PASS=$(printf %s tugra-hub-backup-v1 | openssl dgst -sha256 -hmac "$SECRETS_ENCRYPTION_KEY" | awk '{print $NF}')
+gpg --batch --passphrase "$PASS" -d tugra-hub-<ts>.dump.gz.gpg | gunzip \
+  | docker compose --env-file .env -f deploy/docker-compose.yml exec -T postgres \
+      pg_restore -U tugra -d tugra --clean --if-exists
+```
 
 ## Notes
 
