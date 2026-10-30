@@ -6190,6 +6190,7 @@ export interface operations {
                         cleanupEnabled: boolean;
                         cleanupIntervalHours: number | null;
                         cleanupCron: string | null;
+                        cleanupThresholdPct: number | null;
                         cleanupVolumes: boolean;
                         /** Format: date-time */
                         lastCleanupAt: string | null;
@@ -6360,6 +6361,7 @@ export interface operations {
                         cleanupEnabled: boolean;
                         cleanupIntervalHours: number | null;
                         cleanupCron: string | null;
+                        cleanupThresholdPct: number | null;
                         cleanupVolumes: boolean;
                         /** Format: date-time */
                         lastCleanupAt: string | null;
@@ -21071,6 +21073,7 @@ export interface operations {
                     enabled: boolean;
                     intervalHours?: number;
                     cron?: string | null;
+                    thresholdPct?: number | null;
                     volumes?: boolean;
                 };
             };
@@ -21240,6 +21243,7 @@ export interface operations {
                     enabled: boolean;
                     intervalHours?: number;
                     cron?: string | null;
+                    thresholdPct?: number | null;
                     volumes?: boolean;
                     serverIds: string[];
                 };

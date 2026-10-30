@@ -654,11 +654,13 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
   const [enabled, setEnabled] = useState(false);
   const [interval, setIntervalH] = useState("24");
   const [cron, setCron] = useState("");
+  const [threshold, setThreshold] = useState("");
   const [volumes, setVolumes] = useState(false);
   useEffect(() => {
     setEnabled(server.cleanupEnabled);
     setIntervalH(String(server.cleanupIntervalHours ?? 24));
     setCron(server.cleanupCron ?? "");
+    setThreshold(server.cleanupThresholdPct != null ? String(server.cleanupThresholdPct) : "");
     setVolumes(server.cleanupVolumes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
@@ -666,8 +668,9 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["server", id] });
   const clean = useMutation({ mutationFn: () => api.cleanupServer(id), onSuccess: invalidate });
   const save = useMutation({
-    // A cron expression (when given) overrides the plain interval server-side; blank clears it.
-    mutationFn: () => api.setCleanupConfig(id, { enabled, intervalHours: Number(interval) || 24, cron: cron.trim() || null, volumes }),
+    // A cron expression (when given) overrides the plain interval server-side; blank clears it. thresholdPct
+    // (when set) gates the scheduled run on disk usage; blank clears it.
+    mutationFn: () => api.setCleanupConfig(id, { enabled, intervalHours: Number(interval) || 24, cron: cron.trim() || null, thresholdPct: threshold.trim() ? Math.min(100, Math.max(1, Number(threshold) || 0)) : null, volumes }),
     onSuccess: invalidate,
   });
 
@@ -696,6 +699,10 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
           {t("servers.cleanupCron")}
           <input style={{ ...cleanupField, width: 130 }} placeholder="0 3 * * *" value={cron} onChange={(e) => setCron(e.target.value)} aria-label={t("servers.cleanupCron")} />
         </label>
+        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+          {t("servers.cleanupThreshold")}
+          <input style={cleanupField} type="number" min={1} max={100} placeholder="80" value={threshold} onChange={(e) => setThreshold(e.target.value)} aria-label={t("servers.cleanupThreshold")} />
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
           <input type="checkbox" checked={volumes} onChange={(e) => setVolumes(e.target.checked)} />
           {t("servers.cleanupVolumes")}
@@ -703,6 +710,7 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
         <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       </div>
       {cron.trim() && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("servers.cleanupCronHint")}</p>}
+      {threshold.trim() && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "6px 0 0" }}>{t("servers.cleanupThresholdHint")}</p>}
       {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{(save.error as Error).message}</div>}
     </Card>
   );

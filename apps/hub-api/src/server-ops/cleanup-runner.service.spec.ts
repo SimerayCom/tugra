@@ -55,4 +55,40 @@ describe("CleanupRunnerService.runCleanup", () => {
       expect.objectContaining({ errorTail: expect.stringContaining("agent offline") }),
     );
   });
+
+  // --- disk-usage threshold gate (scheduled runs only) ---
+  function makeThreshold(thresholdPct: number | null, metric: { diskUsed: bigint; diskTotal: bigint } | null) {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "Total reclaimed space: 1GB" });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ ...server, cleanupThresholdPct: thresholdPct }), update: jest.fn().mockResolvedValue({}) },
+      metric: { findFirst: jest.fn().mockResolvedValue(metric) },
+    } as unknown as PrismaService;
+    const svc = new CleanupRunnerService(prisma, { log: jest.fn() } as unknown as AuditService, { sendCommand: send } as unknown as AgentWsServer, { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as NotificationsService);
+    return { svc, send };
+  }
+
+  it("scheduled: SKIPS the prune when disk usage is below the threshold", async () => {
+    const { svc, send } = makeThreshold(80, { diskUsed: 50n, diskTotal: 100n }); // 50%
+    const out = await svc.runCleanup("s1", "scheduler", { respectThreshold: true });
+    expect(send).not.toHaveBeenCalled();
+    expect(out).toMatch(/skipped.*below threshold 80%/i);
+  });
+
+  it("scheduled: RUNS the prune when disk usage is at/above the threshold", async () => {
+    const { svc, send } = makeThreshold(80, { diskUsed: 90n, diskTotal: 100n }); // 90%
+    await svc.runCleanup("s1", "scheduler", { respectThreshold: true });
+    expect(send).toHaveBeenCalled();
+  });
+
+  it("scheduled: RUNS when disk usage is unknown (no metric yet) — never skips on uncertainty", async () => {
+    const { svc, send } = makeThreshold(80, null);
+    await svc.runCleanup("s1", "scheduler", { respectThreshold: true });
+    expect(send).toHaveBeenCalled();
+  });
+
+  it("manual (respectThreshold off): ignores the threshold and always prunes", async () => {
+    const { svc, send } = makeThreshold(80, { diskUsed: 10n, diskTotal: 100n }); // 10%
+    await svc.runCleanup("s1", "u1");
+    expect(send).toHaveBeenCalled();
+  });
 });

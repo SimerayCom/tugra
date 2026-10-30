@@ -17,10 +17,30 @@ export class CleanupRunnerService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Run `docker system prune` on a server; records lastCleanupAt. Returns the agent output. */
-  async runCleanup(serverId: string, actor = "scheduler"): Promise<string> {
+  /** Current disk usage % from the server's latest metric sample, or null when none has been reported. */
+  private async currentDiskPct(serverId: string): Promise<number | null> {
+    const m = await this.prisma.metric
+      .findFirst({ where: { serverId }, orderBy: { ts: "desc" }, select: { diskUsed: true, diskTotal: true } })
+      .catch(() => null);
+    if (!m || m.diskTotal <= 0n) return null;
+    return (Number(m.diskUsed) / Number(m.diskTotal)) * 100;
+  }
+
+  /**
+   * Run `docker system prune` on a server; records lastCleanupAt. Returns the agent output.
+   * `respectThreshold` (scheduled runs only): when the server has a cleanupThresholdPct, skip the prune
+   * unless the latest reported disk usage is at/above it. A manual "Clean now" passes false → always runs.
+   * Unknown disk usage (no metric yet) never skips — better to prune than let a filling disk slip through.
+   */
+  async runCleanup(serverId: string, actor = "scheduler", opts: { respectThreshold?: boolean } = {}): Promise<string> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new Error("server not found");
+    if (opts.respectThreshold && server.cleanupThresholdPct != null) {
+      const pct = await this.currentDiskPct(serverId);
+      if (pct != null && pct < server.cleanupThresholdPct) {
+        return `skipped: disk ${pct.toFixed(0)}% below threshold ${server.cleanupThresholdPct}%`;
+      }
+    }
     let output = "";
     let ok = false;
     try {

@@ -79,6 +79,7 @@ export const ServerViewSchema = z.object({
   cleanupEnabled: z.boolean(),
   cleanupIntervalHours: z.number().nullable(),
   cleanupCron: z.string().nullable(),
+  cleanupThresholdPct: z.number().nullable(),
   cleanupVolumes: z.boolean(),
   lastCleanupAt: z.date().nullable(),
   lastSeenAt: z.date().nullable(),
@@ -648,6 +649,7 @@ export class ServersService {
       cleanupEnabled?: boolean;
       cleanupIntervalHours?: number | null;
       cleanupCron?: string | null;
+      cleanupThresholdPct?: number | null;
       cleanupVolumes?: boolean;
       lastCleanupAt?: Date | null;
       lastSeenAt: Date | null;
@@ -692,6 +694,7 @@ export class ServersService {
       cleanupEnabled: s.cleanupEnabled ?? false,
       cleanupIntervalHours: s.cleanupIntervalHours ?? null,
       cleanupCron: s.cleanupCron ?? null,
+      cleanupThresholdPct: s.cleanupThresholdPct ?? null,
       cleanupVolumes: s.cleanupVolumes ?? false,
       lastCleanupAt: s.lastCleanupAt ?? null,
       lastSeenAt: s.lastSeenAt,
