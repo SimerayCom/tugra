@@ -104,6 +104,14 @@ function make(
       findMany: jest.fn().mockResolvedValue([]),
       ...(prisma as { server?: object }).server,
     },
+    // Compose deploys/rollbacks load per-service domains; default to none so existing tests need no stub.
+    appServiceDomain: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      deleteMany: jest.fn().mockResolvedValue({}),
+      createMany: jest.fn().mockResolvedValue({}),
+      ...(prisma as { appServiceDomain?: object }).appServiceDomain,
+    },
   } as unknown as Partial<PrismaService>;
   // Deploy-queue defaults: existing deploy tests stub only the old runDeploy shape (create/update/findUnique/
   // findFirst). submitDeploy→claimNext now also needs count/updateMany/$queryRaw and must be able to CLAIM the
@@ -1041,6 +1049,44 @@ describe("ApplicationsService", () => {
     const svc = make(prisma, access, {} as AgentWsServer);
     await expect(svc.setHostMounts("u1", "app1", [{ hostPath: "/etc", containerPath: "/x" }])).rejects.toThrow(/protected system path/);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  describe("setServiceDomains", () => {
+    const composeApp = { ...app, source: "COMPOSE", domain: null, clusterId: null, tunnelExposed: false, certType: "le-http", certPem: null, certDomains: [], extraDomains: [], composeFile: "services:\n  api:\n    image: nginx\n  worker:\n    image: busybox" };
+    function svcFor(appOver: Record<string, unknown> = {}) {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...composeApp, ...appOver }), findFirst: jest.fn().mockResolvedValue(null) },
+        appServiceDomain: { findFirst: jest.fn().mockResolvedValue(null), deleteMany: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({}) },
+        $transaction: jest.fn().mockResolvedValue([]),
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      return { svc: make(prisma, access, {} as AgentWsServer), prisma };
+    }
+    const row = (over = {}) => ({ service: "api", hostname: "api.example.com", port: 4000, ...over });
+
+    it("persists rows for a compose app", async () => {
+      const { svc, prisma } = svcFor();
+      await svc.setServiceDomains("u1", "app1", [row()]);
+      expect((prisma as unknown as { $transaction: jest.Mock }).$transaction).toHaveBeenCalled();
+    });
+    it("rejects a non-compose app", async () => {
+      await expect(svcFor({ source: "GIT" }).svc.setServiceDomains("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("rejects a service not in the stored compose file", async () => {
+      await expect(svcFor().svc.setServiceDomains("u1", "app1", [row({ service: "ghost" })])).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("rejects a host already used by another app (service-domain clash)", async () => {
+      const { svc, prisma } = svcFor();
+      (prisma.appServiceDomain.findFirst as jest.Mock).mockResolvedValue({ id: "other" });
+      await expect(svc.setServiceDomains("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("rejects a host equal to the primary domain", async () => {
+      await expect(svcFor({ domain: "api.example.com" }).svc.setServiceDomains("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("rejects a clustered or tunnel-exposed app", async () => {
+      await expect(svcFor({ clusterId: "c1" }).svc.setServiceDomains("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor({ tunnelExposed: true }).svc.setServiceDomains("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   describe("setExtraDomains", () => {

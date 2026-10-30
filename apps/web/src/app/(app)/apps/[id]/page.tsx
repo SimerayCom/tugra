@@ -419,6 +419,7 @@ export default function AppDetailPage() {
     ),
     domain: () => <DomainCard id={id} domain={appData.domain} https={appData.https} />,
     extraDomains: () => <ExtraDomainsCard id={id} extraDomains={appData.extraDomains} />,
+    serviceDomains: () => <ServiceDomainsCard id={id} />,
     domainOptions: () =>
       appData.domain ? (
         <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} />
@@ -1838,6 +1839,49 @@ function DomainCard({ id, domain, https }: { id: string; domain: string | null; 
 }
 
 // Extra alias hostnames (served alongside the primary domain). A textarea, one host per line (also accepts
+// Per-service domains (COMPOSE): route a named service on a port to its own hostname. Replace-set on save.
+function ServiceDomainsCard({ id }: { id: string }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { data } = useQuery({ queryKey: ["serviceDomains", id], queryFn: () => api.getServiceDomains(id) });
+  const [rows, setRows] = useState<{ service: string; hostname: string; port: string }[]>([]);
+  useEffect(() => {
+    if (data) setRows(data.map((d) => ({ service: d.service, hostname: d.hostname, port: String(d.port) })));
+  }, [data]);
+  const setRow = (i: number, patch: Partial<{ service: string; hostname: string; port: string }>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const save = useMutation({
+    mutationFn: () =>
+      api.setServiceDomains(id, rows.filter((r) => r.service.trim() && r.hostname.trim()).map((r) => ({ service: r.service.trim(), hostname: r.hostname.trim().toLowerCase(), port: Number(r.port) || 80 }))),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["serviceDomains", id] }); qc.invalidateQueries({ queryKey: ["app", id] }); },
+    meta: { successMessage: t("apps.saved") },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.serviceDomainsSaveFailed"), "error"),
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.serviceDomains")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.serviceDomainsDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <input style={{ ...envField, width: 150 }} placeholder={t("apps.serviceDomainsService")} value={r.service} onChange={(e) => setRow(i, { service: e.target.value })} aria-label={t("apps.serviceDomainsService")} />
+            <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.serviceDomainsHost")} value={r.hostname} onChange={(e) => setRow(i, { hostname: e.target.value })} aria-label={t("apps.serviceDomainsHost")} />
+            <input style={{ ...envField, width: 90 }} type="number" placeholder={t("apps.serviceDomainsPort")} value={r.port} onChange={(e) => setRow(i, { port: e.target.value })} aria-label={t("apps.serviceDomainsPort")} />
+            <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { service: "", hostname: "", port: "80" }])}>{t("apps.serviceDomainsAdd")}</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.serviceDomainsRedeploy")}</div>}
+    </Card>
+  );
+}
+
 // comma/space separated); replace-set on save, applied on the next deploy.
 function ExtraDomainsCard({ id, extraDomains }: { id: string; extraDomains: string[] }) {
   const t = useT();

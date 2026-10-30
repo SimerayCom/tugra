@@ -964,6 +964,7 @@ model Application {
   deployments   Deployment[]
   scheduledTasks ScheduledTask[]
   domains        Domain[]
+  serviceDomains AppServiceDomain[]
   databaseLinks AppDatabaseLink[]
   icon          AppIcon?
   createdAt     DateTime     @default(now())
@@ -1012,6 +1013,20 @@ model AppDatabaseLink {
  * clean the records up when the domain changes or the app is deleted. `recordIds` is a JSON array of
  * { type, name, recordId }. `mode` is "auto" (Tugra created the records) or "manual" (operator copied them).
  */
+// Per-service domain for a COMPOSE app: routes a named compose service (on a container port) to its own
+// hostname via a dedicated Traefik router in the deploy override. Distinct from Domain (DNS automation).
+model AppServiceDomain {
+  id            String      @id @default(cuid())
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  applicationId String
+  service       String // the compose service name
+  hostname      String      @unique // one app may claim a host; cross-app uniqueness enforced here
+  port          Int // the service's container port to route to
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId])
+}
+
 model Domain {
   id              String      @id @default(cuid())
   application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)

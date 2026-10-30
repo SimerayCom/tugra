@@ -38,6 +38,7 @@ export type ConfigCardId =
   | "expose"
   | "domain"
   | "extraDomains"
+  | "serviceDomains"
   | "domainOptions"
   | "customCert"
   | "volumes"
@@ -95,6 +96,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "domain", group: "domains", visible: (a) => a.canWrite && !a.isPreview && a.domainKind === "custom" },
   // Extra alias hostnames: needs a primary domain + write access, classic/compose only (no swarm), not a preview.
   { id: "extraDomains", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain && !a.clusterId },
+  // Per-service domains: COMPOSE apps only (route individual services to their own hostnames).
+  { id: "serviceDomains", group: "domains", visible: (a) => a.source === "COMPOSE" && a.canWrite && !a.isPreview && !a.clusterId },
   { id: "domainOptions", group: "domains", visible: (a) => !!a.domain },
   // Upload a custom TLS cert for this app's domain (served statically, no ACME). Needs a domain + write access.
   { id: "customCert", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain },
