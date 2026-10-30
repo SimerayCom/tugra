@@ -4,8 +4,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TriangleAlert, RefreshCw, LayoutDashboard, Activity, Boxes, PackageCheck, Waypoints, Wrench, Terminal, Plus, Play, RotateCw, Square, ScrollText, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
+import { filterAudit } from "../../../../lib/audit";
 import { ErrorState } from "../../../../components/error-state";
 import { installPhase } from "../../../../lib/server-install";
 import { useTabState } from "../../../../hooks/useTabState";
@@ -75,6 +76,7 @@ export default function ServerDetailPage() {
     { key: "containers", label: t("servers.tabContainers"), icon: Boxes },
     ...(server?.canWrite ? [{ key: "updates", label: t("servers.tabUpdates"), icon: PackageCheck }, { key: "drains", label: t("servers.tabDrains"), icon: Waypoints }] : []),
     { key: "maintenance", label: t("servers.tabMaintenance"), icon: Wrench },
+    { key: "activity", label: t("servers.tabActivity"), icon: ScrollText },
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
   // Push live samples into the metrics cache while the overview gauges or the live monitoring charts
@@ -223,6 +225,8 @@ export default function ServerDetailPage() {
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
         </>
       )}
+
+      {tab === "activity" && <ServerAuditCard id={id} />}
       </>
       )}
 
@@ -396,6 +400,76 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: msg ? "0 0 8px" : 0 }}>{t("patching.agentDesc")}</p>
       {msg && <div style={{ fontSize: 13, color: toneColor }}>{msg.text}</div>}
+    </Card>
+  );
+}
+
+// This server's audit trail (every actor; membership-gated read). Reuses the global /audit shape but
+// drops the Target column — every row targets this server — and keeps the client-side filter + load-more.
+function ServerAuditCard({ id }: { id: string }) {
+  const t = useT();
+  const [q, setQ] = useState("");
+  const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ["server-audit", id],
+    queryFn: ({ pageParam }) => api.listServerAudit(id, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+  const entries = data?.pages?.flatMap((p) => p.entries) ?? [];
+  const shown = filterAudit(entries, q);
+  const fmt = (iso: string) => new Date(iso).toLocaleString();
+
+  if (isError && entries.length === 0) return <Card style={{ padding: 16, marginTop: 20 }}><ErrorState onRetry={() => refetch()} /></Card>;
+  if (isLoading) return <Card style={{ padding: 16, marginTop: 20, display: "flex", justifyContent: "center" }}><Spinner /></Card>;
+
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ fontWeight: 600, flex: 1 }}>{t("audit.title")}</div>
+        {entries.length > 0 && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{shown.length}/{entries.length}</span>}
+      </div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.activityDesc")}</p>
+      {entries.length === 0 ? (
+        <EmptyState>{t("audit.empty")}</EmptyState>
+      ) : (
+        <>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("audit.search")}
+            aria-label={t("audit.search")}
+            style={{ ...fieldStyle, width: "100%", marginBottom: 12 }}
+          />
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ textAlign: "left", color: "var(--c-tx3)" }}>
+                  <th style={{ padding: "8px 10px", fontWeight: 600 }}>{t("audit.actor")}</th>
+                  <th style={{ padding: "8px 10px", fontWeight: 600 }}>{t("audit.action")}</th>
+                  <th style={{ padding: "8px 10px", fontWeight: 600 }}>{t("audit.time")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((e) => (
+                  <tr key={e.id} style={{ borderTop: "1px solid var(--c-bd)" }}>
+                    <td style={{ padding: "8px 10px", color: "var(--c-tx2)" }}>{e.actor}</td>
+                    <td style={{ padding: "8px 10px" }}><code style={{ fontSize: 12 }}>{e.action}</code></td>
+                    <td style={{ padding: "8px 10px", color: "var(--c-tx3)", whiteSpace: "nowrap" }}>{fmt(e.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {shown.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", padding: "10px 0" }}>{t("audit.noMatch")}</div>}
+          {hasNextPage && (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
+              <Btn variant="ghost" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                {isFetchingNextPage ? "…" : t("audit.loadMore")}
+              </Btn>
+            </div>
+          )}
+        </>
+      )}
     </Card>
   );
 }

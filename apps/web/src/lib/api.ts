@@ -692,6 +692,10 @@ export const api = {
   updateAgent(id: string) {
     return apiFetch<AgentUpdateResponse>(`/servers/${id}/agent-update`, { method: "POST" });
   },
+  listServerAudit(id: string, cursor?: string) {
+    const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+    return apiFetch<AuditPage>(`/servers/${id}/audit${qs}`);
+  },
   bulkUpdateAgent(serverIds: string[]) {
     return apiFetch<AgentUpdateResponse>(`/fleet/agent-update`, {
       method: "POST",
