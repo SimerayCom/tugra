@@ -427,6 +427,10 @@ export interface DnsManualRecords {
   records: Array<{ type: string; name: string; content: string }>;
 }
 
+// The drain targets the agent can ship to (http = Tugra batch JSON, loki = Grafana Loki push,
+// datadog = Datadog intake). Adding more needs agent-side shipping support, not just this list.
+export type LogDrainType = "http" | "loki" | "datadog";
+
 export interface LogDrain {
   id: string;
   name: string;

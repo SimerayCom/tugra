@@ -52,6 +52,7 @@ import type {
   DnsManualRecords,
   Monitor,
   LogDrain,
+  LogDrainType,
   MyInvitation,
   InvitationPreview,
   PatchInfo,
@@ -632,10 +633,10 @@ export const api = {
   listLogDrains(serverId: string) {
     return apiFetch<LogDrain[]>(`/servers/${serverId}/log-drains`);
   },
-  createLogDrain(serverId: string, input: { name: string; endpoint: string; token?: string; enabled?: boolean }) {
+  createLogDrain(serverId: string, input: { name: string; type?: LogDrainType; endpoint: string; token?: string; enabled?: boolean }) {
     return apiFetch<LogDrain>(`/servers/${serverId}/log-drains`, { method: "POST", body: JSON.stringify(input) });
   },
-  updateLogDrain(serverId: string, drainId: string, input: { name?: string; endpoint?: string; token?: string | null; enabled?: boolean }) {
+  updateLogDrain(serverId: string, drainId: string, input: { name?: string; type?: LogDrainType; endpoint?: string; token?: string | null; enabled?: boolean }) {
     return apiFetch<LogDrain>(`/servers/${serverId}/log-drains/${drainId}`, { method: "PUT", body: JSON.stringify(input) });
   },
   deleteLogDrain(serverId: string, drainId: string) {
