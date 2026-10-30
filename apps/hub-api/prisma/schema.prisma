@@ -1149,6 +1149,37 @@ model Backup {
   @@index([databaseId])
 }
 
+// Scheduled backup of the HUB's OWN Postgres (control-plane DB). Singleton (fixed PK), off by default.
+// destinationId is a soft ref to BackupDestination (null => LOCAL /etc/tugra/backups/hub); no FK, like
+// Database.backupDestinationId. Kept out of InstanceSettings (already a grab-bag) for an isolated migration.
+model HubBackupConfig {
+  id            String   @id @default("singleton")
+  enabled       Boolean  @default(false)
+  intervalHours Int      @default(24)
+  retention     Int      @default(7)
+  destinationId String?
+  updatedAt     DateTime @updatedAt
+}
+
+// Hub-backup run history. Mirrors Backup minus the database FK; reuses BackupStatus. errorTail is
+// scrubRestoreOutput()'d (never raw tenant data). Rows live inside the DB they describe — the runner's
+// stale-RUNNING reaper fixes rows that a restore brings back mid-flight.
+model HubBackup {
+  id            String       @id @default(cuid())
+  status        BackupStatus @default(PENDING)
+  filename      String
+  path          String
+  destinationId String?
+  objectKey     String?
+  sizeBytes     BigInt?
+  errorTail     String?
+  createdBy     String
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  @@index([createdAt])
+}
+
 // The last-good SIGNED remote template catalog (single row, fixed PK). Persisted only AFTER the
 // ed25519 signature + shape validation pass, so it is a durable trusted snapshot for boot/offline.
 // The bundled catalog is always the base; this overlays it. See src/catalog/.

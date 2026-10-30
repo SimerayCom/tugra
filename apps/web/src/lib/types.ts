@@ -1129,6 +1129,24 @@ export interface VolumeBackup {
 
 export type DeploymentStatus = "QUEUED" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
 
+export interface HubBackupItem {
+  id: string;
+  status: string;
+  filename: string;
+  sizeBytes: string | null;
+  errorTail: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+export interface HubBackupView {
+  enabled: boolean;
+  intervalHours: number;
+  retention: number;
+  destinationId: string | null;
+  last: { status: string; at: string | null; sizeBytes: string | null } | null;
+  items: HubBackupItem[];
+}
+
 export interface ConfigChange {
   field: string;
   kind: "added" | "removed" | "changed";

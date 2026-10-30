@@ -12,6 +12,6 @@ import { BackupSchedulerService } from "./backups.scheduler.service";
   imports: [AgentGatewayModule, CryptoModule, NotificationsModule],
   controllers: [BackupsController, FleetBackupsController],
   providers: [BackupsService, BackupRunnerService, BackupSchedulerService],
-  exports: [BackupsService],
+  exports: [BackupsService, BackupRunnerService],
 })
 export class BackupsModule {}

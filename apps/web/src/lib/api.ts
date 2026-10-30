@@ -27,6 +27,8 @@ import type {
   Backup,
   Restore,
   BackupDestination,
+  HubBackupView,
+  HubBackupItem,
   AuditPage,
   Channel,
   Delivery,
@@ -302,6 +304,23 @@ export const api = {
   activateLicense(token: string) {
     return apiFetch<LicenseStatus>("/instance/license", { method: "PATCH", body: JSON.stringify({ token }) });
   },
+  // Owner-only backup of the hub's OWN control-plane Postgres (session-auth).
+  getHubBackup() {
+    return apiFetch<HubBackupView>("/instance/backup");
+  },
+  setHubBackup(body: { enabled: boolean; intervalHours: number; retention: number; destinationId: string | null }) {
+    return apiFetch<HubBackupView>("/instance/backup", { method: "PUT", body: JSON.stringify(body) });
+  },
+  runHubBackup() {
+    return apiFetch<HubBackupItem>("/instance/backup/run", { method: "POST" });
+  },
+  testHubBackup() {
+    return apiFetch<{ ok: boolean; output: string }>("/instance/backup/test", { method: "POST" });
+  },
+  deleteHubBackupItem(id: string) {
+    return apiFetch<{ ok: true }>(`/instance/backup/items/${id}`, { method: "DELETE" });
+  },
+
   // Owner-only OIDC (SSO) config — Pro edition (the hub 403s below Pro). The client secret is write-only.
   getOidcConfig() {
     return apiFetch<OidcConfig>("/instance/oidc");
