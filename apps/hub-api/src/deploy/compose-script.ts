@@ -13,6 +13,7 @@ import {
   registryLoginPrelude,
   registryLogoutSteps,
   traefikLabels,
+  certPreludeFor,
   PROXY_NETWORK,
   type AppSpec,
 } from "./deploy-script";
@@ -213,6 +214,9 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
     "set -e",
     `mkdir -p ${dir}`,
     `printf %s ${shq(b64(app.composeFile ?? ""))} | base64 -d > ${file}`,
+    // Write an uploaded custom cert into the proxy's /dynamic (empty for non-custom apps → byte-identical),
+    // so a COMPOSE app whose router carries tls=true actually has a cert to serve.
+    ...certPreludeFor(app),
   ];
   // Materialize each config file (interpolating ${KEY} from the resolved env) next to the compose, so
   // the override's read-only bind resolves and `down`'s `rm -rf` of the compose dir cleans it up.

@@ -939,6 +939,12 @@ export const api = {
   setAppClusterConfig(id: string, cfg: { clusterId?: string | null; replicas?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/cluster-config`, { method: "PUT", body: JSON.stringify(cfg) });
   },
+  setAppCert(id: string, cert: string, key: string) {
+    return apiFetch<{ domains: string[]; notAfter: string }>(`/apps/${id}/cert`, { method: "PUT", body: JSON.stringify({ cert, key }) });
+  },
+  clearAppCert(id: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/cert`, { method: "DELETE" });
+  },
 
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {

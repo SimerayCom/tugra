@@ -7708,6 +7708,20 @@
                       "certType": {
                         "type": "string"
                       },
+                      "certDomains": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "certNotAfter": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "hasCustomCert": {
+                        "type": "boolean"
+                      },
                       "url": {
                         "type": "string",
                         "nullable": true
@@ -7832,6 +7846,9 @@
                       "exposeMode",
                       "tunnelExposed",
                       "certType",
+                      "certDomains",
+                      "certNotAfter",
+                      "hasCustomCert",
                       "url",
                       "webhookToken",
                       "webhookSecret",
@@ -8493,6 +8510,20 @@
                     "certType": {
                       "type": "string"
                     },
+                    "certDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "certNotAfter": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "hasCustomCert": {
+                      "type": "boolean"
+                    },
                     "url": {
                       "type": "string",
                       "nullable": true
@@ -8617,6 +8648,9 @@
                     "exposeMode",
                     "tunnelExposed",
                     "certType",
+                    "certDomains",
+                    "certNotAfter",
+                    "hasCustomCert",
                     "url",
                     "webhookToken",
                     "webhookSecret",
@@ -9361,6 +9395,20 @@
                     "certType": {
                       "type": "string"
                     },
+                    "certDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "certNotAfter": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "hasCustomCert": {
+                      "type": "boolean"
+                    },
                     "url": {
                       "type": "string",
                       "nullable": true
@@ -9485,6 +9533,9 @@
                     "exposeMode",
                     "tunnelExposed",
                     "certType",
+                    "certDomains",
+                    "certNotAfter",
+                    "hasCustomCert",
                     "url",
                     "webhookToken",
                     "webhookSecret",
@@ -10233,6 +10284,20 @@
                     "certType": {
                       "type": "string"
                     },
+                    "certDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "certNotAfter": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "hasCustomCert": {
+                      "type": "boolean"
+                    },
                     "url": {
                       "type": "string",
                       "nullable": true
@@ -10357,6 +10422,9 @@
                     "exposeMode",
                     "tunnelExposed",
                     "certType",
+                    "certDomains",
+                    "certNotAfter",
+                    "hasCustomCert",
                     "url",
                     "webhookToken",
                     "webhookSecret",
@@ -15125,6 +15193,197 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/cert": {
+      "put": {
+        "operationId": "ApplicationsController_setCustomCert",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "cert": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  }
+                },
+                "required": [
+                  "cert",
+                  "key"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "delete": {
+        "operationId": "ApplicationsController_clearCustomCert",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/expose": {
       "put": {
         "operationId": "ApplicationsController_expose",
@@ -15626,6 +15885,20 @@
                     "certType": {
                       "type": "string"
                     },
+                    "certDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "certNotAfter": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "hasCustomCert": {
+                      "type": "boolean"
+                    },
                     "url": {
                       "type": "string",
                       "nullable": true
@@ -15750,6 +16023,9 @@
                     "exposeMode",
                     "tunnelExposed",
                     "certType",
+                    "certDomains",
+                    "certNotAfter",
+                    "hasCustomCert",
                     "url",
                     "webhookToken",
                     "webhookSecret",
@@ -16427,6 +16703,20 @@
                       "certType": {
                         "type": "string"
                       },
+                      "certDomains": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "certNotAfter": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "hasCustomCert": {
+                        "type": "boolean"
+                      },
                       "url": {
                         "type": "string",
                         "nullable": true
@@ -16551,6 +16841,9 @@
                       "exposeMode",
                       "tunnelExposed",
                       "certType",
+                      "certDomains",
+                      "certNotAfter",
+                      "hasCustomCert",
                       "url",
                       "webhookToken",
                       "webhookSecret",
@@ -17298,6 +17591,20 @@
                     "certType": {
                       "type": "string"
                     },
+                    "certDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "certNotAfter": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "hasCustomCert": {
+                      "type": "boolean"
+                    },
                     "url": {
                       "type": "string",
                       "nullable": true
@@ -17422,6 +17729,9 @@
                     "exposeMode",
                     "tunnelExposed",
                     "certType",
+                    "certDomains",
+                    "certNotAfter",
+                    "hasCustomCert",
                     "url",
                     "webhookToken",
                     "webhookSecret",
@@ -19194,6 +19504,20 @@
                     "certType": {
                       "type": "string"
                     },
+                    "certDomains": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "certNotAfter": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "hasCustomCert": {
+                      "type": "boolean"
+                    },
                     "url": {
                       "type": "string",
                       "nullable": true
@@ -19318,6 +19642,9 @@
                     "exposeMode",
                     "tunnelExposed",
                     "certType",
+                    "certDomains",
+                    "certNotAfter",
+                    "hasCustomCert",
                     "url",
                     "webhookToken",
                     "webhookSecret",
