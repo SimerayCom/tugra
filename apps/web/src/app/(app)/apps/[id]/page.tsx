@@ -5,7 +5,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
-import type { AppVolume, HostMount, Application, Deployment } from "../../../../lib/types";
+import type { AppVolume, HostMount, Application, AppSource, BuildType, Deployment } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
 import { relativeTime } from "../../../../lib/fleet";
 import { backupColor, formatSize } from "../../../../lib/backups";
@@ -387,6 +387,8 @@ export default function AppDetailPage() {
     ),
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
+    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} image={appData.image} />,
+    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} buildCommand={appData.buildCommand} outputDir={appData.outputDir} />,
     buildConfig: () => (
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
     ),
@@ -1144,6 +1146,109 @@ function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
           {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
         </>
       )}
+    </Card>
+  );
+}
+
+// Edit WHERE the app's code/image comes from, after create. GIT -> repo URL + branch; IMAGE -> image ref.
+// (Git credentials themselves live in the Credentials card.) Applies on the next deploy; a host change that
+// resets a stored credential is reported back as a warning.
+function SourceCard({ id, source, gitUrl, gitBranch, image }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; image: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [url, setUrl] = useState(gitUrl ?? "");
+  const [branch, setBranch] = useState(gitBranch ?? "");
+  const [img, setImg] = useState(image ?? "");
+  const isGit = source === "GIT";
+  const dirty = isGit ? url.trim() !== (gitUrl ?? "") || branch.trim() !== (gitBranch ?? "") : img.trim() !== (image ?? "");
+  const save = useMutation({
+    mutationFn: () =>
+      isGit
+        ? api.setAppSource(id, { gitUrl: url.trim(), ...(branch.trim() ? { gitBranch: branch.trim() } : {}) })
+        : api.setAppSource(id, { image: img.trim() }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["app", id] });
+      for (const w of res.warnings ?? []) toast(t(`apps.sourceWarn_${w}`), "info");
+    },
+    meta: { successMessage: t("apps.saved") },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.source")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.sourceDesc")}</p>
+      {isGit ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...envField, flex: "1 1 320px" }} placeholder={t("apps.sourceGitUrl")} value={url} onChange={(e) => setUrl(e.target.value)} aria-label={t("apps.sourceGitUrl")} />
+          <input style={{ ...envField, width: 180 }} placeholder={t("apps.sourceBranch")} value={branch} onChange={(e) => setBranch(e.target.value)} aria-label={t("apps.sourceBranch")} />
+        </div>
+      ) : (
+        <input style={{ ...envField, width: "100%" }} placeholder={t("apps.sourceImage")} value={img} onChange={(e) => setImg(e.target.value)} aria-label={t("apps.sourceImage")} />
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || (isGit ? !url.trim() : !img.trim())}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
+    </Card>
+  );
+}
+
+// Build-pack enum -> existing apps.* label key (reused from the create wizard).
+const BUILD_TYPE_LABEL: Record<BuildType, string> = {
+  NIXPACKS: "nixpacks",
+  DOCKERFILE: "dockerfile",
+  STATIC: "static",
+  RAILPACK: "railpack",
+  HEROKU: "heroku",
+};
+
+// Edit HOW a Git app is built, after create: the build pack and the fields that apply to it. Changing the
+// pack clears the other packs' fields server-side. Applies on the next deploy.
+function BuildSettingsCard({ id, buildType, dockerfilePath, buildCommand, outputDir }: { id: string; buildType: BuildType; dockerfilePath: string | null; buildCommand: string | null; outputDir: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [type, setType] = useState<BuildType>(buildType);
+  const [dockerfile, setDockerfile] = useState(dockerfilePath ?? "");
+  const [cmd, setCmd] = useState(buildCommand ?? "");
+  const [out, setOut] = useState(outputDir ?? "");
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppBuild(id, {
+        buildType: type,
+        ...(type === "DOCKERFILE" ? { dockerfilePath: dockerfile.trim() || null } : {}),
+        ...(type === "STATIC" ? { buildCommand: cmd.trim() || null, outputDir: out.trim() || null } : {}),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.buildSaveFailed"), "error"),
+  });
+
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.buildSettings")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.buildSettingsDesc")}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <select style={{ ...envField, width: 200 }} value={type} onChange={(e) => setType(e.target.value as BuildType)} aria-label={t("apps.buildSettings")}>
+          {(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"] as BuildType[]).map((v) => (
+            <option key={v} value={v}>{t(`apps.${BUILD_TYPE_LABEL[v]}`)}</option>
+          ))}
+        </select>
+        {type === "DOCKERFILE" && (
+          <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.buildDockerfilePath")} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} aria-label={t("apps.buildDockerfilePath")} />
+        )}
+        {type === "STATIC" && (
+          <>
+            <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.buildCommand")} value={cmd} onChange={(e) => setCmd(e.target.value)} aria-label={t("apps.buildCommand")} />
+            <input style={{ ...envField, width: 160 }} placeholder={t("apps.outputDir")} value={out} onChange={(e) => setOut(e.target.value)} aria-label={t("apps.outputDir")} />
+          </>
+        )}
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
     </Card>
   );
 }

@@ -37,6 +37,7 @@ import {
   buildCustomCertYaml,
   buildCustomCertRemoveScript,
   isSshGitUrl,
+  gitUrlHost,
   type AppSpec,
 } from "./deploy-script";
 
@@ -56,6 +57,14 @@ describe("SSH deploy-key git clone", () => {
     expect(isSshGitUrl("git@github.com:acme/app.git")).toBe(true);
     expect(isSshGitUrl("ssh://git@host:22/acme/app.git")).toBe(true);
     expect(isSshGitUrl("https://github.com/acme/app.git")).toBe(false);
+  });
+
+  it("gitUrlHost extracts the host from https / ssh / scp forms (lower-cased)", () => {
+    expect(gitUrlHost("https://GitHub.com/acme/app.git")).toBe("github.com");
+    expect(gitUrlHost("https://x-access-token@github.com/acme/app.git")).toBe("github.com");
+    expect(gitUrlHost("git@gitlab.com:acme/app.git")).toBe("gitlab.com");
+    expect(gitUrlHost("ssh://git@host.example:22/acme/app.git")).toBe("host.example");
+    expect(gitUrlHost("not a url")).toBeNull();
   });
 
   it("clones with GIT_SSH_COMMAND (accept-new), key written 0600 via base64 — never in argv or the URL", () => {

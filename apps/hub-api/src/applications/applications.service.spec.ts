@@ -961,6 +961,121 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ composeFile: yaml }) }));
   });
 
+  // ── setSource / setBuild (edit source & build after create) ──
+  const gitApp = {
+    ...app,
+    source: "GIT",
+    image: null,
+    gitUrl: "https://github.com/acme/app.git",
+    gitBranch: "main",
+    gitSourceId: null,
+    gitTokenEnc: "enc(tok)",
+    gitSshKeyEnc: null,
+    gitSshPublicKey: null,
+    buildType: "NIXPACKS",
+    dockerfilePath: null,
+    buildCommand: null,
+    outputDir: null,
+    isPreview: false,
+  };
+  const noActiveDeploy = { findFirst: jest.fn().mockResolvedValue(null) };
+
+  it("setSource rejects a COMPOSE app (use the compose-file endpoint)", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { image: "nginx" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setSource rejects a preview app", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, isPreview: true }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitBranch: "dev" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setSource (IMAGE) updates the image and rejects git fields", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const imageApp = { ...app, source: "IMAGE", image: "nginx", isPreview: false };
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(imageApp), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setSource("u1", "app1", { image: "nginx:1.27" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ image: "nginx:1.27" }) }));
+    await expect(svc.setSource("u1", "app1", { gitUrl: "https://github.com/x/y.git" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("setSource (GIT) same-host url/branch edit keeps the stored token (no credential reset)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(gitApp), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const res = await make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitUrl: "https://github.com/acme/other.git", gitBranch: "dev" });
+    expect(res.warnings).toEqual([]);
+    const data = update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ gitUrl: "https://github.com/acme/other.git", gitBranch: "dev" });
+    expect(data.gitTokenEnc).toBeUndefined(); // untouched
+  });
+
+  it("setSource (GIT) host change clears the token and unlinks the GitHub App", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, gitSourceId: "gs1" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const res = await make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitUrl: "https://gitlab.com/acme/app.git" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.gitTokenEnc).toBeNull();
+    expect(data.gitSourceId).toBeNull();
+    expect(res.warnings).toEqual(expect.arrayContaining(["git_token_cleared", "git_source_unlinked"]));
+  });
+
+  it("setSource (GIT) switch to ssh clears the token and mints a deploy key", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(gitApp), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const res = await make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitUrl: "git@github.com:acme/app.git" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.gitTokenEnc).toBeNull();
+    expect(data.gitSshPublicKey).toMatch(/^ssh-ed25519 /);
+    expect(res.warnings).toEqual(expect.arrayContaining(["git_token_cleared", "ssh_key_generated"]));
+  });
+
+  it("setSource (GIT) rejects linking a GitHub App to a non-github host", async () => {
+    const update = jest.fn();
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, gitUrl: "https://gitlab.com/acme/app.git" }), update },
+      gitSource: { findUnique: jest.fn().mockResolvedValue({ id: "gs1", teamId: "t1" }) },
+      deployment: noActiveDeploy,
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitSourceId: "gs1" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setBuild rejects a non-GIT app", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "IMAGE", isPreview: false }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "DOCKERFILE" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setBuild DOCKERFILE sets the path and clears STATIC fields", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", buildCommand: null, outputDir: null } }));
+  });
+
+  it("setBuild STATIC sets command/output and clears the dockerfile path", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "DOCKERFILE", dockerfilePath: "Dockerfile" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "STATIC", buildCommand: "npm run build", outputDir: "build" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, buildCommand: "npm run build", outputDir: "build" } }));
+  });
+
   it("setConfigMountContent rejects a non-compose app before any write", async () => {
     const update = jest.fn();
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;

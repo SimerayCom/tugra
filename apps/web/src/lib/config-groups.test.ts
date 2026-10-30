@@ -115,6 +115,21 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ source: "DOCKERFILE" }), "build")?.cardIds ?? []).not.toContain("buildArgs");
   });
 
+  it("source card edits non-compose apps and needs write + non-preview", () => {
+    expect(group(facts(), "build")!.cardIds).toContain("source"); // GIT
+    expect(group(facts({ source: "IMAGE" }), "build")!.cardIds).toContain("source");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "build")?.cardIds ?? []).not.toContain("source");
+    expect(group(facts({ isPreview: true }), "build")?.cardIds ?? []).not.toContain("source");
+    expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("source");
+  });
+
+  it("build card is GIT-only and needs write + non-preview", () => {
+    expect(group(facts(), "build")!.cardIds).toContain("build");
+    expect(group(facts({ source: "IMAGE" }), "build")?.cardIds ?? []).not.toContain("build");
+    expect(group(facts({ isPreview: true }), "build")?.cardIds ?? []).not.toContain("build");
+    expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("build");
+  });
+
   it("domain card needs a custom domainKind", () => {
     expect(group(facts(), "domains")!.cardIds).toContain("domain");
     expect(group(facts({ domainKind: "auto" }), "domains")!.cardIds).not.toContain("domain");

@@ -27,6 +27,8 @@ export type ConfigCardId =
   | "clusterDeploy"
   | "environment"
   | "tags"
+  | "source"
+  | "build"
   | "buildConfig"
   | "buildArgs"
   | "dockerOptions"
@@ -74,6 +76,10 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "environment", group: "general", visible: () => true },
   { id: "tags", group: "general", visible: (a) => !a.isPreview },
   // Build
+  // Edit where the code/image comes from (GIT repo+branch / IMAGE ref) after create; COMPOSE edits via its file.
+  { id: "source", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
+  // Edit how a Git app is built (build pack + its fields). GIT only.
+  { id: "build", group: "build", visible: (a) => a.source === "GIT" && a.canWrite && !a.isPreview },
   { id: "buildConfig", group: "build", visible: notCompose },
   { id: "buildArgs", group: "build", visible: (a) => a.source === "GIT" },
   { id: "dockerOptions", group: "build", visible: notCompose },

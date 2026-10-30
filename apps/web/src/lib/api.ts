@@ -18,6 +18,7 @@ import type {
   IngressView,
   SavedView,
   Application,
+  BuildType,
   AppConfigMount,
   AppVolume,
   HostMount,
@@ -953,6 +954,13 @@ export const api = {
   },
   removeGitSshKey(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/git-ssh-key`, { method: "DELETE" });
+  },
+  // Edit the source after create. `warnings` reports credential resets (host change cleared a token, etc.).
+  setAppSource(id: string, body: { gitUrl?: string; gitBranch?: string; gitSourceId?: string | null; image?: string }) {
+    return apiFetch<{ warnings: string[] }>(`/apps/${id}/source`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  setAppBuild(id: string, body: { buildType: BuildType; dockerfilePath?: string | null; buildCommand?: string | null; outputDir?: string | null }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/build`, { method: "PUT", body: JSON.stringify(body) });
   },
 
   // ── bulk ops ──

@@ -1428,6 +1428,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["ApplicationsController_setSource"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/apps/{id}/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["ApplicationsController_setBuild"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/config-mounts": {
         parameters: {
             query?: never;
@@ -8882,9 +8914,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -9114,9 +9148,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -9459,9 +9495,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -9759,9 +9797,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -11772,6 +11812,171 @@ export interface operations {
             };
         };
     };
+    ApplicationsController_setSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    gitUrl?: string;
+                    gitBranch?: string;
+                    gitSourceId?: string | null;
+                    image?: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_setBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
+                    dockerfilePath?: string | null;
+                    buildCommand?: string | null;
+                    outputDir?: string | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     ApplicationsController_getConfigMounts: {
         parameters: {
             query?: never;
@@ -13592,9 +13797,11 @@ export interface operations {
                             image: string | null;
                             gitUrl: string | null;
                             gitBranch: string | null;
+                            gitSourceId: string | null;
                             /** @enum {string} */
                             buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                             buildCommand: string | null;
+                            dockerfilePath: string | null;
                             outputDir: string | null;
                             composeFile: string | null;
                             healthCmd: string | null;
@@ -13821,9 +14028,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -14119,9 +14328,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -14473,9 +14684,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;
@@ -15498,9 +15711,11 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        dockerfilePath: string | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         healthCmd: string | null;

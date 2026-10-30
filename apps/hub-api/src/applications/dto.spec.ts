@@ -1,4 +1,4 @@
-import { SetConfigMountContentSchema, SetDeployHooksSchema, SetLimitsSchema } from "./dto";
+import { SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetLimitsSchema, SetSourceSchema } from "./dto";
 
 describe("SetLimitsSchema — resource reservations", () => {
   it("accepts a reservation at or below the limit", () => {
@@ -14,6 +14,40 @@ describe("SetLimitsSchema — resource reservations", () => {
   it("accepts a reservation alone (no limit to cross-check against)", () => {
     expect(() => SetLimitsSchema.parse({ reserveMemoryMb: 512 })).not.toThrow();
     expect(() => SetLimitsSchema.parse({ reserveCpus: 4 })).not.toThrow();
+  });
+});
+
+describe("SetSourceSchema — edit source after create", () => {
+  it("accepts a git URL / branch / image and rejects bad shapes", () => {
+    expect(SetSourceSchema.safeParse({ gitUrl: "https://github.com/acme/app.git", gitBranch: "main" }).success).toBe(true);
+    expect(SetSourceSchema.safeParse({ gitUrl: "git@github.com:acme/app.git" }).success).toBe(true);
+    expect(SetSourceSchema.safeParse({ gitSourceId: null }).success).toBe(true); // unlink
+    expect(SetSourceSchema.safeParse({ image: "nginx:1.27-alpine" }).success).toBe(true);
+    expect(SetSourceSchema.safeParse({}).success).toBe(false); // at least one field
+    expect(SetSourceSchema.safeParse({ gitUrl: "http://github.com/x/y" }).success).toBe(false); // http not allowed
+    expect(SetSourceSchema.safeParse({ gitUrl: "file:///etc/passwd" }).success).toBe(false);
+    expect(SetSourceSchema.safeParse({ gitBranch: "../../evil" }).success).toBe(false); // no ..
+    expect(SetSourceSchema.safeParse({ gitBranch: "-x" }).success).toBe(false); // no leading -
+    expect(SetSourceSchema.safeParse({ image: "-rm nginx" }).success).toBe(false); // option injection
+    expect(SetSourceSchema.safeParse({ gitUrl: "https://github.com/x/y.git", foo: 1 }).success).toBe(false); // strict
+  });
+});
+
+describe("SetBuildSchema — edit build pack after create", () => {
+  it("gates each build type's fields", () => {
+    expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS" }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile" }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist" }).success).toBe(true);
+    // wrong-type fields are rejected
+    expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", dockerfilePath: "Dockerfile" }).success).toBe(false);
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", buildCommand: "x" }).success).toBe(false);
+    expect(SetBuildSchema.safeParse({ buildType: "STATIC", dockerfilePath: "Dockerfile" }).success).toBe(false);
+    // path/command hardening
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerfilePath: "/etc/passwd" }).success).toBe(false); // absolute
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerfilePath: "../x/Dockerfile" }).success).toBe(false); // ..
+    expect(SetBuildSchema.safeParse({ buildType: "STATIC", buildCommand: "a\nRUN evil", outputDir: "dist" }).success).toBe(false); // newline
+    expect(SetBuildSchema.safeParse({ buildType: "WAT" }).success).toBe(false);
+    expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", foo: 1 }).success).toBe(false); // strict
   });
 });
 

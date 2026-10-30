@@ -374,6 +374,17 @@ export function isSshGitUrl(url: string): boolean {
   return /^ssh:\/\//i.test(url) || /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/.test(url);
 }
 
+/** Lower-cased host of a git URL (https://, ssh://, or scp-style user@host:path); null if unparseable.
+ *  Used to decide whether a repo-URL edit crosses a host boundary — which must drop stored credentials
+ *  so a token/key can't be sent to a different server. */
+export function gitUrlHost(url: string): string | null {
+  const u = (url ?? "").trim();
+  const scp = /^[A-Za-z0-9._-]+@([A-Za-z0-9._-]+):/.exec(u); // scp-style user@host:path
+  if (scp) return scp[1].toLowerCase();
+  const m = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^@/]+@)?([^:/]+)/.exec(u); // scheme://[user@]host[:port]/...
+  return m ? m[1].toLowerCase() : null;
+}
+
 export function gitAuthUrl(gitUrl: string): string {
   return gitUrl.replace(/^https:\/\//i, "https://x-access-token@");
 }

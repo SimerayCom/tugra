@@ -7305,6 +7305,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "gitSourceId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "buildType": {
                         "type": "string",
                         "enum": [
@@ -7316,6 +7320,10 @@
                         ]
                       },
                       "buildCommand": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "dockerfilePath": {
                         "type": "string",
                         "nullable": true
                       },
@@ -7818,8 +7826,10 @@
                       "image",
                       "gitUrl",
                       "gitBranch",
+                      "gitSourceId",
                       "buildType",
                       "buildCommand",
+                      "dockerfilePath",
                       "outputDir",
                       "composeFile",
                       "healthCmd",
@@ -8120,6 +8130,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSourceId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "buildType": {
                       "type": "string",
                       "enum": [
@@ -8131,6 +8145,10 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerfilePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -8633,8 +8651,10 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "dockerfilePath",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -9014,6 +9034,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSourceId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "buildType": {
                       "type": "string",
                       "enum": [
@@ -9025,6 +9049,10 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerfilePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -9527,8 +9555,10 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "dockerfilePath",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -9912,6 +9942,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSourceId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "buildType": {
                       "type": "string",
                       "enum": [
@@ -9923,6 +9957,10 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerfilePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -10425,8 +10463,10 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "dockerfilePath",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -12912,6 +12952,262 @@
                 },
                 "required": [
                   "composeFile"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/source": {
+      "put": {
+        "operationId": "ApplicationsController_setSource",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "gitUrl": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(https:\\/\\/|git@|ssh:\\/\\/)"
+                  },
+                  "gitBranch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "pattern": "^[A-Za-z0-9._#/-]+$"
+                  },
+                  "gitSourceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "nullable": true
+                  },
+                  "image": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/build": {
+      "put": {
+        "operationId": "ApplicationsController_setBuild",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "buildType": {
+                    "type": "string",
+                    "enum": [
+                      "NIXPACKS",
+                      "DOCKERFILE",
+                      "STATIC",
+                      "RAILPACK",
+                      "HEROKU"
+                    ]
+                  },
+                  "dockerfilePath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+                    "nullable": true
+                  },
+                  "buildCommand": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "nullable": true
+                  },
+                  "outputDir": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "buildType"
                 ],
                 "additionalProperties": false
               }
@@ -15686,6 +15982,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "gitSourceId": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "buildType": {
                           "type": "string",
                           "enum": [
@@ -15697,6 +15997,10 @@
                           ]
                         },
                         "buildCommand": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "dockerfilePath": {
                           "type": "string",
                           "nullable": true
                         },
@@ -16199,8 +16503,10 @@
                         "image",
                         "gitUrl",
                         "gitBranch",
+                        "gitSourceId",
                         "buildType",
                         "buildCommand",
+                        "dockerfilePath",
                         "outputDir",
                         "composeFile",
                         "healthCmd",
@@ -16443,6 +16749,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSourceId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "buildType": {
                       "type": "string",
                       "enum": [
@@ -16454,6 +16764,10 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerfilePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -16956,8 +17270,10 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "dockerfilePath",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -17270,6 +17586,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "gitSourceId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "buildType": {
                         "type": "string",
                         "enum": [
@@ -17281,6 +17601,10 @@
                         ]
                       },
                       "buildCommand": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "dockerfilePath": {
                         "type": "string",
                         "nullable": true
                       },
@@ -17783,8 +18107,10 @@
                       "image",
                       "gitUrl",
                       "gitBranch",
+                      "gitSourceId",
                       "buildType",
                       "buildCommand",
+                      "dockerfilePath",
                       "outputDir",
                       "composeFile",
                       "healthCmd",
@@ -18167,6 +18493,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSourceId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "buildType": {
                       "type": "string",
                       "enum": [
@@ -18178,6 +18508,10 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerfilePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -18680,8 +19014,10 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "dockerfilePath",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
@@ -20089,6 +20425,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSourceId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "buildType": {
                       "type": "string",
                       "enum": [
@@ -20100,6 +20440,10 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerfilePath": {
                       "type": "string",
                       "nullable": true
                     },
@@ -20602,8 +20946,10 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "dockerfilePath",
                     "outputDir",
                     "composeFile",
                     "healthCmd",
