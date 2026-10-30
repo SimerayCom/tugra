@@ -4,6 +4,7 @@
  * (clone + Nixpacks/Dockerfile build) sources, optional domain (Traefik + SSL).
  */
 
+import { createHash } from "node:crypto";
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
 import {
   buildPanelRouterYaml,
@@ -101,6 +102,7 @@ export interface AppSpec {
   dbNetwork?: boolean | null;
   domain?: string | null;
   domainRedirect?: "www" | "root" | null;
+  extraDomains?: string[] | null; // additional hostnames (aliases) that serve the same container as `domain`
   securityHeaders?: boolean;
   /** External auth service URL — protects the app via a Traefik forwardauth middleware. */
   forwardAuth?: string | null;
@@ -507,7 +509,44 @@ export function traefikLabels(app: AppSpec): string[] {
     mw.unshift(`${r}-fa`); // auth runs first in the chain
   }
   if (mw.length) labels.push(`traefik.http.routers.${r}.middlewares=${mw.join(",")}`);
+
+  // Multi-domain aliases: additional hostnames that serve the SAME container/service as the primary. Each
+  // alias gets its OWN HTTPS router (+ an HTTP->HTTPS redirect twin) so a bad/undelegated alias can't fail the
+  // primary's cert, and reuses the primary's auth/security-headers chain (an alias must never bypass
+  // forward-auth) but NOT the www/bare canonical redirect. Appended AFTER the primary labels, so an app with
+  // no extras emits a byte-identical set. Classic/compose only — the service layer rejects extras for
+  // clustered (swarm) apps (stale-label removal on `docker service update` is a follow-up).
+  const extras = (app.extraDomains ?? []).filter((h) => !!h && h !== app.domain && h !== base && h !== www);
+  if (extras.length) {
+    const aliasMw = mw.filter((m) => m !== `${r}-canon`); // reuse fa/sec, drop the primary-only canonical redirect
+    // Aliases are always HTTPS; if the primary is plain HTTP (magic host) its -redirect middleware wasn't
+    // defined above, so define it once here.
+    if (httpOnly) labels.push(`traefik.http.middlewares.${r}-redirect.redirectscheme.scheme=https`);
+    // Aliases never use the le-dns wildcard (it doesn't cover them) — fall back to HTTP-01 (le).
+    const aliasResolver = resolver === "le-dns" ? "le" : resolver;
+    for (const h of extras) {
+      const x = extraRouterName(r, h);
+      labels.push(
+        `traefik.http.routers.${x}.rule=Host(\`${h}\`)`,
+        `traefik.http.routers.${x}.entrypoints=websecure`,
+        `traefik.http.routers.${x}.service=${r}`, // explicitly target the primary's single service
+        uploadedCert ? `traefik.http.routers.${x}.tls=true` : `traefik.http.routers.${x}.tls.certresolver=${aliasResolver}`,
+        `traefik.http.routers.${x}-web.rule=Host(\`${h}\`)`,
+        `traefik.http.routers.${x}-web.entrypoints=web`,
+        `traefik.http.routers.${x}-web.service=${r}`,
+        `traefik.http.routers.${x}-web.middlewares=${r}-redirect`,
+      );
+      if (aliasMw.length) labels.push(`traefik.http.routers.${x}.middlewares=${aliasMw.join(",")}`);
+    }
+  }
   return labels;
+}
+
+/** Router name for a multi-domain alias host. Hashed (not indexed) so adding/removing/reordering an alias
+ *  never renames the others, and the `-d` prefix can't collide with the primary's -web/-redirect/-canon/
+ *  -sec/-fa names. */
+export function extraRouterName(r: string, host: string): string {
+  return `${r}-d${createHash("sha1").update(host.toLowerCase()).digest("hex").slice(0, 8)}`;
 }
 
 /** Generated Dockerfile for a STATIC site: optional node build stage, then nginx. */

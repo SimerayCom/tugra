@@ -418,6 +418,7 @@ export default function AppDetailPage() {
       </Card>
     ),
     domain: () => <DomainCard id={id} domain={appData.domain} https={appData.https} />,
+    extraDomains: () => <ExtraDomainsCard id={id} extraDomains={appData.extraDomains} />,
     domainOptions: () =>
       appData.domain ? (
         <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} />
@@ -1832,6 +1833,41 @@ function DomainCard({ id, domain, https }: { id: string; domain: string | null; 
       {https && cleanDomain(value) && (
         <div className="mono" style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 10 }}>https://{cleanDomain(value)}</div>
       )}
+    </Card>
+  );
+}
+
+// Extra alias hostnames (served alongside the primary domain). A textarea, one host per line (also accepts
+// comma/space separated); replace-set on save, applied on the next deploy.
+function ExtraDomainsCard({ id, extraDomains }: { id: string; extraDomains: string[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [value, setValue] = useState(extraDomains.join("\n"));
+  const parse = (s: string) => Array.from(new Set(s.split(/[\s,]+/).map((h) => h.trim().toLowerCase()).filter(Boolean)));
+  const save = useMutation({
+    mutationFn: () => api.setAppExtraDomains(id, parse(value)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.extraDomainsSaveFailed"), "error"),
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.extraDomains")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.extraDomainsDesc")}</p>
+      <textarea
+        className="mono"
+        style={{ ...envField, width: "100%", minHeight: 80, resize: "vertical" }}
+        value={value}
+        placeholder={t("apps.extraDomainsPlaceholder")}
+        onChange={(e) => setValue(e.target.value)}
+        aria-label={t("apps.extraDomains")}
+      />
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.extraDomainsRedeploy")}</div>}
     </Card>
   );
 }

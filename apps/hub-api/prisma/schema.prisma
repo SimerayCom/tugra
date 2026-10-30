@@ -898,6 +898,7 @@ model Application {
   hostPort       Int?
   containerPort  Int?         @default(80)
   domain         String?
+  extraDomains   String[]     @default([]) // additional hostnames (aliases) routed to the same container as `domain`
   domainRedirect  String?
   securityHeaders Boolean     @default(false)
   forwardAuth    String?

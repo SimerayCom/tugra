@@ -66,6 +66,8 @@ import {
   SetEnvSchema,
   SetDomainInput,
   SetDomainSchema,
+  SetExtraDomainsInput,
+  SetExtraDomainsSchema,
   AutoSetupDomainSchema,
   AutoSetupDomainInput,
   ExposeInput,
@@ -618,6 +620,19 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDomainSchema)) body: SetDomainInput,
   ) {
     await this.apps.setDomain(user.userId, id, body.domain);
+    return { ok: true };
+  }
+
+  // Replace the app's additional alias hostnames (served alongside the primary domain). Classic/compose only.
+  @Put(":id/extra-domains")
+  @HttpCode(200)
+  @ApiZodBody(SetExtraDomainsSchema)
+  async setExtraDomains(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetExtraDomainsSchema)) body: SetExtraDomainsInput,
+  ) {
+    await this.apps.setExtraDomains(user.userId, id, body.domains);
     return { ok: true };
   }
 

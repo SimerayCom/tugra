@@ -354,6 +354,23 @@ export const SetDomainSchema = z.object({
 });
 export type SetDomainInput = z.infer<typeof SetDomainSchema>;
 
+// Multi-domain alias hostnames. Same charset as the primary (DOMAIN_RE bars backticks/spaces/wildcards →
+// no Traefik-rule injection) but additionally: lowercased + trailing-dot stripped (so the panel-domain /
+// dedup checks are exact), each DNS label <= 63 chars, and the last label not all-digits (rejects IP
+// literals, which DOMAIN_RE accepts but Let's Encrypt can't issue for). Capped at 10 per app, no duplicates.
+const ALIAS_HOST = z
+  .string()
+  .trim()
+  .transform((h) => h.replace(/\.+$/, "").toLowerCase())
+  .refine((h) => h.length >= 1 && h.length <= 253 && DOMAIN_RE.test(h), "invalid domain")
+  .refine((h) => h.split(".").every((l) => l.length <= 63), "a DNS label exceeds 63 characters")
+  .refine((h) => !/^\d+$/.test(h.split(".").pop() ?? ""), "the top-level label can't be all digits (not a hostname)");
+export const SetExtraDomainsSchema = z
+  .object({ domains: z.array(ALIAS_HOST).max(10, "at most 10 extra domains") })
+  .strict()
+  .refine((d) => new Set(d.domains).size === d.domains.length, { message: "duplicate domains" });
+export type SetExtraDomainsInput = z.infer<typeof SetExtraDomainsSchema>;
+
 // One-click custom-domain DNS auto-setup (Cloudflare). `dryRun` returns the plan without writing. `overwrite`
 // is required before any pre-existing record pointing elsewhere is touched. Records are always DNS-only
 // (proxied=false) — proxying is not exposed in v1 because a proxied record + Flexible SSL causes a redirect loop.

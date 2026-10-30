@@ -33,6 +33,7 @@ import {
   staticDockerfile,
   staticNginxConf,
   traefikLabels,
+  extraRouterName,
   dockerOptionsArgs,
   buildCustomCertYaml,
   buildCustomCertRemoveScript,
@@ -904,6 +905,81 @@ describe("deploy-script", () => {
   it("no forwardauth label without forwardAuth", () => {
     const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
     expect(s).not.toContain("forwardauth");
+  });
+
+  describe("multi-domain aliases (extraDomains)", () => {
+    const R = `tugra_${base.id}`;
+
+    it("no extras is byte-identical to today ([] and undefined produce the same labels)", () => {
+      for (const spec of [
+        { ...base, domain: "x.com" },
+        { ...base, domain: "x.com", certType: "le-dns", wildcardDomain: "apps.example.com" },
+        { ...base, domain: "x.com", certType: "custom", certPem: "P", certKey: "K" },
+        { ...base, domain: "x.com", domainRedirect: "root" as const, securityHeaders: true, forwardAuth: "https://a/v" },
+        { ...base, domain: "app-x.1-2-3-4.sslip.io", certType: "http" },
+      ]) {
+        const baseline = traefikLabels(spec);
+        expect(traefikLabels({ ...spec, extraDomains: [] })).toEqual(baseline);
+        expect(traefikLabels({ ...spec, extraDomains: undefined })).toEqual(baseline);
+      }
+    });
+
+    it("one alias adds its own HTTPS router (+ redirect twin) targeting the primary service", () => {
+      const labels = traefikLabels({ ...base, domain: "x.com", certType: "le-http", extraDomains: ["b.com"] });
+      const x = extraRouterName(R, "b.com");
+      const s = labels.join("\n");
+      expect(s).toContain(`routers.${x}.rule=Host(\`b.com\`)`);
+      expect(s).toContain(`routers.${x}.entrypoints=websecure`);
+      expect(s).toContain(`routers.${x}.service=${R}`);
+      expect(s).toContain(`routers.${x}.tls.certresolver=le`);
+      expect(s).toContain(`routers.${x}-web.rule=Host(\`b.com\`)`);
+      expect(s).toContain(`routers.${x}-web.middlewares=${R}-redirect`);
+    });
+
+    it("alias router names are hashed, distinct, stable under reordering, and never collide with the primary's suffixes", () => {
+      const a = extraRouterName(R, "b.com");
+      const b = extraRouterName(R, "c.com");
+      expect(a).not.toBe(b);
+      expect(extraRouterName(R, "B.COM")).toBe(a); // case-insensitive, order-independent
+      for (const suf of ["-web", "-redirect", "-canon", "-sec", "-fa"]) expect(a.endsWith(suf)).toBe(false);
+      const l1 = traefikLabels({ ...base, domain: "x.com", extraDomains: ["b.com", "c.com"] });
+      const l2 = traefikLabels({ ...base, domain: "x.com", extraDomains: ["c.com", "b.com"] });
+      const routers = (ls: string[]) => ls.filter((l) => l.includes(".rule=")).sort();
+      expect(routers(l1)).toEqual(routers(l2)); // reordering doesn't rename routers
+    });
+
+    it("a plain-HTTP (magic) primary still serves aliases over HTTPS and defines the redirect middleware once", () => {
+      const labels = traefikLabels({ ...base, domain: "app-x.sslip.io", certType: "http", extraDomains: ["b.com"] });
+      const x = extraRouterName(R, "b.com");
+      const s = labels.join("\n");
+      expect(s).toContain(`routers.${x}.entrypoints=websecure`);
+      expect(s).toContain(`routers.${x}.tls.certresolver=le`);
+      expect(labels.filter((l) => l.includes("-redirect.redirectscheme.scheme=https"))).toHaveLength(1);
+      expect(s).toContain(`routers.${R}.entrypoints=web`); // primary stays plain HTTP
+    });
+
+    it("an le-dns primary's alias uses HTTP-01 (le), never the wildcard", () => {
+      const labels = traefikLabels({ ...base, domain: "x.com", certType: "le-dns", wildcardDomain: "apps.example.com", extraDomains: ["b.com"] });
+      const x = extraRouterName(R, "b.com");
+      expect(labels.join("\n")).toContain(`routers.${x}.tls.certresolver=le`);
+      expect(labels.some((l) => l.startsWith(`traefik.http.routers.${x}.tls.domains`))).toBe(false);
+    });
+
+    it("an uploaded-cert primary's alias gets tls=true (SNI, no resolver)", () => {
+      const labels = traefikLabels({ ...base, domain: "x.com", certType: "custom", certPem: "P", certKey: "K", extraDomains: ["b.com"] });
+      const x = extraRouterName(R, "b.com");
+      const s = labels.join("\n");
+      expect(s).toContain(`routers.${x}.tls=true`);
+      expect(s).not.toContain(`routers.${x}.tls.certresolver`);
+    });
+
+    it("aliases reuse the fa+sec chain but never the canonical redirect", () => {
+      const labels = traefikLabels({ ...base, domain: "x.com", domainRedirect: "root", securityHeaders: true, forwardAuth: "https://a/v", extraDomains: ["b.com"] });
+      const x = extraRouterName(R, "b.com");
+      const chain = labels.find((l) => l.includes(`routers.${x}.middlewares=`))!;
+      expect(chain).toBe(`traefik.http.routers.${x}.middlewares=${R}-fa,${R}-sec`);
+      expect(chain).not.toContain("-canon");
+    });
   });
 
   it("proxy setup script runs Traefik with the HTTP-01 resolver by default (no DNS resolver)", () => {

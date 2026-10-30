@@ -952,6 +952,9 @@ export const api = {
   cancelDeployment(id: string, deploymentId: string) {
     return apiFetch<Deployment>(`/apps/${id}/deployments/${deploymentId}/cancel`, { method: "POST" });
   },
+  setAppExtraDomains(id: string, domains: string[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/extra-domains`, { method: "PUT", body: JSON.stringify({ domains }) });
+  },
   generateGitSshKey(id: string) {
     return apiFetch<{ publicKey: string; fingerprint: string }>(`/apps/${id}/git-ssh-key`, { method: "POST" });
   },

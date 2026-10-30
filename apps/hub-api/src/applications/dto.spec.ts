@@ -1,4 +1,24 @@
-import { SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetLimitsSchema, SetSourceSchema } from "./dto";
+import { SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetSourceSchema } from "./dto";
+
+describe("SetExtraDomainsSchema — multi-domain aliases", () => {
+  const ok = (domains: string[]) => SetExtraDomainsSchema.safeParse({ domains });
+  it("accepts valid hostnames and normalizes case + trailing dot", () => {
+    const r = ok(["Www.Example.com.", "app.example.net"]);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.domains).toEqual(["www.example.com", "app.example.net"]);
+    expect(ok([]).success).toBe(true); // clearing is valid
+  });
+  it("rejects IP literals, duplicates, over-cap, over-long labels, and injection shapes", () => {
+    expect(ok(["1.2.3.4"]).success).toBe(false); // all-digit TLD → not a hostname
+    expect(ok(["a.com", "A.COM"]).success).toBe(false); // duplicate after normalization
+    expect(ok(Array.from({ length: 11 }, (_, i) => `a${i}.com`)).success).toBe(false); // > 10
+    expect(ok([`${"a".repeat(64)}.com`]).success).toBe(false); // label > 63
+    expect(ok(["a b.com"]).success).toBe(false);
+    expect(ok(["a`.com"]).success).toBe(false); // backtick (Traefik rule injection)
+    expect(ok(["*.example.com"]).success).toBe(false); // wildcard
+    expect(SetExtraDomainsSchema.safeParse({ domains: ["a.com"], foo: 1 }).success).toBe(false); // strict
+  });
+});
 
 describe("SetLimitsSchema — resource reservations", () => {
   it("accepts a reservation at or below the limit", () => {
