@@ -11,6 +11,7 @@ import {
   Put,
   Query,
   Sse,
+  StreamableFile,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
@@ -35,6 +36,8 @@ import {
   CreateDatabaseSchema,
   RenameInput,
   RenameSchema,
+  SetIconInput,
+  SetIconSchema,
   SetDatabaseLimitsInput,
   SetDatabaseLimitsSchema,
   SetDatabasePortInput,
@@ -218,6 +221,39 @@ export class DatabasesController {
   @HttpCode(200)
   async remove(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("keepVolume") keepVolume?: string) {
     await this.databases.remove(user.userId, id, { keepVolume: keepVolume === "1" });
+    return { ok: true };
+  }
+
+  /**
+   * The database's custom icon as a raw PNG (read-level; 404 when none). Served from our own origin, locked
+   * down with a fixed image/png type, nosniff and a strict CSP. Cache-bust with ?v=<iconUpdatedAt>.
+   */
+  @Get(":id/icon")
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=60")
+  async getIcon(@CurrentUser() user: AuthUser, @Param("id") id: string): Promise<StreamableFile> {
+    const icon = await this.databases.getIcon(user.userId, id);
+    return new StreamableFile(icon.data, { type: icon.mime });
+  }
+
+  @Put(":id/icon")
+  @HttpCode(200)
+  @ApiZodBody(SetIconSchema)
+  async setIcon(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIconSchema)) body: SetIconInput,
+  ) {
+    await this.databases.setIcon(user.userId, id, body.data);
+    return { ok: true };
+  }
+
+  @Delete(":id/icon")
+  @RequireScopes("write") // removing a cosmetic icon is a write op, not a destructive admin one
+  @HttpCode(200)
+  async deleteIcon(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.databases.deleteIcon(user.userId, id);
     return { ok: true };
   }
 }

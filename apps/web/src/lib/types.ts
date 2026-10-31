@@ -1284,6 +1284,7 @@ export interface Database {
   tags: string[];
   role: Role;
   canWrite: boolean;
+  iconUpdatedAt: string | null;
   createdAt: string;
 }
 

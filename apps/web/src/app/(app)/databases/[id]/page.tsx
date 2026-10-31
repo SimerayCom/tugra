@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil } from "lucide-react";
+import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil, Database as DatabaseIcon, CloudUpload } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../../lib/api";
+import { api, databaseIconUrl } from "../../../../lib/api";
+import { cropToPngBase64 } from "../../../../lib/icon";
 import { dbColor, engineLabel, isDbTransitional } from "../../../../lib/databases";
 import { backupColor, formatSize, restoreColor } from "../../../../lib/backups";
 import { ErrorState } from "../../../../components/error-state";
@@ -193,6 +194,8 @@ export default function DatabaseDetailPage() {
           {engineLabel(db.engine)} · {db.version} · :{db.port}{db.hostPort ? ` → host :${db.hostPort}` : ""}
         </p>
       </PageHeader>
+
+      <DatabaseIconCard id={id} iconUpdatedAt={db.iconUpdatedAt} canWrite={db.canWrite} onChanged={invalidate} />
 
       {renameOpen && (
         <RenameModal
@@ -493,6 +496,71 @@ function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | nul
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.publicPortRedeploy")}</div>}
+    </Card>
+  );
+}
+
+/** A database's custom icon: a square PNG (write-gated), shown with a database fallback. Mirrors the app/
+ *  project/team icon cards — the browser center-crops to a small PNG before upload to fit the 64KB cap. */
+function DatabaseIconCard({ id, iconUpdatedAt, canWrite, onChanged }: { id: string; iconUpdatedAt: string | null; canWrite: boolean; onChanged: () => void }) {
+  const t = useT();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [processing, setProcessing] = useState(false);
+  const url = databaseIconUrl(id, iconUpdatedAt);
+
+  const save = useMutation({
+    mutationFn: (data: string) => api.setDatabaseIcon(id, data),
+    onSuccess: () => { onChanged(); toast(t("databases.iconUploaded"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("databases.iconFailed"), "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteDatabaseIcon(id),
+    onSuccess: () => { onChanged(); toast(t("databases.iconRemoved"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("databases.iconFailed"), "error"),
+  });
+
+  const onPick = async (file: File) => {
+    setProcessing(true);
+    try {
+      let data = "";
+      for (const side of [128, 96, 64]) {
+        data = await cropToPngBase64(file, side);
+        if (data.length * 0.75 <= 64 * 1024) break;
+      }
+      if (data.length * 0.75 > 64 * 1024) { toast(t("databases.iconTooLarge"), "error"); return; }
+      save.mutate(data);
+    } catch {
+      toast(t("databases.iconReadFailed"), "error");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  if (!canWrite && !url) return null; // nothing to show a read-only member with no icon
+
+  const busy = processing || save.isPending || remove.isPending;
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <span style={{ width: 48, height: 48, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+          {url ? <img src={url} alt="" width={48} height={48} style={{ objectFit: "cover" }} /> : <DatabaseIcon size={22} color="var(--c-tx3)" />}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{t("databases.iconTitle")}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("databases.iconHint")}</div>
+        </div>
+        {canWrite && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
+              {busy ? "…" : url ? t("databases.iconReplace") : t("databases.iconUpload")}
+            </Btn>
+            {url && <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{t("databases.iconRemove")}</Btn>}
+          </div>
+        )}
+      </div>
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onPick(f); }} />
     </Card>
   );
 }
