@@ -253,6 +253,12 @@ func CanonicalCommand(reqID, command string, timeoutMs int, capability string) s
 	return "cmd\n" + reqID + "\n" + command + "\n" + strconv.Itoa(timeoutMs) + "\n" + capability
 }
 
+// CanonicalCommandCancel mirrors @tugra/shared canonicalCommandCancel — signs just the reqId of the
+// running command to kill.
+func CanonicalCommandCancel(reqID string) string {
+	return "ccancel\n" + reqID
+}
+
 // CanonicalTermStart mirrors @tugra/shared canonicalTermStart.
 func CanonicalTermStart(sessionID, target string, cols, rows int, capability string) string {
 	return "term\n" + sessionID + "\n" + target + "\n" + strconv.Itoa(cols) + "\n" + strconv.Itoa(rows) + "\n" + capability

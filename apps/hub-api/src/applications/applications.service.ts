@@ -283,6 +283,15 @@ function redactInstallConfig(
 
 @Injectable()
 export class ApplicationsService {
+  // In-flight deploy commands by deployment id → the agent server + reqId currently running, so a RUNNING
+  // deploy can be cancelled (the reqId's process group is SIGKILLed on the agent). Set when executeDeploy
+  // dispatches a deploy-capability command, cleared when the deploy finishes. Non-swarm only — a swarm
+  // rollout doesn't go through sendCommand, so it is never tracked here (and so can't be cancelled yet).
+  private readonly activeDeployCommands = new Map<string, { serverId: string; reqId: string }>();
+  // Deployment ids for which a cancel was requested — executeDeploy records the result as CANCELLED (not
+  // FAILED) and skips auto-rollback classification + the failure notification.
+  private readonly cancelRequested = new Set<string>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
@@ -1215,9 +1224,12 @@ export class ApplicationsService {
   }
 
   /**
-   * Cancel a QUEUED deploy — a compare-and-set on status=QUEUED. A RUNNING deploy can't be cancelled yet
-   * (that needs an agent-side process kill — a separate step), so a RUNNING or already-terminal row 409s.
-   * Scoped by the already-authorized appId, so a depId belonging to another app can't be cancelled (no IDOR).
+   * Cancel a deploy. A QUEUED one is a compare-and-set on status=QUEUED. A RUNNING one is cancelled by
+   * killing the in-flight agent command's process group (SIGKILL): executeDeploy then records it CANCELLED
+   * (not FAILED), skips auto-rollback and the failure notification, and leaves the app's running state
+   * untouched (the previous container was never swapped out mid-build). Only a non-swarm RUNNING deploy with
+   * a tracked in-flight command can be cancelled — a swarm rollout (or a RUNNING row orphaned by a hub
+   * restart, with no live command) still 409s. Scoped by the already-authorized appId → no IDOR.
    */
   async cancelDeployment(userId: string, appId: string, depId: string): Promise<Deployment | null> {
     await this.requireWrite(userId, appId, "apps:deploy");
@@ -1231,7 +1243,16 @@ export class ApplicationsService {
     }
     const row = await this.prisma.deployment.findFirst({ where: { id: depId, appId } });
     if (!row) throw new NotFoundException("deployment not found");
-    if (row.status === "RUNNING") throw new ConflictException("a running deployment can't be cancelled yet");
+    if (row.status === "RUNNING") {
+      const active = this.activeDeployCommands.get(depId);
+      if (!active) throw new ConflictException("this running deployment can't be cancelled (no cancellable step is in flight)");
+      // Mark intent BEFORE sending the kill so executeDeploy's result handler sees CANCELLED, then kill the
+      // command's process group on the agent. The deployment flips to CANCELLED when the command returns.
+      this.cancelRequested.add(depId);
+      this.agentWs.cancelCommand(active.serverId, active.reqId);
+      await this.audit.log({ actor: userId, action: "app.deploy.cancel", target: appId });
+      return row;
+    }
     throw new ConflictException("deployment already finished");
   }
 
@@ -1401,7 +1422,26 @@ export class ApplicationsService {
         "deploy",
         this.deployTimeoutMs(app),
         (chunk) => this.deployLogs.push(app.id, chunk),
+        (reqId) => this.activeDeployCommands.set(dep.id, { serverId: app.serverId, reqId }),
       );
+      // Cancelled mid-flight: the agent SIGKILLed the build (its process group), so record CANCELLED — not
+      // FAILED — and skip auto-rollback + the failure notification. The previous container (if any) was
+      // never swapped out, so the app's running state is untouched; leave its status as-is.
+      if (this.cancelRequested.has(dep.id)) {
+        await this.prisma.deployment.update({
+          where: { id: dep.id },
+          data: {
+            status: "CANCELLED",
+            logs: `${(buildLog ? `${buildLog}\n${r.output}` : r.output)}\nCancelled by user`.slice(0, 65536),
+            exitCode: r.exitCode,
+            ...this.finishStamp(dep),
+          },
+        });
+        this.deployLogs.finish(app.id, { status: "FAILED", exitCode: r.exitCode, deploymentId: dep.id });
+        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScript(app, dep.id), "cleanup").catch(() => undefined);
+        await this.audit.log({ actor, action: "app.deploy.cancel", target: app.id });
+        return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+      }
       // Exit-code contract from the rolling/recreate scripts: 0 = healthy & live, 3 = new
       // version failed its health gate and the PREVIOUS one is serving (auto-rollback),
       // anything else = hard failure. Only rolling/recreate emit exit 3, and only when a
@@ -1493,23 +1533,43 @@ export class ApplicationsService {
       // lives in the try scope, so the discriminator is inlined here.)
       const gitSourced = app.source === "GIT" || (app.source === "COMPOSE" && !!app.composePath && !!app.gitUrl);
       const cc = gitSourced && e instanceof Error ? parseCommit(e.message) : null;
-      await this.prisma.deployment.update({
-        where: { id: dep.id },
-        data: {
-          status: "FAILED",
-          logs: e instanceof Error ? e.message : "failed",
-          commitSha: cc?.sha ?? null,
-          commitMessage: cc?.message ?? null,
-          ...this.finishStamp(dep),
-        },
-      });
-      await this.prisma.application.update({
-        where: { id: app.id },
-        data: { status: AppStatus.FAILED },
-      });
-      this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
-      this.notifyDeploy(app, dep, "deploy_failed").catch(() => {});
+      // A cancel can surface here too (the killed command dropped the socket / threw) — record CANCELLED,
+      // leave the app status untouched, and send no failure notification.
+      if (this.cancelRequested.has(dep.id)) {
+        await this.prisma.deployment.update({
+          where: { id: dep.id },
+          data: {
+            status: "CANCELLED",
+            logs: `${e instanceof Error ? e.message : "cancelled"}\nCancelled by user`.slice(0, 65536),
+            commitSha: cc?.sha ?? null,
+            commitMessage: cc?.message ?? null,
+            ...this.finishStamp(dep),
+          },
+        });
+        this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+        await this.audit.log({ actor, action: "app.deploy.cancel", target: app.id });
+      } else {
+        await this.prisma.deployment.update({
+          where: { id: dep.id },
+          data: {
+            status: "FAILED",
+            logs: e instanceof Error ? e.message : "failed",
+            commitSha: cc?.sha ?? null,
+            commitMessage: cc?.message ?? null,
+            ...this.finishStamp(dep),
+          },
+        });
+        await this.prisma.application.update({
+          where: { id: app.id },
+          data: { status: AppStatus.FAILED },
+        });
+        this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+        this.notifyDeploy(app, dep, "deploy_failed").catch(() => {});
+      }
     } finally {
+      // Clear the cancel registry for this deployment (terminal now, whatever happened).
+      this.activeDeployCommands.delete(dep.id);
+      this.cancelRequested.delete(dep.id);
       // Whatever happened (success, failure, or the early swarm return), start the next queued deploy for
       // this app. The row is already terminal here, so claimNext's RUNNING-count check won't see this one.
       void this.drain(app.id);
