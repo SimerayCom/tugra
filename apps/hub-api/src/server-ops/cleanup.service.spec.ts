@@ -83,7 +83,7 @@ describe("CleanupService", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const scheduler = { schedule: jest.fn(), scheduleCron: jest.fn(), unschedule: jest.fn() } as unknown as CleanupSchedulerService;
     await make(prisma, access, {}, scheduler).setConfig("u1", "s1", { enabled: true, intervalHours: 12, cron: "0 3 * * *" });
-    expect(scheduler.scheduleCron).toHaveBeenCalledWith("s1", "0 3 * * *");
+    expect(scheduler.scheduleCron).toHaveBeenCalledWith("s1", "0 3 * * *", undefined);
     expect(scheduler.schedule).not.toHaveBeenCalled();
   });
 

@@ -80,7 +80,7 @@ export class CleanupService {
     });
     // A cron expression drives the schedule when set; otherwise fall back to the plain interval.
     if (server.cleanupEnabled && server.cleanupCron) {
-      await this.scheduler.scheduleCron(serverId, server.cleanupCron);
+      await this.scheduler.scheduleCron(serverId, server.cleanupCron, server.timezone ?? undefined);
     } else if (server.cleanupEnabled && server.cleanupIntervalHours) {
       await this.scheduler.schedule(serverId, server.cleanupIntervalHours * 3600);
     } else {

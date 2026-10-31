@@ -37,6 +37,8 @@ const s = (
   cleanupCron: null,
   cleanupThresholdPct: null,
   cleanupVolumes: false,
+  description: null,
+  timezone: null,
   lastCleanupAt: null,
   lastSeenAt: null,
   createdAt: new Date().toISOString(),
