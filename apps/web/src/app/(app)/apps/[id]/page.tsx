@@ -14,6 +14,7 @@ import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { AppFilesCard } from "../../../../components/app-files-card";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
 import { DatabaseLinksCard } from "../../../../components/database-links-card";
+import { AppSecretRefsCard } from "../../../../components/app-secret-refs-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { CloneAppModal } from "../../../../components/clone-app-modal";
 import { RenameModal } from "../../../../components/rename-modal";
@@ -411,6 +412,7 @@ export default function AppDetailPage() {
     ),
     env: () => <EnvCard id={id} clusterId={appData.clusterId} />,
     databaseLinks: () => <DatabaseLinksCard id={id} serverId={appData.serverId} canWrite={appData.canWrite} />,
+    secretRefs: () => <AppSecretRefsCard id={id} teamId={appData.teamId} canWrite={appData.canWrite} />,
     expose: () => (
       <Card style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200 }}>

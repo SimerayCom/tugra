@@ -70,7 +70,7 @@ describe("visibleConfigGroups", () => {
     // general holds only the always-on cards (environment + tags), build only credentials
     expect(group(f, "general")!.cardIds).toEqual(["environment", "tags"]);
     expect(group(f, "build")!.cardIds).toEqual(["credentials"]);
-    expect(group(f, "environment")!.cardIds).toEqual(["env"]);
+    expect(group(f, "environment")!.cardIds).toEqual(["env", "secretRefs"]); // secret refs resolve on compose deploys too
     expect(group(f, "domains")!.cardIds).toEqual(["expose", "serviceDomains"]); // compose gains per-service domains
   });
 
@@ -183,10 +183,17 @@ describe("visibleConfigGroups", () => {
   });
 
   it("databaseLinks shows for a classic app and hides for compose / swarm / preview", () => {
-    expect(group(facts(), "environment")!.cardIds).toEqual(["env", "databaseLinks"]);
-    expect(group(facts({ source: "COMPOSE" }), "environment")!.cardIds).toEqual(["env"]);
-    expect(group(facts({ clusterId: "c1" }), "environment")!.cardIds).toEqual(["env"]);
+    expect(group(facts(), "environment")!.cardIds).toEqual(["env", "databaseLinks", "secretRefs"]);
+    expect(group(facts({ source: "COMPOSE" }), "environment")!.cardIds).toEqual(["env", "secretRefs"]);
+    expect(group(facts({ clusterId: "c1" }), "environment")!.cardIds).toEqual(["env", "secretRefs"]);
     expect(group(facts({ isPreview: true }), "environment")!.cardIds).toEqual(["env"]);
+  });
+
+  it("secretRefs shows for classic, compose and swarm apps and hides only for previews", () => {
+    expect(group(facts(), "environment")!.cardIds).toContain("secretRefs");
+    expect(group(facts({ source: "COMPOSE" }), "environment")!.cardIds).toContain("secretRefs");
+    expect(group(facts({ clusterId: "c1" }), "environment")!.cardIds).toContain("secretRefs");
+    expect(group(facts({ isPreview: true }), "environment")!.cardIds).not.toContain("secretRefs");
   });
 
   it("deployHooks shows for a classic app and hides for compose / swarm / preview", () => {

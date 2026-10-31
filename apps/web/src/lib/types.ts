@@ -391,6 +391,19 @@ export interface CloudCredential {
   canWrite: boolean;
 }
 
+// A team's external secret store (HashiCorp Vault). The access token is write-only — never returned by the API.
+export interface SecretProvider {
+  id: string;
+  name: string;
+  teamId: string;
+  kind: string;
+  address: string;
+  lastVerifiedAt: string | null;
+  refCount: number;
+  createdAt: string;
+  canWrite: boolean;
+}
+
 // A team's DNS-provider API credential (Cloudflare) for one-click custom-domain setup. The token is never returned.
 export interface DnsCredential {
   id: string;
@@ -1206,6 +1219,18 @@ export type DbEngine =
   | "CLICKHOUSE"
   | "LIBSQL";
 export type DbStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+
+/** One app secret-ref as returned by GET /apps/:id/secret-refs — the locator only, never a secret value. */
+export interface SecretRefView {
+  refId: string;
+  envVar: string;
+  providerId: string;
+  providerName: string;
+  kind: string;
+  remoteKey: string;
+  overridesAppEnv: boolean;
+  createdAt: string;
+}
 
 /** One app<->database link as returned by GET /apps/:id/database-links — never carries a secret. */
 export interface DatabaseLinkView {
