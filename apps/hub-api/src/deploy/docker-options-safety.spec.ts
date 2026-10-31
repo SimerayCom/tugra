@@ -89,5 +89,30 @@ describe("assertSafeDockerOptions", () => {
     bad("--security-opt label:disable");
   });
 
+  it("rejects a traefik.* label (cross-tenant ingress hijack)", () => {
+    bad("--label traefik.http.routers.evil.rule=Host(`victim.com`)", /traefik/);
+    bad("-l traefik.enable=true", /traefik/);
+    bad("--label=traefik.http.routers.evil.service=evil", /traefik/);
+    bad("--memory=256m --label TRAEFIK.enable=true", /traefik/); // case-insensitive
+  });
+
+  it("still allows non-traefik labels (monitoring / metadata)", () => {
+    ok("--label foo=bar --label app='my app'");
+    ok("-l com.example.team=blue");
+    ok("--label traefikish=notreally"); // only the exact `traefik.` prefix is gated
+  });
+
+  it("rejects --label-file (bypass of the traefik.* check)", () => bad("--label-file /tmp/labels", /label-file/));
+
+  it("rejects --name (managed container name)", () => {
+    bad("--name evil", /--name/);
+    bad("--name=tugra_victim", /--name/);
+  });
+
+  it("rejects --env-file (host file disclosure into env)", () => {
+    bad("--env-file /root/tugra/.env", /env-file/);
+    bad("--env-file=/etc/secrets", /env-file/);
+  });
+
   it("fails closed on an unterminated quote", () => bad('--label "oops', /unterminated/));
 });

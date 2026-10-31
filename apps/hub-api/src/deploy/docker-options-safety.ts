@@ -45,7 +45,7 @@ export function validateHostMounts(mounts: unknown): HostMount[] {
 const VALUE_FLAGS = new Set([
   "-v", "--volume", "--mount", "--device", "--device-cgroup-rule", "--cap-add",
   "--network", "--net", "--pid", "--ipc", "--uts", "--userns", "--cgroupns",
-  "--security-opt", "--cgroup-parent",
+  "--security-opt", "--cgroup-parent", "--label", "-l",
 ]);
 
 function dangerousNamespace(v: string): boolean {
@@ -134,6 +134,29 @@ export function assertSafeDockerOptions(raw: string | null | undefined): void {
           throw disallowed("--security-opt disabling confinement");
         }
         break;
+      case "--label":
+      case "-l":
+        // Tugra owns the `traefik.*` label namespace — it is how ingress routing/middleware is wired on the
+        // shared proxy network. A user-supplied `traefik.*` label is additive at `docker run`, so a member
+        // with `apps:config` could declare a NEW router (`traefik.http.routers.x.rule=Host(`victim.com`)`)
+        // that points ANOTHER team's hostname at their own container — a cross-tenant ingress hijack. Block
+        // the namespace; non-traefik labels (monitoring, metadata) stay allowed.
+        if (val.split("=")[0].trim().toLowerCase().startsWith("traefik.")) {
+          throw disallowed("--label in the traefik.* namespace (would hijack shared ingress routing)");
+        }
+        break;
+      case "--label-file":
+        // Labels from an unvalidated host file would bypass the traefik.* check above.
+        throw disallowed("--label-file (labels from an unvalidated file could inject traefik routing)");
+      case "--name":
+        // The container name is managed by Tugra and is the key for every lifecycle op (stop/logs/health/
+        // remove) and the Traefik service binding. Overriding it detaches the app from its own controls and
+        // lets one app squat another's managed name.
+        throw disallowed("--name (the container name is managed by Tugra)");
+      case "--env-file":
+        // `docker run --env-file <path>` reads a host file into the container env at run time, so an
+        // arbitrary path (e.g. an agent-host secrets file) would be disclosed into the app's environment.
+        throw disallowed("--env-file (could read an arbitrary host file into the container env)");
     }
   }
 }
