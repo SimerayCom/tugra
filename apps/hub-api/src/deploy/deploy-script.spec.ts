@@ -932,6 +932,31 @@ describe("deploy-script", () => {
     expect(s).toContain("redirectregex.replacement=https://www.x.com/${1}");
   });
 
+  it("path prefix adds a PathPrefix rule + a stripprefix middleware (stripped by default)", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", pathPrefix: "/api" }).join("\n");
+    expect(s).toContain("Host(`x.com`) && PathPrefix(`/api`)");
+    expect(s).toContain(`middlewares.tugra_${base.id}-strip.stripprefix.prefixes=/api`);
+    expect(s).toContain(`middlewares=tugra_${base.id}-strip`);
+  });
+
+  it("path prefix wraps a www-canonical OR in parens", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", domainRedirect: "root", pathPrefix: "/api" }).join("\n");
+    expect(s).toContain("(Host(`x.com`) || Host(`www.x.com`)) && PathPrefix(`/api`)");
+  });
+
+  it("stripPrefix:false keeps the PathPrefix rule but emits no strip middleware", () => {
+    const s = traefikLabels({ ...base, domain: "x.com", pathPrefix: "/api", stripPrefix: false }).join("\n");
+    expect(s).toContain("PathPrefix(`/api`)");
+    expect(s).not.toContain("-strip");
+  });
+
+  it("no path prefix → byte-identical rule (regression)", () => {
+    const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(s).toContain("routers.tugra_" + base.id + ".rule=Host(`x.com`)");
+    expect(s).not.toContain("PathPrefix");
+    expect(s).not.toContain("-strip");
+  });
+
   it("security headers add a headers middleware to the router", () => {
     const s = traefikLabels({ ...base, domain: "x.com", securityHeaders: true }).join("\n");
     expect(s).toContain("-sec.headers.stsSeconds=31536000");

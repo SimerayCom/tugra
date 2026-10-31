@@ -319,14 +319,25 @@ export const SetDomainOptionsSchema = z
     forwardAuth: z.string().url().nullable().optional(),
     // IP allowlist (CIDRs/addresses); empty array clears it (open to all). Capped at 50 ranges.
     ipAllowlist: z.array(IP_OR_CIDR).max(50).optional(),
+    // Path-prefix routing: must start with "/", only URL-path characters (it is interpolated into a Traefik
+    // rule, so no whitespace/backtick/control chars). null/"" clears it (serve at host root).
+    pathPrefix: z
+      .string()
+      .regex(/^\/[A-Za-z0-9._~\-/]*$/, "pathPrefix must start with / and contain only URL-path characters")
+      .max(256)
+      .nullable()
+      .optional(),
+    stripPrefix: z.boolean().optional(),
   })
   .refine(
     (d) =>
       d.domainRedirect !== undefined ||
       d.securityHeaders !== undefined ||
       d.forwardAuth !== undefined ||
-      d.ipAllowlist !== undefined,
-    { message: "provide domainRedirect, securityHeaders, forwardAuth and/or ipAllowlist" },
+      d.ipAllowlist !== undefined ||
+      d.pathPrefix !== undefined ||
+      d.stripPrefix !== undefined,
+    { message: "provide domainRedirect, securityHeaders, forwardAuth, ipAllowlist, pathPrefix and/or stripPrefix" },
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 

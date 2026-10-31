@@ -7818,6 +7818,13 @@
                           "type": "string"
                         }
                       },
+                      "pathPrefix": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "stripPrefix": {
+                        "type": "boolean"
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -7994,6 +8001,8 @@
                       "forwardAuth",
                       "ipAllowlist",
                       "basicAuthUsers",
+                      "pathPrefix",
+                      "stripPrefix",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -8767,6 +8776,13 @@
                         "type": "string"
                       }
                     },
+                    "pathPrefix": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "stripPrefix": {
+                      "type": "boolean"
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -8943,6 +8959,8 @@
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
+                    "pathPrefix",
+                    "stripPrefix",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -9783,6 +9801,13 @@
                         "type": "string"
                       }
                     },
+                    "pathPrefix": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "stripPrefix": {
+                      "type": "boolean"
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -9959,6 +9984,8 @@
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
+                    "pathPrefix",
+                    "stripPrefix",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -10803,6 +10830,13 @@
                         "type": "string"
                       }
                     },
+                    "pathPrefix": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "stripPrefix": {
+                      "type": "boolean"
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -10979,6 +11013,8 @@
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
+                    "pathPrefix",
+                    "stripPrefix",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -17034,6 +17070,15 @@
                       "maxLength": 49
                     },
                     "maxItems": 50
+                  },
+                  "pathPrefix": {
+                    "type": "string",
+                    "pattern": "^\\/[A-Za-z0-9._~\\-/]*$",
+                    "maxLength": 256,
+                    "nullable": true
+                  },
+                  "stripPrefix": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -18187,6 +18232,13 @@
                             "type": "string"
                           }
                         },
+                        "pathPrefix": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "stripPrefix": {
+                          "type": "boolean"
+                        },
                         "https": {
                           "type": "boolean"
                         },
@@ -18363,6 +18415,8 @@
                         "forwardAuth",
                         "ipAllowlist",
                         "basicAuthUsers",
+                        "pathPrefix",
+                        "stripPrefix",
                         "https",
                         "domainKind",
                         "exposeMode",
@@ -19066,6 +19120,13 @@
                         "type": "string"
                       }
                     },
+                    "pathPrefix": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "stripPrefix": {
+                      "type": "boolean"
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -19242,6 +19303,8 @@
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
+                    "pathPrefix",
+                    "stripPrefix",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -20015,6 +20078,13 @@
                           "type": "string"
                         }
                       },
+                      "pathPrefix": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "stripPrefix": {
+                        "type": "boolean"
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -20191,6 +20261,8 @@
                       "forwardAuth",
                       "ipAllowlist",
                       "basicAuthUsers",
+                      "pathPrefix",
+                      "stripPrefix",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -21049,6 +21121,13 @@
                         "type": "string"
                       }
                     },
+                    "pathPrefix": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "stripPrefix": {
+                      "type": "boolean"
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -21225,6 +21304,8 @@
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
+                    "pathPrefix",
+                    "stripPrefix",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -23093,6 +23174,13 @@
                         "type": "string"
                       }
                     },
+                    "pathPrefix": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "stripPrefix": {
+                      "type": "boolean"
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -23269,6 +23357,8 @@
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
+                    "pathPrefix",
+                    "stripPrefix",
                     "https",
                     "domainKind",
                     "exposeMode",
