@@ -39,6 +39,9 @@ import {
   dockerOptionsArgs,
   buildCustomCertYaml,
   buildCustomCertRemoveScript,
+  buildProxyDynamicWriteScript,
+  buildProxyDynamicRemoveScript,
+  proxyUserDynamicFile,
   isSshGitUrl,
   gitUrlHost,
   type AppSpec,
@@ -194,6 +197,18 @@ describe("custom uploaded cert (certType custom + certPem/certKey)", () => {
     expect(s).toContain("rm -f /etc/tugra/proxy-dynamic/tls-abc.yml");
     expect(s).toContain("/etc/tugra/proxy-dynamic/certs/abc.crt");
     expect(s).toContain("/etc/tugra/proxy-dynamic/certs/abc.key");
+  });
+
+  it("proxy dynamic config writes user-<name>.yml (hidden-temp→mv, base64) — never collides with panel/tls", () => {
+    const s = buildProxyDynamicWriteScript("my-mw", "http:\n  middlewares: {}\n");
+    expect(s).toContain("/etc/tugra/proxy-dynamic/.user-my-mw.yml.tmp"); // hidden temp
+    expect(s).toContain("mv /etc/tugra/proxy-dynamic/.user-my-mw.yml.tmp /etc/tugra/proxy-dynamic/user-my-mw.yml");
+    expect(s).toContain("base64 -d"); // content piped via base64, not inlined
+    expect(proxyUserDynamicFile("x")).toBe("user-x.yml"); // prefix guarantees no panel.yml / tls-*.yml clash
+  });
+
+  it("buildProxyDynamicRemoveScript removes exactly the user-<name>.yml file", () => {
+    expect(buildProxyDynamicRemoveScript("my-mw")).toBe("rm -f /etc/tugra/proxy-dynamic/user-my-mw.yml");
   });
 });
 

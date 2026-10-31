@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { ProxyOpsService } from "./proxy-ops.service";
 import { ProxyService } from "../applications/proxy.service";
@@ -125,5 +125,77 @@ describe("ProxyOpsService", () => {
     await app.ensureProxy("s1");
 
     expect(opsSend.mock.calls[0][1]).toBe(appSend.mock.calls[0][1]);
+  });
+});
+
+describe("ProxyOpsService dynamic configs", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  function makeDyn(role: Role | null, send: jest.Mock, pdc: Record<string, jest.Mock> = {}) {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(server) },
+      proxyDynamicConfig: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(0),
+        upsert: jest.fn().mockResolvedValue({}),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+        ...pdc,
+      },
+    } as unknown as PrismaService;
+    const perms = new Set(role === Role.OWNER || role === Role.ADMIN ? ALL_PERMS : []);
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(role),
+      requirePermission: jest.fn((_u: string, _t: string, perm: string) =>
+        perms.has(perm) ? Promise.resolve(undefined) : Promise.reject(new ForbiddenException("insufficient role for this team")),
+      ),
+    } as unknown as TeamAccessService;
+    const svc = new ProxyOpsService(prisma, access, audit, { sendCommand: send } as unknown as AgentWsServer, {} as unknown as ProxyConfigService);
+    return { svc, prisma };
+  }
+
+  it("writes a valid YAML config to /dynamic as user-<name>.yml, then records + audits it", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const { svc, prisma } = makeDyn(Role.OWNER, send);
+    await svc.putDynamicConfig("u1", "s1", "my-mw", "http:\n  middlewares:\n    foo:\n      headers:\n        stsSeconds: 1\n");
+    expect(send.mock.calls[0][1]).toContain("/etc/tugra/proxy-dynamic/user-my-mw.yml");
+    expect(send.mock.calls[0][2]).toBe("deploy");
+    expect((prisma.proxyDynamicConfig as unknown as { upsert: jest.Mock }).upsert).toHaveBeenCalled();
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.proxy.dynamic.put" }));
+  });
+
+  it("rejects invalid YAML and a non-mapping doc BEFORE touching the proxy", async () => {
+    const send = jest.fn();
+    const { svc } = makeDyn(Role.OWNER, send);
+    await expect(svc.putDynamicConfig("u1", "s1", "bad", "http:\n  foo: [unterminated")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.putDynamicConfig("u1", "s1", "scalar", "just a string")).rejects.toBeInstanceOf(BadRequestException);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bad name (uppercase / dots / path) without writing", async () => {
+    const send = jest.fn();
+    const { svc } = makeDyn(Role.OWNER, send);
+    await expect(svc.putDynamicConfig("u1", "s1", "Bad.Name", "http: {}")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.putDynamicConfig("u1", "s1", "../escape", "http: {}")).rejects.toBeInstanceOf(BadRequestException);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does NOT persist when the proxy write fails (fail-closed)", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 1, output: "permission denied" });
+    const { svc, prisma } = makeDyn(Role.OWNER, send);
+    await expect(svc.putDynamicConfig("u1", "s1", "mw", "http: {}")).rejects.toBeInstanceOf(BadRequestException);
+    expect((prisma.proxyDynamicConfig as unknown as { upsert: jest.Mock }).upsert).not.toHaveBeenCalled();
+  });
+
+  it("delete removes the DB row and sends an rm for user-<name>.yml", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const { svc } = makeDyn(Role.OWNER, send);
+    await svc.deleteDynamicConfig("u1", "s1", "mw");
+    expect(send.mock.calls[0][1]).toBe("rm -f /etc/tugra/proxy-dynamic/user-mw.yml");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "server.proxy.dynamic.delete" }));
+  });
+
+  it("forbids a viewer from writing a dynamic config", async () => {
+    await expect(makeDyn(Role.VIEWER, jest.fn()).svc.putDynamicConfig("u1", "s1", "mw", "http: {}")).rejects.toThrow(/insufficient role/);
   });
 });

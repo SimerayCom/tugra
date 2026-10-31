@@ -35,6 +35,8 @@ import {
   ContainerActionSchema,
   CreateLogDrainInput,
   CreateLogDrainSchema,
+  SetProxyDynamicConfigInput,
+  SetProxyDynamicConfigSchema,
   UpdateLogDrainInput,
   UpdateLogDrainSchema,
 } from "./dto";
@@ -149,6 +151,34 @@ export class ServerOpsController {
     @Query("tail") tail?: string,
   ) {
     return this.proxy.logs(user.userId, id, tail ? Number(tail) : undefined);
+  }
+
+  // Operator-authored Traefik dynamic-config files (Coolify "Proxy > Dynamic Configurations" parity).
+  @Get("proxy/dynamic")
+  proxyDynamicList(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.proxy.listDynamicConfigs(user.userId, id);
+  }
+
+  @Put("proxy/dynamic/:name")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodBody(SetProxyDynamicConfigSchema)
+  async proxyDynamicPut(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("name") name: string,
+    @Body(new ZodValidationPipe(SetProxyDynamicConfigSchema)) body: SetProxyDynamicConfigInput,
+  ) {
+    await this.proxy.putDynamicConfig(user.userId, id, name, body.content);
+    return { ok: true };
+  }
+
+  @Delete("proxy/dynamic/:name")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  async proxyDynamicDelete(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("name") name: string) {
+    await this.proxy.deleteDynamicConfig(user.userId, id, name);
+    return { ok: true };
   }
 
   @Get("log-drains")

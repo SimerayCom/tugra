@@ -216,6 +216,7 @@ export default function ServerDetailPage() {
         <>
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
           <ProxyCard id={id} canWrite={server.canWrite} />
+          <ProxyDynamicCard id={id} canWrite={server.canWrite} />
           {server.canWrite && <NetworkCard id={id} server={server} />}
           <TunnelCard id={id} server={server} />
           {server.canWrite && <CapabilitiesCard id={id} server={server} />}
@@ -1021,6 +1022,65 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
         <pre className="mono" style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs}</pre>
       )}
     </Card>
+  );
+}
+
+// Operator-authored Traefik dynamic-config files (Coolify "Proxy > Dynamic Configurations" parity).
+const DYN_TA: React.CSSProperties = { width: "100%", boxSizing: "border-box", minHeight: 96, fontFamily: "monospace", fontSize: 12, padding: 8, borderRadius: "var(--r1)", border: "1px solid var(--c-bd)", background: "var(--c-el)", color: "var(--c-tx)", resize: "vertical" };
+
+function ProxyDynamicCard({ id, canWrite }: { id: string; canWrite: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: ["proxy-dynamic", id], queryFn: () => api.listProxyDynamicConfigs(id) });
+  const [newName, setNewName] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const refresh = () => qc.invalidateQueries({ queryKey: ["proxy-dynamic", id] });
+  const create = useMutation({
+    mutationFn: () => api.putProxyDynamicConfig(id, newName.trim(), newContent),
+    onSuccess: () => { setNewName(""); setNewContent(""); refresh(); },
+  });
+  const configs = list.data?.configs ?? [];
+  return (
+    <Card style={{ padding: 16, marginTop: 20 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("servers.proxyDynamic")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.proxyDynamicDesc")}</p>
+      {configs.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("servers.proxyDynamicEmpty")}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {configs.map((c) => (
+          <DynamicConfigRow key={c.name} id={id} name={c.name} initial={c.content} canWrite={canWrite} onChanged={refresh} />
+        ))}
+      </div>
+      {canWrite && (
+        <div style={{ marginTop: 16, borderTop: "1px solid var(--c-bd)", paddingTop: 14 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("servers.proxyDynamicAdd")}</div>
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t("servers.proxyDynamicName")} aria-label={t("servers.proxyDynamicName")} className="mono" style={{ ...DYN_TA, minHeight: 0, marginBottom: 8 }} />
+          <textarea value={newContent} onChange={(e) => setNewContent(e.target.value)} placeholder={"http:\n  middlewares:\n    my-rate:\n      rateLimit:\n        average: 100"} aria-label={t("servers.proxyDynamicContent")} style={DYN_TA} />
+          {create.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 6 }}>{(create.error as Error).message}</div>}
+          <div style={{ marginTop: 8 }}><Btn onClick={() => create.mutate()} disabled={create.isPending || !newName.trim() || !newContent.trim()}>{t("servers.proxyDynamicCreate")}</Btn></div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function DynamicConfigRow({ id, name, initial, canWrite, onChanged }: { id: string; name: string; initial: string; canWrite: boolean; onChanged: () => void }) {
+  const t = useT();
+  const confirm = useConfirm();
+  const [content, setContent] = useState(initial);
+  const save = useMutation({ mutationFn: () => api.putProxyDynamicConfig(id, name, content), onSuccess: onChanged });
+  const del = useMutation({ mutationFn: () => api.deleteProxyDynamicConfig(id, name), onSuccess: onChanged });
+  return (
+    <div>
+      <div className="mono" style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>user-{name}.yml</div>
+      <textarea value={content} onChange={(e) => setContent(e.target.value)} disabled={!canWrite} aria-label={`user-${name}.yml`} style={DYN_TA} />
+      {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 6 }}>{(save.error as Error).message}</div>}
+      {canWrite && (
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <Btn onClick={() => save.mutate()} disabled={save.isPending || content === initial}>{t("servers.proxyDynamicSave")}</Btn>
+          <Btn variant="dangerGhost" onClick={async () => { if (await confirm({ body: t("servers.proxyDynamicDeleteConfirm", { name }), danger: true })) del.mutate(); }} disabled={del.isPending}>{t("servers.proxyDynamicDelete")}</Btn>
+        </div>
+      )}
+    </div>
   );
 }
 
