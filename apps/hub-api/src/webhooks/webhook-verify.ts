@@ -33,6 +33,14 @@ export function verifyGitlabToken(secret: string, header?: string | null): boole
   return safeEqual(secret, header);
 }
 
+/** Gitea/Forgejo verification: `X-Gitea-Signature` / `X-Forgejo-Signature` is the hex HMAC-SHA256 of the
+ *  raw body with the per-app secret — same digest as GitHub but WITHOUT the `sha256=` prefix. */
+export function verifyGiteaSignature(secret: string, rawBody: Buffer | string, header?: string | null): boolean {
+  if (!header) return false;
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  return safeEqual(expected, header);
+}
+
 /** Extract the git ref (e.g. "refs/heads/main") from a push payload. */
 export function parseRef(payload: unknown): string | null {
   if (payload && typeof payload === "object" && "ref" in payload) {

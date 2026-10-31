@@ -10,6 +10,7 @@ import {
   repoFullName,
   verifyGithubSignature,
   verifyGitlabToken,
+  verifyGiteaSignature,
 } from "./webhook-verify";
 
 describe("webhook-verify", () => {
@@ -39,6 +40,18 @@ describe("webhook-verify", () => {
     it("rejects missing or malformed headers", () => {
       expect(verifyGithubSignature(secret, body, undefined)).toBe(false);
       expect(verifyGithubSignature(secret, body, "deadbeef")).toBe(false);
+    });
+  });
+
+  describe("verifyGiteaSignature", () => {
+    // Gitea/Forgejo: same HMAC-SHA256 digest as GitHub but hex, no `sha256=` prefix.
+    const sig = createHmac("sha256", secret).update(body).digest("hex");
+    it("accepts a valid hex HMAC and rejects tampered/wrong-secret/missing", () => {
+      expect(verifyGiteaSignature(secret, body, sig)).toBe(true);
+      expect(verifyGiteaSignature(secret, body, sig.slice(0, -1) + "0")).toBe(false);
+      expect(verifyGiteaSignature(secret, body, createHmac("sha256", "other").update(body).digest("hex"))).toBe(false);
+      expect(verifyGiteaSignature(secret, body, undefined)).toBe(false);
+      expect(verifyGiteaSignature(secret, body, `sha256=${sig}`)).toBe(false); // prefix is NOT accepted here
     });
   });
 

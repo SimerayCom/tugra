@@ -996,6 +996,9 @@ export const api = {
   setAppWatchPaths(id: string, watchPaths: string[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/watch-paths`, { method: "PUT", body: JSON.stringify({ watchPaths }) });
   },
+  setAppAutoDeploy(id: string, enabled: boolean) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/auto-deploy`, { method: "PUT", body: JSON.stringify({ enabled }) });
+  },
   setAppBasicAuth(id: string, users: { user: string; password: string }[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/basic-auth`, { method: "PUT", body: JSON.stringify({ users }) });
   },

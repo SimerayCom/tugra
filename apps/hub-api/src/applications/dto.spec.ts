@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -49,6 +49,16 @@ describe("SetBasicAuthSchema — HTTP basic auth users", () => {
     expect(ok([{ user: "u", password: "x" }, { user: "u", password: "y" }]).success).toBe(false); // dup
     expect(ok(Array.from({ length: 21 }, (_, i) => ({ user: `u${i}`, password: "x" }))).success).toBe(false); // > 20
     expect(SetBasicAuthSchema.safeParse({ users: [{ user: "u", password: "x", foo: 1 }] }).success).toBe(false); // strict row
+  });
+});
+
+describe("SetAutoDeploySchema", () => {
+  it("accepts {enabled: boolean} and rejects junk/extra keys", () => {
+    expect(SetAutoDeploySchema.safeParse({ enabled: true }).success).toBe(true);
+    expect(SetAutoDeploySchema.safeParse({ enabled: false }).success).toBe(true);
+    expect(SetAutoDeploySchema.safeParse({}).success).toBe(false);
+    expect(SetAutoDeploySchema.safeParse({ enabled: "yes" }).success).toBe(false);
+    expect(SetAutoDeploySchema.safeParse({ enabled: true, foo: 1 }).success).toBe(false);
   });
 });
 

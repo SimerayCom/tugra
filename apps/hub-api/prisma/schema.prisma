@@ -889,6 +889,9 @@ model Application {
   // triggers a deploy if a changed file matches — so a monorepo doesn't rebuild every app on every push.
   // Empty = deploy on every push (the default / backward-compatible behaviour).
   watchPaths     String[] @default([])
+  // Per-app push-to-deploy switch. True (default) = a matching git push auto-deploys; false = the push is
+  // acknowledged but ignored (pause auto-deploy without deleting the webhook). Preview deploys are separate.
+  autoDeploy     Boolean  @default(true)
   buildCommand   String?
   outputDir      String?
   composeFile    String?

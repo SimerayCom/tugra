@@ -16,6 +16,7 @@ import {
   repoFullName,
   verifyGithubSignature,
   verifyGitlabToken,
+  verifyGiteaSignature,
 } from "./webhook-verify";
 import { parseChangedFiles, pushMatchesWatchPaths } from "./watch-paths";
 import type { Application } from "@prisma/client";
@@ -111,12 +112,15 @@ export class WebhooksService {
 
     const ghSig = header(headers, "x-hub-signature-256");
     const glToken = header(headers, "x-gitlab-token");
+    const giteaSig = header(headers, "x-gitea-signature") ?? header(headers, "x-forgejo-signature");
     const ok =
       ghSig != null
         ? verifyGithubSignature(secret, rawBody, ghSig)
         : glToken != null
           ? verifyGitlabToken(secret, glToken)
-          : false;
+          : giteaSig != null
+            ? verifyGiteaSignature(secret, rawBody, giteaSig)
+            : false;
     if (!ok) throw new UnauthorizedException("invalid webhook signature");
     return app;
   }
@@ -149,6 +153,11 @@ export class WebhooksService {
   ): Promise<WebhookResult> {
     const payload = this.parseBody(rawBody);
     const ref = parseRef(payload);
+    // Per-app push-to-deploy switch: when off, the push is acknowledged (so the provider sees 2xx) but no
+    // deploy runs — pause auto-deploy without deleting the webhook.
+    if (app.autoDeploy === false) {
+      return { deployed: false, reason: "auto-deploy disabled (ignored)" };
+    }
     // Only deploy when the pushed branch matches the app's tracked branch. This applies to a GIT build AND
     // a git-sourced compose (source=COMPOSE + gitUrl); a ping (no ref) or a push to another branch is
     // acknowledged but ignored.
