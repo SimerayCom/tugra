@@ -2,6 +2,7 @@ import {
   constraintExpr,
   spreadPrefExpr,
   buildImageRemoveScript,
+  buildAppImagesRemoveScript,
   buildRestartScript,
   buildStartScript,
   buildProxySetupScript,
@@ -1336,6 +1337,17 @@ describe("deploy-script", () => {
   it("builds remove + image-remove scripts", () => {
     expect(buildRemoveScript({ id: "abc" })).toContain("docker rm -f tugra_abc");
     expect(buildImageRemoveScript({ id: "abc" }, "v1")).toContain("docker rmi tugra_abc:v1");
+  });
+
+  it("app-images remove is scoped to the app's OWN tag namespace (never a bare wildcard)", () => {
+    const s = buildAppImagesRemoveScript({ id: "abc" });
+    // reference filter restricts to tugra_abc:* only
+    expect(s).toContain("--filter=reference='tugra_abc:*'");
+    expect(s).toContain("docker rmi -f");
+    expect(s).toContain("sort -u");
+    // NEVER an unscoped `docker images -q` / `docker images -aq` that could nuke other apps' or base images
+    expect(s).not.toMatch(/docker images\s+-a?q/);
+    expect(s).not.toContain("$(docker images)");
   });
 
   it("GIT + Nixpacks: clones, builds to the versioned tag, runs it, no pull", () => {

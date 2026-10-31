@@ -10503,6 +10503,7 @@ export interface operations {
         parameters: {
             query: {
                 keepVolumes: string;
+                removeImages: string;
             };
             header?: never;
             path: {

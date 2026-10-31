@@ -276,8 +276,9 @@ export default function AppDetailPage() {
   // Read at mutate() time (a stable ref, not a captured state value) so the keep-volumes choice the user
   // ticked in the confirm dialog isn't lost to a stale closure inside the async handler.
   const keepVolumes = useRef(false);
+  const removeImages = useRef(false);
   const del = useMutation({
-    mutationFn: () => api.deleteApp(id, keepVolumes.current),
+    mutationFn: () => api.deleteApp(id, keepVolumes.current, removeImages.current),
     onSuccess: () => router.replace("/apps"),
     onError: (e) => toast(errMsg(e), "error"),
   });
@@ -522,7 +523,16 @@ export default function AppDetailPage() {
                     </Btn>
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
                     <Btn icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("apps.clone")}</Btn>
-                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); keepVolumes.current = false; if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: { label: t("apps.keepVolumes"), ref: keepVolumes } })) del.mutate(); }}>{t("apps.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => {
+                      setMoreOpen(false);
+                      keepVolumes.current = false;
+                      removeImages.current = false;
+                      // Offer "also remove images" only for Image/Git apps — a compose app's images are its
+                      // upstream/compose-built tags, which the hub intentionally never removes.
+                      const boxes = [{ label: t("apps.keepVolumes"), ref: keepVolumes }];
+                      if (appData.source !== "COMPOSE") boxes.push({ label: t("apps.removeImages"), ref: removeImages });
+                      if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: boxes })) del.mutate();
+                    }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>

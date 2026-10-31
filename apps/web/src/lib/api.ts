@@ -1128,8 +1128,9 @@ export const api = {
   restartApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/restart`, { method: "POST" });
   },
-  deleteApp(id: string, keepVolumes = false) {
-    return apiFetch<{ ok: true }>(`/apps/${id}${keepVolumes ? "?keepVolumes=1" : ""}`, { method: "DELETE" });
+  deleteApp(id: string, keepVolumes = false, removeImages = false) {
+    const q = [keepVolumes ? "keepVolumes=1" : "", removeImages ? "removeImages=1" : ""].filter(Boolean).join("&");
+    return apiFetch<{ ok: true }>(`/apps/${id}${q ? `?${q}` : ""}`, { method: "DELETE" });
   },
   getDeployments(id: string) {
     return apiFetch<Deployment[]>(`/apps/${id}/deployments`);

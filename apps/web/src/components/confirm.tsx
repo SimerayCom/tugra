@@ -18,12 +18,17 @@ export interface ConfirmOptions {
    */
   confirmText?: string;
   /**
-   * Optional extra opt-in (e.g. "Keep volumes"). The dialog renders a checkbox and writes its state to
-   * `ref.current`, so the caller reads the choice from the ref after `confirm()` resolves (a stable ref
-   * avoids the stale-closure a captured state value would hit inside the async handler). The confirm
-   * return stays a plain boolean, so existing callers are unaffected.
+   * Optional extra opt-in(s) (e.g. "Keep volumes", "Also remove images"). The dialog renders a checkbox per
+   * entry and writes its state to that entry's `ref.current`, so the caller reads each choice from its ref
+   * after `confirm()` resolves (a stable ref avoids the stale-closure a captured state value would hit inside
+   * the async handler). Pass a single object or an array. The confirm return stays a plain boolean.
    */
-  checkbox?: { label: string; ref: { current: boolean } };
+  checkbox?: ConfirmCheckboxOpt | ConfirmCheckboxOpt[];
+}
+
+export interface ConfirmCheckboxOpt {
+  label: string;
+  ref: { current: boolean };
 }
 
 type ConfirmFn = (opts?: ConfirmOptions) => Promise<boolean>;
@@ -41,11 +46,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const t = useT();
   const [state, setState] = useState<{ opts: ConfirmOptions; resolve: (v: boolean) => void } | null>(null);
   const [typed, setTyped] = useState("");
-  const [checked, setChecked] = useState(false);
 
   const confirm = useCallback<ConfirmFn>((opts = {}) => {
     setTyped("");
-    setChecked(opts.checkbox?.ref.current ?? false);
     return new Promise<boolean>((resolve) => setState({ opts, resolve }));
   }, []);
 
@@ -83,17 +86,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               />
             </label>
           )}
-          {opts?.checkbox && (
-            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 14, fontSize: 13, color: "var(--c-tx2)", cursor: "pointer", lineHeight: 1.5 }}>
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={(e) => { setChecked(e.target.checked); opts.checkbox!.ref.current = e.target.checked; }}
-                style={{ marginTop: 2, accentColor: "var(--c-a)", flexShrink: 0 }}
-              />
-              <span>{opts.checkbox.label}</span>
-            </label>
-          )}
+          {opts?.checkbox &&
+            (Array.isArray(opts.checkbox) ? opts.checkbox : [opts.checkbox]).map((box, i) => (
+              <ConfirmCheckbox key={i} label={box.label} boxRef={box.ref} />
+            ))}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={() => close(false)}>{opts?.cancelLabel ?? t("common.cancel")}</Btn>
             <Btn variant={opts?.danger ? "danger" : "primary"} disabled={!canConfirm} onClick={() => close(true)}>
@@ -103,5 +99,23 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         </Modal>
       )}
     </ConfirmContext.Provider>
+  );
+}
+
+/** One opt-in checkbox in the confirm dialog. Self-managing: it seeds its state from `boxRef.current` on
+ *  mount (the modal remounts each open, so this re-reads the caller's reset value) and mirrors every change
+ *  back to the ref, which is the caller's source of truth. */
+function ConfirmCheckbox({ label, boxRef }: { label: string; boxRef: { current: boolean } }) {
+  const [on, setOn] = useState(boxRef.current);
+  return (
+    <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 14, fontSize: 13, color: "var(--c-tx2)", cursor: "pointer", lineHeight: 1.5 }}>
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => { setOn(e.target.checked); boxRef.current = e.target.checked; }}
+        style={{ marginTop: 2, accentColor: "var(--c-a)", flexShrink: 0 }}
+      />
+      <span>{label}</span>
+    </label>
   );
 }

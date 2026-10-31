@@ -71,6 +71,19 @@ describe("useConfirm / ConfirmProvider", () => {
     await waitFor(() => expect(onResult).toHaveBeenCalledWith(true));
   });
 
+  it("renders multiple opt-in checkboxes and writes each choice to its own ref", async () => {
+    const onResult = vi.fn();
+    const a = { current: false };
+    const b = { current: false };
+    wrap(onResult, { body: "Delete app?", checkbox: [{ label: "Keep volumes", ref: a }, { label: "Also remove images", ref: b }] });
+    fireEvent.click(screen.getByText("trigger"));
+    fireEvent.click(screen.getByText("Also remove images"));
+    fireEvent.click(screen.getByText("Confirm"));
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(true));
+    expect(a.current).toBe(false); // untouched
+    expect(b.current).toBe(true); // ticked
+  });
+
   it("resets the typed value between openings so a stale match can't leak through", async () => {
     const onResult = vi.fn();
     wrap(onResult, { body: "Delete x?", confirmText: "x" });

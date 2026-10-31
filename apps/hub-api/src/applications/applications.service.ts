@@ -44,6 +44,7 @@ import { GitSourcesService } from "../git-sources/git-sources.service";
 import {
   buildImageRemoveScript,
   buildImageRemoveScriptForTag,
+  buildAppImagesRemoveScript,
   buildRemoveScript,
   buildCustomCertRemoveScript,
   isSshGitUrl,
@@ -1980,18 +1981,25 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.restart", target: id });
   }
 
-  async remove(userId: string, id: string, opts: { keepVolumes?: boolean } = {}): Promise<void> {
+  async remove(userId: string, id: string, opts: { keepVolumes?: boolean; removeImages?: boolean } = {}): Promise<void> {
     const app = await this.requireWrite(userId, id);
     if (app.clusterId) {
-      // Swarm: remove the service cluster-wide (Swarm tears down every task on every node).
+      // Swarm: remove the service cluster-wide (Swarm tears down every task on every node). Per-node image
+      // cleanup isn't wired for swarm, so removeImages is a classic-only option (ignored here).
       await this.swarmDeploy.remove(app).catch(() => undefined);
     } else {
       // keepVolumes: leave the app's named volumes / compose volumes on the host (the user opted to keep
       // their data). Default removes them — deleting an app frees its disk, as before.
-      const cmd =
+      let cmd =
         app.source === "COMPOSE"
           ? buildComposeDownScript(this.toSpec(app), { volumes: !opts.keepVolumes })
           : buildRemoveScript(app, opts.keepVolumes ? [] : this.appVolumes(app));
+      // removeImages: also drop the app's OWN locally-stored image tags (tugra_<appId>:*) to reclaim disk.
+      // IMAGE/GIT only — a COMPOSE app's images are its upstream/compose-built tags, not in this namespace,
+      // so we never risk removing a shared base image.
+      if (opts.removeImages && app.source !== "COMPOSE") {
+        cmd += "\n" + buildAppImagesRemoveScript(app);
+      }
       await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
     }
     // Drop the app's uploaded custom cert from the proxy's /dynamic (best-effort; classic apps only — a
