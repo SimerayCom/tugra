@@ -808,6 +808,14 @@ describe("deploy-script", () => {
     expect(s).not.toContain("--health-cmd");
   });
 
+  it("publishes extra ports (TCP + UDP) as additional -p flags; byte-identical when none", () => {
+    const s = buildRunScript({ ...base, extraPorts: [{ hostPort: 9090, containerPort: 9090, protocol: "tcp" }, { hostPort: 5353, containerPort: 53, protocol: "udp" }] }, "v1");
+    expect(s).toContain("-p 9090:9090");
+    expect(s).toContain("-p 5353:53/udp");
+    // no extra ports → byte-identical to the plain run
+    expect(buildRunScript({ ...base, extraPorts: [] }, "v1")).toBe(buildRunScript(base, "v1"));
+  });
+
   it("writes no env-file when there are no env vars", () => {
     const s = buildRunScript({ ...base, hostPort: 8080 }, "v1");
     expect(s).not.toContain("--env-file");

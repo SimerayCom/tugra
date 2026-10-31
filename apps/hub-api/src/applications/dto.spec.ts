@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -49,6 +49,25 @@ describe("SetBasicAuthSchema — HTTP basic auth users", () => {
     expect(ok([{ user: "u", password: "x" }, { user: "u", password: "y" }]).success).toBe(false); // dup
     expect(ok(Array.from({ length: 21 }, (_, i) => ({ user: `u${i}`, password: "x" }))).success).toBe(false); // > 20
     expect(SetBasicAuthSchema.safeParse({ users: [{ user: "u", password: "x", foo: 1 }] }).success).toBe(false); // strict row
+  });
+});
+
+describe("SetExtraPortsSchema", () => {
+  const ok = (ports: unknown[]) => SetExtraPortsSchema.safeParse({ ports }).success;
+  it("accepts tcp/udp maps (protocol defaults to tcp) and an empty array", () => {
+    expect(ok([{ hostPort: 9090, containerPort: 9090 }])).toBe(true); // protocol defaulted
+    expect(ok([{ hostPort: 5353, containerPort: 53, protocol: "udp" }])).toBe(true);
+    expect(ok([])).toBe(true);
+    // same host port on different protocols is allowed (tcp + udp)
+    expect(ok([{ hostPort: 80, containerPort: 80, protocol: "tcp" }, { hostPort: 80, containerPort: 80, protocol: "udp" }])).toBe(true);
+  });
+  it("rejects out-of-range ports, bad protocol, duplicate host-port+protocol, over-cap, extra keys", () => {
+    expect(ok([{ hostPort: 0, containerPort: 80 }])).toBe(false);
+    expect(ok([{ hostPort: 80, containerPort: 70000 }])).toBe(false);
+    expect(ok([{ hostPort: 80, containerPort: 80, protocol: "sctp" }])).toBe(false);
+    expect(ok([{ hostPort: 80, containerPort: 80, protocol: "tcp" }, { hostPort: 80, containerPort: 81, protocol: "tcp" }])).toBe(false); // dup host:tcp
+    expect(ok(Array.from({ length: 21 }, (_, i) => ({ hostPort: 2000 + i, containerPort: 80 })))).toBe(false);
+    expect(SetExtraPortsSchema.safeParse({ ports: [{ hostPort: 80, containerPort: 80, foo: 1 }] }).success).toBe(false);
   });
 });
 

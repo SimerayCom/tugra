@@ -473,6 +473,7 @@ export default function AppDetailPage() {
       ) : null,
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
+    extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} />,
   };
 
@@ -814,6 +815,54 @@ function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: string[] }
       />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty}>{t("apps.save")}</Btn>
+      </div>
+    </Card>
+  );
+}
+
+/** Publish extra ports (raw TCP/UDP host:container maps) beyond the ingress one — docker-run apps only.
+ *  Replace-set: the whole list is saved; an empty list clears the extra ports. */
+function ExtraPortsCard({ id, ports }: { id: string; ports: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [rows, setRows] = useState(ports.map((p) => ({ hostPort: String(p.hostPort), containerPort: String(p.containerPort), protocol: p.protocol })));
+  useEffect(() => { setRows(ports.map((p) => ({ hostPort: String(p.hostPort), containerPort: String(p.containerPort), protocol: p.protocol }))); }, [ports]);
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppExtraPorts(
+        id,
+        rows
+          .filter((r) => r.hostPort.trim() && r.containerPort.trim())
+          .map((r) => ({ hostPort: Number(r.hostPort), containerPort: Number(r.containerPort), protocol: r.protocol })),
+      ),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.saved"), "success"); },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
+  });
+  const setRow = (i: number, patch: Partial<{ hostPort: string; containerPort: string; protocol: "tcp" | "udp" }>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.extraPorts")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.extraPortsDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input style={{ ...envField, width: 120 }} type="number" placeholder={t("apps.extraPortHost")} value={r.hostPort} onChange={(e) => setRow(i, { hostPort: e.target.value })} aria-label={t("apps.extraPortHost")} />
+            <span style={{ color: "var(--c-tx3)" }}>:</span>
+            <input style={{ ...envField, width: 120 }} type="number" placeholder={t("apps.extraPortContainer")} value={r.containerPort} onChange={(e) => setRow(i, { containerPort: e.target.value })} aria-label={t("apps.extraPortContainer")} />
+            <select style={{ ...envField, width: 90 }} value={r.protocol} onChange={(e) => setRow(i, { protocol: e.target.value as "tcp" | "udp" })} aria-label={t("apps.extraPortProtocol")}>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+            <Btn variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>{t("apps.remove")}</Btn>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { hostPort: "", containerPort: "", protocol: "tcp" }])}>{t("apps.extraPortAdd")}</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
     </Card>
   );

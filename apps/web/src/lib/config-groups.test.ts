@@ -124,6 +124,14 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("source");
   });
 
+  it("extraPorts card is non-compose only (+ write, non-preview)", () => {
+    expect(group(facts(), "domains")!.cardIds).toContain("extraPorts"); // GIT
+    expect(group(facts({ source: "IMAGE" }), "domains")!.cardIds).toContain("extraPorts");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "domains")?.cardIds ?? []).not.toContain("extraPorts");
+    expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("extraPorts");
+    expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("extraPorts");
+  });
+
   it("basicAuth card needs a domain, write access and a non-preview app", () => {
     expect(group(facts(), "domains")!.cardIds).toContain("basicAuth");
     expect(group(facts({ domain: null }), "domains")?.cardIds ?? []).not.toContain("basicAuth");

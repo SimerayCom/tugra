@@ -104,6 +104,10 @@ export interface AppSpec {
   registryPull?: { auth?: RegistryAuth | null; ref: string } | null;
   hostPort: number | null;
   containerPort: number | null;
+  // Extra published ports beyond the ingress one — raw host:container TCP/UDP maps for apps that expose
+  // more than one port (metrics, gRPC, a game server's UDP). Emitted as additional `-p` flags. DTO-validated
+  // integers + tcp/udp, safe to interpolate. Classic docker-run apps only (compose declares its own ports).
+  extraPorts?: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[] | null;
   /** Opt-in: also attach the container to the node-local managed-DB network (tugra-net) so it resolves
    *  tugra_db_<id> by name. Co-located classic apps only (masked off for swarm in toSpec). */
   dbNetwork?: boolean | null;
@@ -985,11 +989,17 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     .map((m) => `-v ${shq(`${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`)}`)
     .join(" ");
 
+  // Extra published ports (beyond the ingress hostPort) — raw host:container TCP/UDP maps.
+  const extraPortArgs = (app.extraPorts ?? [])
+    .map((p) => `-p ${p.hostPort}:${p.containerPort}${p.protocol === "udp" ? "/udp" : ""}`)
+    .join(" ");
+
   const run = [
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
     limitArgs.join(" "),
+    extraPortArgs,
     // Operator-supplied raw flags (advanced) — tokenized + shell-quoted per word so they can't inject
     // shell into the `sh -c` deploy command (host-root RCE); see dockerOptionsArgs.
     dockerOptionsArgs(app.dockerOptions),
