@@ -896,6 +896,9 @@ model Application {
   // Env var names dropped from a PR preview's copied env (so prod secrets never leak into an ephemeral
   // preview). Empty = the preview inherits the full parent env (unchanged default).
   previewExcludeKeys String[] @default([])
+  // Max concurrent PR previews for this app; when a new PR would exceed it, the oldest preview is evicted.
+  // Null = unlimited (the default).
+  previewLimit   Int?
   buildCommand   String?
   outputDir      String?
   composeFile    String?

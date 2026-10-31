@@ -868,7 +868,7 @@ export class ApplicationsController {
     @Param("id") id: string,
     @Body(new ZodValidationPipe(PreviewConfigSchema)) body: PreviewConfigInput,
   ) {
-    await this.apps.setPreviewEnabled(user.userId, id, body.enabled, body.excludeEnvKeys);
+    await this.apps.setPreviewEnabled(user.userId, id, body.enabled, body.excludeEnvKeys, body.limit);
     return { ok: true };
   }
 

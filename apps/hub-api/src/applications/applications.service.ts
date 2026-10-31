@@ -230,6 +230,7 @@ export const AppViewSchema = z.object({
   isPreview: z.boolean(),
   previewEnabled: z.boolean(),
   previewExcludeKeys: z.array(z.string()),
+  previewLimit: z.number().nullable(),
   prNumber: z.number().nullable(),
   parentAppId: z.string().nullable(),
   tags: z.array(z.string()),
@@ -1037,6 +1038,20 @@ export class ApplicationsService {
     const existing = await this.prisma.application.findFirst({
       where: { parentAppId: parent.id, prNumber },
     });
+    // Preview cap: when the parent limits concurrent previews and this is a NEW one at the cap, evict the
+    // oldest preview(s) first so a flood of open PRs can't spin unbounded preview containers. The newest PR
+    // always gets a preview; limit <= 0 / null = unlimited (unchanged).
+    if (!existing && parent.previewLimit && parent.previewLimit > 0) {
+      const current = await this.prisma.application.findMany({
+        where: { parentAppId: parent.id },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, prNumber: true },
+      });
+      const evict = current.slice(0, Math.max(0, current.length - (parent.previewLimit - 1)));
+      for (const e of evict) {
+        if (e.prNumber != null) await this.removePreviewByPr(parent.id, e.prNumber).catch(() => undefined);
+      }
+    }
     const previewDomain = `pr${prNumber}.${this.baseDomain(parent.domain)}`;
     let preview: Application;
     if (existing) {
@@ -1140,14 +1155,18 @@ export class ApplicationsService {
 
   /** Toggle per-PR previews on a parent app — requires a domain to build URLs. Optionally set the env keys
    *  to drop from a preview's copied env (so prod secrets never leak into an ephemeral preview). */
-  async setPreviewEnabled(userId: string, id: string, enabled: boolean, excludeEnvKeys?: string[]): Promise<void> {
+  async setPreviewEnabled(userId: string, id: string, enabled: boolean, excludeEnvKeys?: string[], limit?: number | null): Promise<void> {
     const app = await this.requireWrite(userId, id);
     if (enabled && !app.domain) {
       throw new BadRequestException("set a domain on the app before enabling previews");
     }
     await this.prisma.application.update({
       where: { id },
-      data: { previewEnabled: enabled, ...(excludeEnvKeys !== undefined ? { previewExcludeKeys: excludeEnvKeys } : {}) },
+      data: {
+        previewEnabled: enabled,
+        ...(excludeEnvKeys !== undefined ? { previewExcludeKeys: excludeEnvKeys } : {}),
+        ...(limit !== undefined ? { previewLimit: limit } : {}),
+      },
     });
     await this.audit.log({ actor: userId, action: "app.preview.config", target: id });
   }
@@ -3692,6 +3711,7 @@ export class ApplicationsService {
       isPreview: app.isPreview,
       previewEnabled: app.previewEnabled,
       previewExcludeKeys: app.previewExcludeKeys ?? [],
+      previewLimit: app.previewLimit,
       prNumber: app.prNumber,
       parentAppId: app.parentAppId,
       tags: app.tags,

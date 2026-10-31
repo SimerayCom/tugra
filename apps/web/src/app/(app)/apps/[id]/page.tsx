@@ -474,7 +474,7 @@ export default function AppDetailPage() {
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
-    preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} />,
+    preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
   };
 
   return (
@@ -1941,14 +1941,15 @@ function ScheduledTasksCard({ id }: { id: string }) {
   );
 }
 
-function PreviewCard({ id, previewEnabled, domain, excludeKeys }: { id: string; previewEnabled: boolean; domain: string | null; excludeKeys: string[] }) {
+function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: { id: string; previewEnabled: boolean; domain: string | null; excludeKeys: string[]; limit: number | null }) {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [exclude, setExclude] = useState(excludeKeys.join("\n"));
-  useEffect(() => { setExclude(excludeKeys.join("\n")); }, [excludeKeys]);
+  const [lim, setLim] = useState(limit != null ? String(limit) : "");
+  useEffect(() => { setExclude(excludeKeys.join("\n")); setLim(limit != null ? String(limit) : ""); }, [excludeKeys, limit]);
   const parseExclude = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
-  const excludeDirty = parseExclude(exclude).join("\n") !== excludeKeys.join("\n");
+  const excludeDirty = parseExclude(exclude).join("\n") !== excludeKeys.join("\n") || (lim.trim() ? Number(lim) : null) !== limit;
   const { data: previews = [] } = useQuery({
     queryKey: ["appPreviews", id],
     queryFn: () => api.getAppPreviews(id),
@@ -1963,7 +1964,7 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys }: { id: string; 
     onSuccess: invalidate,
   });
   const saveExclude = useMutation({
-    mutationFn: () => api.setPreviewEnabled(id, previewEnabled, parseExclude(exclude)),
+    mutationFn: () => api.setPreviewEnabled(id, previewEnabled, parseExclude(exclude), lim.trim() ? Number(lim) : null),
     onSuccess: invalidate,
     meta: { successMessage: t("apps.saved") },
   });
@@ -2004,8 +2005,12 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys }: { id: string; 
                 aria-label={t("apps.previewExcludeEnv")}
                 style={{ width: "100%", minHeight: 64, maxHeight: 160, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
               />
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>
+                {t("apps.previewLimit")}
+                <input style={{ ...envField, width: 100 }} type="number" value={lim} onChange={(e) => setLim(e.target.value)} placeholder="∞" aria-label={t("apps.previewLimit")} />
+              </label>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                <p style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, margin: 0 }}>{t("apps.previewExcludeEnvHint")}</p>
+                <p style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, margin: 0 }}>{t("apps.previewExcludeEnvHint")} {t("apps.previewLimitHint")}</p>
                 <Btn variant="ghost" onClick={() => saveExclude.mutate()} disabled={saveExclude.isPending || !excludeDirty}>{t("apps.save")}</Btn>
               </div>
             </div>

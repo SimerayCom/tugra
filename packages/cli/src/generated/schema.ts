@@ -9251,6 +9251,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -9507,6 +9508,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -9874,6 +9876,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -10196,6 +10199,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -14843,6 +14847,7 @@ export interface operations {
                             isPreview: boolean;
                             previewEnabled: boolean;
                             previewExcludeKeys: string[];
+                            previewLimit: number | null;
                             prNumber: number | null;
                             parentAppId: string | null;
                             tags: string[];
@@ -15094,6 +15099,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -15414,6 +15420,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -15491,6 +15498,7 @@ export interface operations {
                 "application/json": {
                     enabled: boolean;
                     excludeEnvKeys?: string[];
+                    limit?: number | null;
                 };
             };
         };
@@ -15791,6 +15799,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -16838,6 +16847,7 @@ export interface operations {
                         isPreview: boolean;
                         previewEnabled: boolean;
                         previewExcludeKeys: string[];
+                        previewLimit: number | null;
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];

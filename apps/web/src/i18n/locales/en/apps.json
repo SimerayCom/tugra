@@ -119,6 +119,8 @@
   "remove": "Remove",
   "previewExcludeEnv": "Exclude env vars from previews",
   "previewExcludeEnvHint": "One env var name per line. These are dropped from a PR preview's env so production secrets never reach an ephemeral preview.",
+  "previewLimit": "Max previews",
+  "previewLimitHint": "Max concurrent previews (blank = unlimited); a new PR beyond the cap evicts the oldest.",
   "autoDeploy": "Auto-deploy on push",
   "autoDeployHint": "When on, a push to the tracked branch deploys automatically. Turn off to pause without removing the webhook.",
   "ipAllowlist": "IP allowlist",
