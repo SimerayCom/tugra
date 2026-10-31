@@ -900,6 +900,13 @@ model Application {
   healthCheckType String?                          // null = auto | "NONE" | "HTTP" | "CMD" — deploy-gate health policy
   healthCheckPath String?                          // HTTP check path (default "/")
   healthCheckPort Int?                             // HTTP check port (default container/host port)
+  // Tunable health-check timings (seconds; null = built-in default). Drive both the deploy health-gate and
+  // the container's docker --health-* flags; startPeriod/retries widen the window for a slow-booting app.
+  healthInterval    Int?
+  healthTimeout     Int?
+  healthRetries     Int?
+  healthStartPeriod Int?
+  healthExpectedStatus Int?                        // HTTP check: require this exact status (else any code < 500)
   memoryMb       Int?
   cpus           Float?
   reserveMemoryMb Int?        // soft swarm scheduling hint (--reserve-memory); swarm-only, advisory

@@ -1227,7 +1227,10 @@ export const api = {
   },
   setAppHealthCheck(
     id: string,
-    hc: { type?: string | null; path?: string | null; port?: number | null; command?: string | null },
+    hc: {
+      type?: string | null; path?: string | null; port?: number | null; command?: string | null;
+      interval?: number | null; timeout?: number | null; retries?: number | null; startPeriod?: number | null; expectedStatus?: number | null;
+    },
   ) {
     return apiFetch<{ ok: true }>(`/apps/${id}/health-check`, {
       method: "PUT",

@@ -7369,6 +7369,26 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "healthInterval": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthTimeout": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthRetries": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthStartPeriod": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthExpectedStatus": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "memoryMb": {
                         "type": "number",
                         "nullable": true
@@ -7875,6 +7895,11 @@
                       "healthCheckType",
                       "healthCheckPath",
                       "healthCheckPort",
+                      "healthInterval",
+                      "healthTimeout",
+                      "healthRetries",
+                      "healthStartPeriod",
+                      "healthExpectedStatus",
                       "memoryMb",
                       "cpus",
                       "reserveMemoryMb",
@@ -8241,6 +8266,26 @@
                       "nullable": true
                     },
                     "healthCheckPort": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthInterval": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthTimeout": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthStartPeriod": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthExpectedStatus": {
                       "type": "number",
                       "nullable": true
                     },
@@ -8750,6 +8795,11 @@
                     "healthCheckType",
                     "healthCheckPath",
                     "healthCheckPort",
+                    "healthInterval",
+                    "healthTimeout",
+                    "healthRetries",
+                    "healthStartPeriod",
+                    "healthExpectedStatus",
                     "memoryMb",
                     "cpus",
                     "reserveMemoryMb",
@@ -9186,6 +9236,26 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "healthInterval": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthTimeout": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthStartPeriod": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthExpectedStatus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "memoryMb": {
                       "type": "number",
                       "nullable": true
@@ -9692,6 +9762,11 @@
                     "healthCheckType",
                     "healthCheckPath",
                     "healthCheckPort",
+                    "healthInterval",
+                    "healthTimeout",
+                    "healthRetries",
+                    "healthStartPeriod",
+                    "healthExpectedStatus",
                     "memoryMb",
                     "cpus",
                     "reserveMemoryMb",
@@ -10132,6 +10207,26 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "healthInterval": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthTimeout": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthStartPeriod": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthExpectedStatus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "memoryMb": {
                       "type": "number",
                       "nullable": true
@@ -10638,6 +10733,11 @@
                     "healthCheckType",
                     "healthCheckPath",
                     "healthCheckPort",
+                    "healthInterval",
+                    "healthTimeout",
+                    "healthRetries",
+                    "healthStartPeriod",
+                    "healthExpectedStatus",
                     "memoryMb",
                     "cpus",
                     "reserveMemoryMb",
@@ -14052,6 +14152,36 @@
                     "minLength": 1,
                     "maxLength": 1000,
                     "nullable": true
+                  },
+                  "interval": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300,
+                    "nullable": true
+                  },
+                  "timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 120,
+                    "nullable": true
+                  },
+                  "retries": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "nullable": true
+                  },
+                  "startPeriod": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1800,
+                    "nullable": true
+                  },
+                  "expectedStatus": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -16879,6 +17009,26 @@
                           "type": "number",
                           "nullable": true
                         },
+                        "healthInterval": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "healthTimeout": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "healthRetries": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "healthStartPeriod": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "healthExpectedStatus": {
+                          "type": "number",
+                          "nullable": true
+                        },
                         "memoryMb": {
                           "type": "number",
                           "nullable": true
@@ -17385,6 +17535,11 @@
                         "healthCheckType",
                         "healthCheckPath",
                         "healthCheckPort",
+                        "healthInterval",
+                        "healthTimeout",
+                        "healthRetries",
+                        "healthStartPeriod",
+                        "healthExpectedStatus",
                         "memoryMb",
                         "cpus",
                         "reserveMemoryMb",
@@ -17681,6 +17836,26 @@
                       "nullable": true
                     },
                     "healthCheckPort": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthInterval": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthTimeout": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthStartPeriod": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthExpectedStatus": {
                       "type": "number",
                       "nullable": true
                     },
@@ -18190,6 +18365,11 @@
                     "healthCheckType",
                     "healthCheckPath",
                     "healthCheckPort",
+                    "healthInterval",
+                    "healthTimeout",
+                    "healthRetries",
+                    "healthStartPeriod",
+                    "healthExpectedStatus",
                     "memoryMb",
                     "cpus",
                     "reserveMemoryMb",
@@ -18556,6 +18736,26 @@
                         "nullable": true
                       },
                       "healthCheckPort": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthInterval": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthTimeout": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthRetries": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthStartPeriod": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "healthExpectedStatus": {
                         "type": "number",
                         "nullable": true
                       },
@@ -19065,6 +19265,11 @@
                       "healthCheckType",
                       "healthCheckPath",
                       "healthCheckPort",
+                      "healthInterval",
+                      "healthTimeout",
+                      "healthRetries",
+                      "healthStartPeriod",
+                      "healthExpectedStatus",
                       "memoryMb",
                       "cpus",
                       "reserveMemoryMb",
@@ -19501,6 +19706,26 @@
                       "nullable": true
                     },
                     "healthCheckPort": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthInterval": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthTimeout": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthStartPeriod": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthExpectedStatus": {
                       "type": "number",
                       "nullable": true
                     },
@@ -20010,6 +20235,11 @@
                     "healthCheckType",
                     "healthCheckPath",
                     "healthCheckPort",
+                    "healthInterval",
+                    "healthTimeout",
+                    "healthRetries",
+                    "healthStartPeriod",
+                    "healthExpectedStatus",
                     "memoryMb",
                     "cpus",
                     "reserveMemoryMb",
@@ -21474,6 +21704,26 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "healthInterval": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthTimeout": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthStartPeriod": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "healthExpectedStatus": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "memoryMb": {
                       "type": "number",
                       "nullable": true
@@ -21980,6 +22230,11 @@
                     "healthCheckType",
                     "healthCheckPath",
                     "healthCheckPort",
+                    "healthInterval",
+                    "healthTimeout",
+                    "healthRetries",
+                    "healthStartPeriod",
+                    "healthExpectedStatus",
                     "memoryMb",
                     "cpus",
                     "reserveMemoryMb",

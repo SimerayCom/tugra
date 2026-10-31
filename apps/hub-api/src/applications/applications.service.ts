@@ -55,6 +55,7 @@ import {
   buildRecreateDeployScript,
   buildPostDeployScript,
   resolveHealthProbe,
+  resolveHealthGate,
   buildStartScript,
   buildStopScript,
   runTag,
@@ -124,7 +125,6 @@ const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 const LIFECYCLE_TIMEOUT_MS = 120_000;
 const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
 // Default rolling health-gate timing (not yet configurable per app).
-const ROLLING_GATE = { retries: 20, intervalSec: 3, startPeriodSec: 5 };
 // Raw docker flags that make two overlapping containers impossible (port map, own
 // network/name/ip, or a shared volume mount) → the app can't roll, so we fall back to hard cutover.
 // -v/--volume/--mount: an adopted container carries its named volume this way; two containers writing
@@ -150,6 +150,11 @@ export const AppViewSchema = z.object({
   healthCheckType: z.string().nullable(),
   healthCheckPath: z.string().nullable(),
   healthCheckPort: z.number().nullable(),
+  healthInterval: z.number().nullable(),
+  healthTimeout: z.number().nullable(),
+  healthRetries: z.number().nullable(),
+  healthStartPeriod: z.number().nullable(),
+  healthExpectedStatus: z.number().nullable(),
   memoryMb: z.number().nullable(),
   cpus: z.number().nullable(),
   reserveMemoryMb: z.number().nullable(),
@@ -675,6 +680,11 @@ export class ApplicationsService {
           healthCheckType: src.healthCheckType,
           healthCheckPath: src.healthCheckPath,
           healthCheckPort: src.healthCheckPort,
+          healthInterval: src.healthInterval,
+          healthTimeout: src.healthTimeout,
+          healthRetries: src.healthRetries,
+          healthStartPeriod: src.healthStartPeriod,
+          healthExpectedStatus: src.healthExpectedStatus,
           memoryMb: src.memoryMb,
           cpus: src.cpus,
           reserveMemoryMb: src.reserveMemoryMb,
@@ -1424,14 +1434,14 @@ export class ApplicationsService {
         : isCompose
           ? buildComposeUpScript(spec, noCache)
           : rolling
-            ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), ...ROLLING_GATE })
+            ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), ...resolveHealthGate(spec) })
           : recreate
             ? buildRecreateDeployScript(spec, dep.id, {
                 build: true,
                 noCache,
                 prevVersion: prev?.id ?? null,
                 probe: resolveHealthProbe(spec),
-                ...ROLLING_GATE,
+                ...resolveHealthGate(spec),
               })
             : buildRunScript(spec, dep.id, true, noCache);
       const r = await this.agentWs.sendCommand(
@@ -2520,7 +2530,10 @@ export class ApplicationsService {
   async setHealthCheck(
     userId: string,
     id: string,
-    hc: { type?: string | null; path?: string | null; port?: number | null; command?: string | null },
+    hc: {
+      type?: string | null; path?: string | null; port?: number | null; command?: string | null;
+      interval?: number | null; timeout?: number | null; retries?: number | null; startPeriod?: number | null; expectedStatus?: number | null;
+    },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
@@ -2529,6 +2542,12 @@ export class ApplicationsService {
         healthCheckType: hc.type ?? null,
         healthCheckPath: hc.path ?? null,
         healthCheckPort: hc.port ?? null,
+        // Timing knobs: undefined leaves the column as-is, null clears to the built-in default.
+        ...(hc.interval !== undefined ? { healthInterval: hc.interval } : {}),
+        ...(hc.timeout !== undefined ? { healthTimeout: hc.timeout } : {}),
+        ...(hc.retries !== undefined ? { healthRetries: hc.retries } : {}),
+        ...(hc.startPeriod !== undefined ? { healthStartPeriod: hc.startPeriod } : {}),
+        ...(hc.expectedStatus !== undefined ? { healthExpectedStatus: hc.expectedStatus } : {}),
         // Only a CMD check owns healthCmd; other types leave any existing command intact
         // (resolveHealthProbe ignores it when the type isn't CMD/auto) so a save under
         // Auto/HTTP/None never silently wipes a previously-configured command.
@@ -3316,6 +3335,11 @@ export class ApplicationsService {
       healthCheckType: app.healthCheckType,
       healthCheckPath: app.healthCheckPath,
       healthCheckPort: app.healthCheckPort,
+      healthInterval: app.healthInterval,
+      healthTimeout: app.healthTimeout,
+      healthRetries: app.healthRetries,
+      healthStartPeriod: app.healthStartPeriod,
+      healthExpectedStatus: app.healthExpectedStatus,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       reserveMemoryMb: app.reserveMemoryMb,
@@ -3533,6 +3557,11 @@ export class ApplicationsService {
       healthCheckType: app.healthCheckType,
       healthCheckPath: app.healthCheckPath,
       healthCheckPort: app.healthCheckPort,
+      healthInterval: app.healthInterval,
+      healthTimeout: app.healthTimeout,
+      healthRetries: app.healthRetries,
+      healthStartPeriod: app.healthStartPeriod,
+      healthExpectedStatus: app.healthExpectedStatus,
       memoryMb: app.memoryMb,
       cpus: app.cpus,
       reserveMemoryMb: app.reserveMemoryMb,

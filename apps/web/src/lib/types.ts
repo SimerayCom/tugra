@@ -1047,6 +1047,11 @@ export interface Application {
   healthCheckType: string | null;
   healthCheckPath: string | null;
   healthCheckPort: number | null;
+  healthInterval: number | null;
+  healthTimeout: number | null;
+  healthRetries: number | null;
+  healthStartPeriod: number | null;
+  healthExpectedStatus: number | null;
   memoryMb: number | null;
   cpus: number | null;
   reserveMemoryMb: number | null;

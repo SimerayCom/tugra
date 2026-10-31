@@ -19,6 +19,7 @@ import {
   buildRecreateDeployScript,
   buildHealthGateFragment,
   resolveHealthProbe,
+  resolveHealthGate,
   rolloutName,
   HEALTH_PROBE_IMAGE,
   PROXY_IMAGE,
@@ -496,6 +497,8 @@ describe("deploy-script", () => {
         kind: "httpExternal",
         port: 3000,
         path: "/",
+        expectedStatus: null,
+        timeoutSec: 5,
       });
       expect(resolveHealthProbe(base)).toEqual({ kind: "stableWait" });
     });
@@ -510,6 +513,8 @@ describe("deploy-script", () => {
         kind: "httpExternal",
         port: 9000,
         path: "/up",
+        expectedStatus: null,
+        timeoutSec: 5,
       });
       // HTTP on a host-port app probes localhost over the host network, pinned to the app's
       // OWN published port — a custom healthCheckPort is IGNORED so it can't scan other ports
@@ -518,6 +523,8 @@ describe("deploy-script", () => {
         port: 8080,
         path: "/health",
         onHost: true,
+        expectedStatus: null,
+        timeoutSec: 5,
       });
       // HTTP configured but nothing reachable (no domain, no host port) → liveness wait
       expect(resolveHealthProbe({ ...base, healthCheckType: "HTTP" })).toEqual({ kind: "stableWait" });
@@ -528,6 +535,31 @@ describe("deploy-script", () => {
       const joined = s.join("\n");
       expect(joined).toContain(`docker run --rm --network host ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://localhost:8080/health'`);
       expect(joined).not.toContain("tugra-proxy");
+    });
+
+    it("resolveHealthGate uses rolling defaults, overridden per app", () => {
+      expect(resolveHealthGate(base)).toEqual({ retries: 20, intervalSec: 3, startPeriodSec: 5 });
+      expect(resolveHealthGate({ ...base, healthRetries: 40, healthInterval: 6, healthStartPeriod: 90 })).toEqual({ retries: 40, intervalSec: 6, startPeriodSec: 90 });
+    });
+
+    it("HTTP probe: default passes any code < 500; an expectedStatus requires exactly that code; timeout is tunable", () => {
+      const def = buildHealthGateFragment("t", { kind: "httpExternal", port: 80, path: "/" }, gate).join("\n");
+      expect(def).toContain(`[ "$code" != "000" ] && [ "$code" -lt 500 ]`);
+      const exact = buildHealthGateFragment("t", { kind: "httpExternal", port: 80, path: "/", expectedStatus: 200, timeoutSec: 20 }, gate).join("\n");
+      expect(exact).toContain(`[ "$code" = "200" ]`);
+      expect(exact).toContain("--max-time 20");
+      expect(exact).not.toContain("-lt 500");
+    });
+
+    it("docker --health-* flags use per-app timings, else defaults", () => {
+      const def = buildRunScript({ ...base, healthCmd: "curl -f localhost/health" }, "v1", false);
+      expect(def).toContain("--health-interval=10s");
+      expect(def).toContain("--health-start-period=30s");
+      const tuned = buildRunScript({ ...base, healthCmd: "curl -f localhost/health", healthInterval: 20, healthTimeout: 8, healthRetries: 5, healthStartPeriod: 120 }, "v1", false);
+      expect(tuned).toContain("--health-interval=20s");
+      expect(tuned).toContain("--health-timeout=8s");
+      expect(tuned).toContain("--health-retries=5");
+      expect(tuned).toContain("--health-start-period=120s");
     });
   });
 
