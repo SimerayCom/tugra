@@ -92,7 +92,7 @@ describe("panel-router", () => {
       ["scheme", "https://app.example.com"],
       ["path", "app.example.com/panel"],
       ["port", "app.example.com:443"],
-      ["ipv4", "37.27.205.247"],
+      ["ipv4", "203.0.113.10"],
       ["whitespace", "app .example.com"],
       ["backtick", "a`)||Host(`evil.com"],
       ["quote", 'app".example.com'],
