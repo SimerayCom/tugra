@@ -1237,7 +1237,9 @@ export interface Database {
   cpus: number | null;
   backupEnabled: boolean;
   backupIntervalHours: number | null;
+  backupCron: string | null;
   backupRetention: number;
+  backupRetentionDays: number | null;
   backupDestinationId: string | null;
   backupSupported: boolean;
   tags: string[];

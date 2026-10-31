@@ -1,9 +1,16 @@
 import { z } from "zod";
 
+// 5-field cron (minute hour day-of-month month day-of-week) — same shape the server-ops cleanup DTO uses.
+// When set it overrides intervalHours ("daily at 03:00" instead of "every 24h"); null clears it.
+const CRON = z.string().regex(/^\s*(\S+\s+){4}\S+\s*$/, "must be a 5-field cron expression");
+
 export const BackupConfigSchema = z.object({
   enabled: z.boolean(),
   intervalHours: z.number().int().min(1).max(24 * 30).optional(),
+  cron: CRON.nullable().optional(),
   retention: z.number().int().min(1).max(365).optional(),
+  // Also delete SUCCESS backups older than N days (alongside the keep-N count); null clears it.
+  retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   destinationId: z.string().nullable().optional(),
 });
 export type BackupConfigInput = z.infer<typeof BackupConfigSchema>;

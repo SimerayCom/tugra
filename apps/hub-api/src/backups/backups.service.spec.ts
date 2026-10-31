@@ -7,6 +7,22 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
+import { BackupConfigSchema } from "./dto";
+
+describe("BackupConfigSchema — cron + age retention", () => {
+  const ok = (o: Record<string, unknown>) => BackupConfigSchema.safeParse({ enabled: true, ...o }).success;
+  it("accepts a 5-field cron, retentionDays, and null to clear", () => {
+    expect(ok({ cron: "0 3 * * *", retentionDays: 30 })).toBe(true);
+    expect(ok({ cron: null, retentionDays: null })).toBe(true);
+    expect(ok({ intervalHours: 6, retention: 5 })).toBe(true);
+  });
+  it("rejects a non-5-field cron and out-of-range retentionDays", () => {
+    expect(ok({ cron: "0 3 * *" })).toBe(false); // 4 fields
+    expect(ok({ cron: "every day" })).toBe(false);
+    expect(ok({ retentionDays: 0 })).toBe(false);
+    expect(ok({ retentionDays: 99999 })).toBe(false);
+  });
+});
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 
@@ -77,6 +93,18 @@ describe("BackupsService", () => {
     const svc = make(prisma, access, {}, scheduler);
     await svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6, retention: 5 });
     expect(scheduler.schedule).toHaveBeenCalledWith("db1", 6 * 3600);
+  });
+
+  it("a cron schedule drives scheduleCron and overrides the interval", async () => {
+    const update = jest.fn().mockResolvedValue({ ...db, backupEnabled: true, backupIntervalHours: 6, backupCron: "0 3 * * *" });
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), scheduleCron: jest.fn(), unschedule: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, access, {}, scheduler);
+    await svc.setSchedule("u1", "db1", { enabled: true, cron: "0 3 * * *", intervalHours: 6, retention: 5, retentionDays: 30 });
+    expect(scheduler.scheduleCron).toHaveBeenCalledWith("db1", "0 3 * * *");
+    expect(scheduler.schedule).not.toHaveBeenCalled();
+    expect(update.mock.calls[0][0].data).toMatchObject({ backupCron: "0 3 * * *", backupRetentionDays: 30 });
   });
 
   it("refuses to enable a schedule for an engine with no backup pipeline (libSQL) and never persists it", async () => {

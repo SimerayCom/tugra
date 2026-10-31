@@ -337,11 +337,16 @@ export class BackupsService {
       data: {
         backupEnabled: cfg.enabled,
         backupIntervalHours: cfg.intervalHours ?? null,
+        ...(cfg.cron !== undefined ? { backupCron: cfg.cron } : {}),
         backupRetention: cfg.retention ?? undefined,
+        ...(cfg.retentionDays !== undefined ? { backupRetentionDays: cfg.retentionDays } : {}),
         ...(cfg.destinationId !== undefined ? { backupDestinationId: cfg.destinationId || null } : {}),
       },
     });
-    if (db.backupEnabled && db.backupIntervalHours) {
+    // A cron expression wins over the plain interval when both are set.
+    if (db.backupEnabled && db.backupCron) {
+      await this.scheduler.scheduleCron(dbId, db.backupCron);
+    } else if (db.backupEnabled && db.backupIntervalHours) {
       await this.scheduler.schedule(dbId, db.backupIntervalHours * 3600);
     } else {
       await this.scheduler.unschedule(dbId);

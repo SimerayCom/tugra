@@ -1139,7 +1139,12 @@ model Database {
   cpus           Float?
   backupEnabled       Boolean  @default(false)
   backupIntervalHours Int?
+  // Optional 5-field cron (e.g. "0 3 * * *" = 03:00 daily); when set it drives the schedule and overrides
+  // backupIntervalHours — so "daily at 03:00" instead of "every 24h from whenever".
+  backupCron          String?
   backupRetention     Int      @default(7)
+  // Optional age-based retention: also delete SUCCESS backups older than N days (alongside the keep-N count).
+  backupRetentionDays Int?
   backupDestinationId String?
   tags        String[] @default([])
   backups     Backup[]

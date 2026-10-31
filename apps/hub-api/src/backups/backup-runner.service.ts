@@ -176,13 +176,17 @@ export class BackupRunnerService {
     return this.prisma.backup.findUnique({ where: { id: backup.id } }) as Promise<Backup>;
   }
 
-  /** Keep the newest `backupRetention` successful backups; delete older files + rows. */
+  /** Prune successful backups: delete any beyond the newest `backupRetention` (count) OR — when
+   *  backupRetentionDays is set — older than that many days. The single newest backup is always kept. */
   async prune(db: Database): Promise<void> {
     const all = await this.prisma.backup.findMany({
       where: { databaseId: db.id, status: "SUCCESS" },
       orderBy: { createdAt: "desc" },
     });
-    const stale = all.slice(db.backupRetention);
+    const cutoff = db.backupRetentionDays != null ? Date.now() - db.backupRetentionDays * 86_400_000 : null;
+    const stale = all.filter(
+      (b, i) => i !== 0 && (i >= db.backupRetention || (cutoff != null && b.createdAt.getTime() < cutoff)),
+    );
     for (const b of stale) {
       // Each stale backup may live in a different destination — delete from its own.
       const spec = await this.destinationSpecById(b.destinationId);
