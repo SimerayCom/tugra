@@ -286,7 +286,10 @@ describe("Applications / deploy (e2e)", () => {
       .post(`/apps/${appId}/deploy`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    await sleep(200);
+    // Poll for the deploy command instead of a fixed sleep: the deploy is fire-and-forget (claim → execute
+    // → resolve env → sendCommand) and on a slow runner the command can arrive after a short sleep, which
+    // flaked this assertion. waitForCommand resolves as soon as the env-file command is sent.
+    await waitForCommand(commands, "--env-file /etc/tugra/env/");
 
     const sent = commands.join("\n");
     expect(sent).toContain("--env-file /etc/tugra/env/");
