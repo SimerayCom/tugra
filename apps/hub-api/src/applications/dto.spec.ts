@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -70,6 +70,21 @@ describe("SetRedirectsSchema — custom Traefik redirect rules", () => {
     expect(ok(Array.from({ length: 21 }, () => ({ regex: "/a", replacement: "/b", permanent: true }))).success).toBe(false); // > 20
     expect(SetRedirectsSchema.safeParse({ redirects: [{ regex: "/a", replacement: "/b", permanent: true, foo: 1 }] }).success).toBe(false); // strict row
     expect(SetRedirectsSchema.safeParse({ redirects: [], foo: 1 }).success).toBe(false); // strict outer
+  });
+});
+
+describe("SetRestartPolicySchema — Docker restart policy", () => {
+  it("accepts the four Docker policies and null (clear to default)", () => {
+    for (const p of ["no", "always", "unless-stopped", "on-failure"]) {
+      expect(SetRestartPolicySchema.safeParse({ restartPolicy: p }).success).toBe(true);
+    }
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: null }).success).toBe(true);
+  });
+  it("rejects unknown policies, missing field, extra keys", () => {
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure:3" }).success).toBe(false); // retry-count form not allowed in v1
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "whenever" }).success).toBe(false);
+    expect(SetRestartPolicySchema.safeParse({}).success).toBe(false); // field required (null to clear)
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "always", foo: 1 }).success).toBe(false); // strict
   });
 });
 

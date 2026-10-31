@@ -1300,6 +1300,19 @@ describe("ApplicationsService", () => {
     expect(Array.isArray(update.mock.calls[1][0].data.redirects)).toBe(false);
   });
 
+  it("setRestartPolicy stores the policy and clears to null; refuses compose/cluster when setting", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1" }), update } } as unknown as PrismaService;
+    await make(prisma, access, {} as AgentWsServer).setRestartPolicy("u1", "app1", "always");
+    expect(update.mock.calls[0][0].data.restartPolicy).toBe("always");
+    await make(prisma, access, {} as AgentWsServer).setRestartPolicy("u1", "app1", null); // clear → default
+    expect(update.mock.calls[1][0].data.restartPolicy).toBeNull();
+    // refused on a COMPOSE app when setting a non-null policy (classic docker-run concept)
+    const composePrisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1", source: "COMPOSE" }), update: jest.fn() } } as unknown as PrismaService;
+    await expect(make(composePrisma, access, {} as AgentWsServer).setRestartPolicy("u1", "app1", "always")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("upsertPreview drops the parent's preview-excluded env keys from the preview's env", async () => {
     const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
     const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;

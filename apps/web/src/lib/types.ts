@@ -1088,6 +1088,7 @@ export interface Application {
   // default; containerEntrypoint [] clears the image entrypoint.
   containerEntrypoint: string[] | null;
   containerCommand: string[] | null;
+  restartPolicy: string | null; // Docker restart policy; null = the "unless-stopped" default
   volumes: AppVolume[];
   hostMounts: HostMount[];
   // Named volumes a COMPOSE app declares (empty for non-compose); browsable=false → external/custom.

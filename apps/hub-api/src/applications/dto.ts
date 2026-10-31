@@ -405,6 +405,13 @@ export const SetRedirectsSchema = z.object({
 }).strict();
 export type SetRedirectsInput = z.infer<typeof SetRedirectsSchema>;
 
+// Docker restart policy for the app container. One of Docker's standard policies; null clears it back to the
+// "unless-stopped" default. A raw dockerOptions `--restart` still overrides it at deploy time (escape hatch).
+export const SetRestartPolicySchema = z.object({
+  restartPolicy: z.enum(["no", "always", "unless-stopped", "on-failure"]).nullable(),
+}).strict();
+export type SetRestartPolicyInput = z.infer<typeof SetRestartPolicySchema>;
+
 // Upload a custom TLS cert (certType "custom"). The 64 KiB cap mirrors parseCustomCert's; the real
 // validation (PEM shape, key-to-cert match, domains/expiry) happens server-side in the service.
 export const SetCustomCertSchema = z.object({

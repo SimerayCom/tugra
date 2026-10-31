@@ -173,6 +173,7 @@ export const AppViewSchema = z.object({
   // Container command override (exec-form argv) — write-gated in view() (args can embed credentials).
   containerEntrypoint: z.array(z.string()).nullable(),
   containerCommand: z.array(z.string()).nullable(),
+  restartPolicy: z.string().nullable(), // Docker restart policy; null = the "unless-stopped" default
   dbNetwork: z.boolean(), // attached to the node-local managed-DB network (tugra-net) — set by DB links
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   hostMounts: z.array(z.object({ hostPath: z.string(), containerPath: z.string(), readOnly: z.boolean().optional() })),
@@ -747,6 +748,7 @@ export class ApplicationsService {
           postDeployCommand: src.postDeployCommand,
           containerEntrypoint: jsonOrNull(src.containerEntrypoint),
           containerCommand: jsonOrNull(src.containerCommand),
+          restartPolicy: src.restartPolicy,
           // Volume DEFINITIONS copy, but the docker volume name derives from the new app id → fresh empty
           // volumes, no data shared (structural). Data copy is a follow-up.
           volumes: jsonOrNull(src.volumes),
@@ -1128,6 +1130,8 @@ export class ApplicationsService {
           // A preview must start the same command as its parent.
           containerEntrypoint: (parent.containerEntrypoint ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           containerCommand: (parent.containerCommand ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          restartPolicy: parent.restartPolicy, // a preview runs with the same restart policy as its parent
+
           composeFile: parent.composeFile,
           healthCmd: parent.healthCmd,
           healthCheckType: parent.healthCheckType,
@@ -3181,6 +3185,20 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.redirects.update", target: id, meta: { count: redirects.length } });
   }
 
+  /** Set the Docker restart policy for a classic IMAGE/GIT app's container (null → the "unless-stopped"
+   *  default). Refused on compose/cluster/preview apps when setting a non-null value — the `--restart` flag is
+   *  emitted only on the classic docker-run path (compose declares its own `restart:`, swarm its own restart-
+   *  condition). Clearing (null) is always allowed so a stale policy can be removed after a move. Applies on
+   *  the next deploy. */
+  async setRestartPolicy(userId: string, id: string, restartPolicy: string | null): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (restartPolicy !== null && (app.source === "COMPOSE" || app.clusterId || app.isPreview)) {
+      throw new BadRequestException("a restart policy is only supported on single-server Image and Git apps");
+    }
+    await this.prisma.application.update({ where: { id }, data: { restartPolicy } });
+    await this.audit.log({ actor: userId, action: "app.restartPolicy.update", target: id, meta: { restartPolicy: restartPolicy ?? "unless-stopped" } });
+  }
+
   /**
    * Upload an operator-supplied custom TLS cert for this app (certType → "custom"). The cert/key pair is
    * validated + matched here (parseCustomCert) so a broken pair is rejected before anything is stored; the
@@ -3543,6 +3561,7 @@ export class ApplicationsService {
       dockerOptions: app.dockerOptions,
       containerEntrypoint: this.argv(app.containerEntrypoint),
       containerCommand: this.argv(app.containerCommand),
+      restartPolicy: app.restartPolicy,
       preDeployCommand: app.preDeployCommand,
       postDeployCommand: app.postDeployCommand,
       // Attach to the node-local managed-DB network only for a classic (non-swarm) deploy — a clustered app
@@ -3757,6 +3776,7 @@ export class ApplicationsService {
       // Container argv can embed credentials (e.g. --password=…) → writer-only, like the hooks above.
       containerEntrypoint: canWrite ? this.argv(app.containerEntrypoint) : null,
       containerCommand: canWrite ? this.argv(app.containerCommand) : null,
+      restartPolicy: app.restartPolicy, // not secret → shown regardless of write access
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       hostMounts: this.appHostMounts(app),

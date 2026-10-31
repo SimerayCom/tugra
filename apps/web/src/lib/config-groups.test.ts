@@ -146,6 +146,14 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("redirects");
   });
 
+  it("restartPolicy card is classic docker-run only (not compose/cluster/preview), writer", () => {
+    expect(group(facts(), "build")!.cardIds).toContain("restartPolicy");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "build")?.cardIds ?? []).not.toContain("restartPolicy");
+    expect(group(facts({ clusterId: "c1" }), "build")?.cardIds ?? []).not.toContain("restartPolicy");
+    expect(group(facts({ isPreview: true }), "build")?.cardIds ?? []).not.toContain("restartPolicy");
+    expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("restartPolicy");
+  });
+
   it("watchPaths card shows for a GIT or git-compose app (write, non-preview), not IMAGE/pasted-compose", () => {
     expect(group(facts(), "automation")!.cardIds).toContain("watchPaths"); // GIT
     expect(group(facts({ source: "COMPOSE", composePath: "docker-compose.yml", domain: null, domainKind: null, volumes: [] }), "automation")!.cardIds).toContain("watchPaths"); // git-compose
