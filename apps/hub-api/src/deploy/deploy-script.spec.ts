@@ -907,6 +907,29 @@ describe("deploy-script", () => {
     expect(s).not.toContain("forwardauth");
   });
 
+  it("ip-allowlist adds an ipallowlist middleware FIRST in the chain (before auth)", () => {
+    const labels = traefikLabels({ ...base, domain: "x.com", securityHeaders: true, forwardAuth: "https://a/v", ipAllowlist: ["10.0.0.0/8", "1.2.3.4"] });
+    const s = labels.join("\n");
+    expect(s).toContain(`-ip.ipallowlist.sourcerange=10.0.0.0/8,1.2.3.4`);
+    const chain = labels.find((l) => l.includes(`routers.tugra_${base.id}.middlewares=`))!;
+    expect(chain).toContain(`tugra_${base.id}-ip`);
+    expect(chain.indexOf("-ip")).toBeLessThan(chain.indexOf("-fa")); // IP filter runs before auth
+  });
+
+  it("no ipallowlist label when the allowlist is empty (byte-identical)", () => {
+    const withEmpty = traefikLabels({ ...base, domain: "x.com", ipAllowlist: [] }).join("\n");
+    const without = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(withEmpty).toBe(without);
+    expect(withEmpty).not.toContain("ipallowlist");
+  });
+
+  it("aliases inherit the ip-allowlist middleware", () => {
+    const labels = traefikLabels({ ...base, domain: "x.com", ipAllowlist: ["10.0.0.0/8"], extraDomains: ["b.com"] });
+    const x = extraRouterName(`tugra_${base.id}`, "b.com");
+    const chain = labels.find((l) => l.includes(`routers.${x}.middlewares=`))!;
+    expect(chain).toContain(`tugra_${base.id}-ip`);
+  });
+
   describe("multi-domain aliases (extraDomains)", () => {
     const R = `tugra_${base.id}`;
 

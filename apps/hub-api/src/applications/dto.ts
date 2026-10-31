@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isIP as netIsIP } from "node:net";
 // Cross-module dto import: reuse the label charset from the clusters domain so app placement rules and node
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
 import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
@@ -290,18 +291,34 @@ export const SetEnvironmentSchema = z.object({
 });
 export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
 
+// An IPv4/IPv6 address or CIDR (a Traefik ipallowlist source range). Validated with node:net (no brittle
+// IPv6 regex): the address part must parse, and a `/prefix` must be in range for the family.
+const IP_OR_CIDR = z.string().min(1).max(49).refine((s) => {
+  const [addr, prefix, ...rest] = s.split("/");
+  if (rest.length) return false;
+  const fam = netIsIP(addr);
+  if (fam === 0) return false;
+  if (prefix === undefined) return true;
+  if (!/^\d{1,3}$/.test(prefix)) return false;
+  const p = Number(prefix);
+  return fam === 4 ? p <= 32 : p <= 128;
+}, "must be an IPv4/IPv6 address or CIDR");
+
 export const SetDomainOptionsSchema = z
   .object({
     domainRedirect: z.enum(["www", "root"]).nullable().optional(),
     securityHeaders: z.boolean().optional(),
     forwardAuth: z.string().url().nullable().optional(),
+    // IP allowlist (CIDRs/addresses); empty array clears it (open to all). Capped at 50 ranges.
+    ipAllowlist: z.array(IP_OR_CIDR).max(50).optional(),
   })
   .refine(
     (d) =>
       d.domainRedirect !== undefined ||
       d.securityHeaders !== undefined ||
-      d.forwardAuth !== undefined,
-    { message: "provide domainRedirect, securityHeaders and/or forwardAuth" },
+      d.forwardAuth !== undefined ||
+      d.ipAllowlist !== undefined,
+    { message: "provide domainRedirect, securityHeaders, forwardAuth and/or ipAllowlist" },
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 

@@ -9173,6 +9173,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9413,6 +9414,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9764,6 +9766,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -10070,6 +10073,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -13957,6 +13961,7 @@ export interface operations {
                     securityHeaders?: boolean;
                     /** Format: uri */
                     forwardAuth?: string | null;
+                    ipAllowlist?: string[];
                 };
             };
         };
@@ -14446,6 +14451,7 @@ export interface operations {
                             domainRedirect: string | null;
                             securityHeaders: boolean;
                             forwardAuth: string | null;
+                            ipAllowlist: string[];
                             https: boolean;
                             domainKind: string;
                             exposeMode: string;
@@ -14681,6 +14687,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -14985,6 +14992,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -15345,6 +15353,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -16376,6 +16385,7 @@ export interface operations {
                         domainRedirect: string | null;
                         securityHeaders: boolean;
                         forwardAuth: string | null;
+                        ipAllowlist: string[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;

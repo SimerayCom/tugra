@@ -1308,7 +1308,7 @@ export const api = {
   },
   setAppDomainOptions(
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null; ipAllowlist?: string[] },
   ) {
     return apiFetch<{ ok: true }>(`/apps/${id}/domain-options`, {
       method: "PUT",

@@ -1091,6 +1091,7 @@ export interface Application {
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   forwardAuth: string | null;
+  ipAllowlist: string[];
   https: boolean;
   domainKind: string;
   exposeMode: string;

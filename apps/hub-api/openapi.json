@@ -7752,6 +7752,12 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "ipAllowlist": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -7908,6 +7914,7 @@
                       "domainRedirect",
                       "securityHeaders",
                       "forwardAuth",
+                      "ipAllowlist",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -8613,6 +8620,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "ipAllowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -8769,6 +8782,7 @@
                     "domainRedirect",
                     "securityHeaders",
                     "forwardAuth",
+                    "ipAllowlist",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -9541,6 +9555,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "ipAllowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -9697,6 +9717,7 @@
                     "domainRedirect",
                     "securityHeaders",
                     "forwardAuth",
+                    "ipAllowlist",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -10473,6 +10494,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "ipAllowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -10629,6 +10656,7 @@
                     "domainRedirect",
                     "securityHeaders",
                     "forwardAuth",
+                    "ipAllowlist",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -16110,6 +16138,15 @@
                     "type": "string",
                     "format": "uri",
                     "nullable": true
+                  },
+                  "ipAllowlist": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 49
+                    },
+                    "maxItems": 50
                   }
                 },
                 "additionalProperties": false
@@ -17068,6 +17105,12 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "ipAllowlist": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "https": {
                           "type": "boolean"
                         },
@@ -17224,6 +17267,7 @@
                         "domainRedirect",
                         "securityHeaders",
                         "forwardAuth",
+                        "ipAllowlist",
                         "https",
                         "domainKind",
                         "exposeMode",
@@ -17859,6 +17903,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "ipAllowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -18015,6 +18065,7 @@
                     "domainRedirect",
                     "securityHeaders",
                     "forwardAuth",
+                    "ipAllowlist",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -18720,6 +18771,12 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "ipAllowlist": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -18876,6 +18933,7 @@
                       "domainRedirect",
                       "securityHeaders",
                       "forwardAuth",
+                      "ipAllowlist",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -19651,6 +19709,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "ipAllowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -19807,6 +19871,7 @@
                     "domainRedirect",
                     "securityHeaders",
                     "forwardAuth",
+                    "ipAllowlist",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -21607,6 +21672,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "ipAllowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -21763,6 +21834,7 @@
                     "domainRedirect",
                     "securityHeaders",
                     "forwardAuth",
+                    "ipAllowlist",
                     "https",
                     "domainKind",
                     "exposeMode",
