@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -49,6 +49,27 @@ describe("SetBasicAuthSchema — HTTP basic auth users", () => {
     expect(ok([{ user: "u", password: "x" }, { user: "u", password: "y" }]).success).toBe(false); // dup
     expect(ok(Array.from({ length: 21 }, (_, i) => ({ user: `u${i}`, password: "x" }))).success).toBe(false); // > 20
     expect(SetBasicAuthSchema.safeParse({ users: [{ user: "u", password: "x", foo: 1 }] }).success).toBe(false); // strict row
+  });
+});
+
+describe("SetRedirectsSchema — custom Traefik redirect rules", () => {
+  const ok = (redirects: unknown[]) => SetRedirectsSchema.safeParse({ redirects });
+  it("accepts rules (incl. $ anchors + capture refs) and an empty array (clear)", () => {
+    expect(ok([{ regex: "^https://x\\.com/old$", replacement: "https://x.com/new/${1}", permanent: true }]).success).toBe(true);
+    expect(ok([{ regex: "^/a", replacement: "/b", permanent: false }]).success).toBe(true);
+    expect(ok([]).success).toBe(true);
+  });
+  it("rejects empty strings, CR/LF/NUL, over-length, missing permanent, over-cap, extra keys", () => {
+    expect(ok([{ regex: "", replacement: "/b", permanent: true }]).success).toBe(false); // empty regex
+    expect(ok([{ regex: "/a", replacement: "", permanent: true }]).success).toBe(false); // empty replacement
+    expect(ok([{ regex: "a\nb", replacement: "/b", permanent: true }]).success).toBe(false); // newline regex
+    expect(ok([{ regex: "/a", replacement: "b\r", permanent: true }]).success).toBe(false); // CR replacement
+    expect(ok([{ regex: "/a", replacement: "b\0c", permanent: true }]).success).toBe(false); // NUL replacement
+    expect(ok([{ regex: "a".repeat(1025), replacement: "/b", permanent: true }]).success).toBe(false); // > 1024
+    expect(ok([{ regex: "/a", replacement: "/b" }]).success).toBe(false); // missing permanent
+    expect(ok(Array.from({ length: 21 }, () => ({ regex: "/a", replacement: "/b", permanent: true }))).success).toBe(false); // > 20
+    expect(SetRedirectsSchema.safeParse({ redirects: [{ regex: "/a", replacement: "/b", permanent: true, foo: 1 }] }).success).toBe(false); // strict row
+    expect(SetRedirectsSchema.safeParse({ redirects: [], foo: 1 }).success).toBe(false); // strict outer
   });
 });
 

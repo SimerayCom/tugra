@@ -1038,6 +1038,9 @@ export const api = {
   setAppBasicAuth(id: string, users: { user: string; password: string }[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/basic-auth`, { method: "PUT", body: JSON.stringify({ users }) });
   },
+  setAppRedirects(id: string, redirects: { regex: string; replacement: string; permanent: boolean }[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/redirects`, { method: "PUT", body: JSON.stringify({ redirects }) });
+  },
 
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {

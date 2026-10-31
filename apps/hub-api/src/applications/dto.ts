@@ -385,6 +385,26 @@ export const SetBasicAuthSchema = z.object({
 }).strict();
 export type SetBasicAuthInput = z.infer<typeof SetBasicAuthSchema>;
 
+// Custom redirect rules → one Traefik redirectregex middleware each. `regex` (a Go-RE2 pattern, matched
+// against the full request URL) and `replacement` (may reference capture groups via ${1}) are interpolated
+// into Traefik labels, so both are single-line (no CR/LF/NUL — they must stay one label value) and length-
+// capped; the deploy boundary shell/YAML-escapes them. `permanent` → 301 (true) vs 302. Replace-set
+// semantics: the whole list is sent each time; an empty array clears all redirects. Capped at 20 rules.
+export const SetRedirectsSchema = z.object({
+  redirects: z
+    .array(
+      z
+        .object({
+          regex: z.string().min(1).max(1024).refine((s) => !/[\r\n\0]/.test(s), "regex must be a single line"),
+          replacement: z.string().min(1).max(1024).refine((s) => !/[\r\n\0]/.test(s), "replacement must be a single line"),
+          permanent: z.boolean(),
+        })
+        .strict(),
+    )
+    .max(20),
+}).strict();
+export type SetRedirectsInput = z.infer<typeof SetRedirectsSchema>;
+
 // Upload a custom TLS cert (certType "custom"). The 64 KiB cap mirrors parseCustomCert's; the real
 // validation (PEM shape, key-to-cert match, domains/expiry) happens server-side in the service.
 export const SetCustomCertSchema = z.object({

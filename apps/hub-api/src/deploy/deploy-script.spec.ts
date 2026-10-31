@@ -1082,6 +1082,56 @@ describe("deploy-script", () => {
     expect(withEmpty).not.toContain("ipallowlist");
   });
 
+  it("custom redirects add one redirectregex middleware each, in order, with 301/302 from permanent", () => {
+    const labels = traefikLabels({
+      ...base,
+      domain: "x.com",
+      redirects: [
+        { regex: "^https://x\\.com/old/(.*)", replacement: "https://x.com/new/${1}", permanent: true },
+        { regex: "^https://x\\.com/legacy", replacement: "https://x.com/", permanent: false },
+      ],
+    });
+    const s = labels.join("\n");
+    expect(s).toContain(`-rd0.redirectregex.regex=^https://x\\.com/old/(.*)`);
+    expect(s).toContain(`-rd0.redirectregex.replacement=https://x.com/new/${"${1}"}`); // literal ${1} (docker-run label is single-quoted)
+    expect(s).toContain(`-rd0.redirectregex.permanent=true`);
+    expect(s).toContain(`-rd1.redirectregex.permanent=false`);
+    const chain = labels.find((l) => l.includes(`routers.tugra_${base.id}.middlewares=`))!;
+    expect(chain.indexOf("-rd0")).toBeLessThan(chain.indexOf("-rd1")); // user order preserved
+  });
+
+  it("redirects run after the canonical redirect and the auth gate, before security headers", () => {
+    const labels = traefikLabels({
+      ...base,
+      domain: "x.com",
+      domainRedirect: "root",
+      securityHeaders: true,
+      basicAuthUsers: [{ user: "u", hash: "$2b$h" }],
+      redirects: [{ regex: "^https://x\\.com/a", replacement: "https://x.com/b", permanent: true }],
+    });
+    const chain = labels.find((l) => l.includes(`routers.tugra_${base.id}.middlewares=`))!;
+    expect(chain.indexOf("-ba")).toBeLessThan(chain.indexOf("-canon")); // auth before any redirect
+    expect(chain.indexOf("-canon")).toBeLessThan(chain.indexOf("-rd0")); // canonical before custom
+    expect(chain.indexOf("-rd0")).toBeLessThan(chain.indexOf("-sec")); // redirects before headers
+  });
+
+  it("redirects double every $ on the compose path (end-anchor + capture ref survive interpolation)", () => {
+    const spec = { ...base, domain: "x.com", redirects: [{ regex: "^https://x\\.com/old$", replacement: "https://x.com/new/${1}", permanent: true }] };
+    const classic = traefikLabels(spec).join("\n");
+    expect(classic).toContain(`-rd0.redirectregex.regex=^https://x\\.com/old$`); // literal $ end-anchor
+    expect(classic).toContain(`-rd0.redirectregex.replacement=https://x.com/new/${"${1}"}`); // literal ${1}
+    const compose = traefikLabels(spec, { composeDollarEscape: true }).join("\n");
+    expect(compose).toContain(`-rd0.redirectregex.regex=^https://x\\.com/old$$`); // $ doubled for compose
+    expect(compose).toContain(`-rd0.redirectregex.replacement=https://x.com/new/$${"${1}"}`); // $${1}
+  });
+
+  it("no redirectregex rule label when there are no redirects (byte-identical)", () => {
+    const withEmpty = traefikLabels({ ...base, domain: "x.com", redirects: [] }).join("\n");
+    const without = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(withEmpty).toBe(without);
+    expect(withEmpty).not.toContain("-rd0");
+  });
+
   it("aliases inherit the ip-allowlist middleware", () => {
     const labels = traefikLabels({ ...base, domain: "x.com", ipAllowlist: ["10.0.0.0/8"], extraDomains: ["b.com"] });
     const x = extraRouterName(`tugra_${base.id}`, "b.com");

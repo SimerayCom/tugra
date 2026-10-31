@@ -1924,6 +1924,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/redirects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["ApplicationsController_setRedirects"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/cert": {
         parameters: {
             query?: never;
@@ -9490,6 +9506,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9757,6 +9778,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -10135,6 +10161,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -10468,6 +10499,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -14977,6 +15013,89 @@ export interface operations {
             };
         };
     };
+    ApplicationsController_setRedirects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    redirects: {
+                        regex: string;
+                        replacement: string;
+                        permanent: boolean;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     ApplicationsController_setCustomCert: {
         parameters: {
             query?: never;
@@ -15425,6 +15544,11 @@ export interface operations {
                                 /** @enum {string} */
                                 period: "1s" | "1m" | "1h";
                             } | null;
+                            redirects: {
+                                regex: string;
+                                replacement: string;
+                                permanent: boolean;
+                            }[];
                             https: boolean;
                             domainKind: string;
                             exposeMode: string;
@@ -15687,6 +15811,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -16018,6 +16147,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -16407,6 +16541,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -17465,6 +17604,11 @@ export interface operations {
                             /** @enum {string} */
                             period: "1s" | "1m" | "1h";
                         } | null;
+                        redirects: {
+                            regex: string;
+                            replacement: string;
+                            permanent: boolean;
+                        }[];
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;

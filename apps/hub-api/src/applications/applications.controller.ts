@@ -65,6 +65,8 @@ import {
   SetExtraPortsSchema,
   SetBasicAuthInput,
   SetBasicAuthSchema,
+  SetRedirectsInput,
+  SetRedirectsSchema,
   SetConfigMountContentInput,
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
@@ -824,6 +826,20 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetBasicAuthSchema)) body: SetBasicAuthInput,
   ) {
     await this.apps.setBasicAuth(user.userId, id, body.users);
+    return { ok: true };
+  }
+
+  // Replace the app's custom redirect rules (one Traefik redirectregex middleware each). Replace-set; an
+  // empty list clears them. Writer-only (requireWrite in the service). Applied on the next deploy.
+  @Put(":id/redirects")
+  @HttpCode(200)
+  @ApiZodBody(SetRedirectsSchema)
+  async setRedirects(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetRedirectsSchema)) body: SetRedirectsInput,
+  ) {
+    await this.apps.setRedirects(user.userId, id, body.redirects);
     return { ok: true };
   }
 

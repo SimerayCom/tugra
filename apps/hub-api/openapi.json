@@ -7996,6 +7996,29 @@
                         "additionalProperties": false,
                         "nullable": true
                       },
+                      "redirects": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "regex": {
+                              "type": "string"
+                            },
+                            "replacement": {
+                              "type": "string"
+                            },
+                            "permanent": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "regex",
+                            "replacement",
+                            "permanent"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -8177,6 +8200,7 @@
                       "pathPrefix",
                       "stripPrefix",
                       "rateLimit",
+                      "redirects",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -8997,6 +9021,29 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "redirects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "regex": {
+                            "type": "string"
+                          },
+                          "replacement": {
+                            "type": "string"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "regex",
+                          "replacement",
+                          "permanent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -9178,6 +9225,7 @@
                     "pathPrefix",
                     "stripPrefix",
                     "rateLimit",
+                    "redirects",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -10065,6 +10113,29 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "redirects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "regex": {
+                            "type": "string"
+                          },
+                          "replacement": {
+                            "type": "string"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "regex",
+                          "replacement",
+                          "permanent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -10246,6 +10317,7 @@
                     "pathPrefix",
                     "stripPrefix",
                     "rateLimit",
+                    "redirects",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -11137,6 +11209,29 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "redirects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "regex": {
+                            "type": "string"
+                          },
+                          "replacement": {
+                            "type": "string"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "regex",
+                          "replacement",
+                          "permanent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -11318,6 +11413,7 @@
                     "pathPrefix",
                     "stripPrefix",
                     "rateLimit",
+                    "redirects",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -17756,6 +17852,138 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/redirects": {
+      "put": {
+        "operationId": "ApplicationsController_setRedirects",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "redirects": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "regex": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "replacement": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "permanent": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "regex",
+                        "replacement",
+                        "permanent"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "redirects"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/cert": {
       "put": {
         "operationId": "ApplicationsController_setCustomCert",
@@ -18745,6 +18973,29 @@
                           "additionalProperties": false,
                           "nullable": true
                         },
+                        "redirects": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "regex": {
+                                "type": "string"
+                              },
+                              "replacement": {
+                                "type": "string"
+                              },
+                              "permanent": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "regex",
+                              "replacement",
+                              "permanent"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
                         "https": {
                           "type": "boolean"
                         },
@@ -18926,6 +19177,7 @@
                         "pathPrefix",
                         "stripPrefix",
                         "rateLimit",
+                        "redirects",
                         "https",
                         "domainKind",
                         "exposeMode",
@@ -19676,6 +19928,29 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "redirects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "regex": {
+                            "type": "string"
+                          },
+                          "replacement": {
+                            "type": "string"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "regex",
+                          "replacement",
+                          "permanent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -19857,6 +20132,7 @@
                     "pathPrefix",
                     "stripPrefix",
                     "rateLimit",
+                    "redirects",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -20677,6 +20953,29 @@
                         "additionalProperties": false,
                         "nullable": true
                       },
+                      "redirects": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "regex": {
+                              "type": "string"
+                            },
+                            "replacement": {
+                              "type": "string"
+                            },
+                            "permanent": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "regex",
+                            "replacement",
+                            "permanent"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -20858,6 +21157,7 @@
                       "pathPrefix",
                       "stripPrefix",
                       "rateLimit",
+                      "redirects",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -21763,6 +22063,29 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "redirects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "regex": {
+                            "type": "string"
+                          },
+                          "replacement": {
+                            "type": "string"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "regex",
+                          "replacement",
+                          "permanent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -21944,6 +22267,7 @@
                     "pathPrefix",
                     "stripPrefix",
                     "rateLimit",
+                    "redirects",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -23859,6 +24183,29 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "redirects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "regex": {
+                            "type": "string"
+                          },
+                          "replacement": {
+                            "type": "string"
+                          },
+                          "permanent": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "regex",
+                          "replacement",
+                          "permanent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -24040,6 +24387,7 @@
                     "pathPrefix",
                     "stripPrefix",
                     "rateLimit",
+                    "redirects",
                     "https",
                     "domainKind",
                     "exposeMode",
