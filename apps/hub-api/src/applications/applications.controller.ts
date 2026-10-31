@@ -32,6 +32,7 @@ import { ApplicationsService, AppViewSchema, CloneAppResultSchema, GitSshKeyResu
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import { CreateSecretRefInput, CreateSecretRefSchema } from "../secret-providers/dto";
+import { RequireEdition, RequireEditionGuard } from "../common/edition";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
 import {
   CreateAppInput,
@@ -371,7 +372,9 @@ export class ApplicationsController {
   }
 
   // Secret refs: bind an external secret store value (Vault in v1) so it is fetched at deploy and injected
-  // into the app's env. The list carries NO secret values (only the env var + locator), so no read:secrets scope.
+  // into the app's env. The list carries NO secret values (only the env var + locator), so no read:secrets
+  // scope. BINDING a secret is Pro-gated (open-core governance); list + unbind stay open so a downgraded
+  // instance can still see and remove bindings, and the deploy-time resolver keeps working.
   @Get(":id/secret-refs")
   listSecretRefs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.secretRefs.list(user.userId, id);
@@ -379,6 +382,8 @@ export class ApplicationsController {
 
   @Post(":id/secret-refs")
   @HttpCode(201)
+  @RequireEdition("pro")
+  @UseGuards(RequireEditionGuard)
   @ApiZodBody(CreateSecretRefSchema)
   bindSecret(
     @CurrentUser() user: AuthUser,

@@ -17,6 +17,7 @@ function make(
     findProvider?: jest.Mock;
     findRefUnique?: jest.Mock;
     findRefFirst?: jest.Mock;
+    findDbLink?: jest.Mock;
   } = {},
 ) {
   const audit = { log: jest.fn() } as unknown as AuditService;
@@ -41,6 +42,7 @@ function make(
       ),
       delete: jest.fn(),
     },
+    appDatabaseLink: { findUnique: over.findDbLink ?? jest.fn().mockResolvedValue(null) },
   } as unknown as PrismaService;
   const svc = new AppSecretRefsService(prisma, access, audit, crypto, vault);
   return { svc, prisma, access, crypto, vault, fetchSecret, audit };
@@ -83,6 +85,17 @@ describe("AppSecretRefsService.resolveSecretEnv", () => {
     expect(err).toBeInstanceOf(BadRequestException);
     expect((err as Error).message).toContain("DB_PASSWORD");
     expect((err as Error).message).toContain("prod-vault");
+  });
+
+  it("FAILS the deploy when a fetched value contains a newline (env-file injection guard), without echoing the value", async () => {
+    const { svc } = make({
+      refs: [{ id: "r1", envVar: "DB_PASSWORD", providerId: "sp1", remoteKey: "secret/app#DB_PASSWORD", provider }],
+      fetchImpl: jest.fn().mockResolvedValue("x\nPATH=/evil"),
+    });
+    const err = await svc.resolveSecretEnv(app).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toContain("DB_PASSWORD");
+    expect((err as Error).message).not.toContain("/evil"); // value never echoed
   });
 
   it("fails when a ref's provider is in another team", async () => {
@@ -135,6 +148,12 @@ describe("AppSecretRefsService.create", () => {
   it("conflict when the env var is already bound", async () => {
     const { svc } = make({ findRefUnique: jest.fn().mockResolvedValue({ id: "existing" }) });
     await expect(svc.create("u1", "a1", { providerId: "sp1", envVar: "DB_PASSWORD", remoteKey: "secret/app#DB_PASSWORD" })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("conflict when the env var is already used by a database link (would silently override the DB URI)", async () => {
+    const { svc, prisma } = make({ findDbLink: jest.fn().mockResolvedValue({ id: "dl1", envVar: "DATABASE_URL" }) });
+    await expect(svc.create("u1", "a1", { providerId: "sp1", envVar: "DATABASE_URL", remoteKey: "secret/app#DATABASE_URL" })).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.secretRef!.create as jest.Mock).not.toHaveBeenCalled();
   });
 });
 
