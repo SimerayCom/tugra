@@ -12035,6 +12035,7 @@ export interface operations {
                     gitBranch?: string;
                     gitSourceId?: string | null;
                     image?: string;
+                    composePath?: string;
                 };
             };
         };

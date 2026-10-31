@@ -95,6 +95,12 @@ describe("SetSourceSchema — edit source after create", () => {
     expect(SetSourceSchema.safeParse({ image: "-rm nginx" }).success).toBe(false); // option injection
     expect(SetSourceSchema.safeParse({ gitUrl: "https://github.com/x/y.git", foo: 1 }).success).toBe(false); // strict
   });
+  it("accepts a YAML composePath and rejects a non-YAML / traversing one", () => {
+    expect(SetSourceSchema.safeParse({ composePath: "deploy/docker-compose.yml" }).success).toBe(true);
+    expect(SetSourceSchema.safeParse({ composePath: "stack.yaml" }).success).toBe(true);
+    expect(SetSourceSchema.safeParse({ composePath: "Dockerfile" }).success).toBe(false); // not .yml/.yaml
+    expect(SetSourceSchema.safeParse({ composePath: "../x.yml" }).success).toBe(false); // traversal
+  });
 });
 
 describe("BASE_DIR / baseDirectory — monorepo build root", () => {

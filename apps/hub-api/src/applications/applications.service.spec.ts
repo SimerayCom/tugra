@@ -1202,6 +1202,32 @@ describe("ApplicationsService", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("setSource edits a git-compose app's branch + compose path, and rejects composePath on a pure GIT app", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const gc = { ...gitApp, source: "COMPOSE", composePath: "docker-compose.yml", composeFile: null };
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(gc), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitBranch: "release", composePath: "deploy/stack.yml" });
+    expect(update.mock.calls[0][0].data).toMatchObject({ gitBranch: "release", composePath: "deploy/stack.yml" });
+    // composePath on a pure GIT app is refused
+    const gitPrisma = { application: { findUnique: jest.fn().mockResolvedValue(gitApp), update: jest.fn() }, deployment: noActiveDeploy } as unknown as PrismaService;
+    await expect(make(gitPrisma, access, {} as AgentWsServer).setSource("u1", "app1", { composePath: "x.yml" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("generateGitSshKey works for a git-compose (ssh) app and rejects a non-git-sourced one", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const sshGc = { ...gitApp, source: "COMPOSE", composePath: "docker-compose.yml", composeFile: null, gitUrl: "git@github.com:u/r.git" };
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(sshGc), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const res = await make(prisma, access, {} as AgentWsServer).generateGitSshKey("u1", "app1");
+    expect(res.publicKey).toMatch(/^ssh-ed25519 /);
+    expect(update.mock.calls[0][0].data.gitSshPublicKey).toMatch(/^ssh-ed25519 /);
+    // a pasted compose (no git) has no repo to key
+    const pasted = { ...app, source: "COMPOSE", composePath: null, gitUrl: null };
+    const p2 = { application: { findUnique: jest.fn().mockResolvedValue(pasted), update: jest.fn() } } as unknown as PrismaService;
+    await expect(make(p2, access, {} as AgentWsServer).generateGitSshKey("u1", "app1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("setSource rejects a preview app", async () => {
     const update = jest.fn();
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, isPreview: true }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
