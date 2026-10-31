@@ -187,10 +187,22 @@ model Project {
   teamId       String
   name         String
   isDefault    Boolean       @default(false) // the team's default project (exactly one per team)
+  iconUpdatedAt DateTime?    // list-view marker so the project list never reads the icon bytes
+  icon         ProjectIcon?
   environments Environment[]
   createdAt    DateTime      @default(now())
 
   @@index([teamId])
+}
+
+// A project's custom icon (square PNG), kept off the Project row (Project.iconUpdatedAt is the marker).
+model ProjectIcon {
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId  String   @id
+  mime       String   // always "image/png" (anything else is rejected at upload)
+  data       Bytes
+  sizeBytes  Int
+  updatedAt  DateTime @updatedAt
 }
 
 model Environment {

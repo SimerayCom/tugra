@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -11,6 +12,7 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService, canAccessProject } from "../common/team-access.service";
 import { appUrl } from "../common/app-url";
 import { filterByQuery } from "../common/query-filter";
+import { validatePngIcon } from "../common/png-icon";
 import { TemplateCatalogService } from "../catalog/template-catalog.service";
 
 export const ProjectResourceSchema = z.object({
@@ -50,6 +52,7 @@ export const ProjectViewSchema = z.object({
   environments: z.array(EnvironmentViewSchema),
   role: z.nativeEnum(Role),
   canWrite: z.boolean(),
+  iconUpdatedAt: z.date().nullable(), // set when a custom icon was uploaded (list-view cache-bust marker)
   createdAt: z.date(),
 });
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
@@ -94,6 +97,7 @@ export class ProjectsService {
       isDefault: p.isDefault,
       role: access.get(p.teamId)!.role,
       canWrite: perms.get(p.teamId)?.has("projects") ?? false,
+      iconUpdatedAt: p.iconUpdatedAt,
       environments: p.environments.map((e) => ({
         id: e.id,
         name: e.name,
@@ -145,6 +149,7 @@ export class ProjectsService {
       isDefault: project.isDefault,
       role,
       canWrite,
+      iconUpdatedAt: project.iconUpdatedAt,
       environments: project.environments.map((e) => {
         const resources: ProjectResource[] = [
           ...apps.filter((a) => a.environmentId === e.id).map((a) => ({
@@ -251,6 +256,44 @@ export class ProjectsService {
   }
 
   // ── helpers ──
+  /** Raw icon bytes for the GET endpoint (read-authorized). 404 when the project has no custom icon. */
+  async getIcon(userId: string, id: string): Promise<{ mime: string; data: Buffer }> {
+    const project = await this.prisma.project.findUnique({ where: { id }, select: { teamId: true } });
+    if (!project) throw new NotFoundException("project not found");
+    if (!(await this.access.teamRole(userId, project.teamId))) throw new ForbiddenException("not a member of this team");
+    await this.access.requireProjectAccess(userId, project.teamId, id);
+    const icon = await this.prisma.projectIcon.findUnique({ where: { projectId: id } });
+    if (!icon) throw new NotFoundException("no icon");
+    return { mime: icon.mime, data: Buffer.from(icon.data) };
+  }
+
+  /** Store (or replace) the project's custom icon from a base64-encoded PNG. Write-authorized + validated. */
+  async setIcon(userId: string, id: string, pngBase64: string): Promise<void> {
+    const project = await this.requireProjectWrite(userId, id);
+    const buf = Buffer.from(pngBase64, "base64"); // tolerant decode; the PNG check below is the real gate
+    if (buf.length === 0) throw new BadRequestException("icon is empty");
+    validatePngIcon(buf);
+    await this.prisma.$transaction([
+      this.prisma.projectIcon.upsert({
+        where: { projectId: id },
+        create: { projectId: id, mime: "image/png", data: buf, sizeBytes: buf.length },
+        update: { mime: "image/png", data: buf, sizeBytes: buf.length },
+      }),
+      this.prisma.project.update({ where: { id }, data: { iconUpdatedAt: new Date() } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "project.icon.set", target: project.id, meta: { sizeBytes: buf.length } });
+  }
+
+  /** Remove the project's custom icon (idempotent — a no-op when none is set). Write-authorized. */
+  async deleteIcon(userId: string, id: string): Promise<void> {
+    const project = await this.requireProjectWrite(userId, id);
+    await this.prisma.$transaction([
+      this.prisma.projectIcon.deleteMany({ where: { projectId: id } }), // deleteMany: removing a missing icon is a no-op
+      this.prisma.project.update({ where: { id }, data: { iconUpdatedAt: null } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "project.icon.delete", target: project.id });
+  }
+
   private async requireProjectWrite(userId: string, id: string) {
     const project = await this.prisma.project.findUnique({ where: { id } });
     if (!project) throw new NotFoundException("project not found");

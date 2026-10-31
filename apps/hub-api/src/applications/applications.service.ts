@@ -23,6 +23,7 @@ import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { filterByQuery } from "../common/query-filter";
+import { validatePngIcon } from "../common/png-icon";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
@@ -3571,27 +3572,8 @@ export class ApplicationsService {
   // passes those checks cannot be content-sniffed into HTML/SVG/script, which — together with the fixed
   // image/png Content-Type + nosniff the GET endpoint sends — stops a hostile upload from ever executing in
   // the panel's origin. Kept small by design (the browser crops to a 128x128 PNG before upload).
-  static readonly ICON_MAX_BYTES = 64 * 1024;
-
   private validatePngIcon(buf: Buffer): void {
-    if (buf.length > ApplicationsService.ICON_MAX_BYTES) throw new BadRequestException("icon too large (max 64KB)");
-    // Need at least the 8-byte signature + 25-byte IHDR + 12-byte IEND to be a structurally complete PNG.
-    if (buf.length < 45) throw new BadRequestException("icon is not a valid PNG");
-    const SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    if (!buf.subarray(0, 8).equals(SIG)) throw new BadRequestException("icon must be a PNG");
-    // The first chunk must be IHDR with the canonical 13-byte body (length at 8-11, type "IHDR" at 12-15).
-    if (buf.readUInt32BE(8) !== 13 || buf.toString("ascii", 12, 16) !== "IHDR") {
-      throw new BadRequestException("icon is not a valid PNG");
-    }
-    const width = buf.readUInt32BE(16);
-    const height = buf.readUInt32BE(20);
-    if (width !== height) throw new BadRequestException("icon must be square");
-    if (width < 32 || width > 512) throw new BadRequestException("icon must be 32-512px square");
-    // Must end with the canonical 12-byte IEND chunk (empty data → fixed CRC 0xAE426082). This rejects a
-    // header-only, truncated or garbage-tailed upload — which no browser could decode — rather than storing
-    // it as a broken image. It is not a full PNG decode, but it bounds a direct-API caller to complete files.
-    const IEND = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
-    if (!buf.subarray(buf.length - 12).equals(IEND)) throw new BadRequestException("icon is not a valid PNG");
+    validatePngIcon(buf); // shared structural PNG check (src/common/png-icon.ts) — identical bar for every entity
   }
 
   /** Raw icon bytes for the GET endpoint (read-authorized). 404 when the app has no custom icon. */

@@ -102,6 +102,11 @@ export function appIconUrl(id: string, iconUpdatedAt: string | null): string | n
   return `${API_BASE}/apps/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
 }
 
+export function projectIconUrl(id: string, iconUpdatedAt: string | null): string | null {
+  if (!iconUpdatedAt) return null;
+  return `${API_BASE}/projects/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
+}
+
 // The hub's PUBLIC absolute origin — ONLY for URLs that hit the hub DIRECTLY (not through the SPA's
 // same-origin "/api" proxy): the terminal WebSocket upgrade and webhook URLs shown to paste externally.
 // Resolution: (1) a baked NEXT_PUBLIC_API_URL wins (explicit override; build-from-source installs set it);
@@ -1164,6 +1169,12 @@ export const api = {
   },
   deleteAppIcon(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/icon`, { method: "DELETE" });
+  },
+  setProjectIcon(id: string, data: string) {
+    return apiFetch<{ ok: true }>(`/projects/${id}/icon`, { method: "PUT", body: JSON.stringify({ data }) });
+  },
+  deleteProjectIcon(id: string) {
+    return apiFetch<{ ok: true }>(`/projects/${id}/icon`, { method: "DELETE" });
   },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {
