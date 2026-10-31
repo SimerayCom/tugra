@@ -16,8 +16,12 @@ describe("Secret providers (e2e)", () => {
   let appId = "";
   let providerId = "";
   const SECRET_TOKEN = "hvs.SUPER_SECRET_VAULT_TOKEN";
+  // Configuring a provider / binding a secret is Pro-gated (RequireEditionGuard). Run this suite as the Pro
+  // edition so the gated routes are exercised; restore the env afterwards so other suites are unaffected.
+  const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
 
   beforeAll(async () => {
+    process.env.TUGRA_EDITION = "pro";
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       // Stub the Vault client so create/test never make a real network call; fetchSecret is unused here
       // (deploy-time resolution is unit-tested) but provided for completeness.
@@ -50,6 +54,8 @@ describe("Secret providers (e2e)", () => {
     await prisma.team.deleteMany({ where: { id: teamId } }).catch(() => undefined);
     await prisma.user.deleteMany({ where: { email } }).catch(() => undefined);
     await app.close();
+    if (ORIGINAL_EDITION === undefined) delete process.env.TUGRA_EDITION;
+    else process.env.TUGRA_EDITION = ORIGINAL_EDITION;
   });
 
   it("creates a Vault provider (token verified then never returned)", async () => {
@@ -105,7 +111,7 @@ describe("Secret providers (e2e)", () => {
 
     const list = await request(app.getHttpServer()).get(`/apps/${appId}/secret-refs`).set("Authorization", `Bearer ${token}`).expect(200);
     expect(list.body).toHaveLength(1);
-    expect(list.body[0]).toMatchObject({ envVar: "DB_PASSWORD", remoteKey: "secret/myapp#DB_PASSWORD", shadowedBy: null });
+    expect(list.body[0]).toMatchObject({ envVar: "DB_PASSWORD", remoteKey: "secret/myapp#DB_PASSWORD", overridesAppEnv: false });
   });
 
   it("rejects a malformed Vault locator (400) and a duplicate env var (409)", async () => {

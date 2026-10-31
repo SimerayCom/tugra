@@ -4,7 +4,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { filterByQuery } from "../common/query-filter";
-import { VaultApiClient } from "./vault-api.client";
+import { VaultApiClient, VaultApiError } from "./vault-api.client";
 import type { CreateSecretProviderInput, UpdateSecretProviderInput } from "./dto";
 
 export interface SecretProviderView {
@@ -99,21 +99,23 @@ export class SecretProvidersService {
     });
     if (!existing) throw new NotFoundException("secret provider not found");
     await this.access.requirePermission(userId, existing.teamId, "integrations");
-    // Re-verify a new token (or a changed address) before storing it, using the effective address + token.
-    const effAddress = dto.address ?? existing.address;
-    if (dto.token || (dto.address && dto.address !== existing.address)) {
-      const effToken = dto.token ?? this.crypto.decrypt(existing.tokenEnc);
-      await this.verify(existing.kind, effAddress, effToken);
+    // Changing the store address REQUIRES re-supplying the token: the stored token must never be sent to a
+    // newly-supplied (possibly attacker-controlled) address just to re-verify it — that would exfiltrate the
+    // write-only token. A supplied token is verified against the effective address; the stored token is only
+    // ever re-checked by `test`, against its OWN stored address.
+    if (dto.address && dto.address !== existing.address && !dto.token) {
+      throw new BadRequestException("re-supply the access token when changing the store address");
+    }
+    if (dto.token) {
+      await this.verify(existing.kind, dto.address ?? existing.address, dto.token);
     }
     const r = await this.prisma.secretProvider.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
         ...(dto.address !== undefined ? { address: dto.address } : {}),
-        // Only re-encrypt the token when a new one is supplied (write-only field); refresh lastVerifiedAt
-        // whenever we re-verified (new token, or an address change we re-checked the stored token against).
-        ...(dto.token ? { tokenEnc: this.crypto.encrypt(dto.token) } : {}),
-        ...(dto.token || (dto.address && dto.address !== existing.address) ? { lastVerifiedAt: new Date() } : {}),
+        // The token is write-only: only re-encrypt (and refresh lastVerifiedAt) when a new one is supplied.
+        ...(dto.token ? { tokenEnc: this.crypto.encrypt(dto.token), lastVerifiedAt: new Date() } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "secret_provider.update", target: id });
@@ -150,8 +152,10 @@ export class SecretProvidersService {
     let valid = false;
     try {
       ({ valid } = await this.vault.verify(address, token));
-    } catch {
-      throw new BadRequestException("could not reach the secret store at the given address");
+    } catch (e) {
+      // The client's messages are secret-free (address/status only), so surfacing them gives a precise 400
+      // ("address is not allowed" / "could not reach …") without leaking the token.
+      throw new BadRequestException(e instanceof VaultApiError ? e.message : "could not reach the secret store at the given address");
     }
     if (!valid) throw new BadRequestException("the secret store rejected this token");
   }

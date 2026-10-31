@@ -6,6 +6,7 @@ import { Paginated } from "../common/pagination.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireEdition, RequireEditionGuard } from "../common/edition";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SecretProvidersService } from "./secret-providers.service";
 import {
@@ -18,7 +19,9 @@ import {
 /** Team-scoped external secret-store providers (HashiCorp Vault in v1). Behind ApiAuthGuard+ScopesGuard so
  *  BOTH a browser session (web UI) and a PAT (CLI/API) can manage them (scope defaults: GET=read, POST/PUT=write,
  *  DELETE=admin); the service additionally enforces the `integrations` team permission. The token is never
- *  returned. */
+ *  returned. CONFIGURING a provider (create/update/test) is PRO-EDITION ONLY (RequireEditionGuard → 403 on
+ *  Community) — this is an open-core governance feature; list + delete stay open so a downgraded instance can
+ *  still see and remove what it has, and the deploy-time resolver keeps working so running apps don't break. */
 @ApiTags("secret-providers")
 @ApiSecurity("pat")
 @Controller("secret-providers")
@@ -33,6 +36,8 @@ export class SecretProvidersController {
   }
 
   @Post()
+  @RequireEdition("pro")
+  @UseGuards(RequireEditionGuard)
   @ApiZodBody(CreateSecretProviderSchema)
   create(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(CreateSecretProviderSchema)) body: CreateSecretProviderInput) {
     return this.svc.create(user.userId, body);
@@ -40,6 +45,8 @@ export class SecretProvidersController {
 
   @Put(":id")
   @HttpCode(200)
+  @RequireEdition("pro")
+  @UseGuards(RequireEditionGuard)
   @ApiZodBody(UpdateSecretProviderSchema)
   update(
     @CurrentUser() user: AuthUser,
@@ -51,6 +58,8 @@ export class SecretProvidersController {
 
   @Post(":id/test")
   @HttpCode(200)
+  @RequireEdition("pro")
+  @UseGuards(RequireEditionGuard)
   test(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.svc.test(user.userId, id);
   }

@@ -5,7 +5,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { loadProjectCtx } from "../common/resource-project";
-import { isLinkEnvKeyAllowed } from "../common/env-key";
+import { isLinkEnvKeyAllowed, isSafeEnvValue } from "../common/env-key";
 import { VaultApiClient, parseVaultLocator } from "../secret-providers/vault-api.client";
 
 /** One secret ref as returned by the read API — the env var + where it is located, NEVER the fetched value.
@@ -17,7 +17,10 @@ export interface SecretRefView {
   providerName: string;
   kind: string;
   remoteKey: string;
-  shadowedBy?: "app-env" | null;
+  // true when the app's plain env ALSO sets this key: the fetched secret OVERRIDES it at deploy (secrets are
+  // highest precedence), so the UI can warn that the literal is dead. (NOT "shadowedBy": unlike a db-link,
+  // the secret wins, not the app-env value.)
+  overridesAppEnv: boolean;
   createdAt: string;
 }
 
@@ -77,14 +80,22 @@ export class AppSecretRefsService {
   ): Promise<string> {
     if (kind !== "vault") throw new BadRequestException(`cannot resolve ${envVar}: unsupported secret provider kind "${kind}"`);
     const token = this.crypto.decrypt(tokenEnc);
+    let value: string;
     try {
-      return await this.vault.fetchSecret(address, token, remoteKey);
+      value = await this.vault.fetchSecret(address, token, remoteKey);
     } catch (e) {
       // The client's errors are already secret-free (address + locator only); re-wrap with the env var +
       // provider so the deploy log says WHICH binding failed, never the value or the token.
       const detail = e instanceof Error ? e.message : "unknown error";
       throw new BadRequestException(`could not resolve ${envVar} from secret provider "${providerName}": ${detail}`);
     }
+    // The env-file is KEY=VALUE lines joined by "\n", so a newline/CR/NUL in a fetched value would inject a
+    // second env var (e.g. a Vault field "x\nPATH=/evil"). User-supplied env is held to isSafeEnvValue; a
+    // fetched secret bypasses that DTO guard, so enforce the SAME boundary here. The value is never echoed.
+    if (!isSafeEnvValue(value)) {
+      throw new BadRequestException(`the secret for ${envVar} (provider "${providerName}") contains a newline or control character and cannot be injected as an env var`);
+    }
+    return value;
   }
 
   // ---- read ----------------------------------------------------------------
@@ -106,7 +117,7 @@ export class AppSecretRefsService {
       providerName: ref.provider?.name ?? "(removed)",
       kind: ref.provider?.kind ?? "unknown",
       remoteKey: ref.remoteKey,
-      shadowedBy: appKeys.has(ref.envVar) ? ("app-env" as const) : null,
+      overridesAppEnv: appKeys.has(ref.envVar),
       createdAt: ref.createdAt.toISOString(),
     }));
   }
@@ -150,6 +161,11 @@ export class AppSecretRefsService {
     if (await this.prisma.secretRef.findUnique({ where: { appId_envVar: { appId, envVar: input.envVar } } })) {
       throw new ConflictException(`env var ${input.envVar} is already bound to a secret`);
     }
+    // A secret ref outranks a database link of the same name at deploy (highest precedence), so refuse to
+    // bind one over an existing db-link env var rather than silently overriding the injected connection URI.
+    if (await this.prisma.appDatabaseLink.findUnique({ where: { appId_envVar: { appId, envVar: input.envVar } } })) {
+      throw new ConflictException(`env var ${input.envVar} is already used by a database link — unlink it first`);
+    }
 
     const created = await this.prisma.secretRef.create({
       data: { appId, providerId: provider.id, envVar: input.envVar, remoteKey: input.remoteKey, createdBy: userId },
@@ -168,7 +184,7 @@ export class AppSecretRefsService {
       providerName: provider.name,
       kind: provider.kind,
       remoteKey: created.remoteKey,
-      shadowedBy: this.appEnvKeys(app).has(created.envVar) ? "app-env" : null,
+      overridesAppEnv: this.appEnvKeys(app).has(created.envVar),
       createdAt: created.createdAt.toISOString(),
     };
   }

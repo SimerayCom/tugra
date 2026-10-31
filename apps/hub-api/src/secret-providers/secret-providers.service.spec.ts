@@ -100,11 +100,18 @@ describe("SecretProvidersService", () => {
     expect(verify2).toHaveBeenCalledWith("https://vault.example.com", "NEWTOK");
   });
 
-  it("update re-verifies the stored token against a changed address", async () => {
-    const { svc, verify, crypto } = make();
-    await svc.update("u1", "sp1", { address: "https://vault-2.example.com" });
-    expect(crypto.decrypt).toHaveBeenCalledWith("enc(TOKENVAL)");
-    expect(verify).toHaveBeenCalledWith("https://vault-2.example.com", "TOKENVAL");
+  it("update REJECTS an address change with no re-supplied token (never sends the stored token to a new host)", async () => {
+    const { svc, verify, crypto, prisma } = make();
+    await expect(svc.update("u1", "sp1", { address: "https://vault-2.example.com" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(verify).not.toHaveBeenCalled();
+    expect(crypto.decrypt).not.toHaveBeenCalled(); // stored token never decrypted for a foreign address
+    expect(prisma.secretProvider!.update as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("update verifies a NEW token against the new address when both are supplied", async () => {
+    const { svc, verify } = make();
+    await svc.update("u1", "sp1", { address: "https://vault-2.example.com", token: "NEWTOK" });
+    expect(verify).toHaveBeenCalledWith("https://vault-2.example.com", "NEWTOK");
   });
 
   it("remove is blocked (409) while refs still point at the provider", async () => {

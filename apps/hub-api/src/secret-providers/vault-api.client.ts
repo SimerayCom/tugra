@@ -1,6 +1,13 @@
 import { Injectable } from "@nestjs/common";
+import { assertSafeUrl, SsrfError } from "../notifications/safe-url";
 
 const VAULT_TIMEOUT_MS = 15_000;
+
+// A secret store commonly lives on an internal/private network, so RFC1918 targets are allowed; loopback,
+// link-local and cloud-metadata (169.254.169.254) are always blocked by assertSafeUrl. Re-resolved on every
+// call so a DNS record that flips to an internal address is caught (a narrow TOCTOU remains vs fetch's own
+// resolve — pinning the socket like notifications/safeSend is a follow-up hardening for the GET path).
+const VAULT_SSRF_OPTS = { allowPrivate: true } as const;
 
 /** A Vault API failure. `status` 0 = network/timeout (the request never completed). The token is NEVER
  *  interpolated into the message — a leaked exception must not reveal the credential from the request. */
@@ -39,7 +46,20 @@ export function parseVaultLocator(remoteKey: string): VaultLocator {
   if (slash <= 0 || slash >= locator.length - 1) {
     throw new VaultApiError(`invalid Vault key "${remoteKey}" — expected "<mount>/<path>#<field>"`, 0);
   }
-  return { mount: locator.slice(0, slash), path: locator.slice(slash + 1), field };
+  const mount = locator.slice(0, slash);
+  const path = locator.slice(slash + 1);
+  // The mount/path are interpolated into the request URL, so reject anything that could escape the
+  // "/v1/<mount>/data/<path>" prefix: non-path characters (?, #, %, control chars) and "." / ".." segments
+  // (path traversal to another Vault endpoint). The field names one key and must not contain a slash.
+  const SAFE_PATH = /^[A-Za-z0-9_.\-/]+$/;
+  const SAFE_FIELD = /^[A-Za-z0-9_.\-]+$/;
+  if (!SAFE_PATH.test(mount) || !SAFE_PATH.test(path) || !SAFE_FIELD.test(field)) {
+    throw new VaultApiError(`invalid Vault key "${remoteKey}" — illegal character in mount/path/field`, 0);
+  }
+  if (mount === "." || mount === ".." || path.split("/").some((s) => s === "" || s === "." || s === "..")) {
+    throw new VaultApiError(`invalid Vault key "${remoteKey}" — "." / ".." path segments are not allowed`, 0);
+  }
+  return { mount, path, field };
 }
 
 /**
@@ -88,6 +108,15 @@ export class VaultApiClient {
   ): Promise<{ status: number; body: unknown }> {
     const base = address.replace(/\/+$/, "");
     const url = `${base}/v1/${apiPath}`;
+    // SSRF guard: resolve + classify the target host (loopback/link-local/metadata blocked, private allowed)
+    // BEFORE sending the credentialed request, so an operator with `integrations` cannot point the store at
+    // an internal/metadata endpoint and use it as a blind scanner.
+    try {
+      await assertSafeUrl(url, VAULT_SSRF_OPTS);
+    } catch (e) {
+      if (e instanceof SsrfError) throw new VaultApiError("the store address is not allowed (loopback/link-local/metadata are blocked)", 0);
+      throw new VaultApiError(`could not reach the Vault store at ${base}`, 0);
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), VAULT_TIMEOUT_MS);
     try {
@@ -95,6 +124,9 @@ export class VaultApiClient {
         method: "GET",
         headers: { "X-Vault-Token": token, Accept: "application/json" },
         signal: controller.signal,
+        // Never follow redirects: undici keeps a custom header (X-Vault-Token) across a cross-origin redirect,
+        // so a 3xx to an attacker/internal host would leak the token. A 3xx is treated as a failure status.
+        redirect: "manual",
       });
       let body: unknown = undefined;
       try {

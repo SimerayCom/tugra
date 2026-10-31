@@ -12978,15 +12978,18 @@
                 "properties": {
                   "providerId": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 64
                   },
                   "envVar": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 128
                   },
                   "remoteKey": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 512
                   }
                 },
                 "required": [
@@ -28055,11 +28058,13 @@
                 "properties": {
                   "teamId": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 64
                   },
                   "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 200
                   },
                   "kind": {
                     "type": "string",
@@ -28070,11 +28075,13 @@
                   "address": {
                     "type": "string",
                     "minLength": 1,
+                    "maxLength": 2048,
                     "format": "uri"
                   },
                   "token": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 8192
                   }
                 },
                 "required": [
@@ -28176,16 +28183,19 @@
                 "properties": {
                   "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 200
                   },
                   "address": {
                     "type": "string",
                     "minLength": 1,
+                    "maxLength": 2048,
                     "format": "uri"
                   },
                   "token": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 8192
                   }
                 },
                 "additionalProperties": false
