@@ -404,6 +404,7 @@ export default function AppDetailPage() {
     ),
     buildArgs: () => <BuildArgsCard id={id} />,
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
+    containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
     credentials: () => (
       <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} composePath={appData.composePath} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
@@ -1764,6 +1765,49 @@ function DockerOptionsCard({ id, dockerOptions }: { id: string; dockerOptions: s
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.dockerOptionsRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function ContainerCommandCard({ id, entrypoint, command }: { id: string; entrypoint: string[] | null; command: string[] | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [epText, setEpText] = useState((entrypoint ?? []).join("\n"));
+  const [clearEp, setClearEp] = useState(Array.isArray(entrypoint) && entrypoint.length === 0);
+  const [cmdText, setCmdText] = useState((command ?? []).join("\n"));
+  const parse = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+  const save = useMutation({
+    mutationFn: () => {
+      const epArr = parse(epText);
+      // Checkbox = reset the image entrypoint with no replacement ([]); otherwise non-empty text, else default.
+      const containerEntrypoint = clearEp ? [] : epArr.length ? epArr : null;
+      const cmdArr = parse(cmdText);
+      return api.setAppContainerCommand(id, { containerEntrypoint, containerCommand: cmdArr.length ? cmdArr : null });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  const field: React.CSSProperties = { ...envField, width: "100%", boxSizing: "border-box", minHeight: 52, resize: "vertical", fontFamily: "monospace" };
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.containerCommand")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.containerCommandDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.containerEntrypoint")}</span>
+          <textarea style={field} placeholder={t("apps.containerCommandPlaceholder")} value={epText} disabled={clearEp} onChange={(e) => setEpText(e.target.value)} />
+        </label>
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={clearEp} onChange={(e) => setClearEp(e.target.checked)} />
+          {t("apps.containerEntrypointClear")}
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.containerCommandArgs")}</span>
+          <textarea style={field} placeholder={t("apps.containerCommandPlaceholder")} value={cmdText} onChange={(e) => setCmdText(e.target.value)} />
+        </label>
+        <div><Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn></div>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.containerCommandRedeploy")}</div>}
     </Card>
   );
 }

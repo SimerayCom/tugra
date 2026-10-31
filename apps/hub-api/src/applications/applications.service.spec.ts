@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -2732,6 +2732,46 @@ describe("ApplicationsService", () => {
     expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("SECRET_HOOK_CMD");
   });
 
+  it("setContainerCommand rejects an override on compose/cluster/preview, guards the dockerOptions --entrypoint clash, allows clearing, and audits only counts", async () => {
+    const mk = (over: object) => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, ...over }), update },
+        deployment: { findFirst: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      return { svc: make(prisma, access, {} as AgentWsServer), update };
+    };
+    const argv = { containerEntrypoint: null, containerCommand: ["SECRET_ARG_XYZ"] };
+    await expect(mk({ clusterId: "c1" }).svc.setContainerCommand("u1", "app1", argv)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(mk({ source: "COMPOSE" }).svc.setContainerCommand("u1", "app1", argv)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(mk({ isPreview: true }).svc.setContainerCommand("u1", "app1", argv)).rejects.toBeInstanceOf(BadRequestException);
+    // a raw dockerOptions --entrypoint collides with a structured entrypoint override
+    await expect(
+      mk({ dockerOptions: "--entrypoint /x" }).svc.setContainerCommand("u1", "app1", { containerEntrypoint: ["sh"], containerCommand: null }),
+    ).rejects.toThrow(/--entrypoint/);
+    // clearing (both null) is allowed even on a cluster app so a stale value can be removed
+    const cleared = mk({ clusterId: "c1" });
+    await cleared.svc.setContainerCommand("u1", "app1", { containerEntrypoint: null, containerCommand: null });
+    expect(cleared.update).toHaveBeenCalledWith(expect.objectContaining({ data: { containerEntrypoint: Prisma.JsonNull, containerCommand: Prisma.JsonNull } }));
+    // a classic image app persists the argv + audits only counts, never the args
+    const ok = mk({ source: "IMAGE" });
+    await ok.svc.setContainerCommand("u1", "app1", argv);
+    expect(ok.update).toHaveBeenCalledWith(expect.objectContaining({ data: { containerEntrypoint: Prisma.JsonNull, containerCommand: ["SECRET_ARG_XYZ"] } }));
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("SECRET_ARG_XYZ");
+  });
+
+  it("setDockerOptions refuses a raw --entrypoint while a container entrypoint override is set", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const withOverride = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, containerEntrypoint: ["sh", "-c"] }), update } } as unknown as PrismaService;
+    await expect(make(withOverride, access, {} as AgentWsServer).setDockerOptions("u1", "app1", "--entrypoint /x")).rejects.toThrow(/entrypoint override/);
+    // the same options are fine without the override
+    const noOverride = { application: { findUnique: jest.fn().mockResolvedValue({ ...app }), update } } as unknown as PrismaService;
+    await make(noOverride, access, {} as AgentWsServer).setDockerOptions("u1", "app1", "--entrypoint /x");
+    expect(update).toHaveBeenCalled();
+  });
+
   it("the post-deploy hook never fires on a FAILED deploy", async () => {
     const hookApp = { ...app, postDeployCommand: "curl http://x/notify" };
     const sent: string[] = [];
@@ -3343,6 +3383,11 @@ describe("ApplicationsService stateful auto-pin", () => {
     await expect(make(c.prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toThrow(/compose/i);
     const g = ccDeps(stateful({ gpus: "all" }));
     await expect(make(g.prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toThrow(/GPU/i);
+  });
+
+  it("refuses moving an app with a container command override into a cluster (swarm ignores it)", async () => {
+    const o = ccDeps(stateful({ containerCommand: ["node", "server.js"] }));
+    await expect(make(o.prisma, access, {} as AgentWsServer).setClusterConfig("u1", "app1", { clusterId: "c1" })).rejects.toThrow(/container command/i);
   });
 
   it("throws when a stateful app targets a cluster with no swarm manager", async () => {

@@ -153,6 +153,24 @@ export const SetDeployHooksSchema = z
   .strict();
 export type SetDeployHooksInput = z.infer<typeof SetDeployHooksSchema>;
 
+// Container ENTRYPOINT/CMD override for IMAGE/GIT classic apps. Exec-form argv (one token per element),
+// passed to `docker run` with no implicit shell — so it works on shell-less (distroless/scratch) images.
+// For shell semantics the user sets the entrypoint to ["sh","-c"] and puts the script in the command; that
+// then requires sh in the image (their explicit choice). A NUL byte is rejected (breaks the `-c` arg). Each
+// field is replace-semantics: null = image default; containerEntrypoint [] clears the image entrypoint.
+const ARGV_TOKEN = z.string().min(1).max(4096).refine((s) => !s.includes("\0"), "argument must not contain a NUL byte");
+export const SetContainerCommandSchema = z
+  .object({
+    containerEntrypoint: z.array(ARGV_TOKEN).max(32).nullable(),
+    containerCommand: z.array(ARGV_TOKEN).max(64).nullable(),
+  })
+  .strict()
+  .refine(
+    (d) => (d.containerCommand ?? []).join("").length + (d.containerEntrypoint ?? []).join("").length <= 16000,
+    "container command is too long",
+  );
+export type SetContainerCommandInput = z.infer<typeof SetContainerCommandSchema>;
+
 // Edit a COMPOSE app's docker-compose.yml after creation. Validated server-side (valid YAML + no
 // privileged / host-escaping / host-bind compose) before it can reach a deploy.
 export const SetComposeFileSchema = z.object({

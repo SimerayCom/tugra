@@ -1069,6 +1069,10 @@ export interface Application {
   // Pre/post-deploy hook commands (writer-only in the API → null for read-only members). Single-server apps.
   preDeployCommand: string | null;
   postDeployCommand: string | null;
+  // Container ENTRYPOINT/CMD override, exec-form argv (writer-only; null for read-only members). null = image
+  // default; containerEntrypoint [] clears the image entrypoint.
+  containerEntrypoint: string[] | null;
+  containerCommand: string[] | null;
   volumes: AppVolume[];
   hostMounts: HostMount[];
   // Named volumes a COMPOSE app declares (empty for non-compose); browsable=false → external/custom.

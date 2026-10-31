@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -270,5 +270,27 @@ describe("SetDeployHooksSchema — pre/post-deploy commands", () => {
     expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "a".repeat(4001), postDeployCommand: null }).success).toBe(false);
     expect(SetDeployHooksSchema.safeParse({ preDeployCommand: "a" }).success).toBe(false); // postDeployCommand required (nullable)
     expect(SetDeployHooksSchema.safeParse({ preDeployCommand: null, postDeployCommand: null, foo: 1 }).success).toBe(false);
+  });
+});
+
+describe("SetContainerCommandSchema — container ENTRYPOINT/CMD override", () => {
+  it("accepts exec-form argv, [] (clear entrypoint) and null (image default)", () => {
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: ["sh", "-c"], containerCommand: ["node a.js"] }).success).toBe(true);
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: [], containerCommand: null }).success).toBe(true);
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: null }).success).toBe(true);
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: ["--port", "80"] }).success).toBe(true);
+  });
+
+  it("rejects a NUL/empty token, too many tokens, a non-array, missing fields and extra keys", () => {
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: ["a\0b"] }).success).toBe(false);
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: [""] }).success).toBe(false); // min(1) per token
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: Array.from({ length: 65 }, () => "x") }).success).toBe(false);
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: "sh", containerCommand: null }).success).toBe(false); // not an array
+    expect(SetContainerCommandSchema.safeParse({ containerCommand: null }).success).toBe(false); // containerEntrypoint required (nullable)
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: null, foo: 1 }).success).toBe(false); // strict
+  });
+
+  it("rejects a command that is too long overall", () => {
+    expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: ["a".repeat(4096), "b".repeat(4096), "c".repeat(4096), "d".repeat(4096)] }).success).toBe(false);
   });
 });

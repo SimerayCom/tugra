@@ -92,6 +92,13 @@ export interface AppSpec {
   buildArgs?: Record<string, string>;
   /** Raw extra flags appended to `docker run` (advanced; passed through verbatim). */
   dockerOptions?: string | null;
+  /** Exec-form argv overriding the image ENTRYPOINT (IMAGE/GIT classic). `[]` clears the image entrypoint
+   *  (`--entrypoint=''`); null/undefined keeps the image default. docker's `--entrypoint` takes a single
+   *  executable, so argv[1..] is prepended to the command args. */
+  containerEntrypoint?: string[] | null;
+  /** Exec-form argv overriding the image CMD (IMAGE/GIT classic) — appended AFTER the image ref, so docker
+   *  parses it as the command, never as flags. null/undefined keeps the image default. */
+  containerCommand?: string[] | null;
   /** Shell command run in a one-shot container of the NEW image before the swap (e.g. DB migrations).
    *  A non-zero exit aborts the deploy with the old container still serving. null/empty → no hook. */
   preDeployCommand?: string | null;
@@ -1029,12 +1036,22 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     .map((p) => `-p ${p.hostPort}:${p.containerPort}${p.protocol === "udp" ? "/udp" : ""}`)
     .join(" ");
 
+  // Container command override (exec-form argv). `--entrypoint` replaces the image ENTRYPOINT and takes a
+  // single executable, so argv[1..] is prepended to the command args; words AFTER the image ref replace the
+  // image CMD (and are never parsed by docker as flags). `[]` resets the entrypoint via `--entrypoint=''`.
+  // Both null/undefined → no tokens emitted → byte-identical run line. A set entrypoint and a raw
+  // dockerOptions `--entrypoint` can't coexist (rejected at set-time in both directions).
+  const ep = app.containerEntrypoint;
+  const epFlag = ep ? `--entrypoint=${shq(ep[0] ?? "")}` : "";
+  const argvTail = [...(ep ? ep.slice(1) : []), ...(app.containerCommand ?? [])].map(shq).join(" ");
+
   const run = [
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
     limitArgs.join(" "),
     extraPortArgs,
+    epFlag,
     // Operator-supplied raw flags (advanced) — tokenized + shell-quoted per word so they can't inject
     // shell into the `sh -c` deploy command (host-root RCE); see dockerOptionsArgs.
     dockerOptionsArgs(app.dockerOptions),
@@ -1043,6 +1060,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     volArgs,
     hostMountArgs,
     shq(ref),
+    argvTail,
   ]
     .filter(Boolean)
     .join(" ");
