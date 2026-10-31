@@ -8,6 +8,17 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Poll the shared mock-agent command buffer until `needle` appears. A deploy is fire-and-forget (the HTTP
+// call returns before the async claim→execute→sendCommand chain runs), so a fixed sleep raced it on a slow
+// CI runner. Use this for a positive "the command was sent" assertion instead of a fixed sleep.
+const waitForCommand = async (commands: string[], needle: string, timeoutMs = 8000): Promise<void> => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (commands.join("\n").includes(needle)) return;
+    await sleep(25);
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for a command containing ${JSON.stringify(needle)}`);
+};
 
 describe("Applications / deploy (e2e)", () => {
   let app: INestApplication;
@@ -1174,7 +1185,8 @@ describe("Applications / deploy (e2e)", () => {
 
     commands.length = 0;
     await request(app.getHttpServer()).post(`/apps/${inst.body.id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
-    await sleep(200);
+    // Fire-and-forget deploy: wait for the override-layered compose command to land (not a fixed sleep).
+    await waitForCommand(commands, `/etc/tugra/compose/${inst.body.id}/docker-compose.tugra.yml`);
     const sent = commands.join("\n");
     // the compose deploy layers a Traefik label override joining the web service to the proxy
     expect(sent).toContain(
