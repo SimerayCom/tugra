@@ -1103,6 +1103,8 @@ export interface Application {
   forwardAuth: string | null;
   ipAllowlist: string[];
   basicAuthUsers: string[]; // usernames only (password hashes never returned)
+  pathPrefix: string | null;
+  stripPrefix: boolean;
   https: boolean;
   domainKind: string;
   exposeMode: string;
