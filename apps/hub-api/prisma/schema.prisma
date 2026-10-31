@@ -129,6 +129,8 @@ model ApiToken {
 model Team {
   id          String       @id @default(cuid())
   name        String
+  iconUpdatedAt DateTime?  // list-view marker so the team list never reads the icon bytes
+  icon         TeamIcon?
   memberships  Membership[]
   servers      Server[]
   monitors     Monitor[]
@@ -199,6 +201,16 @@ model Project {
 model ProjectIcon {
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId  String   @id
+  mime       String   // always "image/png" (anything else is rejected at upload)
+  data       Bytes
+  sizeBytes  Int
+  updatedAt  DateTime @updatedAt
+}
+
+// A team's custom icon (square PNG), kept off the Team row (Team.iconUpdatedAt is the marker).
+model TeamIcon {
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId     String   @id
   mime       String   // always "image/png" (anything else is rejected at upload)
   data       Bytes
   sizeBytes  Int

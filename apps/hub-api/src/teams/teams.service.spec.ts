@@ -162,13 +162,13 @@ describe("TeamsService.previewInvitation", () => {
 });
 
 describe("TeamsService.get", () => {
-  const teamRow = { id: "t1", name: "Shop", _count: { memberships: 3 } };
+  const teamRow = { id: "t1", name: "Shop", iconUpdatedAt: null, _count: { memberships: 3 } };
 
   it("returns the team view for a member", async () => {
     const prisma = { team: { findUnique: jest.fn().mockResolvedValue(teamRow) } } as unknown as PrismaService;
     const access = { teamRole: jest.fn().mockResolvedValue(Role.ADMIN) } as unknown as TeamAccessService;
     const view = await make(prisma, access).get("u1", "t1");
-    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3 });
+    expect(view).toEqual({ id: "t1", name: "Shop", role: Role.ADMIN, memberCount: 3, iconUpdatedAt: null });
   });
 
   it("throws NotFound when the team does not exist", async () => {
@@ -214,5 +214,58 @@ describe("TeamsService.setMemberAccess", () => {
     await expect(
       make(prisma, access).setMemberAccess("owner", "t1", "ghost", { restrictedAccess: false, accessedProjects: [] }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe("TeamsService - custom icon", () => {
+  const IEND = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+  function pngB64(w = 128, h = 128): string {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0);
+    ihdr.write("IHDR", 4, "ascii");
+    ihdr.writeUInt32BE(w, 8);
+    ihdr.writeUInt32BE(h, 12);
+    return Buffer.concat([sig, ihdr, IEND]).toString("base64");
+  }
+  const okAccess = {
+    requireRole: jest.fn().mockResolvedValue(undefined),
+    teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+  };
+
+  it("setIcon validates the PNG and persists the icon + marker (OWNER/ADMIN)", async () => {
+    const upsert = jest.fn().mockResolvedValue({});
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      teamIcon: { upsert },
+      team: { update },
+      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    } as unknown as PrismaService;
+    await make(prisma, okAccess).setIcon("u1", "t1", pngB64());
+    expect(upsert).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: expect.any(Date) } }));
+  });
+
+  it("setIcon rejects a non-PNG payload", async () => {
+    const prisma = {} as unknown as PrismaService;
+    await expect(make(prisma, okAccess).setIcon("u1", "t1", Buffer.from("not a png").toString("base64"))).rejects.toThrow(/PNG/);
+  });
+
+  it("getIcon 404s when the team has no icon", async () => {
+    const prisma = { teamIcon: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    await expect(make(prisma, okAccess).getIcon("u1", "t1")).rejects.toThrow(/no icon/);
+  });
+
+  it("deleteIcon is idempotent and clears the marker", async () => {
+    const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      teamIcon: { deleteMany },
+      team: { update },
+      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    } as unknown as PrismaService;
+    await make(prisma, okAccess).deleteIcon("u1", "t1");
+    expect(deleteMany).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
   });
 });

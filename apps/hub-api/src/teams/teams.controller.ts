@@ -3,12 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   Patch,
   Post,
   Put,
   Query,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 import { Role } from "@prisma/client";
@@ -29,6 +31,8 @@ import {
   InviteSchema,
   RenameTeamInput,
   RenameTeamSchema,
+  SetIconInput,
+  SetIconSchema,
   SetMemberAccessInput,
   SetMemberAccessSchema,
   SetRoleInput,
@@ -97,6 +101,39 @@ export class TeamsController {
     @Body(new ZodValidationPipe(RenameTeamSchema)) body: RenameTeamInput,
   ) {
     await this.teams.rename(user.userId, id, body.name);
+    return { ok: true };
+  }
+
+  /**
+   * The team's custom icon as a raw PNG (any member; 404 when none). Served from our own origin, locked
+   * down with a fixed image/png type, nosniff and a strict CSP. Cache-bust with ?v=<iconUpdatedAt>.
+   */
+  @Get(":id/icon")
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=60")
+  async getIcon(@CurrentUser() user: AuthUser, @Param("id") id: string): Promise<StreamableFile> {
+    const icon = await this.teams.getIcon(user.userId, id);
+    return new StreamableFile(icon.data, { type: icon.mime });
+  }
+
+  @Put(":id/icon")
+  @HttpCode(200)
+  @ApiZodBody(SetIconSchema)
+  async setIcon(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIconSchema)) body: SetIconInput,
+  ) {
+    await this.teams.setIcon(user.userId, id, body.data);
+    return { ok: true };
+  }
+
+  @Delete(":id/icon")
+  @RequireScopes("write") // removing a cosmetic icon is a write op, not a destructive admin one
+  @HttpCode(200)
+  async deleteIcon(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.teams.deleteIcon(user.userId, id);
     return { ok: true };
   }
 
