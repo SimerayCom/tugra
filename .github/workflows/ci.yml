@@ -7,6 +7,9 @@ on:
   # Lets the Release workflow re-run this exact suite against the tagged commit before it publishes
   # anything (a tag push does not match the branch trigger above). See release.yml's `ci` job.
   workflow_call:
+  # Manual re-run: lets a maintainer trigger the suite against any ref from the Actions tab or `gh`,
+  # e.g. after a push was skipped by a `[skip ci]` marker in the commit message, or to re-run a flake.
+  workflow_dispatch:
 
 jobs:
   node:
