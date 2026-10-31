@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Box, Database, Layers, Plus, Pencil, type LucideIcon } from "lucide-react";
-import { api, appIconUrl } from "../../../../lib/api";
+import { Box, Database, Layers, Plus, Pencil, FolderTree, CloudUpload, Trash2, type LucideIcon } from "lucide-react";
+import { api, appIconUrl, projectIconUrl } from "../../../../lib/api";
+import { cropToPngBase64 } from "../../../../lib/icon";
+import { useToast } from "../../../../components/toast";
 import { ErrorState } from "../../../../components/error-state";
 import { RenameModal } from "../../../../components/rename-modal";
 import { AppLogo } from "../../../../components/app-logo";
@@ -77,6 +79,8 @@ export default function ProjectDetailPage() {
         }
       />
 
+      <ProjectIconCard id={id} name={project.name} iconUpdatedAt={project.iconUpdatedAt} canWrite={project.canWrite} onChanged={() => { invalidate(); qc.invalidateQueries({ queryKey: ["projects"] }); }} />
+
       {renaming && (
         <Card style={{ padding: 12, marginBottom: 12 }}>
           <form onSubmit={(e) => { e.preventDefault(); if (rname.trim()) rename.mutate(); }} style={{ display: "flex", gap: 8 }}>
@@ -104,6 +108,70 @@ export default function ProjectDetailPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+/** A project's custom icon: a square PNG uploaded by the operator (write-gated), shown with a folder
+ *  fallback. Mirrors the app icon card — the browser center-crops to a small PNG before upload, shrinking
+ *  it until it fits the server's 64KB cap. */
+function ProjectIconCard({ id, name, iconUpdatedAt, canWrite, onChanged }: { id: string; name: string; iconUpdatedAt: string | null; canWrite: boolean; onChanged: () => void }) {
+  const t = useT();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [processing, setProcessing] = useState(false);
+  const url = projectIconUrl(id, iconUpdatedAt);
+
+  const save = useMutation({
+    mutationFn: (data: string) => api.setProjectIcon(id, data),
+    onSuccess: () => { onChanged(); toast(t("projects.iconUploaded"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("projects.iconFailed"), "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteProjectIcon(id),
+    onSuccess: () => { onChanged(); toast(t("projects.iconRemoved"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("projects.iconFailed"), "error"),
+  });
+
+  const onPick = async (file: File) => {
+    setProcessing(true);
+    try {
+      let data = "";
+      for (const side of [128, 96, 64]) {
+        data = await cropToPngBase64(file, side);
+        if (data.length * 0.75 <= 64 * 1024) break;
+      }
+      if (data.length * 0.75 > 64 * 1024) { toast(t("projects.iconTooLarge"), "error"); return; }
+      save.mutate(data);
+    } catch {
+      toast(t("projects.iconReadFailed"), "error");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const busy = processing || save.isPending || remove.isPending;
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <span style={{ width: 48, height: 48, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+          {url ? <img src={url} alt="" width={48} height={48} style={{ objectFit: "cover" }} /> : <FolderTree size={22} color="var(--c-tx3)" />}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("projects.iconHint")}</div>
+        </div>
+        {canWrite && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
+              {busy ? "…" : url ? t("projects.iconReplace") : t("projects.iconUpload")}
+            </Btn>
+            {url && <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{t("projects.iconRemove")}</Btn>}
+          </div>
+        )}
+      </div>
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onPick(f); }} />
+    </Card>
   );
 }
 

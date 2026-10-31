@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderTree, Plus, Settings } from "lucide-react";
-import { api } from "../../../lib/api";
+import { api, projectIconUrl } from "../../../lib/api";
 import { clickedInteractive } from "../../../lib/row-nav";
 import { useT } from "../../../i18n/provider";
 import { Badge, Card, EmptyState, Spinner } from "../../../components/ui";
@@ -99,8 +99,12 @@ export default function ProjectsPage() {
                 onClick={(e) => { if (!clickedInteractive(e)) router.push(`/projects/${p.id}`); }}
                 style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx)" }}
               >
-                <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <FolderTree size={18} color="var(--c-a)" />
+                <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+                  {projectIconUrl(p.id, p.iconUpdatedAt) ? (
+                    <img src={projectIconUrl(p.id, p.iconUpdatedAt)!} alt="" width={36} height={36} style={{ objectFit: "cover" }} />
+                  ) : (
+                    <FolderTree size={18} color="var(--c-a)" />
+                  )}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <Link href={`/projects/${p.id}`} style={{ fontWeight: 600, fontSize: 14, color: "var(--c-tx)", textDecoration: "none" }}>{p.name}</Link>

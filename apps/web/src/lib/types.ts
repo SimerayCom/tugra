@@ -957,6 +957,7 @@ export interface Project {
   environments: Environment[];
   role: Role;
   canWrite: boolean;
+  iconUpdatedAt: string | null;
   createdAt: string;
 }
 

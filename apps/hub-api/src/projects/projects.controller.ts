@@ -3,11 +3,13 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   Post,
   Put,
   Query,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
@@ -16,6 +18,7 @@ import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
+import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ProjectsService, ProjectViewSchema } from "./projects.service";
@@ -26,6 +29,8 @@ import {
   CreateProjectSchema,
   RenameInput,
   RenameSchema,
+  SetIconInput,
+  SetIconSchema,
 } from "./dto";
 
 @ApiTags("projects")
@@ -93,6 +98,40 @@ export class ProjectsController {
   @HttpCode(200)
   async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.remove(user.userId, id);
+    return { ok: true };
+  }
+
+  /**
+   * The project's custom icon as a raw PNG (read-level; 404 when none). Served from our own origin, so it is
+   * locked down: a fixed image/png type, nosniff, and a restrictive CSP. The client appends
+   * ?v=<iconUpdatedAt> to cache-bust it.
+   */
+  @Get(":id/icon")
+  @Header("X-Content-Type-Options", "nosniff")
+  @Header("Content-Security-Policy", "default-src 'none'; sandbox")
+  @Header("Cache-Control", "private, max-age=60")
+  async getIcon(@CurrentUser() user: AuthUser, @Param("id") id: string): Promise<StreamableFile> {
+    const icon = await this.projects.getIcon(user.userId, id);
+    return new StreamableFile(icon.data, { type: icon.mime });
+  }
+
+  @Put(":id/icon")
+  @HttpCode(200)
+  @ApiZodBody(SetIconSchema)
+  async setIcon(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetIconSchema)) body: SetIconInput,
+  ) {
+    await this.projects.setIcon(user.userId, id, body.data);
+    return { ok: true };
+  }
+
+  @Delete(":id/icon")
+  @RequireScopes("write") // removing a cosmetic icon is a write op, not a destructive admin one
+  @HttpCode(200)
+  async deleteIcon(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    await this.projects.deleteIcon(user.userId, id);
     return { ok: true };
   }
 

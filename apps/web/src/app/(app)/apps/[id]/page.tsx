@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
+import { cropToPngBase64 } from "../../../../lib/icon";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
 import type { AppVolume, HostMount, Application, AppSource, BuildType, Deployment } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
@@ -134,35 +135,6 @@ function AppOverview({ app, deployments }: { app: Application; deployments: Depl
       {!app.canWrite && <div style={{ marginTop: 14, fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.readOnlyHint")}</div>}
     </Card>
   );
-}
-
-/** Center-crop an image file to a square PNG at the given side, returned as a base64 string (no data: prefix). */
-async function cropToPngBase64(file: File, side: number): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error("decode"));
-      el.src = url;
-    });
-    const crop = Math.min(img.width, img.height);
-    if (!crop) throw new Error("empty");
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = side;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("no-canvas");
-    ctx.imageSmoothingQuality = "high"; // the default "low" aliases badly downscaling a large photo to 128px
-    ctx.drawImage(img, (img.width - crop) / 2, (img.height - crop) / 2, crop, crop, 0, 0, side, side);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) throw new Error("encode");
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 /** Upload / replace / remove the app's custom icon. Crops client-side to a 128px square PNG (falling back to
