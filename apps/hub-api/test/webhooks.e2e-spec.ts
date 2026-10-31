@@ -19,6 +19,16 @@ const waitForCommand = async (commands: string[], needle: string, timeoutMs = 80
   }
   throw new Error(`timed out after ${timeoutMs}ms waiting for a command containing ${JSON.stringify(needle)}`);
 };
+// Poll an async predicate until it is true — used to await a fire-and-forget deploy reaching a terminal
+// status (the webhook returns 202 before the deploy finishes), instead of a fixed sleep that races a slow runner.
+const waitFor = async (fn: () => Promise<boolean>, timeoutMs = 8000): Promise<void> => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await fn()) return;
+    await sleep(50);
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for condition`);
+};
 
 describe("Webhooks / auto-deploy (e2e)", () => {
   let app: INestApplication;
@@ -127,13 +137,16 @@ describe("Webhooks / auto-deploy (e2e)", () => {
       .send({ ref: "refs/heads/main" })
       .expect(202);
     expect(res.body.deployed).toBe(true);
-    await sleep(300);
-
-    const deployments = await request(app.getHttpServer())
-      .get(`/apps/${appId}/deployments`)
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(deployments.body[0].status).toBe("SUCCESS");
+    // The webhook returned 202 before the fire-and-forget deploy ran; wait for the clone command, then poll
+    // the deployments until it records SUCCESS (no fixed-sleep race on a slow CI runner).
+    await waitForCommand(commands, "git clone");
+    let status = "";
+    await waitFor(async () => {
+      const r = await request(app.getHttpServer()).get(`/apps/${appId}/deployments`).set("Authorization", `Bearer ${token}`).expect(200);
+      status = r.body[0]?.status ?? "";
+      return status === "SUCCESS";
+    });
+    expect(status).toBe("SUCCESS");
     expect(commands.join("\n")).toContain("git clone");
   });
 
@@ -161,7 +174,7 @@ describe("Webhooks / auto-deploy (e2e)", () => {
       .send(body)
       .expect(202);
     expect(res.body.deployed).toBe(true);
-    await sleep(300);
+    await waitForCommand(commands, "git clone");
     expect(commands.join("\n")).toContain("git clone");
   });
 
