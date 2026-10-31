@@ -45,6 +45,31 @@ describe("AgentWsServer command streaming", () => {
     await expect(p).resolves.toEqual({ exitCode: 0, output: "ok" });
   });
 
+  it("exposes the reqId via onStart and cancels it with a signed command_cancel", async () => {
+    const { server, socket, lastSent, deliver } = harness();
+    let startedReqId = "";
+    const p = server.sendCommand("s1", "sleep 99", "deploy", 5000, undefined, (reqId) => { startedReqId = reqId; });
+    await flush();
+    const sent = lastSent();
+    expect(sent.type).toBe("command");
+    expect(startedReqId).toBe(sent.reqId); // onStart got the same reqId that went on the wire
+
+    server.cancelCommand("s1", startedReqId);
+    const cancelMsg = JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    expect(cancelMsg.type).toBe("command_cancel");
+    expect(cancelMsg.reqId).toBe(startedReqId);
+    expect(cancelMsg.sig).toBe("SIG"); // signOutbound stamped canonicalCommandCancel
+
+    // The agent kills the process group → command_result (non-zero) → the original promise resolves.
+    await deliver({ type: "command_result", reqId: startedReqId, exitCode: 137, output: "killed" });
+    await expect(p).resolves.toEqual({ exitCode: 137, output: "killed" });
+  });
+
+  it("cancelCommand is a no-op when the agent is offline (no throw)", () => {
+    const { server } = harness();
+    expect(() => server.cancelCommand("nope", "r1")).not.toThrow();
+  });
+
   it("refuses to sign a command for a capability the server hasn't granted", async () => {
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "database"]) } as any;
     const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign);

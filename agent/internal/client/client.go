@@ -197,6 +197,10 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	// Reader: handle commands + terminal + log-follow sessions from the hub.
 	sessions := map[string]*terminal.Session{}
 	logStreams := map[string]*logs.Session{}
+	// Running commands by reqId → cancel func, so a signed `command_cancel` can kill one mid-flight
+	// (cancelling its context fires exec's Setpgid SIGKILL on the whole process group).
+	running := map[string]context.CancelFunc{}
+	var runMu sync.Mutex
 	var sessMu sync.Mutex
 	var updating atomic.Bool // single-flight: ignore duplicate agent_update messages once one is in flight
 	go func() {
@@ -231,7 +235,18 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 					if timeoutMs > 0 {
 						to = time.Duration(timeoutMs) * time.Millisecond
 					}
-					r := exec.RunStreaming(ctx, command, to, func(chunk string) {
+					// Per-command cancellable context so a `command_cancel` can SIGKILL its process group.
+					cmdCtx, cancel := context.WithCancel(ctx)
+					runMu.Lock()
+					running[reqID] = cancel
+					runMu.Unlock()
+					defer func() {
+						runMu.Lock()
+						delete(running, reqID)
+						runMu.Unlock()
+						cancel()
+					}()
+					r := exec.RunStreaming(cmdCtx, command, to, func(chunk string) {
 						_ = send(protocol.CommandLog{
 							Type:  "command_log",
 							ReqID: reqID,
@@ -245,6 +260,18 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 						Output:   r.Output,
 					})
 				}(m.ReqID, m.Command, m.TimeoutMs)
+			case "command_cancel":
+				// Kill a running command's process group. Verified by the hub signature over the reqId; the
+				// command was already capability-gated when it started, so cancelling needs no extra grant.
+				if !protocol.VerifySig(hubPub, protocol.CanonicalCommandCancel(m.ReqID), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected command_cancel: invalid or missing hub signature")
+					continue
+				}
+				runMu.Lock()
+				if cancel := running[m.ReqID]; cancel != nil {
+					cancel()
+				}
+				runMu.Unlock()
 			case "term_start":
 				if !protocol.VerifySig(hubPub, protocol.CanonicalTermStart(m.SessionID, m.Target, m.Cols, m.Rows, m.Capability), m.Sig) {
 					fmt.Fprintln(os.Stderr, "rejected term_start: invalid or missing hub signature")

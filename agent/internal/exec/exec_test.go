@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+// Cancelling the context mid-run kills the command's whole process group fast (SIGKILL via Setpgid) and
+// returns a non-zero exit — the primitive a signed command_cancel relies on to stop a RUNNING deploy.
+func TestRunStreamingCancelKills(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan Result, 1)
+	go func() { done <- RunStreaming(ctx, "sleep 30", 60*time.Second, func(string) {}) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case r := <-done:
+		if r.ExitCode == 0 {
+			t.Fatalf("expected a non-zero exit after cancel, got 0")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel did not stop the command within 5s")
+	}
+}
+
 func TestRunSuccess(t *testing.T) {
 	r := Run(context.Background(), "echo hi", 5*time.Second)
 	if r.ExitCode != 0 {

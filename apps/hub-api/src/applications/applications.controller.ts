@@ -301,7 +301,8 @@ export class ApplicationsController {
     return this.apps.deploy(user.userId, id, body);
   }
 
-  // Cancel a QUEUED deploy (one that hasn't started). A RUNNING deploy can't be cancelled yet (409).
+  // Cancel a deploy: a QUEUED one (CAS) or a RUNNING one (kills its build on the agent → CANCELLED). A swarm
+  // rollout, or a RUNNING row with no in-flight command (e.g. orphaned by a hub restart), still 409s.
   @Post(":id/deployments/:depId/cancel")
   @RequireScopes("deploy")
   @HttpCode(200)

@@ -653,9 +653,9 @@ export default function AppDetailPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {deployments.map((d) => {
                 const sum = d.logs ? summarizeDeployLog(d.logs) : null;
-                // A QUEUED deploy hasn't started — offer Cancel (a RUNNING one can't be cancelled yet). The
-                // Cancel button sits OUTSIDE the drill-in row button (no nested buttons).
-                const cancellable = d.status === "QUEUED" && appData.canWrite;
+                // A QUEUED deploy hasn't started; a RUNNING one is cancelled by killing its build on the
+                // agent. Offer Cancel for both. The button sits OUTSIDE the drill-in row button (no nesting).
+                const cancellable = (d.status === "QUEUED" || d.status === "RUNNING") && appData.canWrite;
                 // The whole row is the click target: it drills into the deployment (full log lives there).
                 return (
                   <div key={d.id} style={{ display: "flex", alignItems: "stretch", gap: 6 }}>

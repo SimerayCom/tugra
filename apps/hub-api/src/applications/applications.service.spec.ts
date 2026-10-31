@@ -826,8 +826,62 @@ describe("ApplicationsService", () => {
       expect((r as { status: string }).status).toBe("CANCELLED");
     });
 
-    it("409s when the deploy is already RUNNING (can't cancel yet)", async () => {
+    it("409s a RUNNING deploy with no in-flight command to kill (swarm / orphaned by a hub restart)", async () => {
       await expect(svcFor(0, { id: "d1", status: "RUNNING" }).cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("cancels a RUNNING deploy with a tracked command: signals intent + SIGKILLs the agent command", async () => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ id: "app1", teamId: "t1" }) },
+        deployment: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }), // not QUEUED
+          findFirst: jest.fn().mockResolvedValue({ id: "d1", status: "RUNNING" }),
+          findUnique: jest.fn(),
+        },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const agentWs = { cancelCommand: jest.fn(), sendCommand: jest.fn() } as unknown as AgentWsServer;
+      const svc = make(prisma, access, agentWs);
+      (svc as unknown as { activeDeployCommands: Map<string, { serverId: string; reqId: string }> }).activeDeployCommands.set("d1", { serverId: "s9", reqId: "req-9" });
+      const row = await svc.cancelDeployment("u1", "app1", "d1");
+      expect((row as { status: string }).status).toBe("RUNNING"); // flips to CANCELLED async when the command returns
+      expect(agentWs.cancelCommand).toHaveBeenCalledWith("s9", "req-9");
+      expect((svc as unknown as { cancelRequested: Set<string> }).cancelRequested.has("d1")).toBe(true);
+    });
+
+    it("executeDeploy records a cancelled deploy as CANCELLED (not FAILED) and never flips the app to FAILED", async () => {
+      const depUpdate = jest.fn().mockResolvedValue({});
+      const appUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(app), update: appUpdate },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+          update: depUpdate,
+          findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "CANCELLED" }),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const ref: { svc?: import("./applications.service").ApplicationsService } = {};
+      const agentWs = {
+        cancelCommand: jest.fn(),
+        // The deploy command is "cancelled" concurrently (via onStart) then returns a SIGKILL exit code.
+        sendCommand: jest.fn().mockImplementation(async (_s: string, _c: string, cap: string, _t: number, _onChunk: unknown, onStart?: (r: string) => void) => {
+          if (cap === "deploy" && onStart) {
+            onStart("req-x");
+            (ref.svc as unknown as { cancelRequested: Set<string> }).cancelRequested.add("d1");
+          }
+          return { exitCode: 137, output: "killed" };
+        }),
+      } as unknown as AgentWsServer;
+      ref.svc = make(prisma, access, agentWs);
+      await ref.svc.deploy("u1", "app1");
+      await flushMicrotasks();
+      expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
+      expect(appUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
     });
 
     it("409s when the deploy already finished", async () => {
@@ -1696,10 +1750,10 @@ describe("ApplicationsService", () => {
     };
     const custom = mk(600);
     await custom.svc.deploy("u1", "app1");
-    expect(custom.sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 600000, expect.any(Function));
+    expect(custom.sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 600000, expect.any(Function), expect.any(Function));
     const def = mk(null);
     await def.svc.deploy("u1", "app1");
-    expect(def.sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 300000, expect.any(Function));
+    expect(def.sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 300000, expect.any(Function), expect.any(Function));
   });
 
   it("rejects an unknown template slug", async () => {

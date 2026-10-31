@@ -11,6 +11,10 @@ func TestCanonicalStrings(t *testing.T) {
 	if got := CanonicalCommand("r1", "echo hi", 5000, "deploy"); got != "cmd\nr1\necho hi\n5000\ndeploy" {
 		t.Fatalf("CanonicalCommand mismatch: %q", got)
 	}
+	// Must be byte-identical to @tugra/shared canonicalCommandCancel.
+	if got := CanonicalCommandCancel("r1"); got != "ccancel\nr1" {
+		t.Fatalf("CanonicalCommandCancel mismatch: %q", got)
+	}
 	if got := CanonicalTermStart("s1", "tugra_app1", 80, 24, "terminal"); got != "term\ns1\ntugra_app1\n80\n24\nterminal" {
 		t.Fatalf("CanonicalTermStart mismatch: %q", got)
 	}

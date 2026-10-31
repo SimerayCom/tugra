@@ -15,7 +15,7 @@ import type {
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, canonicalCommand, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
+import { PROTOCOL_VERSION, canonicalCommand, canonicalCommandCancel, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 
 /** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
@@ -379,6 +379,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     capability: AgentCapability,
     timeoutMs = 20_000,
     onChunk?: (chunk: string) => void,
+    onStart?: (reqId: string) => void,
   ): Promise<{ exitCode: number; output: string }> {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -401,7 +402,18 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       this.pending.set(reqId, { serverId, resolve, reject, timer });
       if (onChunk) this.chunkListeners.set(reqId, onChunk);
       this.send(socket, this.signOutbound({ type: "command", reqId, command, timeoutMs, capability }));
+      // Expose the reqId to the caller AFTER the command is on the wire, so a cancel can target it.
+      onStart?.(reqId);
     });
+  }
+
+  /** Cancel an in-flight command by reqId — signs a `command_cancel` the agent verifies, then kills that
+   *  command's process group. Best-effort + fire-and-forget: the original command's `command_result` still
+   *  arrives (with a non-zero exit) and resolves its sendCommand promise. A no-op if the agent is offline. */
+  cancelCommand(serverId: string, reqId: string): void {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    this.send(socket, this.signOutbound({ type: "command_cancel", reqId }));
   }
 
   /**
@@ -441,6 +453,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.capability as string,
         ),
       );
+    } else if (msg.type === "command_cancel") {
+      msg.sig = this.hubSign.sign(canonicalCommandCancel(msg.reqId as string));
     } else if (msg.type === "term_start") {
       msg.sig = this.hubSign.sign(
         canonicalTermStart(

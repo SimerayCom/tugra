@@ -78,6 +78,12 @@ export function canonicalCommand(
 ): string {
   return `cmd\n${reqId}\n${command}\n${timeoutMs}\n${capability}`;
 }
+/** Signed payload to cancel an in-flight command: just the reqId of the running command to kill. The agent
+ *  verifies this (hub-origin proof) before killing that command's process group — the command was already
+ *  capability-gated + signed when it started, so cancelling it needs no further grant. */
+export function canonicalCommandCancel(reqId: string): string {
+  return `ccancel\n${reqId}`;
+}
 export function canonicalTermStart(
   sessionId: string,
   target: string,
