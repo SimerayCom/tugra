@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -17,6 +17,20 @@ describe("SetDomainOptionsSchema — ipAllowlist", () => {
   });
   it("still requires at least one option field", () => {
     expect(SetDomainOptionsSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("SetHealthCheckSchema — tunable timings", () => {
+  it("accepts timing knobs + expectedStatus (and null to reset)", () => {
+    expect(SetHealthCheckSchema.safeParse({ type: "HTTP", interval: 15, timeout: 8, retries: 40, startPeriod: 120, expectedStatus: 200 }).success).toBe(true);
+    expect(SetHealthCheckSchema.safeParse({ interval: null, retries: null, startPeriod: null, expectedStatus: null }).success).toBe(true);
+  });
+  it("rejects out-of-range timings and a non-HTTP status", () => {
+    expect(SetHealthCheckSchema.safeParse({ interval: 0 }).success).toBe(false);
+    expect(SetHealthCheckSchema.safeParse({ retries: 101 }).success).toBe(false);
+    expect(SetHealthCheckSchema.safeParse({ startPeriod: 99999 }).success).toBe(false);
+    expect(SetHealthCheckSchema.safeParse({ expectedStatus: 99 }).success).toBe(false);
+    expect(SetHealthCheckSchema.safeParse({ expectedStatus: 600 }).success).toBe(false);
   });
 });
 

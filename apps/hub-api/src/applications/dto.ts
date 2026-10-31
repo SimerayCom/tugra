@@ -262,6 +262,14 @@ export const SetHealthCheckSchema = z
       .optional(),
     port: z.number().int().min(1).max(65535).nullable().optional(),
     command: z.string().min(1).max(1000).nullable().optional(),
+    // Timing knobs (seconds), null = use the built-in default. Bounded so a typo can't wedge a deploy for
+    // hours: a slow-booting app raises startPeriod/retries; interval/timeout tune the poll cadence.
+    interval: z.number().int().min(1).max(300).nullable().optional(),
+    timeout: z.number().int().min(1).max(120).nullable().optional(),
+    retries: z.number().int().min(1).max(100).nullable().optional(),
+    startPeriod: z.number().int().min(0).max(1800).nullable().optional(),
+    // For an HTTP check: require this exact status (e.g. 200) instead of the default "any code < 500".
+    expectedStatus: z.number().int().min(100).max(599).nullable().optional(),
   })
   .refine((v) => v.type !== "CMD" || (v.command != null && v.command.trim().length > 0), {
     message: "a CMD health check requires a command",

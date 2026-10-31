@@ -435,7 +435,7 @@ export default function AppDetailPage() {
     ),
     configMounts: () => <ConfigMountsCard id={id} onDeploy={() => onDeploy()} />,
     healthCheck: () => (
-      <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCmd={appData.healthCmd} />
+      <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCmd={appData.healthCmd} timings={{ interval: appData.healthInterval, timeout: appData.healthTimeout, retries: appData.healthRetries, startPeriod: appData.healthStartPeriod, expectedStatus: appData.healthExpectedStatus }} />
     ),
     limits: () => (
       <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />
@@ -1511,12 +1511,14 @@ function HealthCheckCard({
   healthCheckPath,
   healthCheckPort,
   healthCmd,
+  timings,
 }: {
   id: string;
   healthCheckType: string | null;
   healthCheckPath: string | null;
   healthCheckPort: number | null;
   healthCmd: string | null;
+  timings: { interval: number | null; timeout: number | null; retries: number | null; startPeriod: number | null; expectedStatus: number | null };
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -1526,6 +1528,13 @@ function HealthCheckCard({
   const [path, setPath] = useState(healthCheckPath ?? "");
   const [port, setPort] = useState(healthCheckPort != null ? String(healthCheckPort) : "");
   const [cmd, setCmd] = useState(healthCmd ?? "");
+  const num = (n: number | null) => (n != null ? String(n) : "");
+  const [interval, setInterval] = useState(num(timings.interval));
+  const [timeout, setTimeout] = useState(num(timings.timeout));
+  const [retries, setRetries] = useState(num(timings.retries));
+  const [startPeriod, setStartPeriod] = useState(num(timings.startPeriod));
+  const [expectedStatus, setExpectedStatus] = useState(num(timings.expectedStatus));
+  const toNum = (s: string) => (s.trim() ? Number(s) : null); // empty → reset to default
   const save = useMutation({
     mutationFn: () =>
       api.setAppHealthCheck(id, {
@@ -1533,6 +1542,11 @@ function HealthCheckCard({
         path: type === "HTTP" ? path.trim() || null : null,
         port: type === "HTTP" && port ? Number(port) : null,
         command: type === "CMD" ? cmd.trim() || null : null,
+        interval: toNum(interval),
+        timeout: toNum(timeout),
+        retries: toNum(retries),
+        startPeriod: toNum(startPeriod),
+        expectedStatus: type === "HTTP" ? toNum(expectedStatus) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
@@ -1561,6 +1575,21 @@ function HealthCheckCard({
         )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      {type !== "NONE" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.healthTimings")}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.healthInterval")} value={interval} onChange={(e) => setInterval(e.target.value)} aria-label={t("apps.healthInterval")} />
+            <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.healthTimeout")} value={timeout} onChange={(e) => setTimeout(e.target.value)} aria-label={t("apps.healthTimeout")} />
+            <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.healthRetries")} value={retries} onChange={(e) => setRetries(e.target.value)} aria-label={t("apps.healthRetries")} />
+            <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.healthStartPeriod")} value={startPeriod} onChange={(e) => setStartPeriod(e.target.value)} aria-label={t("apps.healthStartPeriod")} />
+            {type === "HTTP" && (
+              <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.healthExpectedStatus")} value={expectedStatus} onChange={(e) => setExpectedStatus(e.target.value)} aria-label={t("apps.healthExpectedStatus")} />
+            )}
+          </div>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.healthTimingsHint")}</p>
+        </div>
+      )}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );

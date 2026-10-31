@@ -57,6 +57,13 @@ export interface AppSpec {
   healthCheckType?: string | null;
   healthCheckPath?: string | null;
   healthCheckPort?: number | null;
+  // Tunable health timings (seconds; null = built-in default) driving both the deploy gate and the
+  // container's docker --health-* flags; expectedStatus pins the HTTP probe to one status code.
+  healthInterval?: number | null;
+  healthTimeout?: number | null;
+  healthRetries?: number | null;
+  healthStartPeriod?: number | null;
+  healthExpectedStatus?: number | null;
   memoryMb?: number | null;
   cpus?: number | null;
   /** Soft Swarm scheduling hints (`docker service --reserve-memory`/`--reserve-cpu`) — swarm-only; ignored on
@@ -956,14 +963,13 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   if (app.healthCmd) {
     limitArgs.push(
       `--health-cmd ${shq(app.healthCmd)}`,
-      // A 10s interval + 30s start period keeps Docker's health status fresh enough for
-      // the deploy gate to observe a healthy transition promptly (a 30s interval only
-      // yielded ~2 samples inside the gate window) while tolerating a moderately slow boot
-      // without a premature "unhealthy". Longer boots are handled by per-app gate config.
-      "--health-interval=10s",
-      "--health-timeout=5s",
-      "--health-retries=3",
-      "--health-start-period=30s",
+      // Defaults (10s interval / 5s timeout / 3 retries / 30s start) keep Docker's health status fresh for
+      // the deploy gate while tolerating a moderately slow boot; a per-app override widens them for a slow
+      // starter. The values are DTO-bounded integers, safe to interpolate.
+      `--health-interval=${app.healthInterval ?? 10}s`,
+      `--health-timeout=${app.healthTimeout ?? 5}s`,
+      `--health-retries=${app.healthRetries ?? 3}`,
+      `--health-start-period=${app.healthStartPeriod ?? 30}s`,
     );
   }
 
@@ -1078,7 +1084,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
 /** How to health-check a container before treating a deploy as live. */
 export type HealthProbe =
   | { kind: "native" } // the container has a --health-cmd; poll docker's health status
-  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
+  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean; expectedStatus?: number | null; timeoutSec?: number } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
   | { kind: "stableWait" }; // no port/health-cmd → require it to stay Running
 
 /** Timing knobs for the health gate. */
@@ -1086,6 +1092,16 @@ export interface HealthGate {
   retries: number;
   intervalSec: number;
   startPeriodSec: number;
+}
+
+/** The deploy-gate timings for an app: per-app health overrides when set, else the rolling defaults
+ *  (20 retries x 3s after a 5s start ≈ a 65s window). A slow-booting app raises startPeriod/retries. */
+export function resolveHealthGate(app: AppSpec): HealthGate {
+  return {
+    retries: app.healthRetries ?? 20,
+    intervalSec: app.healthInterval ?? 3,
+    startPeriodSec: app.healthStartPeriod ?? 5,
+  };
 }
 
 /**
@@ -1104,8 +1120,9 @@ export function resolveHealthProbe(app: AppSpec): HealthProbe {
     // reaches this app's container). Host-port app: probe localhost over the host network —
     // pinned to the app's OWN published port, never an arbitrary one, so it can't be turned
     // into a host-wide localhost port scanner.
-    if (app.domain) return { kind: "httpExternal", port: app.healthCheckPort ?? app.containerPort ?? 80, path };
-    if (app.hostPort) return { kind: "httpExternal", port: app.hostPort, path, onHost: true };
+    const extra = { expectedStatus: app.healthExpectedStatus ?? null, timeoutSec: app.healthTimeout ?? 5 };
+    if (app.domain) return { kind: "httpExternal", port: app.healthCheckPort ?? app.containerPort ?? 80, path, ...extra };
+    if (app.hostPort) return { kind: "httpExternal", port: app.hostPort, path, onHost: true, ...extra };
     return { kind: "stableWait" }; // HTTP configured but no reachable endpoint
   }
   return { kind: "stableWait" }; // NONE
@@ -1139,10 +1156,16 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
     // Single-quote the URL so the probe path can never break out of the docker-run word
     // even if the path validation is ever loosened (defence-in-depth).
     const url = shq(`http://${host}:${probe.port}${probe.path}`);
+    const maxTime = probe.timeoutSec ?? 5;
+    // Default "healthy" = any code below 500 (a booted app often answers 404/401/400 on the probe path);
+    // when the app pins an exact expected status, require exactly that code instead.
+    const pass = probe.expectedStatus
+      ? `[ "$code" = "${probe.expectedStatus}" ]`
+      : `[ "$code" != "000" ] && [ "$code" -lt 500 ]`;
     lines.push(
       `for i in $(seq 1 ${t.retries}); do`,
-      `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 ${url} 2>/dev/null || echo 000)`,
-      `  if [ "$code" != "000" ] && [ "$code" -lt 500 ]; then healthy=1; break; fi`,
+      `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time ${maxTime} ${url} 2>/dev/null || echo 000)`,
+      `  if ${pass}; then healthy=1; break; fi`,
       `  sleep ${t.intervalSec}`,
       "done",
     );
