@@ -36,6 +36,7 @@ export type ConfigCardId =
   | "credentials"
   | "env"
   | "databaseLinks"
+  | "secretRefs"
   | "expose"
   | "domain"
   | "extraDomains"
@@ -100,6 +101,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // Database links inject a managed DB's connection URI into the app's env; v1 is classic (non-swarm,
   // non-compose) apps only, so hide the card where linking can never work.
   { id: "databaseLinks", group: "environment", visible: (a) => notCompose(a) && !a.isPreview && !a.clusterId },
+  // External secret-store refs resolve on every deploy path (classic, compose, swarm) — only previews carry none.
+  { id: "secretRefs", group: "environment", visible: (a) => !a.isPreview },
   // Domains & Network
   { id: "expose", group: "domains", visible: (a) => a.canWrite && !a.isPreview },
   { id: "domain", group: "domains", visible: (a) => a.canWrite && !a.isPreview && a.domainKind === "custom" },

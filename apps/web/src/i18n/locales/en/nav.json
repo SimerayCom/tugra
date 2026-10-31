@@ -18,6 +18,7 @@
   "sources": "Git Sources",
   "registries": "Container Registries",
   "cloudCredentials": "Cloud Providers",
+  "secretProviders": "Secret Stores",
   "projects": "Projects",
   "apps": "Apps",
   "databases": "Databases",

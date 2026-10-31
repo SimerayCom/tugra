@@ -34,6 +34,8 @@ import type {
   Delivery,
   Database,
   DatabaseLinkView,
+  SecretProvider,
+  SecretRefView,
   GitSource,
   SourceRepo,
   Registry,
@@ -773,6 +775,22 @@ export const api = {
   deleteDnsCredential(id: string) {
     return apiFetch<{ ok: true }>(`/dns-credentials/${id}`, { method: "DELETE" });
   },
+  // External secret stores (HashiCorp Vault). The access token is write-only — sent on create/update, never read back.
+  listSecretProviders() {
+    return apiFetch<SecretProvider[]>("/secret-providers");
+  },
+  createSecretProvider(input: { teamId: string; name: string; kind: "vault"; address: string; token: string }) {
+    return apiFetch<SecretProvider>("/secret-providers", { method: "POST", body: JSON.stringify(input) });
+  },
+  updateSecretProvider(id: string, input: { name?: string; address?: string; token?: string }) {
+    return apiFetch<SecretProvider>(`/secret-providers/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  testSecretProvider(id: string) {
+    return apiFetch<{ ok: true }>(`/secret-providers/${id}/test`, { method: "POST" });
+  },
+  deleteSecretProvider(id: string) {
+    return apiFetch<{ ok: true }>(`/secret-providers/${id}`, { method: "DELETE" });
+  },
   // One-click custom-domain DNS auto-setup. dryRun=true returns the plan without writing.
   autoSetupDomain(
     id: string,
@@ -1188,6 +1206,15 @@ export const api = {
   },
   unlinkAppDatabase(id: string, linkId: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/database-links/${linkId}`, { method: "DELETE" });
+  },
+  getAppSecretRefs(id: string) {
+    return apiFetch<SecretRefView[]>(`/apps/${id}/secret-refs`);
+  },
+  bindAppSecret(id: string, input: { providerId: string; envVar: string; remoteKey: string }) {
+    return apiFetch<SecretRefView>(`/apps/${id}/secret-refs`, { method: "POST", body: JSON.stringify(input) });
+  },
+  unbindAppSecret(id: string, refId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/secret-refs/${refId}`, { method: "DELETE" });
   },
   getAppBuildArgs(id: string) {
     return apiFetch<Record<string, string>>(`/apps/${id}/build-args`);
