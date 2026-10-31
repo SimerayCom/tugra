@@ -328,6 +328,15 @@ export const SetDomainOptionsSchema = z
       .nullable()
       .optional(),
     stripPrefix: z.boolean().optional(),
+    // Per-app rate limit; null clears it. average/burst are requests, period is the window.
+    rateLimit: z
+      .object({
+        average: z.number().int().min(1).max(1_000_000),
+        burst: z.number().int().min(1).max(1_000_000),
+        period: z.enum(["1s", "1m", "1h"]),
+      })
+      .nullable()
+      .optional(),
   })
   .refine(
     (d) =>
@@ -336,8 +345,9 @@ export const SetDomainOptionsSchema = z
       d.forwardAuth !== undefined ||
       d.ipAllowlist !== undefined ||
       d.pathPrefix !== undefined ||
-      d.stripPrefix !== undefined,
-    { message: "provide domainRedirect, securityHeaders, forwardAuth, ipAllowlist, pathPrefix and/or stripPrefix" },
+      d.stripPrefix !== undefined ||
+      d.rateLimit !== undefined,
+    { message: "provide domainRedirect, securityHeaders, forwardAuth, ipAllowlist, pathPrefix, stripPrefix and/or rateLimit" },
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 

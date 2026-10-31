@@ -217,6 +217,7 @@ export const AppViewSchema = z.object({
   basicAuthUsers: z.array(z.string()), // usernames only — password hashes are never returned
   pathPrefix: z.string().nullable(),
   stripPrefix: z.boolean(),
+  rateLimit: z.object({ average: z.number(), burst: z.number(), period: z.enum(["1s", "1m", "1h"]) }).nullable(),
   https: z.boolean(),
   domainKind: z.string(),
   exposeMode: z.string(),
@@ -318,6 +319,16 @@ function parseExtraPorts(raw: unknown): { hostPort: number; containerPort: numbe
       !!p && typeof p === "object" && typeof (p as { hostPort?: unknown }).hostPort === "number" && typeof (p as { containerPort?: unknown }).containerPort === "number",
     )
     .map((p) => ({ hostPort: p.hostPort, containerPort: p.containerPort, protocol: p.protocol === "udp" ? "udp" as const : "tcp" as const }));
+}
+
+/** Safely read the stored rateLimit JSON into a typed value (JSON columns are untyped). Returns null when
+ *  absent or malformed. */
+function parseRateLimit(raw: unknown): { average: number; burst: number; period: "1s" | "1m" | "1h" } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { average?: unknown; burst?: unknown; period?: unknown };
+  if (typeof r.average !== "number" || typeof r.burst !== "number") return null;
+  const period = r.period === "1m" || r.period === "1h" ? r.period : "1s";
+  return { average: r.average, burst: r.burst, period };
 }
 
 @Injectable()
@@ -749,6 +760,7 @@ export class ApplicationsService {
           basicAuthUsers: src.basicAuthUsers ?? Prisma.JsonNull, // clone the auth users (hashes only)
           pathPrefix: src.pathPrefix,
           stripPrefix: src.stripPrefix,
+          rateLimit: src.rateLimit ?? Prisma.JsonNull,
           deployStrategy: src.deployStrategy,
           rollbackOnFailure: src.rollbackOnFailure,
           tags: src.tags,
@@ -3045,7 +3057,7 @@ export class ApplicationsService {
   async setDomainOptions(
     userId: string,
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
@@ -3055,6 +3067,7 @@ export class ApplicationsService {
     if (opts.ipAllowlist !== undefined) data.ipAllowlist = opts.ipAllowlist;
     if (opts.pathPrefix !== undefined) data.pathPrefix = opts.pathPrefix;
     if (opts.stripPrefix !== undefined) data.stripPrefix = opts.stripPrefix;
+    if (opts.rateLimit !== undefined) data.rateLimit = opts.rateLimit === null ? Prisma.JsonNull : (opts.rateLimit as unknown as Prisma.InputJsonValue);
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
   }
@@ -3448,6 +3461,7 @@ export class ApplicationsService {
       basicAuthUsers: parseBasicAuthUsers(app.basicAuthUsers),
       pathPrefix: app.pathPrefix ?? null,
       stripPrefix: app.stripPrefix ?? true,
+      rateLimit: parseRateLimit(app.rateLimit),
       certType: app.certType,
       // A clustered app deploys on the swarm manager's proxy, where the per-server /dynamic cert write never
       // runs — so never feed it a custom cert (it would relabel to tls=true with no cert and serve the
@@ -3698,6 +3712,7 @@ export class ApplicationsService {
       basicAuthUsers: (parseBasicAuthUsers(app.basicAuthUsers) ?? []).map((u) => u.user),
       pathPrefix: app.pathPrefix ?? null,
       stripPrefix: app.stripPrefix ?? true,
+      rateLimit: parseRateLimit(app.rateLimit),
       https: app.https,
       domainKind: app.domainKind,
       exposeMode: app.exposeMode,

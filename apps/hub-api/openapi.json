@@ -7825,6 +7825,32 @@
                       "stripPrefix": {
                         "type": "boolean"
                       },
+                      "rateLimit": {
+                        "type": "object",
+                        "properties": {
+                          "average": {
+                            "type": "number"
+                          },
+                          "burst": {
+                            "type": "number"
+                          },
+                          "period": {
+                            "type": "string",
+                            "enum": [
+                              "1s",
+                              "1m",
+                              "1h"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "average",
+                          "burst",
+                          "period"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -8003,6 +8029,7 @@
                       "basicAuthUsers",
                       "pathPrefix",
                       "stripPrefix",
+                      "rateLimit",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -8783,6 +8810,32 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "rateLimit": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number"
+                        },
+                        "burst": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "1s",
+                            "1m",
+                            "1h"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "average",
+                        "burst",
+                        "period"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -8961,6 +9014,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "rateLimit",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -9808,6 +9862,32 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "rateLimit": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number"
+                        },
+                        "burst": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "1s",
+                            "1m",
+                            "1h"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "average",
+                        "burst",
+                        "period"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -9986,6 +10066,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "rateLimit",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -10837,6 +10918,32 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "rateLimit": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number"
+                        },
+                        "burst": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "1s",
+                            "1m",
+                            "1h"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "average",
+                        "burst",
+                        "period"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -11015,6 +11122,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "rateLimit",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -17079,6 +17187,36 @@
                   },
                   "stripPrefix": {
                     "type": "boolean"
+                  },
+                  "rateLimit": {
+                    "type": "object",
+                    "properties": {
+                      "average": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000
+                      },
+                      "burst": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000
+                      },
+                      "period": {
+                        "type": "string",
+                        "enum": [
+                          "1s",
+                          "1m",
+                          "1h"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "average",
+                      "burst",
+                      "period"
+                    ],
+                    "additionalProperties": false,
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -18239,6 +18377,32 @@
                         "stripPrefix": {
                           "type": "boolean"
                         },
+                        "rateLimit": {
+                          "type": "object",
+                          "properties": {
+                            "average": {
+                              "type": "number"
+                            },
+                            "burst": {
+                              "type": "number"
+                            },
+                            "period": {
+                              "type": "string",
+                              "enum": [
+                                "1s",
+                                "1m",
+                                "1h"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "average",
+                            "burst",
+                            "period"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
                         "https": {
                           "type": "boolean"
                         },
@@ -18417,6 +18581,7 @@
                         "basicAuthUsers",
                         "pathPrefix",
                         "stripPrefix",
+                        "rateLimit",
                         "https",
                         "domainKind",
                         "exposeMode",
@@ -19127,6 +19292,32 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "rateLimit": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number"
+                        },
+                        "burst": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "1s",
+                            "1m",
+                            "1h"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "average",
+                        "burst",
+                        "period"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -19305,6 +19496,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "rateLimit",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -20085,6 +20277,32 @@
                       "stripPrefix": {
                         "type": "boolean"
                       },
+                      "rateLimit": {
+                        "type": "object",
+                        "properties": {
+                          "average": {
+                            "type": "number"
+                          },
+                          "burst": {
+                            "type": "number"
+                          },
+                          "period": {
+                            "type": "string",
+                            "enum": [
+                              "1s",
+                              "1m",
+                              "1h"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "average",
+                          "burst",
+                          "period"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -20263,6 +20481,7 @@
                       "basicAuthUsers",
                       "pathPrefix",
                       "stripPrefix",
+                      "rateLimit",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -21128,6 +21347,32 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "rateLimit": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number"
+                        },
+                        "burst": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "1s",
+                            "1m",
+                            "1h"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "average",
+                        "burst",
+                        "period"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -21306,6 +21551,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "rateLimit",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -23181,6 +23427,32 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "rateLimit": {
+                      "type": "object",
+                      "properties": {
+                        "average": {
+                          "type": "number"
+                        },
+                        "burst": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "1s",
+                            "1m",
+                            "1h"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "average",
+                        "burst",
+                        "period"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -23359,6 +23631,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "rateLimit",
                     "https",
                     "domainKind",
                     "exposeMode",
