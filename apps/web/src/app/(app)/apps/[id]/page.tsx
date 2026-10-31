@@ -449,6 +449,7 @@ export default function AppDetailPage() {
       ) : null,
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
+    redirects: () => <RedirectsCard id={id} redirects={appData.redirects} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
   };
@@ -887,6 +888,50 @@ function BasicAuthCard({ id, usernames }: { id: string; usernames: string[] }) {
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.basicAuthReplaceNote")}</p>
+    </Card>
+  );
+}
+
+function RedirectsCard({ id, redirects }: { id: string; redirects: { regex: string; replacement: string; permanent: boolean }[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [rows, setRows] = useState<{ regex: string; replacement: string; permanent: boolean }[]>(redirects);
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAppRedirects(
+        id,
+        rows.map((r) => ({ regex: r.regex.trim(), replacement: r.replacement.trim(), permanent: r.permanent })).filter((r) => r.regex && r.replacement),
+      ),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.saved"), "success"); },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
+  });
+  const patch = (i: number, p: Partial<{ regex: string; replacement: string; permanent: boolean }>) =>
+    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.redirects")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.redirectsDesc")}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input className="mono" style={{ ...envField, flex: "2 1 200px" }} placeholder={t("apps.redirectsRegex")} value={r.regex} onChange={(e) => patch(i, { regex: e.target.value })} aria-label={t("apps.redirectsRegex")} />
+            <input className="mono" style={{ ...envField, flex: "2 1 200px" }} placeholder={t("apps.redirectsReplacement")} value={r.replacement} onChange={(e) => patch(i, { replacement: e.target.value })} aria-label={t("apps.redirectsReplacement")} />
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "nowrap" }}>
+              <input type="checkbox" checked={r.permanent} onChange={(e) => patch(i, { permanent: e.target.checked })} />
+              {t("apps.redirectsPermanent")}
+            </label>
+            <Btn variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>{t("apps.remove")}</Btn>
+          </div>
+        ))}
+        {rows.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.redirectsEmpty")}</div>}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { regex: "", replacement: "", permanent: true }])}>{t("apps.redirectsAdd")}</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.redirectsHint")}</p>
     </Card>
   );
 }

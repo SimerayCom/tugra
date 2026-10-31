@@ -224,6 +224,7 @@ export const AppViewSchema = z.object({
   pathPrefix: z.string().nullable(),
   stripPrefix: z.boolean(),
   rateLimit: z.object({ average: z.number(), burst: z.number(), period: z.enum(["1s", "1m", "1h"]) }).nullable(),
+  redirects: z.array(z.object({ regex: z.string(), replacement: z.string(), permanent: z.boolean() })),
   https: z.boolean(),
   domainKind: z.string(),
   exposeMode: z.string(),
@@ -335,6 +336,18 @@ function parseRateLimit(raw: unknown): { average: number; burst: number; period:
   if (typeof r.average !== "number" || typeof r.burst !== "number") return null;
   const period = r.period === "1m" || r.period === "1h" ? r.period : "1s";
   return { average: r.average, burst: r.burst, period };
+}
+
+/** Safely read the stored redirects JSON into a typed [{regex, replacement, permanent}] list (JSON columns
+ *  are untyped). Drops any malformed entry; returns [] when there are none. */
+function parseRedirects(raw: unknown): { regex: string; replacement: string; permanent: boolean }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (rd): rd is { regex: string; replacement: string; permanent?: unknown } =>
+        !!rd && typeof rd === "object" && typeof (rd as { regex?: unknown }).regex === "string" && typeof (rd as { replacement?: unknown }).replacement === "string",
+    )
+    .map((rd) => ({ regex: rd.regex, replacement: rd.replacement, permanent: rd.permanent === true }));
 }
 
 @Injectable()
@@ -769,6 +782,7 @@ export class ApplicationsService {
           pathPrefix: src.pathPrefix,
           stripPrefix: src.stripPrefix,
           rateLimit: src.rateLimit ?? Prisma.JsonNull,
+          redirects: src.redirects ?? Prisma.JsonNull, // clone the custom redirect rules
           deployStrategy: src.deployStrategy,
           rollbackOnFailure: src.rollbackOnFailure,
           tags: src.tags,
@@ -3154,6 +3168,19 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.basicAuth.update", target: id, meta: { count: hashed.length } });
   }
 
+  /** Replace the app's custom redirect rules (one Traefik redirectregex middleware each). Replace-set
+   *  semantics: the whole list is sent each time; an empty list clears all redirects. The regex/replacement
+   *  are stored verbatim (validated single-line + length-capped in the DTO) and shell/YAML-escaped at the
+   *  deploy boundary. Applies on the next deploy. */
+  async setRedirects(userId: string, id: string, redirects: { regex: string; replacement: string; permanent: boolean }[]): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({
+      where: { id },
+      data: { redirects: redirects.length ? (redirects as unknown as Prisma.InputJsonValue) : Prisma.JsonNull },
+    });
+    await this.audit.log({ actor: userId, action: "app.redirects.update", target: id, meta: { count: redirects.length } });
+  }
+
   /**
    * Upload an operator-supplied custom TLS cert for this app (certType → "custom"). The cert/key pair is
    * validated + matched here (parseCustomCert) so a broken pair is rejected before anything is stored; the
@@ -3540,6 +3567,7 @@ export class ApplicationsService {
       pathPrefix: app.pathPrefix ?? null,
       stripPrefix: app.stripPrefix ?? true,
       rateLimit: parseRateLimit(app.rateLimit),
+      redirects: parseRedirects(app.redirects),
       certType: app.certType,
       // A clustered app deploys on the swarm manager's proxy, where the per-server /dynamic cert write never
       // runs — so never feed it a custom cert (it would relabel to tls=true with no cert and serve the
@@ -3775,6 +3803,7 @@ export class ApplicationsService {
       pathPrefix: app.pathPrefix ?? null,
       stripPrefix: app.stripPrefix ?? true,
       rateLimit: parseRateLimit(app.rateLimit),
+      redirects: parseRedirects(app.redirects),
       https: app.https,
       domainKind: app.domainKind,
       exposeMode: app.exposeMode,

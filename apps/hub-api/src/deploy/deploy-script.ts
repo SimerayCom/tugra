@@ -137,6 +137,13 @@ export interface AppSpec {
   /** Per-app rate limit → a Traefik ratelimit middleware (average req/period, burst). Keyed on client IP
    *  (behind a CDN/Tunnel every client shares one IP — documented caveat). Null → no limit (byte-identical). */
   rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null;
+  /** Custom redirect rules → one Traefik redirectregex middleware each, applied to the router AFTER the
+   *  www/root canonical redirect and BEFORE security headers (first matching rule wins and short-circuits
+   *  the chain; placed after the auth gate so a redirect never bypasses it). `regex` is a Go-RE2 pattern
+   *  matched against the full request URL; `replacement` may reference capture groups (`${1}`); `permanent`
+   *  → 301 vs 302. Both strings are shell/YAML-escaped at the deploy boundary. Empty/null → no middleware
+   *  (byte-identical). */
+  redirects?: { regex: string; replacement: string; permanent: boolean }[] | null;
   /** Path-prefix routing: serve the app under <host>/<prefix> (Traefik PathPrefix rule). Null/empty → the
    *  app answers at the host root (byte-identical to apps with no prefix). */
   pathPrefix?: string | null;
@@ -549,6 +556,21 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
     );
     mw.push(`${r}-canon`);
   }
+  // Custom redirect rules → one redirectregex middleware each. The regex/replacement are USER input, so on the
+  // COMPOSE path (the override file is interpolated by compose) every `$` is doubled to `$$` — a replacement's
+  // `${1}` capture ref or a regex end-anchor `$` must survive as a literal, exactly like the basic-auth hash
+  // above. On the docker-run path shq() single-quotes each label, so `$` is already literal (no doubling).
+  const redirects = (app.redirects ?? []).filter((rd) => rd && rd.regex && rd.replacement);
+  redirects.forEach((rd, i) => {
+    const name = `${r}-rd${i}`;
+    const dollar = (s: string) => (opts.composeDollarEscape ? s.replace(/\$/g, "$$$$") : s);
+    labels.push(
+      `traefik.http.middlewares.${name}.redirectregex.regex=${dollar(rd.regex)}`,
+      `traefik.http.middlewares.${name}.redirectregex.replacement=${dollar(rd.replacement)}`,
+      `traefik.http.middlewares.${name}.redirectregex.permanent=${rd.permanent ? "true" : "false"}`,
+    );
+    mw.push(name);
+  });
   if (app.securityHeaders) {
     labels.push(
       `traefik.http.middlewares.${r}-sec.headers.stsSeconds=31536000`,

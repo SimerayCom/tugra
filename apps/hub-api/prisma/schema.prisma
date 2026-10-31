@@ -1010,6 +1010,9 @@ model Application {
   stripPrefix    Boolean      @default(true)
   // Per-app rate limit {average, burst, period:'1s'|'1m'|'1h'} → a Traefik ratelimit middleware. Null = off.
   rateLimit      Json?
+  // Custom redirect rules [{regex, replacement, permanent}] → one Traefik redirectregex middleware each,
+  // applied to the router (after the www/root canonical redirect, before security headers). Null/empty = none.
+  redirects      Json?
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"

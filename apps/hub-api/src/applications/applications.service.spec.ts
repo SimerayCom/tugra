@@ -1288,6 +1288,18 @@ describe("ApplicationsService", () => {
     expect(update.mock.calls[1][0].data.basicAuthUsers).toBeDefined(); // JsonNull sentinel, not a {user,hash}[]
   });
 
+  it("setRedirects stores the rule list verbatim and clears to JsonNull on an empty list", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1" }), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const rules = [{ regex: "^https://x.com/old$", replacement: "https://x.com/new/${1}", permanent: true }];
+    await make(prisma, access, {} as AgentWsServer).setRedirects("u1", "app1", rules);
+    expect(update.mock.calls[0][0].data.redirects).toEqual(rules); // stored verbatim (escaped only at deploy)
+    // empty list clears it (JsonNull sentinel, not an array)
+    await make(prisma, access, {} as AgentWsServer).setRedirects("u1", "app1", []);
+    expect(Array.isArray(update.mock.calls[1][0].data.redirects)).toBe(false);
+  });
+
   it("upsertPreview drops the parent's preview-excluded env keys from the preview's env", async () => {
     const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
     const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
