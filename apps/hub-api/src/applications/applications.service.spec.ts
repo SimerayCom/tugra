@@ -2971,6 +2971,24 @@ describe("ApplicationsService", () => {
     expect(monitors.createForApp).toHaveBeenCalledWith(expect.objectContaining({ id: "a9", domain: "x.com" }));
   });
 
+  it("removeImages opt-in drops the app's OWN image tags (scoped); default delete leaves images alone", async () => {
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const mk = () => {
+      const sent: string[] = [];
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "IMAGE" }), delete: jest.fn().mockResolvedValue({}) } } as unknown as PrismaService;
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, c: string) => { sent.push(c); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+      return { sent, svc: make(prisma, access, agentWs, makeDeployLogs(), makeMonitors()) };
+    };
+    const on = mk();
+    await on.svc.remove("u1", "app1", { removeImages: true });
+    expect(on.sent.join("\n")).toContain("--filter=reference='tugra_app1:*'");
+    expect(on.sent.join("\n")).not.toMatch(/docker images\s+-a?q/); // never an unscoped wildcard
+
+    const off = mk();
+    await off.svc.remove("u1", "app1"); // default
+    expect(off.sent.join("\n")).not.toContain("docker rmi"); // images untouched unless opted in
+  });
+
   it("removes the app's auto monitors on delete", async () => {
     const monitors = makeMonitors();
     const prisma = {

@@ -1354,6 +1354,15 @@ export function buildImageRemoveScript(app: { id: string }, version: string): st
   return `docker rmi ${runTag(app, version)} 2>/dev/null || true`;
 }
 
+/** Remove ALL of an app's locally-stored image tags (`tugra_<appId>:*`) — used on delete when the operator
+ *  opts to reclaim image disk. Scoped by a reference filter to the app's OWN tag namespace, so it never
+ *  touches another app's image, a shared/base image, or anything via a bare `docker images` wildcard. An
+ *  empty match makes `docker rmi` a no-op (swallowed). `-f` drops the tags even if a dangling child remains. */
+export function buildAppImagesRemoveScript(app: { id: string }): string {
+  const ref = `${containerName(app)}:*`;
+  return `docker rmi -f $(docker images --filter=reference=${shq(ref)} -q | sort -u) 2>/dev/null || true`;
+}
+
 /** Remove an image by its exact stored tag — a rollback records the TARGET's tag, not its own
  *  deployment id, so pruning must key off the recorded tag rather than reconstruct it. */
 export function buildImageRemoveScriptForTag(tag: string): string {
