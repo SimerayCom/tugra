@@ -106,6 +106,10 @@ export interface AppSpec {
   securityHeaders?: boolean;
   /** External auth service URL — protects the app via a Traefik forwardauth middleware. */
   forwardAuth?: string | null;
+  /** IP allowlist (CIDRs / addresses). When non-empty, a Traefik ipallowlist middleware admits only these
+   *  source ranges; added FIRST in the router's middleware chain so a disallowed client is rejected before
+   *  auth. Empty → no middleware (byte-identical). */
+  ipAllowlist?: string[] | null;
   /** Cert strategy driving the Traefik router: "http"/"none" → plain HTTP; otherwise HTTPS+LE. */
   certType?: string;
   /** Server's wildcard root (e.g. apps.example.com) — for a le-dns wildcard cert. */
@@ -524,6 +528,13 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
       `traefik.http.middlewares.${r}-fa.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email`,
     );
     mw.unshift(`${r}-fa`); // auth runs first in the chain
+  }
+  const ipAllow = (app.ipAllowlist ?? []).filter(Boolean);
+  if (ipAllow.length) {
+    // Traefik v3: ipallowlist admits only these source ranges. Unshifted LAST so it sits at the FRONT of the
+    // chain — a disallowed client is rejected before forward-auth/security-headers even run.
+    labels.push(`traefik.http.middlewares.${r}-ip.ipallowlist.sourcerange=${ipAllow.join(",")}`);
+    mw.unshift(`${r}-ip`);
   }
   if (mw.length) labels.push(`traefik.http.routers.${r}.middlewares=${mw.join(",")}`);
 

@@ -96,6 +96,8 @@
   "sourceCompose": "Compose",
   "composeFile": "Paste your docker-compose.yml…",
   "compose": "Compose file",
+  "ipAllowlist": "IP allowlist",
+  "ipAllowlistDesc": "One IP or CIDR per line. When set, only these source ranges may reach the app (checked before any auth). Empty allows all. Applies on the next deploy.",
   "watchPaths": "Watch paths",
   "watchPathsDesc": "One glob per line (leading ! to exclude). When set, a push only deploys if a changed file matches — so a monorepo doesn't rebuild every app on every push. Empty deploys on every push. Applies to the next push.",
   "composeSource": "Compose source",

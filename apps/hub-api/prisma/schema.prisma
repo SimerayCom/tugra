@@ -937,6 +937,9 @@ model Application {
   domainRedirect  String?
   securityHeaders Boolean     @default(false)
   forwardAuth    String?
+  // IP allowlist (CIDRs/addresses) → a Traefik ipallowlist middleware admitting only these source ranges.
+  // Empty = open to all (the default). Applies on the next deploy.
+  ipAllowlist    String[]    @default([])
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"

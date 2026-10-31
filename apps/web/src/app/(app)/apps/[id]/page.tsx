@@ -422,7 +422,7 @@ export default function AppDetailPage() {
     serviceDomains: () => <ServiceDomainsCard id={id} />,
     domainOptions: () =>
       appData.domain ? (
-        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} />
+        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} />
       ) : null,
     customCert: () =>
       appData.domain ? (
@@ -2000,6 +2000,7 @@ function DomainOptionsCard({
   domainRedirect,
   securityHeaders,
   forwardAuth,
+  ipAllowlist,
 }: {
   id: string;
   domain: string;
@@ -2007,18 +2008,21 @@ function DomainOptionsCard({
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   forwardAuth: string | null;
+  ipAllowlist: string[];
 }) {
   const t = useT();
   const qc = useQueryClient();
   const [redirect, setRedirect] = useState<string>(domainRedirect ?? "");
   const [sec, setSec] = useState(securityHeaders);
   const [fa, setFa] = useState(forwardAuth ?? "");
+  const [ips, setIps] = useState(ipAllowlist.join("\n"));
   const save = useMutation({
     mutationFn: () =>
       api.setAppDomainOptions(id, {
         domainRedirect: redirect ? (redirect as "www" | "root") : null,
         securityHeaders: sec,
         forwardAuth: fa.trim() || null,
+        ipAllowlist: ips.split("\n").map((l) => l.trim()).filter(Boolean),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
@@ -2052,6 +2056,19 @@ function DomainOptionsCard({
           onChange={(e) => setFa(e.target.value)}
         />
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.forwardAuthDesc")}</p>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.ipAllowlist")}</div>
+        <textarea
+          className="mono"
+          value={ips}
+          spellCheck={false}
+          onChange={(e) => setIps(e.target.value)}
+          placeholder={"203.0.113.4\n10.0.0.0/8\n2001:db8::/32"}
+          aria-label={t("apps.ipAllowlist")}
+          style={{ width: "100%", minHeight: 72, maxHeight: 180, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+        />
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.ipAllowlistDesc")}</p>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>

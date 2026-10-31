@@ -1,4 +1,24 @@
-import { CreateAppSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+
+describe("SetDomainOptionsSchema — ipAllowlist", () => {
+  const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
+  it("accepts IPv4/IPv6 addresses + CIDRs and an empty array (clear)", () => {
+    expect(ok(["1.2.3.4", "10.0.0.0/8", "2001:db8::/32", "::1"]).success).toBe(true);
+    expect(ok([]).success).toBe(true);
+  });
+  it("rejects bad addresses, out-of-range prefixes, junk and over-cap", () => {
+    expect(ok(["999.1.1.1"]).success).toBe(false);
+    expect(ok(["10.0.0.0/33"]).success).toBe(false); // v4 prefix > 32
+    expect(ok(["2001:db8::/129"]).success).toBe(false); // v6 prefix > 128
+    expect(ok(["10.0.0.0/8/9"]).success).toBe(false); // double slash
+    expect(ok(["not-an-ip"]).success).toBe(false);
+    expect(ok(["10.0.0.0; rm -rf"]).success).toBe(false);
+    expect(ok(Array.from({ length: 51 }, () => "1.2.3.4")).success).toBe(false); // > 50
+  });
+  it("still requires at least one option field", () => {
+    expect(SetDomainOptionsSchema.safeParse({}).success).toBe(false);
+  });
+});
 
 describe("SetWatchPathsSchema — monorepo deploy-trigger globs", () => {
   const ok = (watchPaths: unknown[]) => SetWatchPathsSchema.safeParse({ watchPaths });

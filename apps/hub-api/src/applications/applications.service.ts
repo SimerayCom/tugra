@@ -203,6 +203,7 @@ export const AppViewSchema = z.object({
   domainRedirect: z.string().nullable(),
   securityHeaders: z.boolean(),
   forwardAuth: z.string().nullable(),
+  ipAllowlist: z.array(z.string()),
   https: z.boolean(),
   domainKind: z.string(),
   exposeMode: z.string(),
@@ -699,6 +700,7 @@ export class ApplicationsService {
           domainRedirect: src.domainRedirect,
           securityHeaders: src.securityHeaders,
           forwardAuth: src.forwardAuth,
+          ipAllowlist: src.ipAllowlist,
           deployStrategy: src.deployStrategy,
           rollbackOnFailure: src.rollbackOnFailure,
           tags: src.tags,
@@ -2940,13 +2942,14 @@ export class ApplicationsService {
   async setDomainOptions(
     userId: string,
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null; ipAllowlist?: string[] },
   ): Promise<void> {
     await this.requireWrite(userId, id);
-    const data: Prisma.ApplicationUpdateInput = {};
+    const data: Prisma.ApplicationUncheckedUpdateInput = {};
     if (opts.domainRedirect !== undefined) data.domainRedirect = opts.domainRedirect;
     if (opts.securityHeaders !== undefined) data.securityHeaders = opts.securityHeaders;
     if (opts.forwardAuth !== undefined) data.forwardAuth = opts.forwardAuth;
+    if (opts.ipAllowlist !== undefined) data.ipAllowlist = opts.ipAllowlist;
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
   }
@@ -3313,6 +3316,7 @@ export class ApplicationsService {
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
+      ipAllowlist: app.ipAllowlist ?? [],
       certType: app.certType,
       // A clustered app deploys on the swarm manager's proxy, where the per-server /dynamic cert write never
       // runs — so never feed it a custom cert (it would relabel to tls=true with no cert and serve the
@@ -3551,6 +3555,7 @@ export class ApplicationsService {
       domainRedirect: app.domainRedirect,
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
+      ipAllowlist: app.ipAllowlist ?? [],
       https: app.https,
       domainKind: app.domainKind,
       exposeMode: app.exposeMode,
