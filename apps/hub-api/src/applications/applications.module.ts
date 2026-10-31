@@ -10,9 +10,11 @@ import { CatalogModule } from "../catalog/catalog.module";
 import { ClustersModule } from "../clusters/clusters.module";
 import { DnsModule } from "../dns/dns.module";
 import { DatabasesModule } from "../databases/databases.module";
+import { SecretProvidersModule } from "../secret-providers/secret-providers.module";
 import { ApplicationsController } from "./applications.controller";
 import { ApplicationsService } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
+import { AppSecretRefsService } from "./app-secret-refs.service";
 import { DeploymentReconcileService } from "./deployment-reconcile.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
@@ -23,11 +25,12 @@ import { ContainerLogStreamGuard } from "./log-stream.guard";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule],
   controllers: [ApplicationsController, PanelTlsController],
   providers: [
     ApplicationsService,
     AppDatabaseLinksService,
+    AppSecretRefsService,
     DeploymentReconcileService,
     ProxyService,
     PanelTlsService,
@@ -38,6 +41,6 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     // without a static module import (which would form a dependency cycle).
     { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },
   ],
-  exports: [ApplicationsService, AppDatabaseLinksService, APPLICATIONS_SERVICE, PortAllocatorService],
+  exports: [ApplicationsService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService],
 })
 export class ApplicationsModule {}

@@ -91,6 +91,7 @@ function make(
   dns: { previewRecords?: jest.Mock; applyRecords?: jest.Mock; verify?: jest.Mock; cleanup?: jest.Mock; purgeDomains?: jest.Mock; manualRecords?: jest.Mock } = {},
   dbLinks: { resolveLinkedEnv?: jest.Mock } = {},
   panelDomain: string | null = null, // when set, the reserved control-panel hostname (collision guard)
+  secretRefs: { resolveSecretEnv?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -190,6 +191,9 @@ function make(
     {
       resolveLinkedEnv: dbLinks.resolveLinkedEnv ?? jest.fn().mockResolvedValue({}),
     } as unknown as import("./app-database-links.service").AppDatabaseLinksService,
+    {
+      resolveSecretEnv: secretRefs.resolveSecretEnv ?? jest.fn().mockResolvedValue({}),
+    } as unknown as import("./app-secret-refs.service").AppSecretRefsService,
     {
       // One token-agnostic stub serves every lazy ModuleRef.get() the service makes: the tunnel service
       // (syncIngress), InstanceSettingsService (panelDomainFor) and ConfigService (get). panelDomain is

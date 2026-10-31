@@ -143,6 +143,7 @@ model Team {
   registries   Registry[]
   cloudCredentials CloudCredential[]
   dnsCredentials   DnsCredential[]
+  secretProviders  SecretProvider[]
   savedViews   SavedView[]
   customRoles  TeamRole[]
   clusters     Cluster[]
@@ -1000,6 +1001,7 @@ model Application {
   domains        Domain[]
   serviceDomains AppServiceDomain[]
   databaseLinks AppDatabaseLink[]
+  secretRefs    SecretRef[]
   icon          AppIcon?
   createdAt     DateTime     @default(now())
 
@@ -1039,6 +1041,48 @@ model AppDatabaseLink {
   @@unique([appId, databaseId])
   @@unique([appId, envVar])
   @@index([databaseId])
+}
+
+// A team-scoped external secret-store credential (HashiCorp Vault in v1; Infisical/AWS-SM are future kinds
+// that slot in as new clients with no model change). Mirrors DnsCredential: the access token is verified
+// against the store BEFORE it is encrypted+persisted, is NEVER returned by any view/log, and management is
+// gated by the `integrations` team permission. The deploy env resolver fetches referenced secrets through
+// this credential at deploy time; the fetched VALUES are injected transiently and never persisted.
+model SecretProvider {
+  id             String      @id @default(cuid())
+  team           Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId         String
+  name           String
+  kind           String      // "vault" — only kind with a client in v1
+  address        String      // the store's base URL (non-secret), e.g. https://vault.example.com
+  tokenEnc       String      // CryptoService-encrypted access token — never returned/logged
+  lastVerifiedAt DateTime?
+  refs           SecretRef[]
+  createdAt      DateTime    @default(now())
+
+  @@index([teamId])
+}
+
+// A per-app binding: inject the value of an external secret (located by `remoteKey` in `provider`) into the
+// app's runtime env under `envVar`, resolved FRESH at deploy time. Mirrors AppDatabaseLink. Only the LOCATOR
+// is stored here, never the secret value. The providerId FK is NO ACTION (not Cascade): deleting a provider
+// that still has refs is refused at the app layer (409) rather than silently breaking the app, while a
+// whole-team delete still cascades (NO ACTION is checked at end-of-statement, after the app's refs die with
+// the app). A ref whose value cannot be fetched FAILS the deploy loudly (never a silent empty value).
+model SecretRef {
+  id         String         @id @default(cuid())
+  app        Application    @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId      String
+  provider   SecretProvider @relation(fields: [providerId], references: [id], onDelete: NoAction)
+  providerId String
+  envVar     String // env var name the fetched secret value is injected under
+  remoteKey  String // provider-specific locator; Vault: "<mount>/<path>#<field>" e.g. "secret/myapp#DB_PASSWORD"
+  createdBy  String? // user id who created the ref (audit convenience)
+  createdAt  DateTime       @default(now())
+
+  @@unique([appId, envVar])
+  @@index([appId])
+  @@index([providerId])
 }
 
 /**
