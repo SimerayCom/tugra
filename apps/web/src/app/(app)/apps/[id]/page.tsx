@@ -427,7 +427,7 @@ export default function AppDetailPage() {
     serviceDomains: () => <ServiceDomainsCard id={id} />,
     domainOptions: () =>
       appData.domain ? (
-        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} />
+        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} />
       ) : null,
     customCert: () =>
       appData.domain ? (
@@ -2164,6 +2164,8 @@ function DomainOptionsCard({
   securityHeaders,
   forwardAuth,
   ipAllowlist,
+  pathPrefix,
+  stripPrefix,
 }: {
   id: string;
   domain: string;
@@ -2172,6 +2174,8 @@ function DomainOptionsCard({
   securityHeaders: boolean;
   forwardAuth: string | null;
   ipAllowlist: string[];
+  pathPrefix: string | null;
+  stripPrefix: boolean;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -2179,6 +2183,8 @@ function DomainOptionsCard({
   const [sec, setSec] = useState(securityHeaders);
   const [fa, setFa] = useState(forwardAuth ?? "");
   const [ips, setIps] = useState(ipAllowlist.join("\n"));
+  const [pfx, setPfx] = useState(pathPrefix ?? "");
+  const [strip, setStrip] = useState(stripPrefix);
   const save = useMutation({
     mutationFn: () =>
       api.setAppDomainOptions(id, {
@@ -2186,6 +2192,8 @@ function DomainOptionsCard({
         securityHeaders: sec,
         forwardAuth: fa.trim() || null,
         ipAllowlist: ips.split("\n").map((l) => l.trim()).filter(Boolean),
+        pathPrefix: pfx.trim() || null,
+        stripPrefix: strip,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
@@ -2232,6 +2240,24 @@ function DomainOptionsCard({
           style={{ width: "100%", minHeight: 72, maxHeight: 180, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
         />
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.ipAllowlistDesc")}</p>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.pathPrefix")}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            style={{ ...envField, minWidth: 200 }}
+            placeholder="/api"
+            value={pfx}
+            spellCheck={false}
+            onChange={(e) => setPfx(e.target.value)}
+            aria-label={t("apps.pathPrefix")}
+          />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+            <input type="checkbox" checked={strip} onChange={(e) => setStrip(e.target.checked)} />
+            {t("apps.stripPrefix")}
+          </label>
+        </div>
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.pathPrefixDesc")}</p>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
