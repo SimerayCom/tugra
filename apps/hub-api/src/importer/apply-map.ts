@@ -21,6 +21,17 @@ export interface AppCreateOptions {
  *  coerce "" to undefined so an otherwise-valid app isn't rejected. */
 const opt = (v: string | undefined): string | undefined => (v ? v : undefined);
 
+/** Coolify stores in-repo paths absolute (`/apps/api`, `/Dockerfile`, `/` for the repo root), but Tugra's
+ *  REPO_PATH/BASE_DIR are repo-RELATIVE (no leading `/`). The importer calls service.create() directly, so it
+ *  skips the DTO that would otherwise reject these — normalize here: strip leading slashes, collapse the
+ *  root (`/`, "", `.`) to undefined, and drop a trailing slash. Returns undefined for a value that isn't a
+ *  usable relative path. */
+const relPath = (v: string | undefined): string | undefined => {
+  if (!v) return undefined;
+  const s = v.replace(/^\/+/, "").replace(/\/+$/, "");
+  return s && s !== "." ? s : undefined;
+};
+
 export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, string>, opts: AppCreateOptions): CreateAppInput {
   const build = mapBuildPack(app); // { source: IMAGE|GIT|COMPOSE, buildType? }
   const domain = (app.domains ?? []).find((d) => d.primary) ?? (app.domains ?? [])[0];
@@ -47,9 +58,12 @@ export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, str
     input.gitUrl = opt(app.git?.url);
     input.gitBranch = opt(app.git?.branch);
     input.buildType = build.buildType;
-    input.dockerfilePath = opt(app.git?.dockerfilePath);
+    // In-repo paths are normalized to Tugra's relative form (Coolify stores them absolute). baseDirectory was
+    // previously dropped entirely → an imported monorepo app built from the repo root; wire it through now.
+    input.dockerfilePath = relPath(app.git?.dockerfilePath);
+    input.baseDirectory = relPath(app.git?.baseDirectory);
     input.buildCommand = opt(app.buildCommand);
-    input.outputDir = opt(app.publishDirectory);
+    input.outputDir = relPath(app.publishDirectory);
     if (opts.gitSourceId) input.gitSourceId = opts.gitSourceId; // link a private GitHub-App repo to a connected GitSource
   }
   return input;
