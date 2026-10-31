@@ -1302,6 +1302,31 @@ describe("ApplicationsService", () => {
     expect(envEnc).not.toContain("SECRET"); // the prod secret never reaches the preview
   });
 
+  it("upsertPreview evicts the oldest preview(s) when a new PR would exceed previewLimit", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "pv-new", teamId: "t1", serverId: "s1", source: "GIT" });
+    // 3 existing previews (oldest first); limit 2 → a NEW one must leave room for itself → evict 2 oldest.
+    const existingPreviews = [
+      { id: "pv1", prNumber: 1 },
+      { id: "pv2", prNumber: 2 },
+      { id: "pv3", prNumber: 3 },
+    ];
+    const prisma = {
+      application: {
+        findFirst: jest.fn().mockResolvedValue(null), // no existing preview for THIS pr → it's new
+        findMany: jest.fn().mockResolvedValue(existingPreviews),
+        create,
+      },
+    } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+    const removed: number[] = [];
+    jest.spyOn(svc, "removePreviewByPr").mockImplementation(async (_pid: string, pr: number) => { removed.push(pr); });
+    const parent = { id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", previewEnabled: true, domain: "app.example.com", previewLimit: 2, previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    await svc.upsertPreview(parent, 9, "feature-9");
+    expect(removed).toEqual([1, 2]); // the two oldest evicted; newest (pr3) + the new pr9 remain = 2 (the cap)
+    expect(create).toHaveBeenCalled();
+  });
+
   it("generateGitSshKey works for a git-compose (ssh) app and rejects a non-git-sourced one", async () => {
     const update = jest.fn().mockResolvedValue({});
     const sshGc = { ...gitApp, source: "COMPOSE", composePath: "docker-compose.yml", composeFile: null, gitUrl: "git@github.com:u/r.git" };

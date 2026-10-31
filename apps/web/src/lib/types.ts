@@ -1043,6 +1043,7 @@ export interface Application {
   watchPaths: string[];
   autoDeploy: boolean;
   previewExcludeKeys: string[];
+  previewLimit: number | null;
   extraPorts: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[];
   outputDir: string | null;
   composeFile: string | null;

@@ -509,6 +509,8 @@ export const PreviewConfigSchema = z.object({
   // Env var names to DROP from a PR preview's copied env, so prod secrets never land in an ephemeral preview.
   // Validated like env keys; capped. Omitted = leave the current exclusion list unchanged.
   excludeEnvKeys: z.array(z.string().min(1).max(256).refine(isValidUserEnvKey, "invalid environment variable name")).max(100).optional(),
+  // Max concurrent previews (a new PR beyond it evicts the oldest); null clears it (unlimited).
+  limit: z.number().int().min(1).max(100).nullable().optional(),
 });
 export type PreviewConfigInput = z.infer<typeof PreviewConfigSchema>;
 

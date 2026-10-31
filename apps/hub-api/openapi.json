@@ -7871,6 +7871,10 @@
                           "type": "string"
                         }
                       },
+                      "previewLimit": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "prNumber": {
                         "type": "number",
                         "nullable": true
@@ -8004,6 +8008,7 @@
                       "isPreview",
                       "previewEnabled",
                       "previewExcludeKeys",
+                      "previewLimit",
                       "prNumber",
                       "parentAppId",
                       "tags",
@@ -8815,6 +8820,10 @@
                         "type": "string"
                       }
                     },
+                    "previewLimit": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -8948,6 +8957,7 @@
                     "isPreview",
                     "previewEnabled",
                     "previewExcludeKeys",
+                    "previewLimit",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -9826,6 +9836,10 @@
                         "type": "string"
                       }
                     },
+                    "previewLimit": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -9959,6 +9973,7 @@
                     "isPreview",
                     "previewEnabled",
                     "previewExcludeKeys",
+                    "previewLimit",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -10841,6 +10856,10 @@
                         "type": "string"
                       }
                     },
+                    "previewLimit": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -10974,6 +10993,7 @@
                     "isPreview",
                     "previewEnabled",
                     "previewExcludeKeys",
+                    "previewLimit",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -17937,6 +17957,10 @@
                             "type": "string"
                           }
                         },
+                        "previewLimit": {
+                          "type": "number",
+                          "nullable": true
+                        },
                         "prNumber": {
                           "type": "number",
                           "nullable": true
@@ -18070,6 +18094,7 @@
                         "isPreview",
                         "previewEnabled",
                         "previewExcludeKeys",
+                        "previewLimit",
                         "prNumber",
                         "parentAppId",
                         "tags",
@@ -18811,6 +18836,10 @@
                         "type": "string"
                       }
                     },
+                    "previewLimit": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -18944,6 +18973,7 @@
                     "isPreview",
                     "previewEnabled",
                     "previewExcludeKeys",
+                    "previewLimit",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -19755,6 +19785,10 @@
                           "type": "string"
                         }
                       },
+                      "previewLimit": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "prNumber": {
                         "type": "number",
                         "nullable": true
@@ -19888,6 +19922,7 @@
                       "isPreview",
                       "previewEnabled",
                       "previewExcludeKeys",
+                      "previewLimit",
                       "prNumber",
                       "parentAppId",
                       "tags",
@@ -19998,6 +20033,12 @@
                       "maxLength": 256
                     },
                     "maxItems": 100
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "nullable": true
                   }
                 },
                 "required": [
@@ -20778,6 +20819,10 @@
                         "type": "string"
                       }
                     },
+                    "previewLimit": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -20911,6 +20956,7 @@
                     "isPreview",
                     "previewEnabled",
                     "previewExcludeKeys",
+                    "previewLimit",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -22817,6 +22863,10 @@
                         "type": "string"
                       }
                     },
+                    "previewLimit": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -22950,6 +23000,7 @@
                     "isPreview",
                     "previewEnabled",
                     "previewExcludeKeys",
+                    "previewLimit",
                     "prNumber",
                     "parentAppId",
                     "tags",
