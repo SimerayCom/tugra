@@ -392,7 +392,7 @@ export default function AppDetailPage() {
     ),
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
-    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} image={appData.image} />,
+    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} image={appData.image} composePath={appData.composePath} />,
     build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} />,
     buildConfig: () => (
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
@@ -401,7 +401,7 @@ export default function AppDetailPage() {
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
     credentials: () => (
-      <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
+      <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} composePath={appData.composePath} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
     ),
     env: () => <EnvCard id={id} clusterId={appData.clusterId} />,
     databaseLinks: () => <DatabaseLinksCard id={id} serverId={appData.serverId} canWrite={appData.canWrite} />,
@@ -597,7 +597,9 @@ export default function AppDetailPage() {
         const overviewPanel =
           appData.source === "COMPOSE" && appData.composeFile ? (
             <ComposeEditorCard id={id} composeFile={appData.composeFile} canWrite={appData.canWrite} onDeploy={() => deploy.mutate(undefined)} />
-          ) : appData.source === "COMPOSE" && appData.composePath ? (
+          ) : appData.source === "COMPOSE" && appData.composePath && !appData.canWrite ? (
+            // Read-only users have no config groups, so surface the git source here; writers edit it in the
+            // Build group's source card instead (and get the normal overview).
             <GitComposeSourceCard app={appData} />
           ) : (
             <AppOverview app={appData} deployments={deployments} />
@@ -1201,19 +1203,28 @@ function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
 // Edit WHERE the app's code/image comes from, after create. GIT -> repo URL + branch; IMAGE -> image ref.
 // (Git credentials themselves live in the Credentials card.) Applies on the next deploy; a host change that
 // resets a stored credential is reported back as a warning.
-function SourceCard({ id, source, gitUrl, gitBranch, image }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; image: string | null }) {
+function SourceCard({ id, source, gitUrl, gitBranch, image, composePath }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; image: string | null; composePath: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const [url, setUrl] = useState(gitUrl ?? "");
   const [branch, setBranch] = useState(gitBranch ?? "");
   const [img, setImg] = useState(image ?? "");
-  const isGit = source === "GIT";
-  const dirty = isGit ? url.trim() !== (gitUrl ?? "") || branch.trim() !== (gitBranch ?? "") : img.trim() !== (image ?? "");
+  const [path, setPath] = useState(composePath ?? "docker-compose.yml");
+  // A COMPOSE-from-git app (composePath set) edits its repo/branch/path here, like a GIT app plus the path.
+  const isGitCompose = source === "COMPOSE" && composePath != null;
+  const gitLike = source === "GIT" || isGitCompose;
+  const dirty = gitLike
+    ? url.trim() !== (gitUrl ?? "") || branch.trim() !== (gitBranch ?? "") || (isGitCompose && path.trim() !== (composePath ?? ""))
+    : img.trim() !== (image ?? "");
   const save = useMutation({
     mutationFn: () =>
-      isGit
-        ? api.setAppSource(id, { gitUrl: url.trim(), ...(branch.trim() ? { gitBranch: branch.trim() } : {}) })
+      gitLike
+        ? api.setAppSource(id, {
+            gitUrl: url.trim(),
+            ...(branch.trim() ? { gitBranch: branch.trim() } : {}),
+            ...(isGitCompose && path.trim() ? { composePath: path.trim() } : {}),
+          })
         : api.setAppSource(id, { image: img.trim() }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["app", id] });
@@ -1227,17 +1238,20 @@ function SourceCard({ id, source, gitUrl, gitBranch, image }: { id: string; sour
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.source")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.sourceDesc")}</p>
-      {isGit ? (
+      {gitLike ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input style={{ ...envField, flex: "1 1 320px" }} placeholder={t("apps.sourceGitUrl")} value={url} onChange={(e) => setUrl(e.target.value)} aria-label={t("apps.sourceGitUrl")} />
           <input style={{ ...envField, width: 180 }} placeholder={t("apps.sourceBranch")} value={branch} onChange={(e) => setBranch(e.target.value)} aria-label={t("apps.sourceBranch")} />
+          {isGitCompose && (
+            <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.composePath")} value={path} onChange={(e) => setPath(e.target.value)} aria-label={t("apps.composePath")} />
+          )}
         </div>
       ) : (
         <input style={{ ...envField, width: "100%" }} placeholder={t("apps.sourceImage")} value={img} onChange={(e) => setImg(e.target.value)} aria-label={t("apps.sourceImage")} />
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <div style={{ flex: 1 }} />
-        <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || (isGit ? !url.trim() : !img.trim())}>{t("apps.save")}</Btn>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || (gitLike ? !url.trim() : !img.trim())}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
     </Card>
@@ -2080,6 +2094,7 @@ function CredentialsCard({
   id,
   source,
   gitUrl,
+  composePath,
   hasGitToken,
   hasGitSshKey,
   gitSshPublicKey,
@@ -2089,6 +2104,7 @@ function CredentialsCard({
   id: string;
   source: string;
   gitUrl: string | null;
+  composePath: string | null;
   hasGitToken: boolean;
   hasGitSshKey: boolean;
   gitSshPublicKey: string | null;
@@ -2097,7 +2113,8 @@ function CredentialsCard({
 }) {
   const t = useT();
   const qc = useQueryClient();
-  const isGit = source === "GIT";
+  // A GIT build OR a git-sourced COMPOSE app both clone a repo → both manage a deploy key / git token here.
+  const isGit = source === "GIT" || (source === "COMPOSE" && composePath != null);
   // An ssh:// / git@ repo authenticates with a deploy key, not a token.
   const sshRepo = isGit && !!gitUrl && /^(ssh:\/\/|[\w.-]+@[\w.-]+:)/.test(gitUrl);
   const [gitToken, setGitToken] = useState("");

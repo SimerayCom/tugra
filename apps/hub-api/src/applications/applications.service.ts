@@ -729,8 +729,9 @@ export class ApplicationsService {
    *  public key to the repo as a read-only deploy key, then deploys. */
   async generateGitSshKey(userId: string, id: string): Promise<{ publicKey: string; fingerprint: string }> {
     const app = await this.requireWrite(userId, id);
-    if (app.source !== "GIT" || !isSshGitUrl(app.gitUrl ?? "")) {
-      throw new BadRequestException("a deploy key applies to a Git app with an ssh:// or git@ repository URL");
+    const gitSourced = app.source === "GIT" || (app.source === "COMPOSE" && !!app.composePath && !!app.gitUrl);
+    if (!gitSourced || !isSshGitUrl(app.gitUrl ?? "")) {
+      throw new BadRequestException("a deploy key applies to a Git-sourced app with an ssh:// or git@ repository URL");
     }
     const key = generateEd25519DeployKey();
     await this.prisma.application.update({
@@ -2245,19 +2246,26 @@ export class ApplicationsService {
   async setSource(userId: string, id: string, input: SetSourceInput): Promise<{ warnings: string[] }> {
     const app = await this.requireWrite(userId, id);
     if (app.isPreview) throw new BadRequestException("a preview app's source is controlled by its parent");
-    if (app.source === "COMPOSE") throw new BadRequestException("edit a compose app's source with the compose-file endpoint");
+    // A git-sourced compose app edits its repo/branch/path here (like a GIT app); a PASTED compose edits its
+    // YAML via the compose-file endpoint instead.
+    const gitCompose = app.source === "COMPOSE" && !!app.composePath && !!app.gitUrl;
+    if (app.source === "COMPOSE" && !gitCompose) throw new BadRequestException("edit a pasted compose app's source with the compose-file endpoint");
     const warnings: string[] = [];
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
 
     if (app.source === "IMAGE") {
-      if (input.gitUrl !== undefined || input.gitBranch !== undefined || input.gitSourceId !== undefined) {
+      if (input.gitUrl !== undefined || input.gitBranch !== undefined || input.gitSourceId !== undefined || input.composePath !== undefined) {
         throw new BadRequestException("this app deploys a prebuilt image — only `image` can be changed (the source type is fixed at create)");
       }
       if (input.image === undefined) throw new BadRequestException("provide an image reference");
       data.image = input.image;
     } else {
-      // GIT
+      // GIT build, or a git-sourced COMPOSE app (both clone a repo → same URL/branch/credential rules).
       if (input.image !== undefined) throw new BadRequestException("this app builds from Git — `image` does not apply (the source type is fixed at create)");
+      if (input.composePath !== undefined) {
+        if (!gitCompose) throw new BadRequestException("composePath only applies to a compose-from-git app");
+        data.composePath = input.composePath;
+      }
 
       const nextUrl = input.gitUrl !== undefined ? input.gitUrl : app.gitUrl ?? "";
       const prevHost = gitUrlHost(app.gitUrl ?? "");

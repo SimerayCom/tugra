@@ -20,6 +20,7 @@ function facts(over: Partial<ConfigGatingFacts> = {}): ConfigGatingFacts {
     domainKind: "custom",
     volumes: [{ name: "data", path: "/data" }],
     hasConfigMounts: false,
+    composePath: null,
     ...over,
   };
 }
@@ -118,9 +119,16 @@ describe("visibleConfigGroups", () => {
   it("source card edits non-compose apps and needs write + non-preview", () => {
     expect(group(facts(), "build")!.cardIds).toContain("source"); // GIT
     expect(group(facts({ source: "IMAGE" }), "build")!.cardIds).toContain("source");
-    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "build")?.cardIds ?? []).not.toContain("source");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "build")?.cardIds ?? []).not.toContain("source"); // pasted compose
     expect(group(facts({ isPreview: true }), "build")?.cardIds ?? []).not.toContain("source");
     expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("source");
+  });
+
+  it("source card ALSO edits a git-compose app (composePath set) — repo/branch/path", () => {
+    const gc = { source: "COMPOSE", composePath: "docker-compose.yml", domain: null, domainKind: null, volumes: [] } as const;
+    expect(group(facts(gc), "build")!.cardIds).toContain("source");
+    expect(group(facts({ ...gc, isPreview: true }), "build")?.cardIds ?? []).not.toContain("source");
+    expect(group(facts({ ...gc, canWrite: false }), "build")?.cardIds ?? []).not.toContain("source");
   });
 
   it("build card is GIT-only and needs write + non-preview", () => {

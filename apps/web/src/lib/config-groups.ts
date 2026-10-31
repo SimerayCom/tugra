@@ -63,9 +63,12 @@ export interface ConfigGatingFacts {
   domainKind: string | null;
   volumes: readonly unknown[];
   hasConfigMounts: boolean;
+  composePath: string | null; // set → a COMPOSE app sourced from git (editable source), vs a pasted compose
 }
 
 const notCompose = (a: ConfigGatingFacts) => a.source !== "COMPOSE";
+/** A COMPOSE app sourced from git edits its repo/branch/path like a GIT app (vs a pasted compose). */
+const isGitCompose = (a: ConfigGatingFacts) => a.source === "COMPOSE" && !!a.composePath;
 
 /**
  * Every card, in display order within its group. The visibility predicates are
@@ -79,7 +82,7 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "tags", group: "general", visible: (a) => !a.isPreview },
   // Build
   // Edit where the code/image comes from (GIT repo+branch / IMAGE ref) after create; COMPOSE edits via its file.
-  { id: "source", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
+  { id: "source", group: "build", visible: (a) => (notCompose(a) || isGitCompose(a)) && a.canWrite && !a.isPreview },
   // Edit how a Git app is built (build pack + its fields). GIT only.
   { id: "build", group: "build", visible: (a) => a.source === "GIT" && a.canWrite && !a.isPreview },
   { id: "buildConfig", group: "build", visible: notCompose },

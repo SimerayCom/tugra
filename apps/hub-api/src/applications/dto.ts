@@ -338,6 +338,7 @@ export const SetSourceSchema = z
     gitBranch: BRANCH.optional(),
     gitSourceId: z.string().min(1).nullable().optional(), // null = unlink the GitHub App
     image: IMAGE.optional(),
+    composePath: COMPOSE_PATH.optional(), // COMPOSE-from-git only: move to a different compose file in the repo
   })
   .strict()
   .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field to change" });
