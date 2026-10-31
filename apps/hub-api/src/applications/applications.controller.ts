@@ -56,6 +56,8 @@ import {
   SetBuildSchema,
   SetWatchPathsInput,
   SetWatchPathsSchema,
+  SetBasicAuthInput,
+  SetBasicAuthSchema,
   SetConfigMountContentInput,
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
@@ -735,6 +737,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDomainOptionsSchema)) body: SetDomainOptionsInput,
   ) {
     await this.apps.setDomainOptions(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/basic-auth")
+  @HttpCode(200)
+  @ApiZodBody(SetBasicAuthSchema)
+  async setBasicAuth(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetBasicAuthSchema)) body: SetBasicAuthInput,
+  ) {
+    await this.apps.setBasicAuth(user.userId, id, body.users);
     return { ok: true };
   }
 

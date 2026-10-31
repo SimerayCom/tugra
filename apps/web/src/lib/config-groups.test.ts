@@ -124,6 +124,13 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("source");
   });
 
+  it("basicAuth card needs a domain, write access and a non-preview app", () => {
+    expect(group(facts(), "domains")!.cardIds).toContain("basicAuth");
+    expect(group(facts({ domain: null }), "domains")?.cardIds ?? []).not.toContain("basicAuth");
+    expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("basicAuth");
+    expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("basicAuth");
+  });
+
   it("watchPaths card shows for a GIT or git-compose app (write, non-preview), not IMAGE/pasted-compose", () => {
     expect(group(facts(), "automation")!.cardIds).toContain("watchPaths"); // GIT
     expect(group(facts({ source: "COMPOSE", composePath: "docker-compose.yml", domain: null, domainKind: null, volumes: [] }), "automation")!.cardIds).toContain("watchPaths"); // git-compose

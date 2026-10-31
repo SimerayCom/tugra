@@ -940,6 +940,9 @@ model Application {
   // IP allowlist (CIDRs/addresses) → a Traefik ipallowlist middleware admitting only these source ranges.
   // Empty = open to all (the default). Applies on the next deploy.
   ipAllowlist    String[]    @default([])
+  // HTTP Basic Auth users as [{user, hash}] — hash is a Traefik-compatible bcrypt htpasswd hash (the
+  // plaintext password is never stored). Null/empty = no basic auth. Applies on the next deploy.
+  basicAuthUsers Json?
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"

@@ -322,6 +322,22 @@ export const SetDomainOptionsSchema = z
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 
+// HTTP Basic Auth users. The username can't hold `:` or `,` (the htpasswd `user:hash,user:hash` separators);
+// the password is hashed server-side (bcrypt) and NEVER stored, so only basic sanity limits apply. Replace-
+// set semantics: the whole list is sent each time; an empty array clears basic auth. Capped at 20 users.
+export const SetBasicAuthSchema = z.object({
+  users: z
+    .array(
+      z.object({
+        user: z.string().min(1).max(64).regex(/^[A-Za-z0-9._@-]+$/, "username may use letters, digits and . _ @ -"),
+        password: z.string().min(1).max(128).refine((s) => !/[\r\n\0]/.test(s), "password must be a single line"),
+      }).strict(),
+    )
+    .max(20)
+    .refine((us) => new Set(us.map((u) => u.user)).size === us.length, { message: "duplicate username" }),
+}).strict();
+export type SetBasicAuthInput = z.infer<typeof SetBasicAuthSchema>;
+
 // Upload a custom TLS cert (certType "custom"). The 64 KiB cap mirrors parseCustomCert's; the real
 // validation (PEM shape, key-to-cert match, domains/expiry) happens server-side in the service.
 export const SetCustomCertSchema = z.object({

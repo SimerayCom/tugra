@@ -907,6 +907,27 @@ describe("deploy-script", () => {
     expect(s).not.toContain("forwardauth");
   });
 
+  it("basic-auth adds a basicauth middleware; compose path escapes the bcrypt $ to $$, classic does not", () => {
+    const users = [{ user: "admin", hash: "$2b$10$abcDEF" }];
+    const classic = traefikLabels({ ...base, domain: "x.com", basicAuthUsers: users }).join("\n");
+    expect(classic).toContain(`-ba.basicauth.users=admin:$2b$10$abcDEF`); // literal $ (docker-run label is single-quoted)
+    const compose = traefikLabels({ ...base, domain: "x.com", basicAuthUsers: users }, { composeDollarEscape: true }).join("\n");
+    expect(compose).toContain(`-ba.basicauth.users=admin:$$2b$$10$$abcDEF`); // $ doubled for compose interpolation
+  });
+
+  it("basic-auth runs before forward-auth but after the ip-allowlist filter", () => {
+    const labels = traefikLabels({ ...base, domain: "x.com", forwardAuth: "https://a/v", ipAllowlist: ["10.0.0.0/8"], basicAuthUsers: [{ user: "u", hash: "$2b$h" }] });
+    const chain = labels.find((l) => l.includes(`routers.tugra_${base.id}.middlewares=`))!;
+    expect(chain.indexOf("-ip")).toBeLessThan(chain.indexOf("-ba"));
+    expect(chain.indexOf("-ba")).toBeLessThan(chain.indexOf("-fa"));
+  });
+
+  it("no basicauth label when there are no users (byte-identical)", () => {
+    const withEmpty = traefikLabels({ ...base, domain: "x.com", basicAuthUsers: [] }).join("\n");
+    expect(withEmpty).toBe(traefikLabels({ ...base, domain: "x.com" }).join("\n"));
+    expect(withEmpty).not.toContain("basicauth");
+  });
+
   it("ip-allowlist adds an ipallowlist middleware FIRST in the chain (before auth)", () => {
     const labels = traefikLabels({ ...base, domain: "x.com", securityHeaders: true, forwardAuth: "https://a/v", ipAllowlist: ["10.0.0.0/8", "1.2.3.4"] });
     const s = labels.join("\n");

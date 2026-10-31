@@ -1268,6 +1268,22 @@ describe("ApplicationsService", () => {
     await expect(make(gitPrisma, access, {} as AgentWsServer).setSource("u1", "app1", { composePath: "x.yml" })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("setBasicAuth bcrypt-hashes each password (Traefik-compatible) and never stores plaintext", async () => {
+    const bcrypt = await import("bcryptjs");
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1" }), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setBasicAuth("u1", "app1", [{ user: "admin", password: "hunter2" }]);
+    const stored = update.mock.calls[0][0].data.basicAuthUsers as { user: string; hash: string }[];
+    expect(stored[0].user).toBe("admin");
+    expect(stored[0].hash).toMatch(/^\$2[aby]\$/); // a bcrypt hash
+    expect(JSON.stringify(stored)).not.toContain("hunter2"); // plaintext never stored
+    expect(bcrypt.compareSync("hunter2", stored[0].hash)).toBe(true); // and it verifies
+    // empty list clears it (JsonNull)
+    await make(prisma, access, {} as AgentWsServer).setBasicAuth("u1", "app1", []);
+    expect(update.mock.calls[1][0].data.basicAuthUsers).toBeDefined(); // JsonNull sentinel, not a {user,hash}[]
+  });
+
   it("generateGitSshKey works for a git-compose (ssh) app and rejects a non-git-sourced one", async () => {
     const update = jest.fn().mockResolvedValue({});
     const sshGc = { ...gitApp, source: "COMPOSE", composePath: "docker-compose.yml", composeFile: null, gitUrl: "git@github.com:u/r.git" };

@@ -88,6 +88,9 @@ importers:
       argon2:
         specifier: ^0.44.0
         version: 0.44.0
+      bcryptjs:
+        specifier: 3.0.2
+        version: 3.0.2
       bullmq:
         specifier: ^5.78.1
         version: 5.78.1
@@ -1769,6 +1772,10 @@ packages:
   baseline-browser-mapping@2.11.30:
     resolution: {integrity: sha512-YJs6Pz17RMNv8HoyKREtCY38E3BV1nPkWVmIb+XN1uHC1Vqt3KZCH/uJH9ZKRoiKb/icZ6tvehyee6RZNbFfRA==}
     engines: {node: '>=6.0.0'}
+    hasBin: true
+
+  bcryptjs@3.0.2:
+    resolution: {integrity: sha512-k38b3XOZKv60C4E2hVsXTolJWfkGRMbILBIe2IBITXciy5bOsTKot5kDrf3ZfufQtQOUN5mXceUEpU1rTl9Uog==}
     hasBin: true
 
   bidi-js@1.0.3:
@@ -5895,6 +5902,8 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.30: {}
+
+  bcryptjs@3.0.2: {}
 
   bidi-js@1.0.3:
     dependencies:
