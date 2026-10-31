@@ -104,4 +104,23 @@ describe("diffSnapshots", () => {
     // unchanged content → no entry
     expect(diffSnapshots(mk("x=1"), mk("x=1"))).toEqual([]);
   });
+
+  it("diffs the compose path, extra domains and per-service domains", () => {
+    // composePath is a scalar field
+    expect(diffSnapshots(buildConfigSnapshot(spec({ composePath: "a.yml" })), buildConfigSnapshot(spec({ composePath: "b.yml" })))).toContainEqual(
+      { field: "composePath", kind: "changed", before: "a.yml", after: "b.yml" },
+    );
+    // extra domains are a set
+    const ed = diffSnapshots(buildConfigSnapshot(spec({ extraDomains: ["a.com", "b.com"] })), buildConfigSnapshot(spec({ extraDomains: ["a.com", "c.com"] })));
+    expect(ed).toContainEqual({ field: "extraDomain.c.com", kind: "added", after: "c.com" });
+    expect(ed).toContainEqual({ field: "extraDomain.b.com", kind: "removed", before: "b.com" });
+    // per-service domains diff by hostname → service:port
+    const sd = diffSnapshots(
+      buildConfigSnapshot(spec({ serviceDomains: [{ service: "web", hostname: "x.com", port: 80 }] })),
+      buildConfigSnapshot(spec({ serviceDomains: [{ service: "web", hostname: "x.com", port: 8080 }] })),
+    );
+    expect(sd).toContainEqual({ field: "serviceDomain.x.com", kind: "changed", before: "web:80", after: "web:8080" });
+    // no routing change → no entries
+    expect(diffSnapshots(buildConfigSnapshot(spec({ extraDomains: ["a.com"] })), buildConfigSnapshot(spec({ extraDomains: ["a.com"] })))).toEqual([]);
+  });
 });

@@ -18,6 +18,7 @@ export interface ConfigSnapshot {
   buildCommand?: string | null;
   outputDir?: string | null;
   composeFile?: string | null;
+  composePath?: string | null;
   healthCmd?: string | null;
   memoryMb?: number | null;
   cpus?: number | null;
@@ -28,6 +29,10 @@ export interface ConfigSnapshot {
   domain?: string | null;
   domainRedirect?: "www" | "root" | null;
   securityHeaders?: boolean;
+  /** Extra alias hostnames routed to the primary service (sorted; diffed as a set). */
+  extraDomains?: string[];
+  /** Per-service compose domains: hostname → the service + port it routes to (diffed by hostname). */
+  serviceDomains?: { service: string; hostname: string; port: number }[];
   volumes: { name: string; path: string }[];
   /** config mount target → 12-hex fingerprint of its (placeholder) content — never stored verbatim. */
   configMounts?: { target: string; mode?: string; fp: string }[];
@@ -59,6 +64,7 @@ const SCALAR_FIELDS = [
   "buildCommand",
   "outputDir",
   "composeFile",
+  "composePath",
   "healthCmd",
   "memoryMb",
   "cpus",
@@ -90,6 +96,7 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     buildCommand: spec.buildCommand ?? null,
     outputDir: spec.outputDir ?? null,
     composeFile: spec.composeFile ?? null,
+    composePath: spec.composePath ?? null,
     healthCmd: spec.healthCmd ?? null,
     memoryMb: spec.memoryMb ?? null,
     cpus: spec.cpus ?? null,
@@ -100,6 +107,10 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     domain: spec.domain ?? null,
     domainRedirect: spec.domainRedirect ?? null,
     securityHeaders: spec.securityHeaders,
+    ...(spec.extraDomains && spec.extraDomains.length ? { extraDomains: [...spec.extraDomains].sort() } : {}),
+    ...(spec.serviceDomains && spec.serviceDomains.length
+      ? { serviceDomains: spec.serviceDomains.map((d) => ({ service: d.service, hostname: d.hostname, port: d.port })) }
+      : {}),
     volumes: (spec.volumes ?? []).map((v) => ({ name: v.name, path: v.path })),
     ...(spec.configMounts && spec.configMounts.length
       ? { configMounts: spec.configMounts.map((m) => ({ target: m.target, mode: m.mode, fp: fingerprint(m.content) })) }
@@ -145,6 +156,23 @@ export function diffSnapshots(
   }
   for (const [name] of pv) {
     if (!nv.has(name)) changes.push({ field: `volume.${name}`, kind: "removed" });
+  }
+
+  // extra domains: a hostname set (added/removed aliases).
+  const pd = new Set(prev.extraDomains ?? []);
+  const nd = new Set(next.extraDomains ?? []);
+  for (const h of nd) if (!pd.has(h)) changes.push({ field: `extraDomain.${h}`, kind: "added", after: h });
+  for (const h of pd) if (!nd.has(h)) changes.push({ field: `extraDomain.${h}`, kind: "removed", before: h });
+
+  // per-service domains: compare by hostname → "service:port".
+  const psd = new Map((prev.serviceDomains ?? []).map((d) => [d.hostname, `${d.service}:${d.port}`]));
+  const nsd = new Map((next.serviceDomains ?? []).map((d) => [d.hostname, `${d.service}:${d.port}`]));
+  for (const [host, v] of nsd) {
+    if (!psd.has(host)) changes.push({ field: `serviceDomain.${host}`, kind: "added", after: v });
+    else if (psd.get(host) !== v) changes.push({ field: `serviceDomain.${host}`, kind: "changed", before: psd.get(host), after: v });
+  }
+  for (const [host, v] of psd) {
+    if (!nsd.has(host)) changes.push({ field: `serviceDomain.${host}`, kind: "removed", before: v });
   }
 
   // config mounts: compare by target → content fingerprint (+ mode); content is never revealed.
