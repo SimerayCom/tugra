@@ -141,6 +141,7 @@ export const AppViewSchema = z.object({
   image: z.string().nullable(),
   gitUrl: z.string().nullable(),
   gitBranch: z.string().nullable(),
+  gitCommit: z.string().nullable(), // pinned commit SHA; null = deploy the branch HEAD
   gitSourceId: z.string().nullable(), // linked GitHub App installation (private-repo token minting), if any
   buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
   buildCommand: z.string().nullable(),
@@ -718,6 +719,7 @@ export class ApplicationsService {
           image: src.image,
           gitUrl: src.gitUrl,
           gitBranch: src.gitBranch,
+          gitCommit: src.gitCommit, // clone keeps the pinned commit (same repo)
           gitSourceId: src.gitSourceId,
           buildType: src.buildType,
           dockerfilePath: src.dockerfilePath,
@@ -1100,7 +1102,7 @@ export class ApplicationsService {
       // Re-sync the head branch (a PR can be retargeted) before redeploying.
       preview = await this.prisma.application.update({
         where: { id: existing.id },
-        data: { gitBranch: headRef },
+        data: { gitBranch: headRef, gitCommit: null }, // a preview tracks the PR head, never a pinned commit
       });
     } else {
       // Copy the parent's env MINUS any keys it marks preview-excluded, so prod secrets never land in an
@@ -1121,6 +1123,7 @@ export class ApplicationsService {
           gitUrl: parent.gitUrl,
           gitSourceId: parent.gitSourceId, // keep the GitHub-App link so a private-repo preview can mint a clone token
           gitBranch: headRef,
+          // gitCommit deliberately not copied: a preview builds the PR head, not the parent's pinned commit.
           buildType: parent.buildType,
           dockerfilePath: parent.dockerfilePath,
           dockerBuildTarget: parent.dockerBuildTarget,
@@ -2488,7 +2491,7 @@ export class ApplicationsService {
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
 
     if (app.source === "IMAGE") {
-      if (input.gitUrl !== undefined || input.gitBranch !== undefined || input.gitSourceId !== undefined || input.composePath !== undefined) {
+      if (input.gitUrl !== undefined || input.gitBranch !== undefined || input.gitCommit !== undefined || input.gitSourceId !== undefined || input.composePath !== undefined) {
         throw new BadRequestException("this app deploys a prebuilt image — only `image` can be changed (the source type is fixed at create)");
       }
       if (input.image === undefined) throw new BadRequestException("provide an image reference");
@@ -2522,7 +2525,15 @@ export class ApplicationsService {
 
       if (input.gitUrl !== undefined) data.gitUrl = input.gitUrl;
       if (input.gitBranch !== undefined) data.gitBranch = input.gitBranch;
+      if (input.gitCommit !== undefined) data.gitCommit = input.gitCommit;
       if (nextSourceId !== undefined) data.gitSourceId = nextSourceId;
+      // A pinned commit belongs to the old repo — if the URL changes and the caller didn't set a new pin in
+      // the same call, drop it so a later deploy doesn't fail checking out a SHA that isn't in the new repo.
+      const urlChanged = input.gitUrl !== undefined && input.gitUrl !== (app.gitUrl ?? "");
+      if (urlChanged && input.gitCommit === undefined && app.gitCommit) {
+        data.gitCommit = null;
+        warnings.push("git_commit_cleared");
+      }
 
       // A host change (or https->ssh) must drop the old host's credentials.
       if (hostChanged || (nowSsh && !wasSsh)) {
@@ -3533,6 +3544,7 @@ export class ApplicationsService {
       image: app.image,
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
+      gitCommit: app.gitCommit,
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
       dockerBuildTarget: app.dockerBuildTarget,
@@ -3742,6 +3754,7 @@ export class ApplicationsService {
       image: app.image,
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
+      gitCommit: app.gitCommit,
       gitSourceId: app.gitSourceId,
       buildType: app.buildType,
       buildCommand: app.buildCommand,

@@ -1051,6 +1051,7 @@ export interface Application {
   image: string | null;
   gitUrl: string | null;
   gitBranch: string | null;
+  gitCommit: string | null; // pinned commit SHA; null = deploy the branch HEAD
   gitSourceId: string | null;
   buildType: BuildType;
   buildCommand: string | null;

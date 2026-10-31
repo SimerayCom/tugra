@@ -371,7 +371,7 @@ export default function AppDetailPage() {
     ),
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
-    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} image={appData.image} composePath={appData.composePath} />,
+    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} gitCommit={appData.gitCommit} image={appData.image} composePath={appData.composePath} />,
     build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} />,
     buildConfig: () => (
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
@@ -1368,19 +1368,20 @@ function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
 // Edit WHERE the app's code/image comes from, after create. GIT -> repo URL + branch; IMAGE -> image ref.
 // (Git credentials themselves live in the Credentials card.) Applies on the next deploy; a host change that
 // resets a stored credential is reported back as a warning.
-function SourceCard({ id, source, gitUrl, gitBranch, image, composePath }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; image: string | null; composePath: string | null }) {
+function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePath }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; gitCommit: string | null; image: string | null; composePath: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const [url, setUrl] = useState(gitUrl ?? "");
   const [branch, setBranch] = useState(gitBranch ?? "");
+  const [commit, setCommit] = useState(gitCommit ?? "");
   const [img, setImg] = useState(image ?? "");
   const [path, setPath] = useState(composePath ?? "docker-compose.yml");
   // A COMPOSE-from-git app (composePath set) edits its repo/branch/path here, like a GIT app plus the path.
   const isGitCompose = source === "COMPOSE" && composePath != null;
   const gitLike = source === "GIT" || isGitCompose;
   const dirty = gitLike
-    ? url.trim() !== (gitUrl ?? "") || branch.trim() !== (gitBranch ?? "") || (isGitCompose && path.trim() !== (composePath ?? ""))
+    ? url.trim() !== (gitUrl ?? "") || branch.trim() !== (gitBranch ?? "") || commit.trim() !== (gitCommit ?? "") || (isGitCompose && path.trim() !== (composePath ?? ""))
     : img.trim() !== (image ?? "");
   const save = useMutation({
     mutationFn: () =>
@@ -1388,6 +1389,7 @@ function SourceCard({ id, source, gitUrl, gitBranch, image, composePath }: { id:
         ? api.setAppSource(id, {
             gitUrl: url.trim(),
             ...(branch.trim() ? { gitBranch: branch.trim() } : {}),
+            gitCommit: commit.trim() || null, // empty → unpin (deploy branch HEAD); else pin to this SHA
             ...(isGitCompose && path.trim() ? { composePath: path.trim() } : {}),
           })
         : api.setAppSource(id, { image: img.trim() }),
@@ -1407,6 +1409,7 @@ function SourceCard({ id, source, gitUrl, gitBranch, image, composePath }: { id:
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input style={{ ...envField, flex: "1 1 320px" }} placeholder={t("apps.sourceGitUrl")} value={url} onChange={(e) => setUrl(e.target.value)} aria-label={t("apps.sourceGitUrl")} />
           <input style={{ ...envField, width: 180 }} placeholder={t("apps.sourceBranch")} value={branch} onChange={(e) => setBranch(e.target.value)} aria-label={t("apps.sourceBranch")} />
+          <input className="mono" style={{ ...envField, width: 180 }} placeholder={t("apps.sourceCommit")} value={commit} onChange={(e) => setCommit(e.target.value)} aria-label={t("apps.sourceCommit")} />
           {isGitCompose && (
             <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.composePath")} value={path} onChange={(e) => setPath(e.target.value)} aria-label={t("apps.composePath")} />
           )}

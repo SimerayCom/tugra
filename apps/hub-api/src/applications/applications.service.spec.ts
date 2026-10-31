@@ -1272,6 +1272,22 @@ describe("ApplicationsService", () => {
     await expect(make(gitPrisma, access, {} as AgentWsServer).setSource("u1", "app1", { composePath: "x.yml" })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("setSource pins a commit, and clears a stale pin when the repo URL changes without re-pinning", async () => {
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    // pin a commit (no URL change)
+    const update1 = jest.fn().mockResolvedValue({});
+    const p1 = { application: { findUnique: jest.fn().mockResolvedValue(gitApp), update: update1 }, deployment: noActiveDeploy } as unknown as PrismaService;
+    await make(p1, access, {} as AgentWsServer).setSource("u1", "app1", { gitCommit: "abc1234" });
+    expect(update1.mock.calls[0][0].data.gitCommit).toBe("abc1234");
+    // changing the URL (same host, so no token churn) without re-pinning clears the stale pin + warns
+    const pinned = { ...gitApp, gitCommit: "abc1234" };
+    const update2 = jest.fn().mockResolvedValue({});
+    const p2 = { application: { findUnique: jest.fn().mockResolvedValue(pinned), update: update2 }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const res = await make(p2, access, {} as AgentWsServer).setSource("u1", "app1", { gitUrl: "https://github.com/acme/other.git" });
+    expect(update2.mock.calls[0][0].data.gitCommit).toBeNull();
+    expect(res.warnings).toContain("git_commit_cleared");
+  });
+
   it("setBasicAuth bcrypt-hashes each password (Traefik-compatible) and never stores plaintext", async () => {
     const bcrypt = await import("bcryptjs");
     const update = jest.fn().mockResolvedValue({});
@@ -2945,7 +2961,7 @@ describe("ApplicationsService", () => {
     await svc.upsertPreview(parentApp as never, 5, "feat-v2");
     expect(create).not.toHaveBeenCalled();
     expect(appUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2" } }),
+      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2", gitCommit: null } }),
     );
   });
 

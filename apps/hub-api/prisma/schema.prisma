@@ -919,6 +919,9 @@ model Application {
   image          String?
   gitUrl         String?
   gitBranch      String?      @default("main")
+  // Pin deploys to a specific commit SHA (must be reachable from gitBranch). Null = deploy the branch HEAD
+  // (byte-identical shallow clone). When set, the clone fetches full branch history + checks out this SHA.
+  gitCommit      String?
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
   dockerBuildTarget String?   // DOCKERFILE build: multi-stage target stage (docker build --target)
