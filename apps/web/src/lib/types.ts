@@ -366,6 +366,8 @@ export interface ServerView {
   cleanupCron: string | null;
   cleanupThresholdPct: number | null;
   cleanupVolumes: boolean;
+  description: string | null;
+  timezone: string | null;
   lastCleanupAt: string | null;
   lastSeenAt: string | null;
   createdAt: string;

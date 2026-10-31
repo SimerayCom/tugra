@@ -219,6 +219,7 @@ export default function ServerDetailPage() {
           {server.canWrite && <NetworkCard id={id} server={server} />}
           <TunnelCard id={id} server={server} />
           {server.canWrite && <CapabilitiesCard id={id} server={server} />}
+          {server.canWrite && <ServerDetailsCard id={id} server={server} />}
           {server.canWrite && <CleanupCard id={id} server={server} />}
           {server.canWrite && <DiscoverAdoptCard id={id} />}
           {server.canWrite && <DeleteServerCard id={id} server={server} />}
@@ -644,6 +645,41 @@ function LogDrainCard({ id }: { id: string }) {
         <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !endpoint}>{t("logdrains.add")}</Btn>
       </div>
       {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
+    </Card>
+  );
+}
+
+function ServerDetailsCard({ id, server }: { id: string; server: ServerView }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [desc, setDesc] = useState(server.description ?? "");
+  const [tz, setTz] = useState(server.timezone ?? "");
+  useEffect(() => {
+    setDesc(server.description ?? "");
+    setTz(server.timezone ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server.id]);
+  const save = useMutation({
+    mutationFn: () => api.setServerDetails(id, { description: desc.trim() || null, timezone: tz.trim() || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
+    meta: { successMessage: t("servers.saved") },
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("servers.details")}</div>
+      <textarea
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        placeholder={t("servers.descriptionPlaceholder")}
+        aria-label={t("servers.description")}
+        spellCheck={false}
+        style={{ width: "100%", minHeight: 56, maxHeight: 140, resize: "vertical", fontSize: 13, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+        <input value={tz} onChange={(e) => setTz(e.target.value)} placeholder="Europe/Istanbul" aria-label={t("servers.timezone")} spellCheck={false} style={{ ...cleanupField, minWidth: 200 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
+      </div>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "6px 0 0" }}>{t("servers.timezoneHint")}</p>
     </Card>
   );
 }

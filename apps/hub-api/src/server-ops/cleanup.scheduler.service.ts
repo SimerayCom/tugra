@@ -51,7 +51,7 @@ export class CleanupSchedulerService
     });
     for (const s of servers) {
       // A cron expression wins over the plain interval when both are set.
-      if (s.cleanupCron) await this.scheduleCron(s.id, s.cleanupCron);
+      if (s.cleanupCron) await this.scheduleCron(s.id, s.cleanupCron, s.timezone ?? undefined);
       else await this.schedule(s.id, (s.cleanupIntervalHours ?? 24) * 3600);
     }
     this.logger.log(`scheduled ${servers.length} docker cleanup(s)`);
@@ -63,11 +63,12 @@ export class CleanupSchedulerService
     await this.queue.add(`cleanup:${serverId}`, { serverId }, { repeat: { every: intervalSec * 1000 } });
   }
 
-  /** Schedule cleanup on a cron pattern (e.g. "0 3 * * *" — 03:00 daily) instead of a fixed interval. */
-  async scheduleCron(serverId: string, cron: string): Promise<void> {
+  /** Schedule cleanup on a cron pattern (e.g. "0 3 * * *" — 03:00 daily) instead of a fixed interval. An
+   *  optional IANA timezone makes the cron fire in the server's local time (BullMQ repeat tz). */
+  async scheduleCron(serverId: string, cron: string, tz?: string): Promise<void> {
     if (!this.queue) return;
     await this.unschedule(serverId);
-    await this.queue.add(`cleanup:${serverId}`, { serverId }, { repeat: { pattern: cron } });
+    await this.queue.add(`cleanup:${serverId}`, { serverId }, { repeat: { pattern: cron, ...(tz ? { tz } : {}) } });
   }
 
   async unschedule(serverId: string): Promise<void> {

@@ -22,6 +22,7 @@ import { ServerStatus } from "@prisma/client";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { Paginated } from "../common/pagination.decorator";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
+import { isValidIana } from "../common/timezone";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { parseDate, str } from "../audit/audit.controller";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -45,6 +46,14 @@ import {
 
 // trim() first so a whitespace-only name fails min(1) instead of persisting a blank name.
 const RenameServerSchema = z.object({ name: z.string().trim().min(1).max(100) });
+
+// Operator metadata: a free-text note + an IANA timezone (validated at runtime). null clears either.
+const SetServerDetailsSchema = z
+  .object({
+    description: z.string().trim().max(1000).nullable().optional(),
+    timezone: z.string().trim().max(64).nullable().optional().refine((tz) => tz == null || isValidIana(tz), "invalid IANA timezone"),
+  })
+  .refine((d) => d.description !== undefined || d.timezone !== undefined, { message: "provide description and/or timezone" });
 
 @ApiTags("servers")
 @ApiSecurity("pat")
@@ -184,6 +193,18 @@ export class ServersController {
     @Body(new ZodValidationPipe(RenameServerSchema)) body: z.infer<typeof RenameServerSchema>,
   ) {
     await this.servers.rename(user.userId, id, body.name);
+    return { ok: true };
+  }
+
+  @Put(":id/details")
+  @HttpCode(200)
+  @ApiZodBody(SetServerDetailsSchema)
+  async setDetails(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetServerDetailsSchema)) body: z.infer<typeof SetServerDetailsSchema>,
+  ) {
+    await this.servers.setServerDetails(user.userId, id, body);
     return { ok: true };
   }
 

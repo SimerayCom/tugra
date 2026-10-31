@@ -81,6 +81,8 @@ export const ServerViewSchema = z.object({
   cleanupCron: z.string().nullable(),
   cleanupThresholdPct: z.number().nullable(),
   cleanupVolumes: z.boolean(),
+  description: z.string().nullable(),
+  timezone: z.string().nullable(),
   lastCleanupAt: z.date().nullable(),
   lastSeenAt: z.date().nullable(),
   createdAt: z.date(),
@@ -355,6 +357,21 @@ export class ServersService {
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
     await this.prisma.server.update({ where: { id }, data: { name: name.trim() } });
     await this.audit.log({ actor: userId, action: "server.rename", target: id });
+  }
+
+  /** Update operator metadata (free-text description + IANA timezone). The timezone is consumed by the
+   *  cleanup cron scheduler (read at hub boot and on the next cleanup-config save), so a tz change takes
+   *  effect on the next cleanup-config save or hub restart rather than instantly — kept decoupled on
+   *  purpose so this module does not depend on the server-ops cleanup scheduler. */
+  async setServerDetails(userId: string, id: string, patch: { description?: string | null; timezone?: string | null }): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id } });
+    if (!server) throw new NotFoundException("server not found");
+    await this.access.requirePermission(userId, server.teamId, "servers:manage");
+    const data: Prisma.ServerUncheckedUpdateInput = {};
+    if (patch.description !== undefined) data.description = patch.description?.trim() || null;
+    if (patch.timezone !== undefined) data.timezone = patch.timezone || null;
+    await this.prisma.server.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "server.details.update", target: id });
   }
 
   /** The set of agent capabilities the hub is allowed to sign commands for on this server.
@@ -651,6 +668,8 @@ export class ServersService {
       cleanupCron?: string | null;
       cleanupThresholdPct?: number | null;
       cleanupVolumes?: boolean;
+      description?: string | null;
+      timezone?: string | null;
       lastCleanupAt?: Date | null;
       lastSeenAt: Date | null;
       createdAt: Date;
@@ -696,6 +715,8 @@ export class ServersService {
       cleanupCron: s.cleanupCron ?? null,
       cleanupThresholdPct: s.cleanupThresholdPct ?? null,
       cleanupVolumes: s.cleanupVolumes ?? false,
+      description: s.description ?? null,
+      timezone: s.timezone ?? null,
       lastCleanupAt: s.lastCleanupAt ?? null,
       lastSeenAt: s.lastSeenAt,
       createdAt: s.createdAt,

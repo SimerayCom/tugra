@@ -1261,6 +1261,9 @@ export const api = {
   renameServer(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
   },
+  setServerDetails(id: string, body: { description?: string | null; timezone?: string | null }) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/details`, { method: "PUT", body: JSON.stringify(body) });
+  },
   importDatabaseFromUrl(id: string, body: { url: string; gzip: boolean; encrypted: boolean; encryptionKey?: string }) {
     return apiFetch<{ ok: true }>(`/databases/${id}/backups/import-from-url`, { method: "POST", body: JSON.stringify(body) });
   },
