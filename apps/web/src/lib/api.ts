@@ -993,6 +993,9 @@ export const api = {
   setAppBuild(id: string, body: { buildType: BuildType; dockerfilePath?: string | null; buildCommand?: string | null; outputDir?: string | null; baseDirectory?: string | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/build`, { method: "PUT", body: JSON.stringify(body) });
   },
+  setAppWatchPaths(id: string, watchPaths: string[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/watch-paths`, { method: "PUT", body: JSON.stringify({ watchPaths }) });
+  },
 
   // ── bulk ops ──
   runBulk(serverIds: string[], command: string) {

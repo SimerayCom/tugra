@@ -1039,6 +1039,7 @@ export interface Application {
   buildCommand: string | null;
   dockerfilePath: string | null;
   baseDirectory: string | null;
+  watchPaths: string[];
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;

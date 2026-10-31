@@ -124,6 +124,15 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("source");
   });
 
+  it("watchPaths card shows for a GIT or git-compose app (write, non-preview), not IMAGE/pasted-compose", () => {
+    expect(group(facts(), "automation")!.cardIds).toContain("watchPaths"); // GIT
+    expect(group(facts({ source: "COMPOSE", composePath: "docker-compose.yml", domain: null, domainKind: null, volumes: [] }), "automation")!.cardIds).toContain("watchPaths"); // git-compose
+    expect(group(facts({ source: "IMAGE" }), "automation")?.cardIds ?? []).not.toContain("watchPaths");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "automation")?.cardIds ?? []).not.toContain("watchPaths"); // pasted compose
+    expect(group(facts({ isPreview: true }), "automation")?.cardIds ?? []).not.toContain("watchPaths");
+    expect(group(facts({ canWrite: false }), "automation")?.cardIds ?? []).not.toContain("watchPaths");
+  });
+
   it("source card ALSO edits a git-compose app (composePath set) — repo/branch/path", () => {
     const gc = { source: "COMPOSE", composePath: "docker-compose.yml", domain: null, domainKind: null, volumes: [] } as const;
     expect(group(facts(gc), "build")!.cardIds).toContain("source");

@@ -54,6 +54,8 @@ import {
   SetSourceSchema,
   SetBuildInput,
   SetBuildSchema,
+  SetWatchPathsInput,
+  SetWatchPathsSchema,
   SetConfigMountContentInput,
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
@@ -461,6 +463,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetBuildSchema)) body: SetBuildInput,
   ) {
     await this.apps.setBuild(user.userId, id, body);
+    return { ok: true };
+  }
+
+  @Put(":id/watch-paths")
+  @HttpCode(200)
+  @ApiZodBody(SetWatchPathsSchema)
+  async setWatchPaths(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetWatchPathsSchema)) body: SetWatchPathsInput,
+  ) {
+    await this.apps.setWatchPaths(user.userId, id, body.watchPaths);
     return { ok: true };
   }
 

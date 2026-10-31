@@ -7335,6 +7335,12 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "watchPaths": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "outputDir": {
                         "type": "string",
                         "nullable": true
@@ -7849,6 +7855,7 @@
                       "buildCommand",
                       "dockerfilePath",
                       "baseDirectory",
+                      "watchPaths",
                       "outputDir",
                       "composeFile",
                       "composePath",
@@ -8188,6 +8195,12 @@
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "watchPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "outputDir": {
                       "type": "string",
@@ -8703,6 +8716,7 @@
                     "buildCommand",
                     "dockerfilePath",
                     "baseDirectory",
+                    "watchPaths",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -9110,6 +9124,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "watchPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -9624,6 +9644,7 @@
                     "buildCommand",
                     "dockerfilePath",
                     "baseDirectory",
+                    "watchPaths",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -10035,6 +10056,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "watchPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -10549,6 +10576,7 @@
                     "buildCommand",
                     "dockerfilePath",
                     "baseDirectory",
+                    "watchPaths",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -13391,6 +13419,120 @@
                 },
                 "required": [
                   "buildType"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/watch-paths": {
+      "put": {
+        "operationId": "ApplicationsController_setWatchPaths",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "watchPaths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^!?[A-Za-z0-9_./*?{}\\[\\],-]+$"
+                    },
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "watchPaths"
                 ],
                 "additionalProperties": false
               }
@@ -16509,6 +16651,12 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "watchPaths": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "outputDir": {
                           "type": "string",
                           "nullable": true
@@ -17023,6 +17171,7 @@
                         "buildCommand",
                         "dockerfilePath",
                         "baseDirectory",
+                        "watchPaths",
                         "outputDir",
                         "composeFile",
                         "composePath",
@@ -17292,6 +17441,12 @@
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "watchPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "outputDir": {
                       "type": "string",
@@ -17807,6 +17962,7 @@
                     "buildCommand",
                     "dockerfilePath",
                     "baseDirectory",
+                    "watchPaths",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -18146,6 +18302,12 @@
                       "baseDirectory": {
                         "type": "string",
                         "nullable": true
+                      },
+                      "watchPaths": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       },
                       "outputDir": {
                         "type": "string",
@@ -18661,6 +18823,7 @@
                       "buildCommand",
                       "dockerfilePath",
                       "baseDirectory",
+                      "watchPaths",
                       "outputDir",
                       "composeFile",
                       "composePath",
@@ -19070,6 +19233,12 @@
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "watchPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "outputDir": {
                       "type": "string",
@@ -19585,6 +19754,7 @@
                     "buildCommand",
                     "dockerfilePath",
                     "baseDirectory",
+                    "watchPaths",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -21020,6 +21190,12 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "watchPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -21534,6 +21710,7 @@
                     "buildCommand",
                     "dockerfilePath",
                     "baseDirectory",
+                    "watchPaths",
                     "outputDir",
                     "composeFile",
                     "composePath",

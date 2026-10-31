@@ -92,3 +92,41 @@ describe("WebhooksService.handle — [skip ci]", () => {
     expect(deployFromWebhook).toHaveBeenCalledWith("a1");
   });
 });
+
+describe("WebhooksService.handle — watch paths", () => {
+  const appRow = { id: "a1", source: "GIT", gitBranch: "main", webhookToken: "tok", webhookSecret: "enc", watchPaths: ["apps/api/**"] };
+  const pushWith = (files: string[]) =>
+    JSON.stringify({ ref: "refs/heads/main", head_commit: { message: "feat: x" }, commits: [{ added: files, modified: [], removed: [] }] });
+  const run = (body: string, app = appRow) => {
+    const deployFromWebhook = jest.fn().mockResolvedValue(undefined);
+    const svc = make({ application: { findUnique: jest.fn().mockResolvedValue(app) } } as unknown as PrismaService, { deployFromWebhook });
+    return { deployFromWebhook, p: svc.handle("tok", { "x-hub-signature-256": sign(body) }, body) };
+  };
+
+  it("deploys when a changed file matches a watch path", async () => {
+    const { deployFromWebhook, p } = run(pushWith(["apps/api/src/x.ts"]));
+    expect((await p).deployed).toBe(true);
+    expect(deployFromWebhook).toHaveBeenCalledWith("a1");
+  });
+
+  it("skips (acknowledged) when no changed file matches", async () => {
+    const { deployFromWebhook, p } = run(pushWith(["apps/web/src/x.ts"]));
+    const r = await p;
+    expect(r.deployed).toBe(false);
+    expect(r.reason).toMatch(/watched path/);
+    expect(deployFromWebhook).not.toHaveBeenCalled();
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.deploy.skipped" }));
+  });
+
+  it("fail-open: a push with no changed-file list deploys anyway", async () => {
+    const { deployFromWebhook, p } = run(JSON.stringify({ ref: "refs/heads/main", head_commit: { message: "feat: x" } })); // no commits[]
+    expect((await p).deployed).toBe(true);
+    expect(deployFromWebhook).toHaveBeenCalledWith("a1");
+  });
+
+  it("no watch paths → deploys on any push (backward-compatible)", async () => {
+    const { deployFromWebhook, p } = run(pushWith(["anything/x.ts"]), { ...appRow, watchPaths: [] });
+    expect((await p).deployed).toBe(true);
+    expect(deployFromWebhook).toHaveBeenCalledWith("a1");
+  });
+});

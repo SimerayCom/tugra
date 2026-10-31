@@ -50,6 +50,7 @@ export type ConfigCardId =
   | "scheduledTasks"
   | "deployHooks"
   | "webhooks"
+  | "watchPaths"
   | "preview";
 
 /** The subset of an app's detail the gating predicates read. `AppDetail` satisfies this. */
@@ -119,6 +120,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // non-compose, non-preview) apps only — hide the card where execution is not wired.
   { id: "deployHooks", group: "automation", visible: (a) => notCompose(a) && !a.clusterId && !a.isPreview },
   { id: "webhooks", group: "automation", visible: (a) => !!a.webhookToken },
+  // Watch paths gate which pushes deploy — git-sourced apps only (a GIT build or a compose-from-git app).
+  { id: "watchPaths", group: "automation", visible: (a) => (a.source === "GIT" || isGitCompose(a)) && a.canWrite && !a.isPreview },
   { id: "preview", group: "automation", visible: (a) => !a.isPreview && a.source === "GIT" },
 ];
 

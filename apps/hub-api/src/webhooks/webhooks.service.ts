@@ -17,6 +17,7 @@ import {
   verifyGithubSignature,
   verifyGitlabToken,
 } from "./webhook-verify";
+import { parseChangedFiles, pushMatchesWatchPaths } from "./watch-paths";
 import type { Application } from "@prisma/client";
 
 type Headers = Record<string, string | string[] | undefined>;
@@ -156,6 +157,23 @@ export class WebhooksService {
       if (!ref) return { deployed: false, reason: "no ref (ignored)" };
       if (!refMatchesBranch(ref, app.gitBranch)) {
         return { deployed: false, reason: "branch mismatch (ignored)" };
+      }
+    }
+
+    // Watch paths: when the app restricts deploys to certain globs, only a push that TOUCHES one of them
+    // deploys (a monorepo otherwise rebuilds every app on every push). Fail-open — a push whose payload
+    // lists no changed files (truncated / fileless) deploys as before, so a real change is never skipped.
+    const watchPaths = app.watchPaths ?? [];
+    if (watchPaths.length > 0) {
+      const changed = parseChangedFiles(payload);
+      if (changed && !pushMatchesWatchPaths(changed, watchPaths)) {
+        await this.audit.log({
+          actor: "webhook",
+          action: "app.deploy.skipped",
+          target: app.id,
+          meta: { trigger: "git-push", ref: ref ?? null, reason: "no watched path changed" },
+        });
+        return { deployed: false, reason: "no watched path changed (ignored)" };
       }
     }
 

@@ -141,6 +141,7 @@ export const AppViewSchema = z.object({
   buildCommand: z.string().nullable(),
   dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
+  watchPaths: z.array(z.string()), // monorepo deploy-trigger globs (empty = deploy on every push)
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   composePath: z.string().nullable(), // COMPOSE-from-git: repo-relative path to the compose file (null = pasted compose)
@@ -653,6 +654,7 @@ export class ApplicationsService {
           baseDirectory: src.baseDirectory,
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
+          watchPaths: src.watchPaths, // keep the clone's monorepo deploy-trigger globs
           composeFile: src.composeFile,
           composePath: src.composePath, // keep a cloned git-compose app git-sourced
           healthCmd: src.healthCmd,
@@ -2413,6 +2415,17 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null } });
   }
 
+  /** Replace the app's watch paths (monorepo deploy-trigger globs). Git-sourced apps only (a GIT build or a
+   *  COMPOSE-from-git app) — watch paths gate webhook pushes, which an IMAGE or pasted-COMPOSE app never has.
+   *  An empty array clears them (back to deploy-on-every-push). Applies to the NEXT push. */
+  async setWatchPaths(userId: string, id: string, watchPaths: string[]): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const gitSourced = app.source === "GIT" || (app.source === "COMPOSE" && !!app.gitUrl);
+    if (!gitSourced) throw new BadRequestException("watch paths apply only to a git-sourced app (a Git build or a compose-from-git app)");
+    await this.prisma.application.update({ where: { id }, data: { watchPaths } });
+    await this.audit.log({ actor: userId, action: "app.watch_paths.update", target: id, meta: { count: watchPaths.length } });
+  }
+
   /** Config mounts (serviceName/target/mode + current content) of a COMPOSE app, for the editor UI.
    *  Content holds `${KEY}` placeholders at rest (resolved only at deploy) but can also hold literal
    *  text a user typed, so the route is gated `read:secrets`. Empty when the app declares none. */
@@ -3479,6 +3492,7 @@ export class ApplicationsService {
       buildCommand: app.buildCommand,
       dockerfilePath: app.dockerfilePath,
       baseDirectory: app.baseDirectory,
+      watchPaths: app.watchPaths ?? [],
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       composePath: app.composePath,

@@ -885,6 +885,10 @@ model Application {
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
   baseDirectory  String? // monorepo: repo-relative subdirectory used as the build context/root (GIT apps)
+  // Watch paths: glob patterns (repo-relative, leading `!` = exclude). When non-empty, a git push only
+  // triggers a deploy if a changed file matches — so a monorepo doesn't rebuild every app on every push.
+  // Empty = deploy on every push (the default / backward-compatible behaviour).
+  watchPaths     String[] @default([])
   buildCommand   String?
   outputDir      String?
   composeFile    String?

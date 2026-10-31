@@ -461,6 +461,7 @@ export default function AppDetailPage() {
           </div>
         </Card>
       ) : null,
+    watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />,
   };
 
@@ -769,6 +770,41 @@ function ContainerPickerModal({ id, onClose, onPick }: { id: string; onClose: ()
         </div>
       )}
     </Modal>
+  );
+}
+
+/** Edit a git-sourced app's watch paths: one glob per line (leading `!` = exclude). Empty = deploy on every
+ *  push. When set, only a push that touches a matching file triggers a deploy (monorepo-friendly). */
+function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: string[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [text, setText] = useState(watchPaths.join("\n"));
+  useEffect(() => { setText(watchPaths.join("\n")); }, [watchPaths]);
+  const parse = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
+  const dirty = parse(text).join("\n") !== watchPaths.join("\n");
+  const save = useMutation({
+    mutationFn: () => api.setAppWatchPaths(id, parse(text)),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.saved"), "success"); },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.watchPaths")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.watchPathsDesc")}</p>
+      <textarea
+        className="mono"
+        value={text}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={"apps/api/**\npackages/shared/**\n!**/*.md"}
+        aria-label={t("apps.watchPaths")}
+        style={{ width: "100%", minHeight: 96, maxHeight: 240, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty}>{t("apps.save")}</Btn>
+      </div>
+    </Card>
   );
 }
 

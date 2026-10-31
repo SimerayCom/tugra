@@ -1,4 +1,22 @@
-import { CreateAppSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema } from "./dto";
+import { CreateAppSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+
+describe("SetWatchPathsSchema — monorepo deploy-trigger globs", () => {
+  const ok = (watchPaths: unknown[]) => SetWatchPathsSchema.safeParse({ watchPaths });
+  it("accepts glob patterns incl. negation + braces, and an empty array (clear)", () => {
+    expect(ok(["apps/api/**", "!**/*.md", "packages/*/src/**", "src/**/*.{ts,tsx}"]).success).toBe(true);
+    expect(ok([]).success).toBe(true);
+  });
+  it("rejects whitespace / shell metachars / newlines / over-length / too many / unknown keys", () => {
+    expect(ok(["apps api/**"]).success).toBe(false); // space
+    expect(ok(["apps/$(evil)/**"]).success).toBe(false); // $()
+    expect(ok(["apps/**;rm -rf"]).success).toBe(false); // ; and space
+    expect(ok(["a\n b"]).success).toBe(false); // newline
+    expect(ok([""]).success).toBe(false); // empty pattern
+    expect(ok(["a".repeat(257)]).success).toBe(false); // too long
+    expect(ok(Array.from({ length: 51 }, () => "a/**")).success).toBe(false); // > 50
+    expect(SetWatchPathsSchema.safeParse({ watchPaths: ["a/**"], foo: 1 }).success).toBe(false); // strict
+  });
+});
 
 describe("CreateAppSchema — COMPOSE source (pasted vs git)", () => {
   const compose = (over: Record<string, unknown>) =>
