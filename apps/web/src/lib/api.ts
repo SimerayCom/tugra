@@ -637,6 +637,15 @@ export const api = {
   getProxyLogs(id: string, tail?: number) {
     return apiFetch<{ output: string }>(`/servers/${id}/proxy/logs${tail ? `?tail=${tail}` : ""}`);
   },
+  listProxyDynamicConfigs(id: string) {
+    return apiFetch<{ configs: { name: string; content: string; updatedAt: string }[] }>(`/servers/${id}/proxy/dynamic`);
+  },
+  putProxyDynamicConfig(id: string, name: string, content: string) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/proxy/dynamic/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ content }) });
+  },
+  deleteProxyDynamicConfig(id: string, name: string) {
+    return apiFetch<{ ok: true }>(`/servers/${id}/proxy/dynamic/${encodeURIComponent(name)}`, { method: "DELETE" });
+  },
   getTunnelStatus(id: string) {
     return apiFetch<TunnelView>(`/servers/${id}/tunnel`);
   },

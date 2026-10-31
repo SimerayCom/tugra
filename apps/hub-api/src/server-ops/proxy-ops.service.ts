@@ -7,15 +7,21 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { parse as parseYaml } from "yaml";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ProxyConfigService } from "../proxy-config/proxy-config.service";
 import {
+  buildProxyDynamicRemoveScript,
+  buildProxyDynamicWriteScript,
   buildProxyLogsScript,
   buildProxyRestartScript,
   buildProxySetupScript,
   buildProxyStatusScript,
   buildProxyStopScript,
 } from "../deploy/deploy-script";
+import { PROXY_DYNAMIC_NAME_RE } from "./dto";
+
+const MAX_DYNAMIC_CONFIGS = 25;
 
 const PROXY_TIMEOUT_MS = 60_000;
 
@@ -90,6 +96,58 @@ export class ProxyOpsService {
     await this.requireWrite(userId, serverId);
     const r = await this.agentWs.sendCommand(serverId, buildProxyLogsScript(tail), "deploy", PROXY_TIMEOUT_MS);
     return { output: r.output.slice(0, 65536) };
+  }
+
+  // ── Dynamic configuration files (Coolify "Proxy > Dynamic Configurations" parity) ──────────────────────
+  // Operator-authored Traefik dynamic-config YAML, written to the proxy's /dynamic as `user-<name>.yml` (so it
+  // never collides with the Tugra-managed panel.yml / tls-*.yml). Server-admin scoped (servers:ops) — a server
+  // owner already controls the whole box, so this is NOT the per-app label-hijack surface (that stays blocked).
+
+  async listDynamicConfigs(userId: string, serverId: string): Promise<{ configs: { name: string; content: string; updatedAt: Date }[] }> {
+    await this.requireRead(userId, serverId);
+    const configs = await this.prisma.proxyDynamicConfig.findMany({
+      where: { serverId },
+      orderBy: { name: "asc" },
+      select: { name: true, content: true, updatedAt: true },
+    });
+    return { configs };
+  }
+
+  async putDynamicConfig(userId: string, serverId: string, name: string, content: string): Promise<void> {
+    await this.requireWrite(userId, serverId);
+    if (!PROXY_DYNAMIC_NAME_RE.test(name)) throw new BadRequestException("invalid config name");
+    // Validate it parses as a YAML mapping (Traefik config is an http:/tls:/tcp: map) BEFORE touching the
+    // proxy — a syntax error is caught here with a clear 400 instead of silently taking routes offline on
+    // Traefik's next reload.
+    let doc: unknown;
+    try {
+      doc = parseYaml(content);
+    } catch (e) {
+      throw new BadRequestException(`invalid YAML: ${e instanceof Error ? e.message : "parse error"}`);
+    }
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+      throw new BadRequestException("the config must be a YAML mapping (e.g. start with `http:` or `tls:`)");
+    }
+    const existing = await this.prisma.proxyDynamicConfig.findUnique({ where: { serverId_name: { serverId, name } }, select: { id: true } });
+    if (!existing && (await this.prisma.proxyDynamicConfig.count({ where: { serverId } })) >= MAX_DYNAMIC_CONFIGS) {
+      throw new BadRequestException(`too many dynamic config files (max ${MAX_DYNAMIC_CONFIGS})`);
+    }
+    // Write to the proxy FIRST — if the agent is offline or the write fails, nothing is persisted (fail-closed).
+    const r = await this.agentWs.sendCommand(serverId, buildProxyDynamicWriteScript(name, content), "deploy", PROXY_TIMEOUT_MS);
+    if (r.exitCode !== 0) throw new BadRequestException(`writing the dynamic config failed: ${r.output.trim().slice(-500)}`);
+    await this.prisma.proxyDynamicConfig.upsert({
+      where: { serverId_name: { serverId, name } },
+      create: { serverId, name, content },
+      update: { content },
+    });
+    await this.audit.log({ actor: userId, action: "server.proxy.dynamic.put", target: serverId, meta: { name } });
+  }
+
+  async deleteDynamicConfig(userId: string, serverId: string, name: string): Promise<void> {
+    await this.requireWrite(userId, serverId);
+    await this.prisma.proxyDynamicConfig.deleteMany({ where: { serverId, name } });
+    await this.agentWs.sendCommand(serverId, buildProxyDynamicRemoveScript(name), "deploy", PROXY_TIMEOUT_MS);
+    await this.audit.log({ actor: userId, action: "server.proxy.dynamic.delete", target: serverId, meta: { name } });
   }
 
   private async statusAfter(serverId: string): Promise<{ status: ProxyStatus }> {

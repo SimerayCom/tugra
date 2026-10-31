@@ -83,3 +83,15 @@ export const UpdateLogDrainSchema = z.object({
   enabled: z.boolean().optional(),
 });
 export type UpdateLogDrainInput = z.infer<typeof UpdateLogDrainSchema>;
+
+// Operator-authored Traefik dynamic-config file (Coolify "Proxy > Dynamic Configurations" parity). The name
+// is a slug (lowercase alnum + `-`, no dots/slashes/extension) — the file on disk is `user-<name>.yml`, so it
+// can never collide with a Tugra-managed file. Content is validated as parseable YAML in the service.
+export const PROXY_DYNAMIC_NAME_RE = /^[a-z0-9][a-z0-9-]{0,48}$/;
+export const ProxyDynamicNameSchema = z
+  .string()
+  .regex(PROXY_DYNAMIC_NAME_RE, "name must be a lowercase slug (a-z, 0-9, -), 1–49 chars, no extension");
+export const SetProxyDynamicConfigSchema = z
+  .object({ content: z.string().min(1).max(64_000) })
+  .strict();
+export type SetProxyDynamicConfigInput = z.infer<typeof SetProxyDynamicConfigSchema>;

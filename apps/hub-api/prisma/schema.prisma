@@ -354,10 +354,28 @@ model Server {
   metricRollups        MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
   logDrains            LogDrain[]
+  proxyDynamicConfigs  ProxyDynamicConfig[]
   tunnel               ServerTunnel?
   createdAt            DateTime     @default(now())
 
   @@index([clusterId])
+}
+
+// Operator-authored Traefik dynamic-config files (Coolify "Proxy > Dynamic Configurations" parity). Each row
+// is one YAML file written to the proxy's /dynamic dir (as `user-<name>.yml`, namespaced so it never collides
+// with the Tugra-managed panel.yml / tls-*.yml). Server-admin scoped (servers:ops); referenced from an app's
+// router via a middleware name with the `@file` suffix.
+model ProxyDynamicConfig {
+  id        String   @id @default(cuid())
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId  String
+  name      String   // slug (no extension); the file on disk is `user-<name>.yml`
+  content   String   // Traefik dynamic-config YAML (validated as parseable YAML before write)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([serverId, name])
+  @@index([serverId])
 }
 
 // A named group of a team's servers (fleet organization + rollup + group-scoped ops). Model-agnostic

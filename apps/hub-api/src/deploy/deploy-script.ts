@@ -1016,6 +1016,31 @@ export function certPreludeFor(app: AppSpec): string[] {
   ];
 }
 
+/** Disk file name for an operator-authored Traefik dynamic-config file. Namespaced with a `user-` prefix so
+ *  it can never collide with a Tugra-managed file (panel.yml, tls-*.yml) in the same /dynamic dir. `name` is a
+ *  DTO-validated slug (lowercase alnum + `-`), so it is shell- and path-safe. */
+export function proxyUserDynamicFile(name: string): string {
+  return `user-${name}.yml`;
+}
+
+/** Write an operator-authored Traefik dynamic-config file into the proxy's /dynamic (atomic hidden-temp→mv, so
+ *  the file provider never reads a half-written file). Mirrors the custom-cert write. The content is piped via
+ *  base64, so it can't inject shell. */
+export function buildProxyDynamicWriteScript(name: string, content: string): string {
+  const file = proxyUserDynamicFile(name);
+  return [
+    "set -e",
+    `mkdir -p ${PROXY_DYNAMIC_DIR}`,
+    `printf %s ${shq(b64(content))} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${file}.tmp`,
+    `mv ${PROXY_DYNAMIC_DIR}/.${file}.tmp ${PROXY_DYNAMIC_DIR}/${file}`,
+  ].join("\n");
+}
+
+/** Remove an operator-authored dynamic-config file from the proxy's /dynamic. */
+export function buildProxyDynamicRemoveScript(name: string): string {
+  return `rm -f ${PROXY_DYNAMIC_DIR}/${proxyUserDynamicFile(name)}`;
+}
+
 /** The `docker run -d --name <name> ...` line shared by every deploy strategy —
  *  identical flags (net/labels/env/limits/volumes/image) regardless of the container
  *  name, so a rolling container gets the exact same routing as the canonical one. */
