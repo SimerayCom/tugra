@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   GoneException,
@@ -17,6 +18,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { TeamDefaultsService } from "./team-defaults.service";
 import { webBaseUrl } from "../common/web-url";
 import { filterByQuery } from "../common/query-filter";
+import { validatePngIcon } from "../common/png-icon";
 
 const MANAGE: Role[] = [Role.OWNER, Role.ADMIN];
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -26,6 +28,7 @@ export interface TeamView {
   name: string;
   role: Role;
   memberCount: number;
+  iconUpdatedAt: Date | null;
 }
 export interface TeamMemberView {
   userId: string;
@@ -89,6 +92,7 @@ export class TeamsService {
       name: t.name,
       role: roles.get(t.id)!,
       memberCount: t._count.memberships,
+      iconUpdatedAt: t.iconUpdatedAt,
     }));
     return filterByQuery(views, q, (t) => [t.name, t.role]);
   }
@@ -101,7 +105,7 @@ export class TeamsService {
     if (!team) throw new NotFoundException("team not found");
     const role = await this.access.teamRole(userId, id);
     if (!role) throw new ForbiddenException("not a member of this team");
-    return { id: team.id, name: team.name, role, memberCount: team._count.memberships };
+    return { id: team.id, name: team.name, role, memberCount: team._count.memberships, iconUpdatedAt: team.iconUpdatedAt };
   }
 
   async create(userId: string, name: string): Promise<TeamView> {
@@ -116,13 +120,48 @@ export class TeamsService {
       return created;
     });
     await this.audit.log({ actor: userId, action: "team.create", target: team.id });
-    return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1 };
+    return { id: team.id, name: team.name, role: Role.OWNER, memberCount: 1, iconUpdatedAt: null };
   }
 
   async rename(userId: string, id: string, name: string): Promise<void> {
     await this.access.requireRole(userId, id, MANAGE);
     await this.prisma.team.update({ where: { id }, data: { name } });
     await this.audit.log({ actor: userId, action: "team.rename", target: id });
+  }
+
+  /** Raw icon bytes for the GET endpoint (any team member). 404 when the team has no custom icon. */
+  async getIcon(userId: string, id: string): Promise<{ mime: string; data: Buffer }> {
+    if (!(await this.access.teamRole(userId, id))) throw new ForbiddenException("not a member of this team");
+    const icon = await this.prisma.teamIcon.findUnique({ where: { teamId: id } });
+    if (!icon) throw new NotFoundException("no icon");
+    return { mime: icon.mime, data: Buffer.from(icon.data) };
+  }
+
+  /** Store (or replace) the team's custom icon from a base64-encoded PNG. OWNER/ADMIN + validated. */
+  async setIcon(userId: string, id: string, pngBase64: string): Promise<void> {
+    await this.access.requireRole(userId, id, MANAGE);
+    const buf = Buffer.from(pngBase64, "base64"); // tolerant decode; the PNG check below is the real gate
+    if (buf.length === 0) throw new BadRequestException("icon is empty");
+    validatePngIcon(buf);
+    await this.prisma.$transaction([
+      this.prisma.teamIcon.upsert({
+        where: { teamId: id },
+        create: { teamId: id, mime: "image/png", data: buf, sizeBytes: buf.length },
+        update: { mime: "image/png", data: buf, sizeBytes: buf.length },
+      }),
+      this.prisma.team.update({ where: { id }, data: { iconUpdatedAt: new Date() } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "team.icon.set", target: id, meta: { sizeBytes: buf.length } });
+  }
+
+  /** Remove the team's custom icon (idempotent — a no-op when none is set). OWNER/ADMIN. */
+  async deleteIcon(userId: string, id: string): Promise<void> {
+    await this.access.requireRole(userId, id, MANAGE);
+    await this.prisma.$transaction([
+      this.prisma.teamIcon.deleteMany({ where: { teamId: id } }), // deleteMany: removing a missing icon is a no-op
+      this.prisma.team.update({ where: { id }, data: { iconUpdatedAt: null } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "team.icon.delete", target: id });
   }
 
   async remove(userId: string, id: string): Promise<void> {

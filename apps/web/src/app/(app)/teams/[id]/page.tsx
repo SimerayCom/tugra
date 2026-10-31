@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../../../lib/api";
+import { Users, CloudUpload, Trash2 } from "lucide-react";
+import { api, teamIconUrl } from "../../../../lib/api";
+import { cropToPngBase64 } from "../../../../lib/icon";
 import type { Role, TeamMember, Project, TeamRole } from "../../../../lib/types";
 import { TEAM_PERMISSIONS } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
+import { useToast } from "../../../../components/toast";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { IconBtn } from "../../../../components/icon-btn";
@@ -92,6 +95,8 @@ export default function TeamDetailPage() {
         actions={isOwner ? <Btn variant="danger" onClick={async () => { if (await confirm({ title: t("teams.deleteTeam"), body: t("teams.deleteConfirm"), danger: true, confirmText: team.name })) del.mutate(); }}>{t("teams.deleteTeam")}</Btn> : undefined}
       />
       {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 12 }}>{(del.error as Error).message}</div>}
+
+      <TeamIconCard id={id} name={team.name} iconUpdatedAt={team.iconUpdatedAt ?? null} canManage={canManage} onChanged={() => { qc.invalidateQueries({ queryKey: ["team", id] }); qc.invalidateQueries({ queryKey: ["teams"] }); }} />
 
       {canManage && (
         <Card style={{ padding: 16, marginBottom: 16 }}>
@@ -302,5 +307,68 @@ function MemberAccessEditor({
       <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("teams.saveAccess")}</Btn>
       {save.isSuccess && <span style={{ fontSize: 11, color: "var(--c-g)", marginLeft: 8 }}>{t("teams.accessSaved")}</span>}
     </div>
+  );
+}
+
+/** A team's custom icon: a square PNG (OWNER/ADMIN upload), shown with a users fallback. Mirrors the app/
+ *  project icon cards — the browser center-crops to a small PNG before upload, shrinking to fit the 64KB cap. */
+function TeamIconCard({ id, name, iconUpdatedAt, canManage, onChanged }: { id: string; name: string; iconUpdatedAt: string | null; canManage: boolean; onChanged: () => void }) {
+  const t = useT();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [processing, setProcessing] = useState(false);
+  const url = teamIconUrl(id, iconUpdatedAt);
+
+  const save = useMutation({
+    mutationFn: (data: string) => api.setTeamIcon(id, data),
+    onSuccess: () => { onChanged(); toast(t("teams.iconUploaded"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("teams.iconFailed"), "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteTeamIcon(id),
+    onSuccess: () => { onChanged(); toast(t("teams.iconRemoved"), "success"); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("teams.iconFailed"), "error"),
+  });
+
+  const onPick = async (file: File) => {
+    setProcessing(true);
+    try {
+      let data = "";
+      for (const side of [128, 96, 64]) {
+        data = await cropToPngBase64(file, side);
+        if (data.length * 0.75 <= 64 * 1024) break;
+      }
+      if (data.length * 0.75 > 64 * 1024) { toast(t("teams.iconTooLarge"), "error"); return; }
+      save.mutate(data);
+    } catch {
+      toast(t("teams.iconReadFailed"), "error");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const busy = processing || save.isPending || remove.isPending;
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <span style={{ width: 48, height: 48, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+          {url ? <img src={url} alt="" width={48} height={48} style={{ objectFit: "cover" }} /> : <Users size={22} color="var(--c-tx3)" />}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
+          <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("teams.iconHint")}</div>
+        </div>
+        {canManage && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn variant="ghost" icon={CloudUpload} onClick={() => fileRef.current?.click()} disabled={busy}>
+              {busy ? "…" : url ? t("teams.iconReplace") : t("teams.iconUpload")}
+            </Btn>
+            {url && <Btn variant="ghost" icon={Trash2} onClick={() => remove.mutate()} disabled={busy}>{t("teams.iconRemove")}</Btn>}
+          </div>
+        )}
+      </div>
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void onPick(f); }} />
+    </Card>
   );
 }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Users } from "lucide-react";
-import { api } from "../../../lib/api";
+import { api, teamIconUrl } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
@@ -78,6 +78,13 @@ export default function TeamsPage() {
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
           {teams.map((tm) => (
             <Link key={tm.id} href={`/teams/${tm.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+              <span style={{ width: 32, height: 32, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+                {teamIconUrl(tm.id, tm.iconUpdatedAt) ? (
+                  <img src={teamIconUrl(tm.id, tm.iconUpdatedAt)!} alt="" width={32} height={32} style={{ objectFit: "cover" }} />
+                ) : (
+                  <Users size={16} color="var(--c-a)" />
+                )}
+              </span>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{tm.name}</div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("teams.members", { n: tm.memberCount ?? 0 })}</div>

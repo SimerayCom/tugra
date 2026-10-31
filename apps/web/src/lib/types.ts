@@ -19,6 +19,7 @@ export interface Team {
   name: string;
   role: Role;
   memberCount?: number;
+  iconUpdatedAt?: string | null;
 }
 
 export interface TeamMember {
