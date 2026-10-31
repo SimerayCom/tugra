@@ -233,7 +233,9 @@ describe("Applications / deploy (e2e)", () => {
       .post(`/apps/${appRes.body.id}/deploy`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    await sleep(300);
+    // Deploy is fire-and-forget (the POST returns before the async claim→execute→sendCommand runs), so poll
+    // for the build step instead of a fixed sleep that races a slow CI runner.
+    await waitForCommand(commands, "nixpacks build");
 
     const all = commands.join("\n");
     expect(all).toContain("git clone");
@@ -252,7 +254,8 @@ describe("Applications / deploy (e2e)", () => {
 
     commands.length = 0;
     await request(app.getHttpServer()).post(`/apps/${appRes.body.id}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
-    await sleep(300);
+    // Fire-and-forget deploy → poll for the build step rather than a fixed sleep (which raced on CI).
+    await waitForCommand(commands, "docker build -t");
     const all = commands.join("\n");
     expect(all).toContain("git clone");
     expect(all).toContain("Dockerfile.tugra");
