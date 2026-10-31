@@ -112,6 +112,11 @@ export function teamIconUrl(id: string, iconUpdatedAt: string | null | undefined
   return `${API_BASE}/teams/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
 }
 
+export function databaseIconUrl(id: string, iconUpdatedAt: string | null): string | null {
+  if (!iconUpdatedAt) return null;
+  return `${API_BASE}/databases/${id}/icon?v=${encodeURIComponent(iconUpdatedAt)}`;
+}
+
 // The hub's PUBLIC absolute origin — ONLY for URLs that hit the hub DIRECTLY (not through the SPA's
 // same-origin "/api" proxy): the terminal WebSocket upgrade and webhook URLs shown to paste externally.
 // Resolution: (1) a baked NEXT_PUBLIC_API_URL wins (explicit override; build-from-source installs set it);
@@ -1186,6 +1191,12 @@ export const api = {
   },
   deleteTeamIcon(id: string) {
     return apiFetch<{ ok: true }>(`/teams/${id}/icon`, { method: "DELETE" });
+  },
+  setDatabaseIcon(id: string, data: string) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/icon`, { method: "PUT", body: JSON.stringify({ data }) });
+  },
+  deleteDatabaseIcon(id: string) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/icon`, { method: "DELETE" });
   },
   regenerateWebhook(id: string) {
     return apiFetch<Application>(`/apps/${id}/webhook/regenerate`, {

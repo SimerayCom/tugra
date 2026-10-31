@@ -15,6 +15,7 @@ import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource, resolvePermissions } from "../common/team-access.service";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { filterByQuery } from "../common/query-filter";
+import { validatePngIcon } from "../common/png-icon";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { LogStreamService, type LogStreamEvent } from "../agent-gateway/log-stream.service";
 import { ContainerMetricsService, type AppContainerMetrics } from "../metrics/container-metrics.service";
@@ -78,6 +79,7 @@ export const DatabaseViewSchema = z.object({
   tags: z.array(z.string()),
   role: z.nativeEnum(Role),
   canWrite: z.boolean(),
+  iconUpdatedAt: z.date().nullable(), // set when a custom icon was uploaded (list-view cache-bust marker)
   createdAt: z.date(),
 });
 export type DatabaseView = z.infer<typeof DatabaseViewSchema>;
@@ -493,6 +495,41 @@ export class DatabasesService {
     return db;
   }
 
+  /** Raw icon bytes for the GET endpoint (read-authorized). 404 when the database has no custom icon. */
+  async getIcon(userId: string, id: string): Promise<{ mime: string; data: Buffer }> {
+    await this.require(userId, id);
+    const icon = await this.prisma.databaseIcon.findUnique({ where: { databaseId: id } });
+    if (!icon) throw new NotFoundException("no icon");
+    return { mime: icon.mime, data: Buffer.from(icon.data) };
+  }
+
+  /** Store (or replace) the database's custom icon from a base64-encoded PNG. Write-authorized + validated. */
+  async setIcon(userId: string, id: string, pngBase64: string): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    const buf = Buffer.from(pngBase64, "base64"); // tolerant decode; the PNG check below is the real gate
+    if (buf.length === 0) throw new BadRequestException("icon is empty");
+    validatePngIcon(buf);
+    await this.prisma.$transaction([
+      this.prisma.databaseIcon.upsert({
+        where: { databaseId: id },
+        create: { databaseId: id, mime: "image/png", data: buf, sizeBytes: buf.length },
+        update: { mime: "image/png", data: buf, sizeBytes: buf.length },
+      }),
+      this.prisma.database.update({ where: { id }, data: { iconUpdatedAt: new Date() } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "database.icon.set", target: db.id, meta: { sizeBytes: buf.length } });
+  }
+
+  /** Remove the database's custom icon (idempotent — a no-op when none is set). Write-authorized. */
+  async deleteIcon(userId: string, id: string): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    await this.prisma.$transaction([
+      this.prisma.databaseIcon.deleteMany({ where: { databaseId: id } }), // deleteMany: removing a missing icon is a no-op
+      this.prisma.database.update({ where: { id }, data: { iconUpdatedAt: null } }),
+    ]);
+    await this.audit.log({ actor: userId, action: "database.icon.delete", target: db.id });
+  }
+
   /** Effective 'databases' write permission for a member in one team (single membership read). */
   private async canWriteDatabases(userId: string, teamId: string): Promise<boolean> {
     const m = await this.prisma.membership.findUnique({
@@ -543,6 +580,7 @@ export class DatabasesService {
       tags: db.tags,
       role,
       canWrite,
+      iconUpdatedAt: db.iconUpdatedAt,
       createdAt: db.createdAt,
     };
   }

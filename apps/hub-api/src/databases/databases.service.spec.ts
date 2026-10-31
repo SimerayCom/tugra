@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { Role } from "@prisma/client";
 import { DatabasesService } from "./databases.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -441,5 +442,63 @@ describe("DatabasesService", () => {
     expect(view.canWrite).toBe(false);
     expect(view.connectionUri).toBeNull();
     expect(view.password).toBeNull();
+  });
+});
+
+describe("DatabasesService - custom icon", () => {
+  const IEND = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+  function pngB64(w = 128, h = 128): string {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0);
+    ihdr.write("IHDR", 4, "ascii");
+    ihdr.writeUInt32BE(w, 8);
+    ihdr.writeUInt32BE(h, 12);
+    return Buffer.concat([sig, ihdr, IEND]).toString("base64");
+  }
+  const dbRow = { id: "db1", teamId: "t1", environmentId: "e1" };
+  const okAccess = {
+    teamRole: jest.fn().mockResolvedValue(Role.OWNER),
+    requirePermission: jest.fn().mockResolvedValue(undefined),
+    requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+  };
+
+  it("setIcon validates the PNG and persists the icon + marker", async () => {
+    const upsert = jest.fn().mockResolvedValue({});
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbRow), update },
+      databaseIcon: { upsert },
+      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    } as unknown as PrismaService;
+    await make(prisma, okAccess).setIcon("u1", "db1", pngB64());
+    expect(upsert).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: expect.any(Date) } }));
+  });
+
+  it("setIcon rejects a non-PNG payload", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(dbRow) } } as unknown as PrismaService;
+    await expect(make(prisma, okAccess).setIcon("u1", "db1", Buffer.from("not a png").toString("base64"))).rejects.toThrow(/PNG/);
+  });
+
+  it("getIcon 404s when the database has no icon", async () => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbRow) },
+      databaseIcon: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    await expect(make(prisma, okAccess).getIcon("u1", "db1")).rejects.toThrow(/no icon/);
+  });
+
+  it("deleteIcon is idempotent and clears the marker", async () => {
+    const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(dbRow), update },
+      databaseIcon: { deleteMany },
+      $transaction: jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+    } as unknown as PrismaService;
+    await make(prisma, okAccess).deleteIcon("u1", "db1");
+    expect(deleteMany).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
   });
 });

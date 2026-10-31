@@ -217,6 +217,16 @@ model TeamIcon {
   updatedAt  DateTime @updatedAt
 }
 
+// A database's custom icon (square PNG), kept off the Database row (Database.iconUpdatedAt is the marker).
+model DatabaseIcon {
+  database   Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  databaseId String   @id
+  mime       String   // always "image/png" (anything else is rejected at upload)
+  data       Bytes
+  sizeBytes  Int
+  updatedAt  DateTime @updatedAt
+}
+
 model Environment {
   id        String   @id @default(cuid())
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -1221,6 +1231,8 @@ model Database {
   hostPort    Int?
   credentials String
   status      DbStatus @default(NEW)
+  iconUpdatedAt DateTime?    // list-view marker so the database list never reads the icon bytes
+  icon         DatabaseIcon?
   healthCmd      String?
   memoryMb       Int?
   cpus           Float?

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Database } from "lucide-react";
-import { api } from "../../../lib/api";
+import { api, databaseIconUrl } from "../../../lib/api";
 import { dbColor, engineLabel } from "../../../lib/databases";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, Spinner } from "../../../components/ui";
@@ -84,7 +84,11 @@ export default function DatabasesPage() {
                 />
                 <Link href={`/databases/${d.id}`} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, textDecoration: "none", color: "var(--c-tx)" }}>
                   <span style={{ width: 9, height: 9, borderRadius: "50%", background: dbColor(d.status), flexShrink: 0 }} />
-                  <TemplateLogo logo={ENGINE_LOGO[d.engine]} slug={d.engine} name={engineLabel(d.engine)} size={22} />
+                  {databaseIconUrl(d.id, d.iconUpdatedAt) ? (
+                    <img src={databaseIconUrl(d.id, d.iconUpdatedAt)!} alt="" width={22} height={22} style={{ borderRadius: 4, objectFit: "cover", flexShrink: 0 }} />
+                  ) : (
+                    <TemplateLogo logo={ENGINE_LOGO[d.engine]} slug={d.engine} name={engineLabel(d.engine)} size={22} />
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
                       {d.name}
