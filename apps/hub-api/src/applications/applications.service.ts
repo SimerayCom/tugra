@@ -227,6 +227,7 @@ export const AppViewSchema = z.object({
   webhookSecret: z.string().nullable(),
   isPreview: z.boolean(),
   previewEnabled: z.boolean(),
+  previewExcludeKeys: z.array(z.string()),
   prNumber: z.number().nullable(),
   parentAppId: z.string().nullable(),
   tags: z.array(z.string()),
@@ -1031,6 +1032,13 @@ export class ApplicationsService {
         data: { gitBranch: headRef },
       });
     } else {
+      // Copy the parent's env MINUS any keys it marks preview-excluded, so prod secrets never land in an
+      // ephemeral preview. No exclusions → reuse the parent blob verbatim (byte-identical to before).
+      const exclude = parent.previewExcludeKeys ?? [];
+      const previewEnvEnc =
+        exclude.length && parent.envEnc
+          ? this.crypto.encrypt(JSON.stringify(Object.fromEntries(Object.entries(this.appEnv(parent)).filter(([k]) => !exclude.includes(k)))))
+          : parent.envEnc;
       preview = await this.prisma.application.create({
         data: {
           name: `${parent.name} · PR #${prNumber}`,
@@ -1063,7 +1071,7 @@ export class ApplicationsService {
           gitSshPublicKey: parent.gitSshPublicKey,
           registryAuthEnc: parent.registryAuthEnc,
           env: {} as Prisma.InputJsonValue,
-          envEnc: parent.envEnc,
+          envEnc: previewEnvEnc,
           containerPort: parent.containerPort,
           domain: previewDomain,
           https: parent.https,
@@ -1115,15 +1123,16 @@ export class ApplicationsService {
     );
   }
 
-  /** Toggle per-PR previews on a parent app — requires a domain to build URLs. */
-  async setPreviewEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
+  /** Toggle per-PR previews on a parent app — requires a domain to build URLs. Optionally set the env keys
+   *  to drop from a preview's copied env (so prod secrets never leak into an ephemeral preview). */
+  async setPreviewEnabled(userId: string, id: string, enabled: boolean, excludeEnvKeys?: string[]): Promise<void> {
     const app = await this.requireWrite(userId, id);
     if (enabled && !app.domain) {
       throw new BadRequestException("set a domain on the app before enabling previews");
     }
     await this.prisma.application.update({
       where: { id },
-      data: { previewEnabled: enabled },
+      data: { previewEnabled: enabled, ...(excludeEnvKeys !== undefined ? { previewExcludeKeys: excludeEnvKeys } : {}) },
     });
     await this.audit.log({ actor: userId, action: "app.preview.config", target: id });
   }
@@ -3652,6 +3661,7 @@ export class ApplicationsService {
         canDeploy && app.webhookSecret ? this.crypto.decrypt(app.webhookSecret) : null,
       isPreview: app.isPreview,
       previewEnabled: app.previewEnabled,
+      previewExcludeKeys: app.previewExcludeKeys ?? [],
       prNumber: app.prNumber,
       parentAppId: app.parentAppId,
       tags: app.tags,

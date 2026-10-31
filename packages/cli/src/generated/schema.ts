@@ -9227,6 +9227,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -9475,6 +9476,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -9834,6 +9836,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -10148,6 +10151,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -14699,6 +14703,7 @@ export interface operations {
                             webhookSecret: string | null;
                             isPreview: boolean;
                             previewEnabled: boolean;
+                            previewExcludeKeys: string[];
                             prNumber: number | null;
                             parentAppId: string | null;
                             tags: string[];
@@ -14942,6 +14947,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -15254,6 +15260,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -15330,6 +15337,7 @@ export interface operations {
             content: {
                 "application/json": {
                     enabled: boolean;
+                    excludeEnvKeys?: string[];
                 };
             };
         };
@@ -15622,6 +15630,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];
@@ -16661,6 +16670,7 @@ export interface operations {
                         webhookSecret: string | null;
                         isPreview: boolean;
                         previewEnabled: boolean;
+                        previewExcludeKeys: string[];
                         prNumber: number | null;
                         parentAppId: string | null;
                         tags: string[];

@@ -1284,6 +1284,24 @@ describe("ApplicationsService", () => {
     expect(update.mock.calls[1][0].data.basicAuthUsers).toBeDefined(); // JsonNull sentinel, not a {user,hash}[]
   });
 
+  it("upsertPreview drops the parent's preview-excluded env keys from the preview's env", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
+    const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    // crypto mock: encrypt(s)=`enc(${s})`, decrypt=identity → parent.envEnc is readable as JSON.
+    jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+    const parent = {
+      id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT",
+      previewEnabled: true, domain: "app.example.com",
+      envEnc: JSON.stringify({ SECRET: "prod", API_URL: "https://x" }),
+      previewExcludeKeys: ["SECRET"],
+    } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    await svc.upsertPreview(parent, 7, "feature-7");
+    const envEnc = create.mock.calls[0][0].data.envEnc as string;
+    expect(envEnc).toContain("API_URL");
+    expect(envEnc).not.toContain("SECRET"); // the prod secret never reaches the preview
+  });
+
   it("generateGitSshKey works for a git-compose (ssh) app and rejects a non-git-sourced one", async () => {
     const update = jest.fn().mockResolvedValue({});
     const sshGc = { ...gitApp, source: "COMPOSE", composePath: "docker-compose.yml", composeFile: null, gitUrl: "git@github.com:u/r.git" };

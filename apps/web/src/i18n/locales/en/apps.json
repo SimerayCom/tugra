@@ -111,6 +111,8 @@
   "basicAuthAdd": "Add user",
   "basicAuthReplaceNote": "Saving replaces all users (re-enter every password). Save with no users to remove basic auth.",
   "remove": "Remove",
+  "previewExcludeEnv": "Exclude env vars from previews",
+  "previewExcludeEnvHint": "One env var name per line. These are dropped from a PR preview's env so production secrets never reach an ephemeral preview.",
   "autoDeploy": "Auto-deploy on push",
   "autoDeployHint": "When on, a push to the tracked branch deploys automatically. Turn off to pause without removing the webhook.",
   "ipAllowlist": "IP allowlist",

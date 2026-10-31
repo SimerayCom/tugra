@@ -473,7 +473,7 @@ export default function AppDetailPage() {
       ) : null,
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
-    preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />,
+    preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} />,
   };
 
   return (
@@ -1888,10 +1888,14 @@ function ScheduledTasksCard({ id }: { id: string }) {
   );
 }
 
-function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnabled: boolean; domain: string | null }) {
+function PreviewCard({ id, previewEnabled, domain, excludeKeys }: { id: string; previewEnabled: boolean; domain: string | null; excludeKeys: string[] }) {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const [exclude, setExclude] = useState(excludeKeys.join("\n"));
+  useEffect(() => { setExclude(excludeKeys.join("\n")); }, [excludeKeys]);
+  const parseExclude = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
+  const excludeDirty = parseExclude(exclude).join("\n") !== excludeKeys.join("\n");
   const { data: previews = [] } = useQuery({
     queryKey: ["appPreviews", id],
     queryFn: () => api.getAppPreviews(id),
@@ -1904,6 +1908,11 @@ function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnable
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => api.setPreviewEnabled(id, enabled),
     onSuccess: invalidate,
+  });
+  const saveExclude = useMutation({
+    mutationFn: () => api.setPreviewEnabled(id, previewEnabled, parseExclude(exclude)),
+    onSuccess: invalidate,
+    meta: { successMessage: t("apps.saved") },
   });
   const del = useMutation({
     mutationFn: (previewId: string) => api.deletePreview(id, previewId),
@@ -1930,6 +1939,24 @@ function PreviewCard({ id, previewEnabled, domain }: { id: string; previewEnable
           <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "0 0 12px" }}>
             {t("apps.previewWildcardHint", { domain })}
           </p>
+          {previewEnabled && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.previewExcludeEnv")}</div>
+              <textarea
+                className="mono"
+                value={exclude}
+                spellCheck={false}
+                onChange={(e) => setExclude(e.target.value)}
+                placeholder={"DATABASE_URL\nSTRIPE_SECRET_KEY"}
+                aria-label={t("apps.previewExcludeEnv")}
+                style={{ width: "100%", minHeight: 64, maxHeight: 160, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+              />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                <p style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, margin: 0 }}>{t("apps.previewExcludeEnvHint")}</p>
+                <Btn variant="ghost" onClick={() => saveExclude.mutate()} disabled={saveExclude.isPending || !excludeDirty}>{t("apps.save")}</Btn>
+              </div>
+            </div>
+          )}
           {previewEnabled && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {previews.length === 0 && (

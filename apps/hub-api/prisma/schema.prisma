@@ -892,6 +892,9 @@ model Application {
   // Per-app push-to-deploy switch. True (default) = a matching git push auto-deploys; false = the push is
   // acknowledged but ignored (pause auto-deploy without deleting the webhook). Preview deploys are separate.
   autoDeploy     Boolean  @default(true)
+  // Env var names dropped from a PR preview's copied env (so prod secrets never leak into an ephemeral
+  // preview). Empty = the preview inherits the full parent env (unchanged default).
+  previewExcludeKeys String[] @default([])
   buildCommand   String?
   outputDir      String?
   composeFile    String?

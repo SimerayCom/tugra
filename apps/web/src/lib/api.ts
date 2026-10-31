@@ -1157,10 +1157,10 @@ export const api = {
   getAppPreviews(id: string) {
     return apiFetch<Application[]>(`/apps/${id}/previews`);
   },
-  setPreviewEnabled(id: string, enabled: boolean) {
+  setPreviewEnabled(id: string, enabled: boolean, excludeEnvKeys?: string[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/preview-config`, {
       method: "PUT",
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify({ enabled, ...(excludeEnvKeys !== undefined ? { excludeEnvKeys } : {}) }),
     });
   },
   deletePreview(id: string, previewId: string) {
