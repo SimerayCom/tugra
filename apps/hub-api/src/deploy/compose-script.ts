@@ -173,7 +173,8 @@ export function composeOverride(app: AppSpec): string {
     // When a per-service domain also targets the web service, the container has >1 Traefik service → the
     // primary router must name its service explicitly (byte-identical when there are no such rows).
     const primaryExplicit = rows.some((row) => row.service === name);
-    for (const l of traefikLabels(app, primaryExplicit ? { explicitService: true } : {})) add(labels, name, `      - ${JSON.stringify(l)}`);
+    // Compose interpolates the override file → a basic-auth hash's `$` must be escaped to `$$`.
+    for (const l of traefikLabels(app, { explicitService: primaryExplicit, composeDollarEscape: true })) add(labels, name, `      - ${JSON.stringify(l)}`);
   }
   // Per-service domains: each row gets its own HTTPS router on its named service + port.
   for (const row of rows) {

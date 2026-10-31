@@ -1092,6 +1092,7 @@ export interface Application {
   securityHeaders: boolean;
   forwardAuth: string | null;
   ipAllowlist: string[];
+  basicAuthUsers: string[]; // usernames only (password hashes never returned)
   https: boolean;
   domainKind: string;
   exposeMode: string;

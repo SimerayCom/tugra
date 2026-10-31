@@ -110,6 +110,10 @@ export interface AppSpec {
    *  source ranges; added FIRST in the router's middleware chain so a disallowed client is rejected before
    *  auth. Empty → no middleware (byte-identical). */
   ipAllowlist?: string[] | null;
+  /** HTTP Basic Auth users: {user, hash} where hash is a Traefik-compatible bcrypt htpasswd hash (the
+   *  plaintext password is never stored). When non-empty, a Traefik basicauth middleware protects the app.
+   *  Empty → no middleware (byte-identical). */
+  basicAuthUsers?: { user: string; hash: string }[] | null;
   /** Cert strategy driving the Traefik router: "http"/"none" → plain HTTP; otherwise HTTPS+LE. */
   certType?: string;
   /** Server's wildcard root (e.g. apps.example.com) — for a le-dns wildcard cert. */
@@ -421,7 +425,7 @@ function secretsDirPrelude(): string[] {
   ];
 }
 
-export function traefikLabels(app: AppSpec, opts: { router?: string; explicitService?: boolean } = {}): string[] {
+export function traefikLabels(app: AppSpec, opts: { router?: string; explicitService?: boolean; composeDollarEscape?: boolean } = {}): string[] {
   if (!app.domain) return [];
   // `router` overrides the router/service/middleware name prefix (per-service compose domains pass a hashed
   // one); `explicitService` emits `routers.*.service=` so routing stays unambiguous once a container carries
@@ -529,6 +533,15 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
     );
     mw.unshift(`${r}-fa`); // auth runs first in the chain
   }
+  const basicAuth = (app.basicAuthUsers ?? []).filter((u) => u && u.user && u.hash);
+  if (basicAuth.length) {
+    // `users=user:$2b$..,user2:$2b$..`. On the COMPOSE path the override file is interpolated by compose, so
+    // the bcrypt `$` must be doubled to `$$` (a classic docker-run label is single-quoted → `$` is literal).
+    const usersRaw = basicAuth.map((u) => `${u.user}:${u.hash}`).join(",");
+    const users = opts.composeDollarEscape ? usersRaw.replace(/\$/g, "$$$$") : usersRaw;
+    labels.push(`traefik.http.middlewares.${r}-ba.basicauth.users=${users}`);
+    mw.unshift(`${r}-ba`);
+  }
   const ipAllow = (app.ipAllowlist ?? []).filter(Boolean);
   if (ipAllow.length) {
     // Traefik v3: ipallowlist admits only these source ranges. Unshifted LAST so it sits at the FRONT of the
@@ -599,7 +612,9 @@ export function serviceDomainLabels(app: AppSpec, row: { service: string; hostna
     // le-dns wildcard doesn't cover an arbitrary service host → force per-host HTTP-01 (keep an uploaded cert).
     certType: app.certType === "custom" ? "custom" : "le-http",
   };
-  return traefikLabels(derived, { router: r, explicitService: true });
+  // serviceDomainLabels is only ever used in the COMPOSE override (compose interpolates the file), so a
+  // basic-auth hash's `$` must be escaped to `$$`.
+  return traefikLabels(derived, { router: r, explicitService: true, composeDollarEscape: true });
 }
 
 /** Generated Dockerfile for a STATIC site: optional node build stage, then nginx. */

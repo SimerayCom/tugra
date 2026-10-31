@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { Observable } from "rxjs";
 import { createHash } from "node:crypto";
+import * as bcrypt from "bcryptjs";
 import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Application, AppStatus, Deployment, Prisma, Role } from "@prisma/client";
@@ -204,6 +205,7 @@ export const AppViewSchema = z.object({
   securityHeaders: z.boolean(),
   forwardAuth: z.string().nullable(),
   ipAllowlist: z.array(z.string()),
+  basicAuthUsers: z.array(z.string()), // usernames only — password hashes are never returned
   https: z.boolean(),
   domainKind: z.string(),
   exposeMode: z.string(),
@@ -281,6 +283,17 @@ function redactInstallConfig(
     if (!secretKeys.has(k)) out[k] = v; // secret field values are dropped, not stored
   }
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Safely read the stored basicAuthUsers JSON into a typed [{user, hash}] list (defensive: it is our own
+ *  data, but JSON columns are untyped). Drops any malformed entry; returns null when there are none. */
+function parseBasicAuthUsers(raw: unknown): { user: string; hash: string }[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out = raw.filter(
+    (u): u is { user: string; hash: string } =>
+      !!u && typeof u === "object" && typeof (u as { user?: unknown }).user === "string" && typeof (u as { hash?: unknown }).hash === "string",
+  );
+  return out.length ? out.map((u) => ({ user: u.user, hash: u.hash })) : null;
 }
 
 @Injectable()
@@ -701,6 +714,7 @@ export class ApplicationsService {
           securityHeaders: src.securityHeaders,
           forwardAuth: src.forwardAuth,
           ipAllowlist: src.ipAllowlist,
+          basicAuthUsers: src.basicAuthUsers ?? Prisma.JsonNull, // clone the auth users (hashes only)
           deployStrategy: src.deployStrategy,
           rollbackOnFailure: src.rollbackOnFailure,
           tags: src.tags,
@@ -2954,6 +2968,19 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
   }
 
+  /** Replace the app's HTTP Basic Auth users. Each password is hashed with bcrypt (a Traefik-compatible
+   *  htpasswd hash) and ONLY the hash is stored — the plaintext never touches the DB. An empty list clears
+   *  basic auth. Applies on the next deploy. */
+  async setBasicAuth(userId: string, id: string, users: { user: string; password: string }[]): Promise<void> {
+    await this.requireWrite(userId, id);
+    const hashed = users.map((u) => ({ user: u.user, hash: bcrypt.hashSync(u.password, 10) }));
+    await this.prisma.application.update({
+      where: { id },
+      data: { basicAuthUsers: hashed.length ? (hashed as unknown as Prisma.InputJsonValue) : Prisma.JsonNull },
+    });
+    await this.audit.log({ actor: userId, action: "app.basicAuth.update", target: id, meta: { count: hashed.length } });
+  }
+
   /**
    * Upload an operator-supplied custom TLS cert for this app (certType → "custom"). The cert/key pair is
    * validated + matched here (parseCustomCert) so a broken pair is rejected before anything is stored; the
@@ -3317,6 +3344,7 @@ export class ApplicationsService {
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
       ipAllowlist: app.ipAllowlist ?? [],
+      basicAuthUsers: parseBasicAuthUsers(app.basicAuthUsers),
       certType: app.certType,
       // A clustered app deploys on the swarm manager's proxy, where the per-server /dynamic cert write never
       // runs — so never feed it a custom cert (it would relabel to tls=true with no cert and serve the
@@ -3556,6 +3584,7 @@ export class ApplicationsService {
       securityHeaders: app.securityHeaders,
       forwardAuth: app.forwardAuth,
       ipAllowlist: app.ipAllowlist ?? [],
+      basicAuthUsers: (parseBasicAuthUsers(app.basicAuthUsers) ?? []).map((u) => u.user),
       https: app.https,
       domainKind: app.domainKind,
       exposeMode: app.exposeMode,

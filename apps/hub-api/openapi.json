@@ -7758,6 +7758,12 @@
                           "type": "string"
                         }
                       },
+                      "basicAuthUsers": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -7915,6 +7921,7 @@
                       "securityHeaders",
                       "forwardAuth",
                       "ipAllowlist",
+                      "basicAuthUsers",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -8626,6 +8633,12 @@
                         "type": "string"
                       }
                     },
+                    "basicAuthUsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -8783,6 +8796,7 @@
                     "securityHeaders",
                     "forwardAuth",
                     "ipAllowlist",
+                    "basicAuthUsers",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -9561,6 +9575,12 @@
                         "type": "string"
                       }
                     },
+                    "basicAuthUsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -9718,6 +9738,7 @@
                     "securityHeaders",
                     "forwardAuth",
                     "ipAllowlist",
+                    "basicAuthUsers",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -10500,6 +10521,12 @@
                         "type": "string"
                       }
                     },
+                    "basicAuthUsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -10657,6 +10684,7 @@
                     "securityHeaders",
                     "forwardAuth",
                     "ipAllowlist",
+                    "basicAuthUsers",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -16229,6 +16257,135 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/basic-auth": {
+      "put": {
+        "operationId": "ApplicationsController_setBasicAuth",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "users": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[A-Za-z0-9._@-]+$"
+                        },
+                        "password": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        }
+                      },
+                      "required": [
+                        "user",
+                        "password"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "users"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/cert": {
       "put": {
         "operationId": "ApplicationsController_setCustomCert",
@@ -17111,6 +17268,12 @@
                             "type": "string"
                           }
                         },
+                        "basicAuthUsers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "https": {
                           "type": "boolean"
                         },
@@ -17268,6 +17431,7 @@
                         "securityHeaders",
                         "forwardAuth",
                         "ipAllowlist",
+                        "basicAuthUsers",
                         "https",
                         "domainKind",
                         "exposeMode",
@@ -17909,6 +18073,12 @@
                         "type": "string"
                       }
                     },
+                    "basicAuthUsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -18066,6 +18236,7 @@
                     "securityHeaders",
                     "forwardAuth",
                     "ipAllowlist",
+                    "basicAuthUsers",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -18777,6 +18948,12 @@
                           "type": "string"
                         }
                       },
+                      "basicAuthUsers": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "https": {
                         "type": "boolean"
                       },
@@ -18934,6 +19111,7 @@
                       "securityHeaders",
                       "forwardAuth",
                       "ipAllowlist",
+                      "basicAuthUsers",
                       "https",
                       "domainKind",
                       "exposeMode",
@@ -19715,6 +19893,12 @@
                         "type": "string"
                       }
                     },
+                    "basicAuthUsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -19872,6 +20056,7 @@
                     "securityHeaders",
                     "forwardAuth",
                     "ipAllowlist",
+                    "basicAuthUsers",
                     "https",
                     "domainKind",
                     "exposeMode",
@@ -21678,6 +21863,12 @@
                         "type": "string"
                       }
                     },
+                    "basicAuthUsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "https": {
                       "type": "boolean"
                     },
@@ -21835,6 +22026,7 @@
                     "securityHeaders",
                     "forwardAuth",
                     "ipAllowlist",
+                    "basicAuthUsers",
                     "https",
                     "domainKind",
                     "exposeMode",

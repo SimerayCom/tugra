@@ -27,6 +27,7 @@
     "@prisma/client": "^6.0.0",
     "@tugra/shared": "workspace:*",
     "argon2": "^0.44.0",
+    "bcryptjs": "3.0.2",
     "bullmq": "^5.78.1",
     "ioredis": "^5.11.1",
     "jose": "^4.15.9",

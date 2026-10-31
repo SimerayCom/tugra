@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -17,6 +17,24 @@ describe("SetDomainOptionsSchema — ipAllowlist", () => {
   });
   it("still requires at least one option field", () => {
     expect(SetDomainOptionsSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("SetBasicAuthSchema — HTTP basic auth users", () => {
+  const ok = (users: unknown[]) => SetBasicAuthSchema.safeParse({ users });
+  it("accepts users and an empty array (clear)", () => {
+    expect(ok([{ user: "admin", password: "s3cret!" }]).success).toBe(true);
+    expect(ok([]).success).toBe(true);
+  });
+  it("rejects a username with : or , (htpasswd separators), bad chars, dup users, newline password, over-cap", () => {
+    expect(ok([{ user: "a:b", password: "x" }]).success).toBe(false); // colon
+    expect(ok([{ user: "a,b", password: "x" }]).success).toBe(false); // comma
+    expect(ok([{ user: "a b", password: "x" }]).success).toBe(false); // space
+    expect(ok([{ user: "u", password: "a\nb" }]).success).toBe(false); // newline password
+    expect(ok([{ user: "u", password: "" }]).success).toBe(false); // empty password
+    expect(ok([{ user: "u", password: "x" }, { user: "u", password: "y" }]).success).toBe(false); // dup
+    expect(ok(Array.from({ length: 21 }, (_, i) => ({ user: `u${i}`, password: "x" }))).success).toBe(false); // > 20
+    expect(SetBasicAuthSchema.safeParse({ users: [{ user: "u", password: "x", foo: 1 }] }).success).toBe(false); // strict row
   });
 });
 

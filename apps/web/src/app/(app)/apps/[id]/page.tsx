@@ -462,6 +462,7 @@ export default function AppDetailPage() {
         </Card>
       ) : null,
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
+    basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} />,
   };
 
@@ -804,6 +805,44 @@ function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: string[] }
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty}>{t("apps.save")}</Btn>
       </div>
+    </Card>
+  );
+}
+
+/** Protect a routed app with HTTP Basic Auth. Passwords are write-only (the API returns only usernames), so
+ *  the card lists who's protected and edits by REPLACING the whole set — saving an empty list removes it. */
+function BasicAuthCard({ id, usernames }: { id: string; usernames: string[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [rows, setRows] = useState<{ user: string; password: string }[]>([]);
+  const save = useMutation({
+    mutationFn: () => api.setAppBasicAuth(id, rows.map((r) => ({ user: r.user.trim(), password: r.password })).filter((r) => r.user && r.password)),
+    onSuccess: () => { setRows([]); qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.saved"), "success"); },
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.basicAuth")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.basicAuthDesc")}</p>
+      {usernames.length > 0 && (
+        <div style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10 }}>{t("apps.basicAuthCurrent", { users: usernames.join(", ") })}</div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input style={{ ...envField, flex: 1 }} placeholder={t("apps.basicAuthUser")} value={r.user} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x)))} aria-label={t("apps.basicAuthUser")} />
+            <input style={{ ...envField, flex: 1 }} type="password" placeholder={t("apps.basicAuthPassword")} value={r.password} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, password: e.target.value } : x)))} aria-label={t("apps.basicAuthPassword")} />
+            <Btn variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>{t("apps.remove")}</Btn>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { user: "", password: "" }])}>{t("apps.basicAuthAdd")}</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.basicAuthReplaceNote")}</p>
     </Card>
   );
 }

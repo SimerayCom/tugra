@@ -40,6 +40,7 @@ export type ConfigCardId =
   | "extraDomains"
   | "serviceDomains"
   | "domainOptions"
+  | "basicAuth"
   | "customCert"
   | "volumes"
   | "hostMounts"
@@ -103,6 +104,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // Per-service domains: COMPOSE apps only (route individual services to their own hostnames).
   { id: "serviceDomains", group: "domains", visible: (a) => a.source === "COMPOSE" && a.canWrite && !a.isPreview && !a.clusterId },
   { id: "domainOptions", group: "domains", visible: (a) => !!a.domain },
+  // Basic auth protects a routed app with a username/password (Traefik basicauth) — needs a domain + write.
+  { id: "basicAuth", group: "domains", visible: (a) => !!a.domain && a.canWrite && !a.isPreview },
   // Upload a custom TLS cert for this app's domain (served statically, no ACME). Needs a domain + write access.
   { id: "customCert", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain },
   // Storage
