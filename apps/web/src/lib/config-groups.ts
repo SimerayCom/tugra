@@ -33,6 +33,7 @@ export type ConfigCardId =
   | "buildArgs"
   | "dockerOptions"
   | "containerCommand"
+  | "restartPolicy"
   | "credentials"
   | "env"
   | "databaseLinks"
@@ -96,6 +97,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "dockerOptions", group: "build", visible: notCompose },
   // Classic docker-run concept only: single-server Image/Git apps (not compose, not clustered, not a preview).
   { id: "containerCommand", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },
+  // Docker restart policy — classic docker-run apps only (compose/swarm declare their own), writer, not preview.
+  { id: "restartPolicy", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },
   { id: "credentials", group: "build", visible: () => true },
   // Environment
   { id: "env", group: "environment", visible: () => true },

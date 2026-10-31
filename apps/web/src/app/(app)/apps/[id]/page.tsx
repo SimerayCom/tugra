@@ -379,6 +379,7 @@ export default function AppDetailPage() {
     buildArgs: () => <BuildArgsCard id={id} />,
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
     containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
+    restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
     credentials: () => (
       <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} composePath={appData.composePath} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
@@ -1837,6 +1838,40 @@ function ContainerCommandCard({ id, entrypoint, command }: { id: string; entrypo
         <div><Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn></div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.containerCommandRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function RestartPolicyCard({ id, restartPolicy }: { id: string; restartPolicy: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const POLICIES = ["unless-stopped", "always", "on-failure", "no"] as const;
+  const [policy, setPolicy] = useState<string>(restartPolicy ?? "unless-stopped");
+  const save = useMutation({
+    // "unless-stopped" is the default → store null (keeps the run line byte-identical); else the chosen policy.
+    mutationFn: () => api.setAppRestartPolicy(id, policy === "unless-stopped" ? null : policy),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  const label: Record<string, string> = {
+    "unless-stopped": t("apps.restartPolicy_unlessStopped"),
+    always: t("apps.restartPolicy_always"),
+    "on-failure": t("apps.restartPolicy_onFailure"),
+    no: t("apps.restartPolicy_no"),
+  };
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.restartPolicy")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.restartPolicyDesc")}</p>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <select aria-label={t("apps.restartPolicy")} value={policy} onChange={(e) => setPolicy(e.target.value)} style={{ ...envField, maxWidth: 240 }}>
+          {POLICIES.map((p) => (
+            <option key={p} value={p}>{label[p]}</option>
+          ))}
+        </select>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+      </div>
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.restartPolicyRedeploy")}</div>}
     </Card>
   );
 }

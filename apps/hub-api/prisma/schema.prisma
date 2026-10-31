@@ -1013,6 +1013,10 @@ model Application {
   // Custom redirect rules [{regex, replacement, permanent}] → one Traefik redirectregex middleware each,
   // applied to the router (after the www/root canonical redirect, before security headers). Null/empty = none.
   redirects      Json?
+  // Docker restart policy for the app container: no | always | unless-stopped | on-failure. Null = the
+  // "unless-stopped" default (byte-identical). A raw dockerOptions `--restart` still overrides it (emitted
+  // after this flag; Docker last-wins). Classic docker-run apps only.
+  restartPolicy  String?
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"

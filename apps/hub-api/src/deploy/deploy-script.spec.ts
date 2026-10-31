@@ -278,6 +278,25 @@ describe("container command/entrypoint override (exec-form argv)", () => {
   });
 });
 
+describe("restart policy", () => {
+  const runLine = (s: string) => s.split("\n").find((l) => l.includes("docker run -d"))!;
+
+  it("null → --restart unless-stopped (byte-identical default)", () => {
+    expect(runLine(buildRunScript(base, "v1"))).toContain("--restart unless-stopped");
+  });
+
+  it("emits the chosen policy", () => {
+    expect(runLine(buildRunScript({ ...base, restartPolicy: "always" }, "v1"))).toContain("--restart always");
+    expect(runLine(buildRunScript({ ...base, restartPolicy: "no" }, "v1"))).toContain("--restart no");
+    expect(runLine(buildRunScript({ ...base, restartPolicy: "on-failure" }, "v1"))).toContain("--restart on-failure");
+  });
+
+  it("a raw dockerOptions --restart is emitted AFTER the field, so it still wins (Docker last-wins)", () => {
+    const l = runLine(buildRunScript({ ...base, restartPolicy: "always", dockerOptions: "--restart on-failure:3" } as AppSpec, "v1"));
+    expect(l.indexOf("--restart always")).toBeLessThan(l.indexOf("'--restart' 'on-failure:3'"));
+  });
+});
+
 describe("host bind-mounts", () => {
   it("emits a shell-quoted -v for each host mount (`:ro` only when read-only)", () => {
     const s = buildRunScript(

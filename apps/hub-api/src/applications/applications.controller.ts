@@ -67,6 +67,8 @@ import {
   SetBasicAuthSchema,
   SetRedirectsInput,
   SetRedirectsSchema,
+  SetRestartPolicyInput,
+  SetRestartPolicySchema,
   SetConfigMountContentInput,
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
@@ -840,6 +842,20 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetRedirectsSchema)) body: SetRedirectsInput,
   ) {
     await this.apps.setRedirects(user.userId, id, body.redirects);
+    return { ok: true };
+  }
+
+  // Set the Docker restart policy for the app container (null clears to the unless-stopped default). Writer-
+  // only (requireWrite in the service); refused on compose/cluster/preview apps. Applied on the next deploy.
+  @Put(":id/restart-policy")
+  @HttpCode(200)
+  @ApiZodBody(SetRestartPolicySchema)
+  async setRestartPolicy(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetRestartPolicySchema)) body: SetRestartPolicyInput,
+  ) {
+    await this.apps.setRestartPolicy(user.userId, id, body.restartPolicy);
     return { ok: true };
   }
 

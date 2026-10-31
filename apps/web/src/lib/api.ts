@@ -1280,6 +1280,9 @@ export const api = {
       body: JSON.stringify(body),
     });
   },
+  setAppRestartPolicy(id: string, restartPolicy: string | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/restart-policy`, { method: "PUT", body: JSON.stringify({ restartPolicy }) });
+  },
   setAppComposeFile(id: string, composeFile: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/compose-file`, {
       method: "PUT",

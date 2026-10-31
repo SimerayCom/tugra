@@ -144,6 +144,11 @@ export interface AppSpec {
    *  → 301 vs 302. Both strings are shell/YAML-escaped at the deploy boundary. Empty/null → no middleware
    *  (byte-identical). */
   redirects?: { regex: string; replacement: string; permanent: boolean }[] | null;
+  /** Docker restart policy for the app container: "no" | "always" | "unless-stopped" | "on-failure". Null →
+   *  "unless-stopped" (byte-identical default). A raw dockerOptions `--restart` is emitted AFTER this flag, so
+   *  it still wins (Docker last-wins) — the field is the managed default, dockerOptions the escape hatch. The
+   *  value is a DTO-validated enum, so it is shell-safe interpolated here. */
+  restartPolicy?: string | null;
   /** Path-prefix routing: serve the app under <host>/<prefix> (Traefik PathPrefix rule). Null/empty → the
    *  app answers at the host root (byte-identical to apps with no prefix). */
   pathPrefix?: string | null;
@@ -1070,7 +1075,8 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const run = [
     "docker run -d",
     `--name ${name}`,
-    "--restart unless-stopped",
+    // Null → "unless-stopped" (byte-identical). Enum value (DTO-validated) → shell-safe without quoting.
+    `--restart ${app.restartPolicy ?? "unless-stopped"}`,
     limitArgs.join(" "),
     extraPortArgs,
     epFlag,
