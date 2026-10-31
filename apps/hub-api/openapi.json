@@ -7563,6 +7563,20 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "containerEntrypoint": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "nullable": true
+                      },
+                      "containerCommand": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "nullable": true
+                      },
                       "dbNetwork": {
                         "type": "boolean"
                       },
@@ -8119,6 +8133,8 @@
                       "dockerOptions",
                       "preDeployCommand",
                       "postDeployCommand",
+                      "containerEntrypoint",
+                      "containerCommand",
                       "dbNetwork",
                       "volumes",
                       "hostMounts",
@@ -8546,6 +8562,20 @@
                     },
                     "postDeployCommand": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "containerEntrypoint": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "containerCommand": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
                       "nullable": true
                     },
                     "dbNetwork": {
@@ -9104,6 +9134,8 @@
                     "dockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "containerEntrypoint",
+                    "containerCommand",
                     "dbNetwork",
                     "volumes",
                     "hostMounts",
@@ -9600,6 +9632,20 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "containerEntrypoint": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "containerCommand": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
                     "dbNetwork": {
                       "type": "boolean"
                     },
@@ -10156,6 +10202,8 @@
                     "dockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "containerEntrypoint",
+                    "containerCommand",
                     "dbNetwork",
                     "volumes",
                     "hostMounts",
@@ -10656,6 +10704,20 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "containerEntrypoint": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "containerCommand": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
                     "dbNetwork": {
                       "type": "boolean"
                     },
@@ -11212,6 +11274,8 @@
                     "dockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "containerEntrypoint",
+                    "containerCommand",
                     "dbNetwork",
                     "volumes",
                     "hostMounts",
@@ -13951,6 +14015,131 @@
                 "required": [
                   "preDeployCommand",
                   "postDeployCommand"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-command": {
+      "put": {
+        "operationId": "ApplicationsController_setContainerCommand",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "containerEntrypoint": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "maxItems": 32,
+                    "nullable": true
+                  },
+                  "containerCommand": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "maxItems": 64,
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "containerEntrypoint",
+                  "containerCommand"
                 ],
                 "additionalProperties": false
               }
@@ -18115,6 +18304,20 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "containerEntrypoint": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "nullable": true
+                        },
+                        "containerCommand": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "nullable": true
+                        },
                         "dbNetwork": {
                           "type": "boolean"
                         },
@@ -18671,6 +18874,8 @@
                         "dockerOptions",
                         "preDeployCommand",
                         "postDeployCommand",
+                        "containerEntrypoint",
+                        "containerCommand",
                         "dbNetwork",
                         "volumes",
                         "hostMounts",
@@ -19028,6 +19233,20 @@
                     },
                     "postDeployCommand": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "containerEntrypoint": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "containerCommand": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
                       "nullable": true
                     },
                     "dbNetwork": {
@@ -19586,6 +19805,8 @@
                     "dockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "containerEntrypoint",
+                    "containerCommand",
                     "dbNetwork",
                     "volumes",
                     "hostMounts",
@@ -20013,6 +20234,20 @@
                       },
                       "postDeployCommand": {
                         "type": "string",
+                        "nullable": true
+                      },
+                      "containerEntrypoint": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "nullable": true
+                      },
+                      "containerCommand": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
                         "nullable": true
                       },
                       "dbNetwork": {
@@ -20571,6 +20806,8 @@
                       "dockerOptions",
                       "preDeployCommand",
                       "postDeployCommand",
+                      "containerEntrypoint",
+                      "containerCommand",
                       "dbNetwork",
                       "volumes",
                       "hostMounts",
@@ -21083,6 +21320,20 @@
                     },
                     "postDeployCommand": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "containerEntrypoint": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "containerCommand": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
                       "nullable": true
                     },
                     "dbNetwork": {
@@ -21641,6 +21892,8 @@
                     "dockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "containerEntrypoint",
+                    "containerCommand",
                     "dbNetwork",
                     "volumes",
                     "hostMounts",
@@ -23165,6 +23418,20 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "containerEntrypoint": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "containerCommand": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
                     "dbNetwork": {
                       "type": "boolean"
                     },
@@ -23721,6 +23988,8 @@
                     "dockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "containerEntrypoint",
+                    "containerCommand",
                     "dbNetwork",
                     "volumes",
                     "hostMounts",

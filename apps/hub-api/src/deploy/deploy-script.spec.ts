@@ -233,6 +233,50 @@ describe("dockerOptionsArgs (shell-injection guard)", () => {
   });
 });
 
+describe("container command/entrypoint override (exec-form argv)", () => {
+  const runLine = (s: string) => s.split("\n").find((l) => l.includes("docker run -d"))!;
+
+  it("no override → byte-identical run line (ends at the image ref, no --entrypoint)", () => {
+    const l = runLine(buildRunScript(base, "v1"));
+    expect(l).not.toContain("--entrypoint");
+    expect(l.trimEnd().endsWith("'tugra_abc:v1'")).toBe(true);
+  });
+
+  it("containerCommand replaces CMD — argv appended AFTER the image ref", () => {
+    const l = runLine(buildRunScript({ ...base, containerCommand: ["node", "server.js"] }, "v1"));
+    expect(l).toContain("'tugra_abc:v1' 'node' 'server.js'");
+    expect(l.indexOf("'node'")).toBeGreaterThan(l.indexOf("'tugra_abc:v1'")); // image BEFORE args
+    expect(l).not.toContain("--entrypoint");
+  });
+
+  it("containerEntrypoint replaces ENTRYPOINT — --entrypoint before the image, ep[1..] prepended to args", () => {
+    const l = runLine(buildRunScript({ ...base, containerEntrypoint: ["sh", "-c"], containerCommand: ["echo hi && x"] }, "v1"));
+    expect(l).toContain("--entrypoint='sh'");
+    expect(l).toContain("'tugra_abc:v1' '-c' 'echo hi && x'");
+    expect(l.indexOf("--entrypoint=")).toBeLessThan(l.indexOf("'tugra_abc:v1'")); // flag BEFORE image
+  });
+
+  it("containerEntrypoint [] resets the image entrypoint and appends no args", () => {
+    const l = runLine(buildRunScript({ ...base, containerEntrypoint: [] }, "v1"));
+    expect(l).toContain("--entrypoint=''");
+    expect(l.trimEnd().endsWith("'tugra_abc:v1'")).toBe(true); // nothing after the image
+  });
+
+  it("entrypoint with its own args (no command): ep[0] is --entrypoint, ep[1..] follow the image", () => {
+    const l = runLine(buildRunScript({ ...base, containerEntrypoint: ["/app/run", "--port", "80"] }, "v1"));
+    expect(l).toContain("--entrypoint='/app/run'");
+    expect(l).toContain("'tugra_abc:v1' '--port' '80'");
+  });
+
+  it("NEUTRALIZES injection in argv — each token is single-quoted, never executes", () => {
+    const l = runLine(buildRunScript({ ...base, containerCommand: ["$(rm -rf /)", "a'b", "; reboot"] }, "v1"));
+    expect(l).toContain("'$(rm -rf /)'");
+    expect(l).toContain("'a'\\''b'"); // shq escapes the embedded single quote
+    expect(l).toContain("'; reboot'");
+    expect(l).not.toMatch(/[^']; reboot/); // no bare command separator
+  });
+});
+
 describe("host bind-mounts", () => {
   it("emits a shell-quoted -v for each host mount (`:ro` only when read-only)", () => {
     const s = buildRunScript(

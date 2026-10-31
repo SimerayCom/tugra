@@ -32,6 +32,7 @@ export type ConfigCardId =
   | "buildConfig"
   | "buildArgs"
   | "dockerOptions"
+  | "containerCommand"
   | "credentials"
   | "env"
   | "databaseLinks"
@@ -91,6 +92,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "buildConfig", group: "build", visible: notCompose },
   { id: "buildArgs", group: "build", visible: (a) => a.source === "GIT" },
   { id: "dockerOptions", group: "build", visible: notCompose },
+  // Classic docker-run concept only: single-server Image/Git apps (not compose, not clustered, not a preview).
+  { id: "containerCommand", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },
   { id: "credentials", group: "build", visible: () => true },
   // Environment
   { id: "env", group: "environment", visible: () => true },

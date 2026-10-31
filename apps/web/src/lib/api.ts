@@ -1210,6 +1210,12 @@ export const api = {
       body: JSON.stringify(hooks),
     });
   },
+  setAppContainerCommand(id: string, body: { containerEntrypoint: string[] | null; containerCommand: string[] | null }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/container-command`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  },
   setAppComposeFile(id: string, composeFile: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/compose-file`, {
       method: "PUT",

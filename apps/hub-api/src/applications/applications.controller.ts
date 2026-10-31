@@ -71,6 +71,8 @@ import {
   SetDockerOptionsSchema,
   SetDeployHooksInput,
   SetDeployHooksSchema,
+  SetContainerCommandInput,
+  SetContainerCommandSchema,
   SetCredentialsInput,
   SetCredentialsSchema,
   SetEnvInput,
@@ -467,6 +469,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetDeployHooksSchema)) body: SetDeployHooksInput,
   ) {
     await this.apps.setDeployHooks(user.userId, id, body.preDeployCommand, body.postDeployCommand);
+    return { ok: true };
+  }
+
+  @Put(":id/container-command")
+  @HttpCode(200)
+  @ApiZodBody(SetContainerCommandSchema)
+  async setContainerCommand(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetContainerCommandSchema)) body: SetContainerCommandInput,
+  ) {
+    await this.apps.setContainerCommand(user.userId, id, body);
     return { ok: true };
   }
 

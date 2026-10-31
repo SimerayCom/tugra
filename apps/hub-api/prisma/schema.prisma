@@ -949,6 +949,10 @@ model Application {
   envEnc         String?
   buildArgsEnc   String?
   dockerOptions  String?
+  // IMAGE/GIT classic (docker run) container command override, exec-form argv (string[]). Replaces the image
+  // ENTRYPOINT / CMD. containerEntrypoint [] clears the image entrypoint; null on either = image default.
+  containerEntrypoint Json?
+  containerCommand    Json?
   dbNetwork      Boolean      @default(false) // opt-in: also attach this app to the node-local managed-DB network (tugra-net) so it resolves tugra_db_<id> by name
   hostPort       Int?
   containerPort  Int?         @default(80)

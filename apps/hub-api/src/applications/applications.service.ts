@@ -65,6 +65,7 @@ import {
   containerName,
   appVolumeName,
   hasNetworkOpt,
+  tokenizeDockerOptions,
   type AppSpec,
   type AppVolume,
   type HostMount,
@@ -118,7 +119,7 @@ import { normalizeTags } from "../common/tags";
 import { appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
-import type { CreateAppInput, SetSourceInput, SetBuildInput } from "./dto";
+import type { CreateAppInput, SetSourceInput, SetBuildInput, SetContainerCommandInput } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 // stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
@@ -167,6 +168,9 @@ export const AppViewSchema = z.object({
   dockerOptions: z.string().nullable(),
   preDeployCommand: z.string().nullable(), // write-gated in view() (exec-power, may embed internal paths)
   postDeployCommand: z.string().nullable(),
+  // Container command override (exec-form argv) — write-gated in view() (args can embed credentials).
+  containerEntrypoint: z.array(z.string()).nullable(),
+  containerCommand: z.array(z.string()).nullable(),
   dbNetwork: z.boolean(), // attached to the node-local managed-DB network (tugra-net) — set by DB links
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   hostMounts: z.array(z.object({ hostPath: z.string(), containerPath: z.string(), readOnly: z.boolean().optional() })),
@@ -726,6 +730,8 @@ export class ApplicationsService {
           deployTimeoutSec: src.deployTimeoutSec,
           preDeployCommand: src.preDeployCommand,
           postDeployCommand: src.postDeployCommand,
+          containerEntrypoint: jsonOrNull(src.containerEntrypoint),
+          containerCommand: jsonOrNull(src.containerCommand),
           // Volume DEFINITIONS copy, but the docker volume name derives from the new app id → fresh empty
           // volumes, no data shared (structural). Data copy is a follow-up.
           volumes: jsonOrNull(src.volumes),
@@ -1103,6 +1109,9 @@ export class ApplicationsService {
           baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
           buildCommand: parent.buildCommand,
           outputDir: parent.outputDir,
+          // A preview must start the same command as its parent.
+          containerEntrypoint: (parent.containerEntrypoint ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          containerCommand: (parent.containerCommand ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           composeFile: parent.composeFile,
           healthCmd: parent.healthCmd,
           healthCheckType: parent.healthCheckType,
@@ -2331,6 +2340,12 @@ export class ApplicationsService {
     if (app.dbNetwork && hasNetworkOpt(dockerOptions)) {
       throw new BadRequestException("this app is linked to the managed-DB network — remove --network here, or unlink the DB network first");
     }
+    // A raw `--entrypoint` here would collide with a structured container-entrypoint override (docker takes
+    // the LAST one — order-dependent). Refuse rather than silently depend on flag order. (The reverse
+    // direction is checked in setContainerCommand.)
+    if (this.argv(app.containerEntrypoint) && tokenizeDockerOptions(dockerOptions).some((t) => /^--entrypoint(=|$)/.test(t))) {
+      throw new BadRequestException("this app has a container entrypoint override — clear it before adding --entrypoint to Docker options");
+    }
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
   }
@@ -2358,6 +2373,46 @@ export class ApplicationsService {
       action: "app.deploy_hooks.update",
       target: id,
       meta: { preLen: preDeployCommand?.length ?? 0, postLen: postDeployCommand?.length ?? 0 },
+    });
+  }
+
+  /** Set the container ENTRYPOINT/CMD override (exec-form argv) for a classic IMAGE/GIT app. Replace
+   *  semantics: null = image default; containerEntrypoint [] clears the image entrypoint. Write-gated; the
+   *  audit record carries only arg counts + total length, never the argv (it can embed credentials). Refused
+   *  on compose/cluster/preview apps — the override is consumed only by the classic docker-run path
+   *  (runContainerArgs); swarm services are a deferred follow-up. Clearing (both null) is always allowed so a
+   *  stale override can be removed after an app moves to a cluster. */
+  async setContainerCommand(userId: string, id: string, input: SetContainerCommandInput): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const setting = input.containerEntrypoint !== null || input.containerCommand !== null;
+    if (setting && (app.source === "COMPOSE" || app.clusterId || app.isPreview)) {
+      throw new BadRequestException("a container command override is only supported on single-server Image and Git apps");
+    }
+    // A structured entrypoint and a raw dockerOptions `--entrypoint` can't coexist (docker takes the last —
+    // order-dependent). The reverse direction is checked in setDockerOptions.
+    if (
+      input.containerEntrypoint !== null &&
+      tokenizeDockerOptions(app.dockerOptions).some((t) => /^--entrypoint(=|$)/.test(t))
+    ) {
+      throw new BadRequestException("remove --entrypoint from Custom Docker options before setting an entrypoint override here");
+    }
+    await this.ensureNoActiveDeploy(id);
+    await this.prisma.application.update({
+      where: { id },
+      data: {
+        containerEntrypoint: input.containerEntrypoint ?? Prisma.JsonNull,
+        containerCommand: input.containerCommand ?? Prisma.JsonNull,
+      },
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "app.container_command.update",
+      target: id,
+      meta: {
+        epArgc: input.containerEntrypoint?.length ?? 0,
+        cmdArgc: input.containerCommand?.length ?? 0,
+        len: (input.containerEntrypoint ?? []).join("").length + (input.containerCommand ?? []).join("").length,
+      },
     });
   }
 
@@ -2754,6 +2809,11 @@ export class ApplicationsService {
         // GPUs are node-local hardware — genuinely unsupportable on a multi-node cluster. (Named volumes used
         // to be refused here too; a stateful app is now hard-pinned to one node instead — see below.)
         if (app.gpus) throw new BadRequestException("GPU apps can't be deployed as swarm services");
+        // A container command override is consumed only by the classic docker-run path; a swarm service would
+        // silently ignore it. Refuse rather than no-op — the operator clears it first (or keeps the app classic).
+        if (this.argv(app.containerEntrypoint) || this.argv(app.containerCommand)) {
+          throw new BadRequestException("a container command override isn't supported on swarm services yet — clear it first");
+        }
         const cluster = await this.prisma.cluster.findUnique({ where: { id: cfg.clusterId }, select: { teamId: true, swarmStatus: true, swarmManagerId: true } });
         if (!cluster || cluster.teamId !== app.teamId) throw new BadRequestException("cluster not found in this team");
         if (cluster.swarmStatus !== "ACTIVE" && cluster.swarmStatus !== "DEGRADED") {
@@ -3251,6 +3311,13 @@ export class ApplicationsService {
     return Array.isArray(app.volumes) ? (app.volumes as unknown as AppVolume[]) : [];
   }
 
+  /** A container-command override column (Json) coerced to a string[] — null unless it is a clean array of
+   *  strings (so a malformed value never reaches `docker run` as a half-argv). `[]` is preserved (it means
+   *  "clear the image entrypoint"). */
+  private argv(j: Prisma.JsonValue | null): string[] | null {
+    return Array.isArray(j) && j.every((x) => typeof x === "string") ? (j as string[]) : null;
+  }
+
   private appHostMounts(app: Application): HostMount[] {
     return Array.isArray(app.hostMounts) ? (app.hostMounts as unknown as HostMount[]) : [];
   }
@@ -3438,6 +3505,8 @@ export class ApplicationsService {
       placementConstraints: this.appPlacement(app).constraints,
       placementSpreadLabelKey: this.appPlacement(app).spreadLabelKey,
       dockerOptions: app.dockerOptions,
+      containerEntrypoint: this.argv(app.containerEntrypoint),
+      containerCommand: this.argv(app.containerCommand),
       preDeployCommand: app.preDeployCommand,
       postDeployCommand: app.postDeployCommand,
       // Attach to the node-local managed-DB network only for a classic (non-swarm) deploy — a clustered app
@@ -3667,6 +3736,9 @@ export class ApplicationsService {
       // Hooks are deploy-time exec power and may embed internal paths → writer-only (like composeFile).
       preDeployCommand: canWrite ? app.preDeployCommand : null,
       postDeployCommand: canWrite ? app.postDeployCommand : null,
+      // Container argv can embed credentials (e.g. --password=…) → writer-only, like the hooks above.
+      containerEntrypoint: canWrite ? this.argv(app.containerEntrypoint) : null,
+      containerCommand: canWrite ? this.argv(app.containerCommand) : null,
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       hostMounts: this.appHostMounts(app),
