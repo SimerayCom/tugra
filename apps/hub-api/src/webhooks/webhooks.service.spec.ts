@@ -114,6 +114,26 @@ describe("WebhooksService.handle — auto-deploy switch + Gitea", () => {
     expect(r.deployed).toBe(true);
     expect(deployFromWebhook).toHaveBeenCalledWith("a1");
   });
+
+  it("authenticates a Bitbucket push (X-Hub-Signature sha256 + push.changes branch) and deploys", async () => {
+    const deployFromWebhook = jest.fn().mockResolvedValue(undefined);
+    const bbBody = JSON.stringify({ push: { changes: [{ new: { type: "branch", name: "main" } }] } });
+    const sig = "sha256=" + createHmac("sha256", SECRET).update(bbBody).digest("hex");
+    const svc = make({ application: { findUnique: jest.fn().mockResolvedValue(base) } } as unknown as PrismaService, { deployFromWebhook });
+    const r = await svc.handle("tok", { "x-hub-signature": sig }, bbBody);
+    expect(r.deployed).toBe(true);
+    expect(deployFromWebhook).toHaveBeenCalledWith("a1");
+  });
+
+  it("ignores a Bitbucket push to a non-tracked branch", async () => {
+    const deployFromWebhook = jest.fn();
+    const bbBody = JSON.stringify({ push: { changes: [{ new: { type: "branch", name: "feature" } }] } });
+    const sig = "sha256=" + createHmac("sha256", SECRET).update(bbBody).digest("hex");
+    const svc = make({ application: { findUnique: jest.fn().mockResolvedValue(base) } } as unknown as PrismaService, { deployFromWebhook });
+    const r = await svc.handle("tok", { "x-hub-signature": sig }, bbBody);
+    expect(r.deployed).toBe(false);
+    expect(deployFromWebhook).not.toHaveBeenCalled();
+  });
 });
 
 describe("WebhooksService.handle — watch paths", () => {
