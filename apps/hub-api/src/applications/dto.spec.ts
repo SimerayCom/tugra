@@ -230,6 +230,14 @@ describe("SetSourceSchema — edit source after create", () => {
     expect(SetSourceSchema.safeParse({ image: "-rm nginx" }).success).toBe(false); // option injection
     expect(SetSourceSchema.safeParse({ gitUrl: "https://github.com/x/y.git", foo: 1 }).success).toBe(false); // strict
   });
+  it("accepts a hex commit SHA to pin (and null to unpin); rejects a non-hex / too-short ref", () => {
+    expect(SetSourceSchema.safeParse({ gitCommit: "a1b2c3d" }).success).toBe(true); // 7 hex
+    expect(SetSourceSchema.safeParse({ gitCommit: "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c" }).success).toBe(true); // 40 hex
+    expect(SetSourceSchema.safeParse({ gitCommit: null }).success).toBe(true); // unpin
+    expect(SetSourceSchema.safeParse({ gitCommit: "abc123" }).success).toBe(false); // < 7
+    expect(SetSourceSchema.safeParse({ gitCommit: "main" }).success).toBe(false); // not hex
+    expect(SetSourceSchema.safeParse({ gitCommit: "abc1234; rm -rf /" }).success).toBe(false); // injection
+  });
   it("accepts a YAML composePath and rejects a non-YAML / traversing one", () => {
     expect(SetSourceSchema.safeParse({ composePath: "deploy/docker-compose.yml" }).success).toBe(true);
     expect(SetSourceSchema.safeParse({ composePath: "stack.yaml" }).success).toBe(true);

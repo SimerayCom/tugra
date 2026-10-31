@@ -120,6 +120,19 @@ describe("monorepo base directory (build context/root = bd/baseDirectory)", () =
     expect(s).toContain(`git -C ${BD} rev-parse HEAD`);
   });
 
+  it("gitCommit pins the deploy: full-history clone (no --depth 1) + detached checkout of the SHA", () => {
+    const s = buildRunScript({ ...gitBase, gitCommit: "abc1234" }, "t", true);
+    expect(s).toContain(`git clone --branch 'main' -- 'https://github.com/acme/app.git' ${BD}`);
+    expect(s).not.toContain("--depth 1");
+    expect(s).toContain(`git -C ${BD} -c advice.detachedHead=false checkout 'abc1234'`);
+  });
+
+  it("no gitCommit → shallow clone, no checkout (byte-identical default)", () => {
+    const s = buildRunScript(gitBase, "t", true);
+    expect(s).toContain("git clone --depth 1 --branch 'main'");
+    expect(s).not.toContain("advice.detachedHead");
+  });
+
   it("base directory applies to STATIC / RAILPACK / HEROKU / NIXPACKS roots", () => {
     expect(buildRunScript({ ...gitBase, buildType: "STATIC", baseDirectory: "web" }, "t", true)).toContain(`-f ${BD}/web/Dockerfile.tugra ${BD}/web`);
     expect(buildRunScript({ ...gitBase, buildType: "RAILPACK", baseDirectory: "svc/api" }, "t", true)).toContain(`railpack build ${BD}/svc/api --name`);

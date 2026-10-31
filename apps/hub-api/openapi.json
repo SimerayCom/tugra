@@ -7440,6 +7440,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "gitCommit": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "gitSourceId": {
                         "type": "string",
                         "nullable": true
@@ -8131,6 +8135,7 @@
                       "image",
                       "gitUrl",
                       "gitBranch",
+                      "gitCommit",
                       "gitSourceId",
                       "buildType",
                       "buildCommand",
@@ -8467,6 +8472,10 @@
                       "nullable": true
                     },
                     "gitBranch": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "gitCommit": {
                       "type": "string",
                       "nullable": true
                     },
@@ -9161,6 +9170,7 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitCommit",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -9567,6 +9577,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitCommit": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "gitSourceId": {
                       "type": "string",
                       "nullable": true
@@ -10258,6 +10272,7 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitCommit",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -10668,6 +10683,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitCommit": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "gitSourceId": {
                       "type": "string",
                       "nullable": true
@@ -11359,6 +11378,7 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitCommit",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -14484,6 +14504,11 @@
                     "minLength": 1,
                     "maxLength": 255,
                     "pattern": "^[A-Za-z0-9._#/-]+$"
+                  },
+                  "gitCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{7,40}$",
+                    "nullable": true
                   },
                   "gitSourceId": {
                     "type": "string",
@@ -18551,6 +18576,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "gitCommit": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "gitSourceId": {
                           "type": "string",
                           "nullable": true
@@ -19242,6 +19271,7 @@
                         "image",
                         "gitUrl",
                         "gitBranch",
+                        "gitCommit",
                         "gitSourceId",
                         "buildType",
                         "buildCommand",
@@ -19508,6 +19538,10 @@
                       "nullable": true
                     },
                     "gitBranch": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "gitCommit": {
                       "type": "string",
                       "nullable": true
                     },
@@ -20202,6 +20236,7 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitCommit",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -20538,6 +20573,10 @@
                         "nullable": true
                       },
                       "gitBranch": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "gitCommit": {
                         "type": "string",
                         "nullable": true
                       },
@@ -21232,6 +21271,7 @@
                       "image",
                       "gitUrl",
                       "gitBranch",
+                      "gitCommit",
                       "gitSourceId",
                       "buildType",
                       "buildCommand",
@@ -21653,6 +21693,10 @@
                       "nullable": true
                     },
                     "gitBranch": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "gitCommit": {
                       "type": "string",
                       "nullable": true
                     },
@@ -22347,6 +22391,7 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitCommit",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -23781,6 +23826,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitCommit": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "gitSourceId": {
                       "type": "string",
                       "nullable": true
@@ -24472,6 +24521,7 @@
                     "image",
                     "gitUrl",
                     "gitBranch",
+                    "gitCommit",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",

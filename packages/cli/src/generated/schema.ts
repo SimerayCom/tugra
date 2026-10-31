@@ -9382,6 +9382,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -9655,6 +9656,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -10039,6 +10041,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -10378,6 +10381,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -12800,6 +12804,7 @@ export interface operations {
                 "application/json": {
                     gitUrl?: string;
                     gitBranch?: string;
+                    gitCommit?: string | null;
                     gitSourceId?: string | null;
                     image?: string;
                     composePath?: string;
@@ -15504,6 +15509,7 @@ export interface operations {
                             image: string | null;
                             gitUrl: string | null;
                             gitBranch: string | null;
+                            gitCommit: string | null;
                             gitSourceId: string | null;
                             /** @enum {string} */
                             buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -15772,6 +15778,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -16109,6 +16116,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -16504,6 +16512,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -17568,6 +17577,7 @@ export interface operations {
                         image: string | null;
                         gitUrl: string | null;
                         gitBranch: string | null;
+                        gitCommit: string | null;
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";

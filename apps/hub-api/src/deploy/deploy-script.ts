@@ -45,6 +45,10 @@ export interface AppSpec {
   image?: string | null;
   gitUrl?: string | null;
   gitBranch?: string | null;
+  /** Pin the deploy to a specific commit SHA (must be reachable from gitBranch). Null → deploy the branch
+   *  HEAD (shallow clone, byte-identical). When set, the clone drops `--depth 1` (full branch history) and
+   *  checks out this SHA. DTO-validated as 7–40 hex, and shell-quoted here, so it can't inject. */
+  gitCommit?: string | null;
   buildType?: BuildKind;
   dockerfilePath?: string | null;
   /** DOCKERFILE build only: the multi-stage build stage to target (`docker build --target <stage>`). */
@@ -737,6 +741,8 @@ export function staticNginxConf(): string {
 export function gitCloneSteps(app: AppSpec, dir: string): string[] {
   const branch = app.gitBranch || "main";
   const url = app.gitUrl ?? "";
+  // Pin to a commit → full branch history (drop --depth 1) so the SHA is reachable for checkout; else shallow.
+  const depthFlag = app.gitCommit ? "" : "--depth 1 ";
   const ssh = isSshGitUrl(url);
   const useSsh = !!app.gitSshKey && ssh;
   const useToken = !!app.gitToken && /^https:\/\//i.test(url);
@@ -750,7 +756,7 @@ export function gitCloneSteps(app: AppSpec, dir: string): string[] {
       `printf %s ${shq(b64(app.gitSshKey!))} | base64 -d > "$sd/id"`,
       'chmod 600 "$sd/id"',
       `mkdir -p ${SSH_DIR}`,
-      `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${dir}`,
+      `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0 git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(url)} ${dir}`,
     );
   } else if (ssh) {
     // An SSH repo URL but no deploy key configured — fail clearly instead of prompting / hanging.
@@ -763,10 +769,17 @@ export function gitCloneSteps(app: AppSpec, dir: string): string[] {
       'chmod 600 "$sd/token"',
       `printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`,
       'chmod 700 "$sd/askpass"',
-      `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${dir}`,
+      `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${dir}`,
     );
   } else {
-    steps.push(`git clone --depth 1 --branch ${shq(branch)} -- ${shq(url)} ${dir}`);
+    steps.push(`git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(url)} ${dir}`);
+  }
+  // Pin to a specific commit: detach onto the SHA (present thanks to the full-history clone above). Fails
+  // clearly if the SHA is not reachable from the branch. The SHA is DTO-validated as 7–40 hex and shq'd here.
+  if (app.gitCommit) {
+    steps.push(
+      `git -C ${dir} -c advice.detachedHead=false checkout ${shq(app.gitCommit)} || { echo "TUGRA: pinned commit not found on branch ${shq(branch)}"; exit 1; }`,
+    );
   }
   // Record the deployed commit right after the clone and BEFORE any build output — build/user output is
   // noisy (could push a late marker past the agent's 64KB head-capped buffer) and could print a fake

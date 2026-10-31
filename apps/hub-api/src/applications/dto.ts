@@ -443,6 +443,8 @@ export const SetSourceSchema = z
   .object({
     gitUrl: z.string().min(1).regex(GIT_URL_RE, "git URL must be https:// or ssh").optional(),
     gitBranch: BRANCH.optional(),
+    // Pin to a specific commit SHA (7–40 hex). null = unpin → deploy the branch HEAD. GIT / git-compose only.
+    gitCommit: z.string().regex(/^[0-9a-fA-F]{7,40}$/, "commit must be a 7–40 character hex SHA").nullable().optional(),
     gitSourceId: z.string().min(1).nullable().optional(), // null = unlink the GitHub App
     image: IMAGE.optional(),
     composePath: COMPOSE_PATH.optional(), // COMPOSE-from-git only: move to a different compose file in the repo
