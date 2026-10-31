@@ -100,6 +100,13 @@ describe("monorepo base directory (build context/root = bd/baseDirectory)", () =
     expect(buildRunScript({ ...gitBase, buildType: "NIXPACKS" }, "t", true)).toMatch(/^nixpacks build .* \/etc\/tugra\/builds\/abc$/m); // root = bd (not the .plan.json path)
   });
 
+  it("DOCKERFILE build --target adds the stage flag (shq'd); none → no flag", () => {
+    const withTarget = buildRunScript({ ...gitBase, buildType: "DOCKERFILE", dockerBuildTarget: "production" }, "t", true);
+    expect(withTarget).toContain(`--target 'production' -t`);
+    const without = buildRunScript({ ...gitBase, buildType: "DOCKERFILE" }, "t", true);
+    expect(without).not.toContain("--target");
+  });
+
   it("a base directory moves the build context/root and adds a symlink-containment guard", () => {
     const s = buildRunScript({ ...gitBase, buildType: "DOCKERFILE", baseDirectory: "apps/api" }, "t", true);
     // guard: resolve + stay inside the clone

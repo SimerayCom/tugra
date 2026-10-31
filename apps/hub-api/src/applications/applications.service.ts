@@ -141,6 +141,7 @@ export const AppViewSchema = z.object({
   buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
   buildCommand: z.string().nullable(),
   dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
+  dockerBuildTarget: z.string().nullable(), // DOCKERFILE build: multi-stage target stage
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
   watchPaths: z.array(z.string()), // monorepo deploy-trigger globs (empty = deploy on every push)
   autoDeploy: z.boolean(), // per-app push-to-deploy switch
@@ -684,6 +685,7 @@ export class ApplicationsService {
           gitSourceId: src.gitSourceId,
           buildType: src.buildType,
           dockerfilePath: src.dockerfilePath,
+          dockerBuildTarget: src.dockerBuildTarget,
           baseDirectory: src.baseDirectory,
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
@@ -1064,6 +1066,7 @@ export class ApplicationsService {
           gitBranch: headRef,
           buildType: parent.buildType,
           dockerfilePath: parent.dockerfilePath,
+          dockerBuildTarget: parent.dockerBuildTarget,
           baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
           buildCommand: parent.buildCommand,
           outputDir: parent.outputDir,
@@ -2456,6 +2459,7 @@ export class ApplicationsService {
       data: {
         buildType: input.buildType,
         dockerfilePath: input.buildType === "DOCKERFILE" ? input.dockerfilePath ?? null : null,
+        dockerBuildTarget: input.buildType === "DOCKERFILE" ? input.dockerBuildTarget ?? null : null,
         buildCommand: input.buildType === "STATIC" ? input.buildCommand ?? null : null,
         outputDir: input.buildType === "STATIC" ? input.outputDir ?? null : null,
         // The monorepo base directory applies to every build type, so it sits outside the per-type ternaries.
@@ -3367,6 +3371,7 @@ export class ApplicationsService {
       gitBranch: app.gitBranch,
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
+      dockerBuildTarget: app.dockerBuildTarget,
       baseDirectory: app.baseDirectory,
       buildCommand: app.buildCommand,
       outputDir: app.outputDir,
@@ -3589,6 +3594,7 @@ export class ApplicationsService {
       buildType: app.buildType,
       buildCommand: app.buildCommand,
       dockerfilePath: app.dockerfilePath,
+      dockerBuildTarget: app.dockerBuildTarget,
       baseDirectory: app.baseDirectory,
       watchPaths: app.watchPaths ?? [],
       autoDeploy: app.autoDeploy ?? true,

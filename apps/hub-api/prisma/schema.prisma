@@ -884,6 +884,7 @@ model Application {
   gitBranch      String?      @default("main")
   buildType      BuildType    @default(NIXPACKS)
   dockerfilePath String?
+  dockerBuildTarget String?   // DOCKERFILE build: multi-stage target stage (docker build --target)
   baseDirectory  String? // monorepo: repo-relative subdirectory used as the build context/root (GIT apps)
   // Watch paths: glob patterns (repo-relative, leading `!` = exclude). When non-empty, a git push only
   // triggers a deploy if a changed file matches — so a monorepo doesn't rebuild every app on every push.

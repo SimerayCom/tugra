@@ -1038,6 +1038,7 @@ export interface Application {
   buildType: BuildType;
   buildCommand: string | null;
   dockerfilePath: string | null;
+  dockerBuildTarget: string | null;
   baseDirectory: string | null;
   watchPaths: string[];
   autoDeploy: boolean;

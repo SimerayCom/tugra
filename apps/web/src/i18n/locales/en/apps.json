@@ -282,6 +282,7 @@
   "buildSettings": "Build pack",
   "buildSettingsDesc": "Change how this Git app is built. Set a base directory to build a subfolder of a monorepo. Switching the pack clears the fields that don't apply to it. Applied on the next deploy.",
   "buildDockerfilePath": "Dockerfile path, relative to the base directory (Dockerfile)",
+  "buildTarget": "Target stage",
   "buildBaseDirectory": "Base directory (repo root)",
   "buildSaveFailed": "Could not update the build settings.",
   "dockerOptions": "Custom Docker options",
