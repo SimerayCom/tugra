@@ -25,6 +25,8 @@ import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import type { ProvisioningService } from "../cloud/provisioning.service";
 import { PROVISIONING_SERVICE } from "../cloud/cloud.tokens";
+import type { MonitorsService } from "../monitors/monitors.service";
+import { MONITORS_SERVICE } from "../monitors/monitors.tokens";
 import {
   generateEnrollToken,
   generateSeal,
@@ -160,6 +162,13 @@ export class ServersService {
       action: "server.create",
       target: created.id,
     });
+    // Auto-provision a default disk-usage monitor so every server is watched out of the box (Coolify/Dokploy
+    // parity). Best-effort + lazy token: a monitor hiccup never blocks creating the server, and there is no
+    // static module edge servers → monitors.
+    await this.moduleRef
+      .get<MonitorsService>(MONITORS_SERVICE, { strict: false })
+      .createForServer({ id: created.id, name: created.name, teamId: created.teamId })
+      .catch(() => undefined);
 
     return {
       server: this.toView(created, true),
@@ -336,6 +345,13 @@ export class ServersService {
         .destroyVm(server.provider, server.cloudCredentialId, server.providerServerId)
         .catch(() => undefined);
     }
+    // Remove the server's monitors (the auto disk monitor + any user-created METRIC monitors scoped to it):
+    // Monitor.serverId has no FK cascade, so without this they would dangle with a live scheduler timer.
+    // Best-effort + lazy token (mirrors the tunnel/VM cleanup above).
+    await this.moduleRef
+      .get<MonitorsService>(MONITORS_SERVICE, { strict: false })
+      .removeForServer(id)
+      .catch(() => undefined);
     await this.prisma.server.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "server.delete", target: id, meta: { destroyVm: !!opts?.destroyVm } });
   }
