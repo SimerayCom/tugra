@@ -7754,6 +7754,33 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "extraPorts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "hostPort": {
+                              "type": "number"
+                            },
+                            "containerPort": {
+                              "type": "number"
+                            },
+                            "protocol": {
+                              "type": "string",
+                              "enum": [
+                                "tcp",
+                                "udp"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "hostPort",
+                            "containerPort",
+                            "protocol"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "domain": {
                         "type": "string",
                         "nullable": true
@@ -7950,6 +7977,7 @@
                       "status",
                       "hostPort",
                       "containerPort",
+                      "extraPorts",
                       "domain",
                       "extraDomains",
                       "domainRedirect",
@@ -8665,6 +8693,33 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "extraPorts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPort": {
+                            "type": "number"
+                          },
+                          "containerPort": {
+                            "type": "number"
+                          },
+                          "protocol": {
+                            "type": "string",
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "hostPort",
+                          "containerPort",
+                          "protocol"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -8861,6 +8916,7 @@
                     "status",
                     "hostPort",
                     "containerPort",
+                    "extraPorts",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -9643,6 +9699,33 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "extraPorts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPort": {
+                            "type": "number"
+                          },
+                          "containerPort": {
+                            "type": "number"
+                          },
+                          "protocol": {
+                            "type": "string",
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "hostPort",
+                          "containerPort",
+                          "protocol"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -9839,6 +9922,7 @@
                     "status",
                     "hostPort",
                     "containerPort",
+                    "extraPorts",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -10625,6 +10709,33 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "extraPorts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPort": {
+                            "type": "number"
+                          },
+                          "containerPort": {
+                            "type": "number"
+                          },
+                          "protocol": {
+                            "type": "string",
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "hostPort",
+                          "containerPort",
+                          "protocol"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -10821,6 +10932,7 @@
                     "status",
                     "hostPort",
                     "containerPort",
+                    "extraPorts",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -13840,6 +13952,142 @@
                 },
                 "required": [
                   "enabled"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/extra-ports": {
+      "put": {
+        "operationId": "ApplicationsController_setExtraPorts",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ports": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "hostPort": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "containerPort": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "protocol": {
+                          "type": "string",
+                          "enum": [
+                            "tcp",
+                            "udp"
+                          ],
+                          "default": "tcp"
+                        }
+                      },
+                      "required": [
+                        "hostPort",
+                        "containerPort"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "ports"
                 ],
                 "additionalProperties": false
               }
@@ -17545,6 +17793,33 @@
                           "type": "number",
                           "nullable": true
                         },
+                        "extraPorts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "hostPort": {
+                                "type": "number"
+                              },
+                              "containerPort": {
+                                "type": "number"
+                              },
+                              "protocol": {
+                                "type": "string",
+                                "enum": [
+                                  "tcp",
+                                  "udp"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "hostPort",
+                              "containerPort",
+                              "protocol"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
                         "domain": {
                           "type": "string",
                           "nullable": true
@@ -17741,6 +18016,7 @@
                         "status",
                         "hostPort",
                         "containerPort",
+                        "extraPorts",
                         "domain",
                         "extraDomains",
                         "domainRedirect",
@@ -18386,6 +18662,33 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "extraPorts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPort": {
+                            "type": "number"
+                          },
+                          "containerPort": {
+                            "type": "number"
+                          },
+                          "protocol": {
+                            "type": "string",
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "hostPort",
+                          "containerPort",
+                          "protocol"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -18582,6 +18885,7 @@
                     "status",
                     "hostPort",
                     "containerPort",
+                    "extraPorts",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -19297,6 +19601,33 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "extraPorts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "hostPort": {
+                              "type": "number"
+                            },
+                            "containerPort": {
+                              "type": "number"
+                            },
+                            "protocol": {
+                              "type": "string",
+                              "enum": [
+                                "tcp",
+                                "udp"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "hostPort",
+                            "containerPort",
+                            "protocol"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "domain": {
                         "type": "string",
                         "nullable": true
@@ -19493,6 +19824,7 @@
                       "status",
                       "hostPort",
                       "containerPort",
+                      "extraPorts",
                       "domain",
                       "extraDomains",
                       "domainRedirect",
@@ -20287,6 +20619,33 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "extraPorts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPort": {
+                            "type": "number"
+                          },
+                          "containerPort": {
+                            "type": "number"
+                          },
+                          "protocol": {
+                            "type": "string",
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "hostPort",
+                          "containerPort",
+                          "protocol"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -20483,6 +20842,7 @@
                     "status",
                     "hostPort",
                     "containerPort",
+                    "extraPorts",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -22293,6 +22653,33 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "extraPorts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "hostPort": {
+                            "type": "number"
+                          },
+                          "containerPort": {
+                            "type": "number"
+                          },
+                          "protocol": {
+                            "type": "string",
+                            "enum": [
+                              "tcp",
+                              "udp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "hostPort",
+                          "containerPort",
+                          "protocol"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -22489,6 +22876,7 @@
                     "status",
                     "hostPort",
                     "containerPort",
+                    "extraPorts",
                     "domain",
                     "extraDomains",
                     "domainRedirect",

@@ -999,6 +999,9 @@ export const api = {
   setAppAutoDeploy(id: string, enabled: boolean) {
     return apiFetch<{ ok: true }>(`/apps/${id}/auto-deploy`, { method: "PUT", body: JSON.stringify({ enabled }) });
   },
+  setAppExtraPorts(id: string, ports: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/extra-ports`, { method: "PUT", body: JSON.stringify({ ports }) });
+  },
   setAppBasicAuth(id: string, users: { user: string; password: string }[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/basic-auth`, { method: "PUT", body: JSON.stringify({ users }) });
   },

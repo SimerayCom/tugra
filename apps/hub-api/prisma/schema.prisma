@@ -945,6 +945,9 @@ model Application {
   dbNetwork      Boolean      @default(false) // opt-in: also attach this app to the node-local managed-DB network (tugra-net) so it resolves tugra_db_<id> by name
   hostPort       Int?
   containerPort  Int?         @default(80)
+  // Extra published ports beyond the ingress one: [{hostPort, containerPort, protocol: "tcp"|"udp"}].
+  // Emitted as additional docker -p flags (classic apps). Null/empty = just the single ingress port.
+  extraPorts     Json?
   domain         String?
   extraDomains   String[]     @default([]) // additional hostnames (aliases) routed to the same container as `domain`
   domainRedirect  String?

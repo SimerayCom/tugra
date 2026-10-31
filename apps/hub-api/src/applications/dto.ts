@@ -418,6 +418,22 @@ export type SetWatchPathsInput = z.infer<typeof SetWatchPathsSchema>;
 export const SetAutoDeploySchema = z.object({ enabled: z.boolean() }).strict();
 export type SetAutoDeployInput = z.infer<typeof SetAutoDeploySchema>;
 
+// Extra published ports beyond the ingress one (raw host:container TCP/UDP maps). Capped at 20; a host
+// port + protocol can't repeat (two maps can't bind the same one). An empty array clears them.
+export const SetExtraPortsSchema = z.object({
+  ports: z
+    .array(
+      z.object({
+        hostPort: z.number().int().min(1).max(65535),
+        containerPort: z.number().int().min(1).max(65535),
+        protocol: z.enum(["tcp", "udp"]).default("tcp"),
+      }).strict(),
+    )
+    .max(20)
+    .refine((ps) => new Set(ps.map((p) => `${p.hostPort}/${p.protocol}`)).size === ps.length, { message: "a host port + protocol can't repeat" }),
+}).strict();
+export type SetExtraPortsInput = z.infer<typeof SetExtraPortsSchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({

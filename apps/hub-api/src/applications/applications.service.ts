@@ -205,6 +205,7 @@ export const AppViewSchema = z.object({
   status: z.nativeEnum(AppStatus),
   hostPort: z.number().nullable(),
   containerPort: z.number().nullable(),
+  extraPorts: z.array(z.object({ hostPort: z.number(), containerPort: z.number(), protocol: z.enum(["tcp", "udp"]) })),
   domain: z.string().nullable(),
   extraDomains: z.array(z.string()), // additional alias hostnames routed to the same container
   domainRedirect: z.string().nullable(),
@@ -301,6 +302,17 @@ function parseBasicAuthUsers(raw: unknown): { user: string; hash: string }[] | n
       !!u && typeof u === "object" && typeof (u as { user?: unknown }).user === "string" && typeof (u as { hash?: unknown }).hash === "string",
   );
   return out.length ? out.map((u) => ({ user: u.user, hash: u.hash })) : null;
+}
+
+/** Safely read the stored extraPorts JSON into a typed list (JSON columns are untyped). Drops malformed
+ *  entries + any non-tcp/udp protocol; returns [] when there are none. */
+function parseExtraPorts(raw: unknown): { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((p): p is { hostPort: number; containerPort: number; protocol: string } =>
+      !!p && typeof p === "object" && typeof (p as { hostPort?: unknown }).hostPort === "number" && typeof (p as { containerPort?: unknown }).containerPort === "number",
+    )
+    .map((p) => ({ hostPort: p.hostPort, containerPort: p.containerPort, protocol: p.protocol === "udp" ? "udp" as const : "tcp" as const }));
 }
 
 @Injectable()
@@ -1173,6 +1185,7 @@ export class ApplicationsService {
       app.deployStrategy === "ROLLING" &&
       app.rollbackOnFailure &&
       !app.hostPort &&
+      !(Array.isArray(app.extraPorts) && app.extraPorts.length > 0) && // extra published ports can't overlap → recreate
       !(app.dockerOptions && RISKY_DOCKER_OPTS.test(app.dockerOptions)) &&
       !app.gpus &&
       this.appVolumes(app).length === 0
@@ -2460,6 +2473,15 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.auto_deploy.update", target: id, meta: { enabled } });
   }
 
+  /** Replace the app's extra published ports (raw host:container TCP/UDP maps beyond the ingress port).
+   *  Classic (docker-run) apps only — a compose app declares its ports in its YAML. Applies on the next deploy. */
+  async setExtraPorts(userId: string, id: string, ports: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[]): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source === "COMPOSE") throw new BadRequestException("a compose app declares its ports in its compose file");
+    await this.prisma.application.update({ where: { id }, data: { extraPorts: ports as unknown as Prisma.InputJsonValue } });
+    await this.audit.log({ actor: userId, action: "app.extra_ports.update", target: id, meta: { count: ports.length } });
+  }
+
   /** Replace the app's watch paths (monorepo deploy-trigger globs). Git-sourced apps only (a GIT build or a
    *  COMPOSE-from-git app) — watch paths gate webhook pushes, which an IMAGE or pasted-COMPOSE app never has.
    *  An empty array clears them (back to deploy-on-every-push). Applies to the NEXT push. */
@@ -3381,6 +3403,7 @@ export class ApplicationsService {
       env: this.appEnv(app),
       hostPort: app.hostPort,
       containerPort: web?.port ?? app.containerPort,
+      extraPorts: app.source === "COMPOSE" ? null : parseExtraPorts(app.extraPorts),
       domain: app.domain,
       extraDomains: app.extraDomains ?? [],
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
@@ -3627,6 +3650,7 @@ export class ApplicationsService {
       status: app.status,
       hostPort: app.hostPort,
       containerPort: app.containerPort,
+      extraPorts: parseExtraPorts(app.extraPorts),
       domain: app.domain,
       extraDomains: app.extraDomains ?? [],
       domainRedirect: app.domainRedirect,

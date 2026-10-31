@@ -1042,6 +1042,7 @@ export interface Application {
   watchPaths: string[];
   autoDeploy: boolean;
   previewExcludeKeys: string[];
+  extraPorts: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[];
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;
