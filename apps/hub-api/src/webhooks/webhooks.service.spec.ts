@@ -93,6 +93,29 @@ describe("WebhooksService.handle — [skip ci]", () => {
   });
 });
 
+describe("WebhooksService.handle — auto-deploy switch + Gitea", () => {
+  const base = { id: "a1", source: "GIT", gitBranch: "main", webhookToken: "tok", webhookSecret: "enc", autoDeploy: true };
+  const body = JSON.stringify({ ref: "refs/heads/main", head_commit: { message: "feat: x" } });
+
+  it("skips (acknowledged) when auto-deploy is off", async () => {
+    const deployFromWebhook = jest.fn();
+    const svc = make({ application: { findUnique: jest.fn().mockResolvedValue({ ...base, autoDeploy: false }) } } as unknown as PrismaService, { deployFromWebhook });
+    const r = await svc.handle("tok", { "x-hub-signature-256": sign(body) }, body);
+    expect(r.deployed).toBe(false);
+    expect(r.reason).toMatch(/auto-deploy disabled/);
+    expect(deployFromWebhook).not.toHaveBeenCalled();
+  });
+
+  it("authenticates a Gitea signature (hex HMAC, no prefix) and deploys", async () => {
+    const deployFromWebhook = jest.fn().mockResolvedValue(undefined);
+    const svc = make({ application: { findUnique: jest.fn().mockResolvedValue(base) } } as unknown as PrismaService, { deployFromWebhook });
+    const giteaSig = createHmac("sha256", SECRET).update(body).digest("hex");
+    const r = await svc.handle("tok", { "x-gitea-signature": giteaSig }, body);
+    expect(r.deployed).toBe(true);
+    expect(deployFromWebhook).toHaveBeenCalledWith("a1");
+  });
+});
+
 describe("WebhooksService.handle — watch paths", () => {
   const appRow = { id: "a1", source: "GIT", gitBranch: "main", webhookToken: "tok", webhookSecret: "enc", watchPaths: ["apps/api/**"] };
   const pushWith = (files: string[]) =>

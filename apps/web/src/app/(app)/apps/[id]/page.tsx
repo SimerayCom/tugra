@@ -286,6 +286,11 @@ export default function AppDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
+  const autoDeployMut = useMutation({
+    mutationFn: (enabled: boolean) => api.setAppAutoDeploy(id, enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
   const rollback = useMutation({
     mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
     onSuccess: invalidate,
@@ -454,6 +459,11 @@ export default function AppDetailPage() {
               <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
             )}
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-tx2)", marginTop: 12 }}>
+            <input type="checkbox" checked={appData.autoDeploy} disabled={autoDeployMut.isPending} onChange={(e) => autoDeployMut.mutate(e.target.checked)} />
+            {t("apps.autoDeploy")}
+          </label>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "2px 0 0 24px" }}>{t("apps.autoDeployHint")}</p>
           <div style={{ marginTop: 12 }}>
             <Btn variant="ghost" disabled={regen.isPending} onClick={async () => { if (await confirm({ body: t("apps.regenerateConfirm"), danger: true })) regen.mutate(); }}>
               {t("apps.regenerate")}

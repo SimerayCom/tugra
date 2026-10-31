@@ -414,6 +414,10 @@ export const SetWatchPathsSchema = z.object({
 }).strict();
 export type SetWatchPathsInput = z.infer<typeof SetWatchPathsSchema>;
 
+// Per-app push-to-deploy switch.
+export const SetAutoDeploySchema = z.object({ enabled: z.boolean() }).strict();
+export type SetAutoDeployInput = z.infer<typeof SetAutoDeploySchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({

@@ -143,6 +143,7 @@ export const AppViewSchema = z.object({
   dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
   watchPaths: z.array(z.string()), // monorepo deploy-trigger globs (empty = deploy on every push)
+  autoDeploy: z.boolean(), // per-app push-to-deploy switch
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   composePath: z.string().nullable(), // COMPOSE-from-git: repo-relative path to the compose file (null = pasted compose)
@@ -674,6 +675,7 @@ export class ApplicationsService {
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
           watchPaths: src.watchPaths, // keep the clone's monorepo deploy-trigger globs
+          autoDeploy: src.autoDeploy,
           composeFile: src.composeFile,
           composePath: src.composePath, // keep a cloned git-compose app git-sourced
           healthCmd: src.healthCmd,
@@ -2441,6 +2443,14 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null } });
   }
 
+  /** Toggle the per-app push-to-deploy switch (a matching git push auto-deploys). Off acknowledges the push
+   *  but skips the deploy — pause without deleting the webhook. Applies to the next push. */
+  async setAutoDeploy(userId: string, id: string, enabled: boolean): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({ where: { id }, data: { autoDeploy: enabled } });
+    await this.audit.log({ actor: userId, action: "app.auto_deploy.update", target: id, meta: { enabled } });
+  }
+
   /** Replace the app's watch paths (monorepo deploy-trigger globs). Git-sourced apps only (a GIT build or a
    *  COMPOSE-from-git app) — watch paths gate webhook pushes, which an IMAGE or pasted-COMPOSE app never has.
    *  An empty array clears them (back to deploy-on-every-push). Applies to the NEXT push. */
@@ -3549,6 +3559,7 @@ export class ApplicationsService {
       dockerfilePath: app.dockerfilePath,
       baseDirectory: app.baseDirectory,
       watchPaths: app.watchPaths ?? [],
+      autoDeploy: app.autoDeploy ?? true,
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       composePath: app.composePath,

@@ -1040,6 +1040,7 @@ export interface Application {
   dockerfilePath: string | null;
   baseDirectory: string | null;
   watchPaths: string[];
+  autoDeploy: boolean;
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;

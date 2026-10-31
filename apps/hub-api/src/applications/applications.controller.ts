@@ -56,6 +56,8 @@ import {
   SetBuildSchema,
   SetWatchPathsInput,
   SetWatchPathsSchema,
+  SetAutoDeployInput,
+  SetAutoDeploySchema,
   SetBasicAuthInput,
   SetBasicAuthSchema,
   SetConfigMountContentInput,
@@ -477,6 +479,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetWatchPathsSchema)) body: SetWatchPathsInput,
   ) {
     await this.apps.setWatchPaths(user.userId, id, body.watchPaths);
+    return { ok: true };
+  }
+
+  @Put(":id/auto-deploy")
+  @HttpCode(200)
+  @ApiZodBody(SetAutoDeploySchema)
+  async setAutoDeploy(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetAutoDeploySchema)) body: SetAutoDeployInput,
+  ) {
+    await this.apps.setAutoDeploy(user.userId, id, body.enabled);
     return { ok: true };
   }
 
