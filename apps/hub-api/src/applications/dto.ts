@@ -359,6 +359,20 @@ export const SetBuildSchema = z
   .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" });
 export type SetBuildInput = z.infer<typeof SetBuildSchema>;
 
+// Watch paths: repo-relative glob patterns (leading `!` = exclude) gating whether a push deploys. The charset
+// allows glob metacharacters (*?{}[],!) + path chars but bars whitespace / quotes / $ ; | & backtick / NUL —
+// so a pattern can never be more than a glob (it is matched in-process, never shell-interpolated). Capped at
+// 50 patterns, each <= 256 chars. An empty array clears them (back to deploy-on-every-push).
+const WATCH_GLOB = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^!?[A-Za-z0-9_./*?{}\[\],-]+$/, "invalid watch-path glob");
+export const SetWatchPathsSchema = z.object({
+  watchPaths: z.array(WATCH_GLOB).max(50),
+}).strict();
+export type SetWatchPathsInput = z.infer<typeof SetWatchPathsSchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({
