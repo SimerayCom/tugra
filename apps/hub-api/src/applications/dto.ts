@@ -488,6 +488,9 @@ export type ExposeInput = z.infer<typeof ExposeSchema>;
 
 export const PreviewConfigSchema = z.object({
   enabled: z.boolean(),
+  // Env var names to DROP from a PR preview's copied env, so prod secrets never land in an ephemeral preview.
+  // Validated like env keys; capped. Omitted = leave the current exclusion list unchanged.
+  excludeEnvKeys: z.array(z.string().min(1).max(256).refine(isValidUserEnvKey, "invalid environment variable name")).max(100).optional(),
 });
 export type PreviewConfigInput = z.infer<typeof PreviewConfigSchema>;
 

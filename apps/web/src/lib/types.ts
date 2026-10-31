@@ -1041,6 +1041,7 @@ export interface Application {
   baseDirectory: string | null;
   watchPaths: string[];
   autoDeploy: boolean;
+  previewExcludeKeys: string[];
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;

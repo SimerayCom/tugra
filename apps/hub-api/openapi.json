@@ -7834,6 +7834,12 @@
                       "previewEnabled": {
                         "type": "boolean"
                       },
+                      "previewExcludeKeys": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "prNumber": {
                         "type": "number",
                         "nullable": true
@@ -7964,6 +7970,7 @@
                       "webhookSecret",
                       "isPreview",
                       "previewEnabled",
+                      "previewExcludeKeys",
                       "prNumber",
                       "parentAppId",
                       "tags",
@@ -8738,6 +8745,12 @@
                     "previewEnabled": {
                       "type": "boolean"
                     },
+                    "previewExcludeKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -8868,6 +8881,7 @@
                     "webhookSecret",
                     "isPreview",
                     "previewEnabled",
+                    "previewExcludeKeys",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -9709,6 +9723,12 @@
                     "previewEnabled": {
                       "type": "boolean"
                     },
+                    "previewExcludeKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -9839,6 +9859,7 @@
                     "webhookSecret",
                     "isPreview",
                     "previewEnabled",
+                    "previewExcludeKeys",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -10684,6 +10705,12 @@
                     "previewEnabled": {
                       "type": "boolean"
                     },
+                    "previewExcludeKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -10814,6 +10841,7 @@
                     "webhookSecret",
                     "isPreview",
                     "previewEnabled",
+                    "previewExcludeKeys",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -17597,6 +17625,12 @@
                         "previewEnabled": {
                           "type": "boolean"
                         },
+                        "previewExcludeKeys": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "prNumber": {
                           "type": "number",
                           "nullable": true
@@ -17727,6 +17761,7 @@
                         "webhookSecret",
                         "isPreview",
                         "previewEnabled",
+                        "previewExcludeKeys",
                         "prNumber",
                         "parentAppId",
                         "tags",
@@ -18431,6 +18466,12 @@
                     "previewEnabled": {
                       "type": "boolean"
                     },
+                    "previewExcludeKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -18561,6 +18602,7 @@
                     "webhookSecret",
                     "isPreview",
                     "previewEnabled",
+                    "previewExcludeKeys",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -19335,6 +19377,12 @@
                       "previewEnabled": {
                         "type": "boolean"
                       },
+                      "previewExcludeKeys": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "prNumber": {
                         "type": "number",
                         "nullable": true
@@ -19465,6 +19513,7 @@
                       "webhookSecret",
                       "isPreview",
                       "previewEnabled",
+                      "previewExcludeKeys",
                       "prNumber",
                       "parentAppId",
                       "tags",
@@ -19566,6 +19615,15 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "excludeEnvKeys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "maxItems": 100
                   }
                 },
                 "required": [
@@ -20309,6 +20367,12 @@
                     "previewEnabled": {
                       "type": "boolean"
                     },
+                    "previewExcludeKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -20439,6 +20503,7 @@
                     "webhookSecret",
                     "isPreview",
                     "previewEnabled",
+                    "previewExcludeKeys",
                     "prNumber",
                     "parentAppId",
                     "tags",
@@ -22308,6 +22373,12 @@
                     "previewEnabled": {
                       "type": "boolean"
                     },
+                    "previewExcludeKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "prNumber": {
                       "type": "number",
                       "nullable": true
@@ -22438,6 +22509,7 @@
                     "webhookSecret",
                     "isPreview",
                     "previewEnabled",
+                    "previewExcludeKeys",
                     "prNumber",
                     "parentAppId",
                     "tags",
