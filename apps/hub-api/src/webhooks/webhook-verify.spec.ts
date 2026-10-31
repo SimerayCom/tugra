@@ -76,6 +76,13 @@ describe("webhook-verify", () => {
       expect(parseRef({ ref: 1 })).toBeNull();
       expect(parseRef(null)).toBeNull();
     });
+
+    it("normalizes a Bitbucket push (push.changes[].new branch) to refs/heads/<branch>", () => {
+      expect(parseRef({ push: { changes: [{ new: { type: "branch", name: "main" } }] } })).toBe("refs/heads/main");
+      // a tag change (not a branch) is ignored; falls through to null
+      expect(parseRef({ push: { changes: [{ new: { type: "tag", name: "v1" } }] } })).toBeNull();
+      expect(parseRef({ push: { changes: [] } })).toBeNull();
+    });
   });
 
   describe("refMatchesBranch", () => {

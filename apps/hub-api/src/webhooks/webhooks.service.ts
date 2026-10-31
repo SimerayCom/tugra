@@ -110,7 +110,10 @@ export class WebhooksService {
     }
     const secret = this.crypto.decrypt(app.webhookSecret);
 
-    const ghSig = header(headers, "x-hub-signature-256");
+    // Bitbucket (Cloud + Server) signs with X-Hub-Signature using the SAME sha256= HMAC format as GitHub's
+    // X-Hub-Signature-256, so verifyGithubSignature (which requires the sha256= prefix) validates it too — a
+    // legacy GitHub sha1 X-Hub-Signature lacks that prefix and is correctly rejected.
+    const ghSig = header(headers, "x-hub-signature-256") ?? header(headers, "x-hub-signature");
     const glToken = header(headers, "x-gitlab-token");
     const giteaSig = header(headers, "x-gitea-signature") ?? header(headers, "x-forgejo-signature");
     const ok =

@@ -41,11 +41,20 @@ export function verifyGiteaSignature(secret: string, rawBody: Buffer | string, h
   return safeEqual(expected, header);
 }
 
-/** Extract the git ref (e.g. "refs/heads/main") from a push payload. */
+/** Extract the git ref (e.g. "refs/heads/main") from a push payload. GitHub/GitLab/Gitea send
+ *  `ref: "refs/heads/<branch>"`; Bitbucket sends `push.changes[].new.{type:"branch", name}` — normalize the
+ *  latter to the same `refs/heads/<branch>` shape so refMatchesBranch works across providers. */
 export function parseRef(payload: unknown): string | null {
-  if (payload && typeof payload === "object" && "ref" in payload) {
-    const ref = (payload as { ref?: unknown }).ref;
-    return typeof ref === "string" ? ref : null;
+  if (!payload || typeof payload !== "object") return null;
+  const ref = (payload as { ref?: unknown }).ref;
+  if (typeof ref === "string") return ref;
+  // Bitbucket push: first change whose `new` is a branch.
+  const changes = (payload as { push?: { changes?: unknown } }).push?.changes;
+  if (Array.isArray(changes)) {
+    for (const c of changes) {
+      const n = (c as { new?: { type?: unknown; name?: unknown } } | null)?.new;
+      if (n && n.type === "branch" && typeof n.name === "string" && n.name) return `refs/heads/${n.name}`;
+    }
   }
   return null;
 }
