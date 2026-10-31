@@ -9111,6 +9111,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -9366,6 +9367,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -9732,6 +9734,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -10053,6 +10056,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -12245,6 +12249,7 @@ export interface operations {
                     /** @enum {string} */
                     buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                     dockerfilePath?: string | null;
+                    dockerBuildTarget?: string | null;
                     buildCommand?: string | null;
                     outputDir?: string | null;
                     baseDirectory?: string | null;
@@ -14698,6 +14703,7 @@ export interface operations {
                             buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                             buildCommand: string | null;
                             dockerfilePath: string | null;
+                            dockerBuildTarget: string | null;
                             baseDirectory: string | null;
                             watchPaths: string[];
                             autoDeploy: boolean;
@@ -14948,6 +14954,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -15267,6 +15274,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -15643,6 +15651,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -16689,6 +16698,7 @@ export interface operations {
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
                         dockerfilePath: string | null;
+                        dockerBuildTarget: string | null;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;

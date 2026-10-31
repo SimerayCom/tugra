@@ -390,13 +390,15 @@ export const SetBuildSchema = z
   .object({
     buildType: z.enum(BUILD_TYPES),
     dockerfilePath: REPO_PATH.nullable().optional(),
+    // DOCKERFILE build: multi-stage target stage. Safe charset (a Dockerfile stage name), shq'd in the script.
+    dockerBuildTarget: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/, "invalid build target").nullable().optional(),
     buildCommand: BUILD_CMD.nullable().optional(),
     outputDir: REPO_PATH.nullable().optional(),
     // Monorepo build root — valid for every build type, so no type-gated refine (unlike the fields above).
     baseDirectory: BASE_DIR.nullable().optional(),
   })
   .strict()
-  .refine((d) => d.buildType === "DOCKERFILE" || d.dockerfilePath == null, { message: "dockerfilePath applies only to the DOCKERFILE build type" })
+  .refine((d) => d.buildType === "DOCKERFILE" || (d.dockerfilePath == null && d.dockerBuildTarget == null), { message: "dockerfilePath/dockerBuildTarget apply only to the DOCKERFILE build type" })
   .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" });
 export type SetBuildInput = z.infer<typeof SetBuildSchema>;
 

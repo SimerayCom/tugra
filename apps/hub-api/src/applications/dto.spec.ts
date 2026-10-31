@@ -233,6 +233,10 @@ describe("SetBuildSchema — edit build pack after create", () => {
     expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerfilePath: "/etc/passwd" }).success).toBe(false); // absolute
     expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerfilePath: "../x/Dockerfile" }).success).toBe(false); // ..
     expect(SetBuildSchema.safeParse({ buildType: "STATIC", buildCommand: "a\nRUN evil", outputDir: "dist" }).success).toBe(false); // newline
+    // dockerBuildTarget: DOCKERFILE-only, safe charset
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerBuildTarget: "production" }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", dockerBuildTarget: "production" }).success).toBe(false); // wrong type
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", dockerBuildTarget: "prod stage; rm" }).success).toBe(false); // metachars
     expect(SetBuildSchema.safeParse({ buildType: "WAT" }).success).toBe(false);
     expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", foo: 1 }).success).toBe(false); // strict
   });

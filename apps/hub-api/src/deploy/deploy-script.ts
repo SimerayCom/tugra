@@ -47,6 +47,8 @@ export interface AppSpec {
   gitBranch?: string | null;
   buildType?: BuildKind;
   dockerfilePath?: string | null;
+  /** DOCKERFILE build only: the multi-stage build stage to target (`docker build --target <stage>`). */
+  dockerBuildTarget?: string | null;
   baseDirectory?: string | null; // GIT monorepo: build context/root = `${bd}/${baseDirectory}`; null → repo root
   buildCommand?: string | null;
   outputDir?: string | null;
@@ -766,7 +768,10 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       // URL that begins with `-` from being parsed as a git option. The path is relative to `base` (the
       // monorepo subdirectory, or the repo root when no base is set).
       const df = app.dockerfilePath || "Dockerfile";
-      steps.push(`docker build ${nc}${buildArgFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
+      // `--target <stage>` builds a specific multi-stage Dockerfile stage (e.g. a lean "production" stage).
+      // DTO-validated charset (no metachars) + shq, so it can't inject into the build command.
+      const targetFlag = app.dockerBuildTarget ? `--target ${shq(app.dockerBuildTarget)} ` : "";
+      steps.push(`docker build ${nc}${targetFlag}${buildArgFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
       steps.push(

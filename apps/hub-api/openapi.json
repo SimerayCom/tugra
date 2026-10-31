@@ -7331,6 +7331,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "dockerBuildTarget": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "baseDirectory": {
                         "type": "string",
                         "nullable": true
@@ -7922,6 +7926,7 @@
                       "buildType",
                       "buildCommand",
                       "dockerfilePath",
+                      "dockerBuildTarget",
                       "baseDirectory",
                       "watchPaths",
                       "autoDeploy",
@@ -8267,6 +8272,10 @@
                       "nullable": true
                     },
                     "dockerfilePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerBuildTarget": {
                       "type": "string",
                       "nullable": true
                     },
@@ -8861,6 +8870,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "dockerBuildTarget",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -9276,6 +9286,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dockerBuildTarget": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -9867,6 +9881,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "dockerBuildTarget",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -10286,6 +10301,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dockerBuildTarget": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -10877,6 +10896,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "dockerBuildTarget",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -13706,6 +13726,13 @@
                     "minLength": 1,
                     "maxLength": 512,
                     "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+                    "nullable": true
+                  },
+                  "dockerBuildTarget": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_.-]+$",
                     "nullable": true
                   },
                   "buildCommand": {
@@ -17370,6 +17397,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "dockerBuildTarget": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "baseDirectory": {
                           "type": "string",
                           "nullable": true
@@ -17961,6 +17992,7 @@
                         "buildType",
                         "buildCommand",
                         "dockerfilePath",
+                        "dockerBuildTarget",
                         "baseDirectory",
                         "watchPaths",
                         "autoDeploy",
@@ -18236,6 +18268,10 @@
                       "nullable": true
                     },
                     "dockerfilePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerBuildTarget": {
                       "type": "string",
                       "nullable": true
                     },
@@ -18830,6 +18866,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "dockerBuildTarget",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -19175,6 +19212,10 @@
                         "nullable": true
                       },
                       "dockerfilePath": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "dockerBuildTarget": {
                         "type": "string",
                         "nullable": true
                       },
@@ -19769,6 +19810,7 @@
                       "buildType",
                       "buildCommand",
                       "dockerfilePath",
+                      "dockerBuildTarget",
                       "baseDirectory",
                       "watchPaths",
                       "autoDeploy",
@@ -20193,6 +20235,10 @@
                       "nullable": true
                     },
                     "dockerfilePath": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "dockerBuildTarget": {
                       "type": "string",
                       "nullable": true
                     },
@@ -20787,6 +20833,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "dockerBuildTarget",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -22230,6 +22277,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dockerBuildTarget": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -22821,6 +22872,7 @@
                     "buildType",
                     "buildCommand",
                     "dockerfilePath",
+                    "dockerBuildTarget",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
