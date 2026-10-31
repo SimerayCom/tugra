@@ -52,13 +52,29 @@ describe("foreignAppToCreateInput", () => {
     expect(input.outputDir).toBeUndefined();
   });
 
-  it("carries a static build's output directory + dockerfile path", () => {
+  it("carries a static build's output directory + dockerfile path, normalized to Tugra's relative form", () => {
     const input = foreignAppToCreateInput(
       base({ kind: "git", buildPack: "static", git: { url: "g", dockerfilePath: "/Dockerfile" }, publishDirectory: "/dist" }),
       {},
       { serverId: "t-srv" },
     );
-    expect(input).toMatchObject({ source: "GIT", buildType: "STATIC", outputDir: "/dist", dockerfilePath: "/Dockerfile" });
+    // Coolify stores these absolute (leading slash); the importer strips it so the stored value matches a
+    // manual create (REPO_PATH is relative-only, and the importer bypasses that DTO).
+    expect(input).toMatchObject({ source: "GIT", buildType: "STATIC", outputDir: "dist", dockerfilePath: "Dockerfile" });
+  });
+
+  it("wires + normalizes the monorepo base directory (was dropped before), and treats the repo root as none", () => {
+    const sub = foreignAppToCreateInput(
+      base({ kind: "git", buildPack: "nixpacks", git: { url: "g", baseDirectory: "/apps/api/" } }),
+      {},
+      { serverId: "t-srv" },
+    );
+    expect(sub.baseDirectory).toBe("apps/api");
+    // Coolify's default base_directory is "/" (repo root) → Tugra represents that as no base directory.
+    for (const root of ["/", "", "."]) {
+      const r = foreignAppToCreateInput(base({ kind: "git", buildPack: "nixpacks", git: { url: "g", baseDirectory: root } }), {}, { serverId: "t-srv" });
+      expect(r.baseDirectory).toBeUndefined();
+    }
   });
 
   it("links a git import to a resolved GitSource when opts.gitSourceId is given, and omits it otherwise", () => {
