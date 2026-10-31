@@ -252,3 +252,38 @@ describe("MonitorsService.createForApp / removeForApp", () => {
     expect(deleteMany).toHaveBeenCalledWith({ where: { appId: "app1", auto: true } });
   });
 });
+
+describe("MonitorsService.createForServer / removeForServer", () => {
+  const server = { id: "s1", name: "web-1", teamId: "t1" };
+
+  it("creates an auto DISK metric monitor (90%) for a server and schedules it", async () => {
+    const create = jest.fn().mockResolvedValue({ ...monitor, id: "auto-s1", auto: true, serverId: "s1", intervalSec: 30 });
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const schedule = jest.fn();
+    const prisma = { monitor: { findFirst, create } } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, { schedule }).createForServer(server);
+    const data = create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ type: "METRIC", metric: "DISK", thresholdPct: 90, serverId: "s1", teamId: "t1", auto: true });
+    expect(schedule).toHaveBeenCalledWith("auto-s1", 30);
+  });
+
+  it("is idempotent — skips when an auto disk monitor already exists", async () => {
+    const create = jest.fn();
+    const findFirst = jest.fn().mockResolvedValue({ id: "auto-s1" });
+    const prisma = { monitor: { findFirst, create } } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, { schedule: jest.fn() }).createForServer(server);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("removeForServer unschedules and deletes EVERY monitor scoped to the server (auto + user)", async () => {
+    const unschedule = jest.fn();
+    const deleteMany = jest.fn().mockResolvedValue({});
+    const prisma = {
+      monitor: { findMany: jest.fn().mockResolvedValue([{ id: "auto-s1" }, { id: "user-m2" }]), deleteMany },
+    } as unknown as PrismaService;
+    await make(prisma, {} as TeamAccessService, { unschedule }).removeForServer("s1");
+    expect(unschedule).toHaveBeenCalledWith("auto-s1");
+    expect(unschedule).toHaveBeenCalledWith("user-m2");
+    expect(deleteMany).toHaveBeenCalledWith({ where: { serverId: "s1" } });
+  });
+});

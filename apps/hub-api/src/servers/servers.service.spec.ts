@@ -9,8 +9,11 @@ import { TeamAccessService } from "../common/team-access.service";
 const audit = { log: jest.fn() } as unknown as AuditService;
 const notifications = { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService;
 const regenerateMagicForServer = jest.fn().mockResolvedValue(undefined);
-// ModuleRef stub: setNetwork resolves ApplicationsService lazily to regenerate magic domains.
-const moduleRef = { get: jest.fn().mockReturnValue({ regenerateMagicForServer }) } as unknown as import("@nestjs/core").ModuleRef;
+// ModuleRef stub: setNetwork resolves ApplicationsService lazily (regenerate magic domains); create/delete
+// resolve MonitorsService lazily (auto disk monitor create/teardown). One object serves every lazy token.
+const createForServer = jest.fn().mockResolvedValue(undefined);
+const removeForServer = jest.fn().mockResolvedValue(undefined);
+const moduleRef = { get: jest.fn().mockReturnValue({ regenerateMagicForServer, createForServer, removeForServer }) } as unknown as import("@nestjs/core").ModuleRef;
 // Crypto stub: base64 so the plaintext isn't a literal substring — tests can assert
 // the creds were encrypted (not persisted raw).
 const crypto = {
@@ -202,7 +205,9 @@ describe("ServersService.deleteForUser (destroy VM)", () => {
   function svcForDelete(prisma: Partial<PrismaService>, destroyVm = jest.fn().mockResolvedValue(undefined)) {
     const mr = {
       get: jest.fn().mockImplementation((tok: string) =>
-        tok === "PROVISIONING_SERVICE" ? { destroyVm } : { releaseResources: jest.fn().mockResolvedValue(undefined) },
+        tok === "PROVISIONING_SERVICE"
+          ? { destroyVm }
+          : { releaseResources: jest.fn().mockResolvedValue(undefined), removeForServer: jest.fn().mockResolvedValue(undefined) },
       ),
     } as unknown as import("@nestjs/core").ModuleRef;
     const svc = new ServersService(prisma as PrismaService, audit, notifications, mr, crypto, new TeamAccessService(prisma as PrismaService));

@@ -16,6 +16,9 @@ import { planTargets } from "../bulk/bulk.service";
 import { filterByQuery } from "../common/query-filter";
 import type { CreateMonitorInput, UpdateMonitorInput } from "./dto";
 
+/** Default alarm threshold for the auto disk monitor created on server enroll (usage ≥ this % → DOWN). */
+const DEFAULT_DISK_THRESHOLD_PCT = 90;
+
 export const MonitorViewSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -266,6 +269,47 @@ export class MonitorsService {
     if (autos.length) {
       await this.prisma.monitor.deleteMany({ where: { appId, auto: true } });
       await this.audit.log({ actor: "system", action: "monitor.auto.remove", target: appId });
+    }
+  }
+
+  /** Auto-create a default disk-usage monitor for a newly created server (system; no RBAC — the caller
+   *  already checked servers:manage). Idempotent: skips if an auto disk monitor already exists. The METRIC
+   *  check reads "no metrics yet" as UP (checkers.metricCheckResult), so a PENDING server whose agent is
+   *  not reporting yet never false-alarms. */
+  async createForServer(server: { id: string; name: string; teamId: string }): Promise<void> {
+    const existing = await this.prisma.monitor.findFirst({
+      where: { serverId: server.id, auto: true, metric: "DISK" },
+      select: { id: true },
+    });
+    if (existing) return;
+    const m = await this.prisma.monitor.create({
+      data: {
+        name: server.name,
+        type: MonitorType.METRIC,
+        target: "DISK", // a label for METRIC monitors
+        serverId: server.id,
+        metric: "DISK",
+        thresholdPct: DEFAULT_DISK_THRESHOLD_PCT,
+        teamId: server.teamId,
+        auto: true,
+      },
+    });
+    await this.audit.log({ actor: "system", action: "monitor.auto.create", target: m.id });
+    await this.scheduler.schedule(m.id, m.intervalSec);
+  }
+
+  /** Remove every monitor scoped to a server (system; called on server delete). A server-scoped METRIC
+   *  monitor is meaningless once the server is gone — this unschedules each so no timer leaks, then deletes
+   *  them (there is no FK cascade on Monitor.serverId, so this cleanup must be explicit). */
+  async removeForServer(serverId: string): Promise<void> {
+    const monitors = await this.prisma.monitor.findMany({
+      where: { serverId },
+      select: { id: true },
+    });
+    for (const m of monitors) await this.scheduler.unschedule(m.id);
+    if (monitors.length) {
+      await this.prisma.monitor.deleteMany({ where: { serverId } });
+      await this.audit.log({ actor: "system", action: "monitor.auto.remove", target: serverId });
     }
   }
 
