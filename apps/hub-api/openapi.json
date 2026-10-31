@@ -25077,8 +25077,16 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "backupCron": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "backupRetention": {
                         "type": "number"
+                      },
+                      "backupRetentionDays": {
+                        "type": "number",
+                        "nullable": true
                       },
                       "backupDestinationId": {
                         "type": "string",
@@ -25135,7 +25143,9 @@
                       "cpus",
                       "backupEnabled",
                       "backupIntervalHours",
+                      "backupCron",
                       "backupRetention",
+                      "backupRetentionDays",
                       "backupDestinationId",
                       "backupSupported",
                       "tags",
@@ -25371,8 +25381,16 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "backupRetention": {
                       "type": "number"
+                    },
+                    "backupRetentionDays": {
+                      "type": "number",
+                      "nullable": true
                     },
                     "backupDestinationId": {
                       "type": "string",
@@ -25429,7 +25447,9 @@
                     "cpus",
                     "backupEnabled",
                     "backupIntervalHours",
+                    "backupCron",
                     "backupRetention",
+                    "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
@@ -25632,8 +25652,16 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "backupRetention": {
                       "type": "number"
+                    },
+                    "backupRetentionDays": {
+                      "type": "number",
+                      "nullable": true
                     },
                     "backupDestinationId": {
                       "type": "string",
@@ -25690,7 +25718,9 @@
                     "cpus",
                     "backupEnabled",
                     "backupIntervalHours",
+                    "backupCron",
                     "backupRetention",
+                    "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
@@ -26087,8 +26117,16 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "backupRetention": {
                       "type": "number"
+                    },
+                    "backupRetentionDays": {
+                      "type": "number",
+                      "nullable": true
                     },
                     "backupDestinationId": {
                       "type": "string",
@@ -26145,7 +26183,9 @@
                     "cpus",
                     "backupEnabled",
                     "backupIntervalHours",
+                    "backupCron",
                     "backupRetention",
+                    "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
@@ -28074,10 +28114,21 @@
                     "minimum": 1,
                     "maximum": 720
                   },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
+                  },
                   "retention": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 365
+                  },
+                  "retentionDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "nullable": true
                   },
                   "destinationId": {
                     "type": "string",

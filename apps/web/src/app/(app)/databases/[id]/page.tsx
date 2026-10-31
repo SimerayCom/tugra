@@ -105,7 +105,9 @@ export default function DatabaseDetailPage() {
 
   const [schedEnabled, setSchedEnabled] = useState(false);
   const [interval, setIntervalH] = useState("24");
+  const [cron, setCron] = useState("");
   const [retention, setRetention] = useState("7");
+  const [retentionDays, setRetentionDays] = useState("");
   const [importUrl, setImportUrl] = useState("");
   const [importGzip, setImportGzip] = useState(true);
   const [importKey, setImportKey] = useState("");
@@ -120,7 +122,9 @@ export default function DatabaseDetailPage() {
     if (db) {
       setSchedEnabled(db.backupEnabled);
       setIntervalH(String(db.backupIntervalHours ?? 24));
+      setCron(db.backupCron ?? "");
       setRetention(String(db.backupRetention));
+      setRetentionDays(db.backupRetentionDays != null ? String(db.backupRetentionDays) : "");
       setDestinationId(db.backupDestinationId ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,7 +134,9 @@ export default function DatabaseDetailPage() {
       api.setBackupConfig(id, {
         enabled: schedEnabled,
         intervalHours: Number(interval) || 24,
+        cron: cron.trim() || null,
         retention: Number(retention) || 7,
+        retentionDays: retentionDays.trim() ? Number(retentionDays) : null,
         destinationId: destinationId || null,
       }),
     onSuccess: invalidate,
@@ -307,11 +313,19 @@ export default function DatabaseDetailPage() {
             </label>
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
               {t("databases.every")}
-              <input style={fieldSm} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} />
+              <input style={fieldSm} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} disabled={!!cron.trim()} />
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }} title={t("databases.backupCronHint")}>
+              {t("databases.backupCron")}
+              <input style={{ ...fieldSm, width: 120 }} value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 3 * * *" />
             </label>
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
               {t("databases.keep")}
               <input style={fieldSm} type="number" value={retention} onChange={(e) => setRetention(e.target.value)} />
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }} title={t("databases.backupRetentionDaysHint")}>
+              {t("databases.backupRetentionDays")}
+              <input style={fieldSm} type="number" value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)} placeholder="∞" />
             </label>
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
               {t("databases.destination")}

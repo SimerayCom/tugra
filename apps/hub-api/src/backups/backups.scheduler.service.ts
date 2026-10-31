@@ -51,9 +51,13 @@ export class BackupSchedulerService
     );
 
     const dbs = await this.prisma.database.findMany({
-      where: { backupEnabled: true, backupIntervalHours: { not: null } },
+      where: { backupEnabled: true, OR: [{ backupIntervalHours: { not: null } }, { backupCron: { not: null } }] },
     });
-    for (const d of dbs) await this.schedule(d.id, (d.backupIntervalHours ?? 24) * 3600);
+    // A cron expression wins over the plain interval when both are set.
+    for (const d of dbs) {
+      if (d.backupCron) await this.scheduleCron(d.id, d.backupCron);
+      else await this.schedule(d.id, (d.backupIntervalHours ?? 24) * 3600);
+    }
     this.logger.log(`scheduled ${dbs.length} database backup(s)`);
   }
 
@@ -65,6 +69,13 @@ export class BackupSchedulerService
       { databaseId },
       { repeat: { every: intervalSec * 1000 } },
     );
+  }
+
+  /** Schedule a backup on a cron pattern (e.g. "0 3 * * *" — 03:00 daily) instead of a fixed interval. */
+  async scheduleCron(databaseId: string, cron: string): Promise<void> {
+    if (!this.queue) return;
+    await this.unschedule(databaseId);
+    await this.queue.add(`backup:${databaseId}`, { databaseId }, { repeat: { pattern: cron } });
   }
 
   async unschedule(databaseId: string): Promise<void> {

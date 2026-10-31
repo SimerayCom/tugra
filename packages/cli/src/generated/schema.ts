@@ -18448,7 +18448,9 @@ export interface operations {
                         cpus: number | null;
                         backupEnabled: boolean;
                         backupIntervalHours: number | null;
+                        backupCron: string | null;
                         backupRetention: number;
+                        backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         tags: string[];
@@ -18552,7 +18554,9 @@ export interface operations {
                         cpus: number | null;
                         backupEnabled: boolean;
                         backupIntervalHours: number | null;
+                        backupCron: string | null;
                         backupRetention: number;
+                        backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         tags: string[];
@@ -18655,7 +18659,9 @@ export interface operations {
                         cpus: number | null;
                         backupEnabled: boolean;
                         backupIntervalHours: number | null;
+                        backupCron: string | null;
                         backupRetention: number;
+                        backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         tags: string[];
@@ -18893,7 +18899,9 @@ export interface operations {
                         cpus: number | null;
                         backupEnabled: boolean;
                         backupIntervalHours: number | null;
+                        backupCron: string | null;
                         backupRetention: number;
+                        backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         tags: string[];
@@ -20225,7 +20233,9 @@ export interface operations {
                 "application/json": {
                     enabled: boolean;
                     intervalHours?: number;
+                    cron?: string | null;
                     retention?: number;
+                    retentionDays?: number | null;
                     destinationId?: string | null;
                 };
             };

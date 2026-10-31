@@ -1418,7 +1418,7 @@ export const api = {
       body: JSON.stringify(expireHours ? { expireHours } : {}),
     });
   },
-  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; retention?: number; destinationId?: string | null }) {
+  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; retention?: number; retentionDays?: number | null; destinationId?: string | null }) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backup-config`, {
       method: "PUT",
       body: JSON.stringify(cfg),
