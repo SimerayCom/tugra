@@ -957,6 +957,27 @@ describe("deploy-script", () => {
     expect(s).not.toContain("-strip");
   });
 
+  it("rate limit emits a ratelimit middleware, placed after the IP gate + before auth", () => {
+    const s = traefikLabels({
+      ...base,
+      domain: "x.com",
+      ipAllowlist: ["10.0.0.0/8"],
+      basicAuthUsers: [{ user: "u", hash: "$2b$x" }],
+      rateLimit: { average: 100, burst: 50, period: "1m" },
+    }).join("\n");
+    expect(s).toContain(`middlewares.tugra_${base.id}-rl.ratelimit.average=100`);
+    expect(s).toContain(`middlewares.tugra_${base.id}-rl.ratelimit.burst=50`);
+    expect(s).toContain(`middlewares.tugra_${base.id}-rl.ratelimit.period=1m`);
+    // chain order: ip -> rl -> ba
+    expect(s).toContain(`routers.tugra_${base.id}.middlewares=tugra_${base.id}-ip,tugra_${base.id}-rl,tugra_${base.id}-ba`);
+  });
+
+  it("no rate limit → no ratelimit middleware (regression)", () => {
+    const s = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(s).not.toContain("-rl");
+    expect(s).not.toContain("ratelimit");
+  });
+
   it("security headers add a headers middleware to the router", () => {
     const s = traefikLabels({ ...base, domain: "x.com", securityHeaders: true }).join("\n");
     expect(s).toContain("-sec.headers.stsSeconds=31536000");

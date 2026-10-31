@@ -9318,6 +9318,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9577,6 +9583,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9947,6 +9959,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -10272,6 +10290,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -14546,6 +14570,12 @@ export interface operations {
                     ipAllowlist?: string[];
                     pathPrefix?: string | null;
                     stripPrefix?: boolean;
+                    rateLimit?: {
+                        average: number;
+                        burst: number;
+                        /** @enum {string} */
+                        period: "1s" | "1m" | "1h";
+                    } | null;
                 };
             };
         };
@@ -15134,6 +15164,12 @@ export interface operations {
                             basicAuthUsers: string[];
                             pathPrefix: string | null;
                             stripPrefix: boolean;
+                            rateLimit: {
+                                average: number;
+                                burst: number;
+                                /** @enum {string} */
+                                period: "1s" | "1m" | "1h";
+                            } | null;
                             https: boolean;
                             domainKind: string;
                             exposeMode: string;
@@ -15388,6 +15424,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -15711,6 +15753,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -16092,6 +16140,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -17142,6 +17196,12 @@ export interface operations {
                         basicAuthUsers: string[];
                         pathPrefix: string | null;
                         stripPrefix: boolean;
+                        rateLimit: {
+                            average: number;
+                            burst: number;
+                            /** @enum {string} */
+                            period: "1s" | "1m" | "1h";
+                        } | null;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;

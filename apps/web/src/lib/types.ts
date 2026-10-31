@@ -1105,6 +1105,7 @@ export interface Application {
   basicAuthUsers: string[]; // usernames only (password hashes never returned)
   pathPrefix: string | null;
   stripPrefix: boolean;
+  rateLimit: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null;
   https: boolean;
   domainKind: string;
   exposeMode: string;

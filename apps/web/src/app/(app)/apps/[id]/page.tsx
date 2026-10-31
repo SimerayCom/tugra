@@ -427,7 +427,7 @@ export default function AppDetailPage() {
     serviceDomains: () => <ServiceDomainsCard id={id} />,
     domainOptions: () =>
       appData.domain ? (
-        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} />
+        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} rateLimit={appData.rateLimit} />
       ) : null,
     customCert: () =>
       appData.domain ? (
@@ -2166,6 +2166,7 @@ function DomainOptionsCard({
   ipAllowlist,
   pathPrefix,
   stripPrefix,
+  rateLimit,
 }: {
   id: string;
   domain: string;
@@ -2176,6 +2177,7 @@ function DomainOptionsCard({
   ipAllowlist: string[];
   pathPrefix: string | null;
   stripPrefix: boolean;
+  rateLimit: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -2185,6 +2187,10 @@ function DomainOptionsCard({
   const [ips, setIps] = useState(ipAllowlist.join("\n"));
   const [pfx, setPfx] = useState(pathPrefix ?? "");
   const [strip, setStrip] = useState(stripPrefix);
+  const [rlOn, setRlOn] = useState(!!rateLimit);
+  const [rlAvg, setRlAvg] = useState(String(rateLimit?.average ?? 60));
+  const [rlBurst, setRlBurst] = useState(String(rateLimit?.burst ?? 30));
+  const [rlPeriod, setRlPeriod] = useState<"1s" | "1m" | "1h">(rateLimit?.period ?? "1m");
   const save = useMutation({
     mutationFn: () =>
       api.setAppDomainOptions(id, {
@@ -2194,6 +2200,7 @@ function DomainOptionsCard({
         ipAllowlist: ips.split("\n").map((l) => l.trim()).filter(Boolean),
         pathPrefix: pfx.trim() || null,
         stripPrefix: strip,
+        rateLimit: rlOn ? { average: Math.max(1, Number(rlAvg) || 0), burst: Math.max(1, Number(rlBurst) || 0), period: rlPeriod } : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
@@ -2258,6 +2265,24 @@ function DomainOptionsCard({
           </label>
         </div>
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.pathPrefixDesc")}</p>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
+          <input type="checkbox" checked={rlOn} onChange={(e) => setRlOn(e.target.checked)} />
+          {t("apps.rateLimit")}
+        </label>
+        {rlOn && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+            <input style={{ ...envField, width: 110 }} type="number" min={1} value={rlAvg} onChange={(e) => setRlAvg(e.target.value)} aria-label={t("apps.rateLimitAverage")} placeholder={t("apps.rateLimitAverage")} />
+            <input style={{ ...envField, width: 110 }} type="number" min={1} value={rlBurst} onChange={(e) => setRlBurst(e.target.value)} aria-label={t("apps.rateLimitBurst")} placeholder={t("apps.rateLimitBurst")} />
+            <select style={{ ...envField, minWidth: 110 }} value={rlPeriod} onChange={(e) => setRlPeriod(e.target.value as "1s" | "1m" | "1h")} aria-label={t("apps.rateLimitPeriod")}>
+              <option value="1s">/s</option>
+              <option value="1m">/min</option>
+              <option value="1h">/hour</option>
+            </select>
+          </div>
+        )}
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.rateLimitDesc")}</p>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>

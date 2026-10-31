@@ -968,6 +968,8 @@ model Application {
   // stripPrefix (default true) removes the prefix before forwarding to the backend. Applies on next deploy.
   pathPrefix     String?
   stripPrefix    Boolean      @default(true)
+  // Per-app rate limit {average, burst, period:'1s'|'1m'|'1h'} → a Traefik ratelimit middleware. Null = off.
+  rateLimit      Json?
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"

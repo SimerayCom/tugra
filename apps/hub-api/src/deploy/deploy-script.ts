@@ -127,6 +127,9 @@ export interface AppSpec {
    *  plaintext password is never stored). When non-empty, a Traefik basicauth middleware protects the app.
    *  Empty → no middleware (byte-identical). */
   basicAuthUsers?: { user: string; hash: string }[] | null;
+  /** Per-app rate limit → a Traefik ratelimit middleware (average req/period, burst). Keyed on client IP
+   *  (behind a CDN/Tunnel every client shares one IP — documented caveat). Null → no limit (byte-identical). */
+  rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null;
   /** Path-prefix routing: serve the app under <host>/<prefix> (Traefik PathPrefix rule). Null/empty → the
    *  app answers at the host root (byte-identical to apps with no prefix). */
   pathPrefix?: string | null;
@@ -565,6 +568,16 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
     const users = opts.composeDollarEscape ? usersRaw.replace(/\$/g, "$$$$") : usersRaw;
     labels.push(`traefik.http.middlewares.${r}-ba.basicauth.users=${users}`);
     mw.unshift(`${r}-ba`);
+  }
+  if (app.rateLimit) {
+    // Rate limit sits AFTER the IP gate but BEFORE auth (unshifted here, then ip is unshifted below →
+    // final chain: ip -> rl -> ba -> fa -> canon -> sec). Traefik keys on the source IP by default.
+    labels.push(
+      `traefik.http.middlewares.${r}-rl.ratelimit.average=${app.rateLimit.average}`,
+      `traefik.http.middlewares.${r}-rl.ratelimit.burst=${app.rateLimit.burst}`,
+      `traefik.http.middlewares.${r}-rl.ratelimit.period=${app.rateLimit.period}`,
+    );
+    mw.unshift(`${r}-rl`);
   }
   const ipAllow = (app.ipAllowlist ?? []).filter(Boolean);
   if (ipAllow.length) {
