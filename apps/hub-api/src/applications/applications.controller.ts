@@ -30,6 +30,8 @@ import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ApplicationsService, AppViewSchema, CloneAppResultSchema, GitSshKeyResultSchema, DomainViewSchema } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
+import { AppSecretRefsService } from "./app-secret-refs.service";
+import { CreateSecretRefInput, CreateSecretRefSchema } from "../secret-providers/dto";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
 import {
   CreateAppInput,
@@ -117,6 +119,7 @@ export class ApplicationsController {
   constructor(
     private readonly apps: ApplicationsService,
     private readonly dbLinks: AppDatabaseLinksService,
+    private readonly secretRefs: AppSecretRefsService,
   ) {}
 
   @Get()
@@ -364,6 +367,31 @@ export class ApplicationsController {
   @HttpCode(200)
   async unlinkDatabase(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("linkId") linkId: string) {
     await this.dbLinks.remove(user.userId, id, linkId);
+    return { ok: true };
+  }
+
+  // Secret refs: bind an external secret store value (Vault in v1) so it is fetched at deploy and injected
+  // into the app's env. The list carries NO secret values (only the env var + locator), so no read:secrets scope.
+  @Get(":id/secret-refs")
+  listSecretRefs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.secretRefs.list(user.userId, id);
+  }
+
+  @Post(":id/secret-refs")
+  @HttpCode(201)
+  @ApiZodBody(CreateSecretRefSchema)
+  bindSecret(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(CreateSecretRefSchema)) body: CreateSecretRefInput,
+  ) {
+    return this.secretRefs.create(user.userId, id, body);
+  }
+
+  @Delete(":id/secret-refs/:refId")
+  @HttpCode(200)
+  async unbindSecret(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("refId") refId: string) {
+    await this.secretRefs.remove(user.userId, id, refId);
     return { ok: true };
   }
 

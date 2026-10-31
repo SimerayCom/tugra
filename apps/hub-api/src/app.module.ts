@@ -36,6 +36,7 @@ import { ImporterModule } from "./importer/importer.module";
 import { CloudModule } from "./cloud/cloud.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
 import { DnsModule } from "./dns/dns.module";
+import { SecretProvidersModule } from "./secret-providers/secret-providers.module";
 import { ApiTokensModule } from "./api-tokens/api-tokens.module";
 import { SavedViewsModule } from "./saved-views/saved-views.module";
 import { SharedVariablesModule } from "./shared-variables/shared-variables.module";
@@ -102,6 +103,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     CloudModule,
     TunnelModule,
     DnsModule,
+    SecretProvidersModule,
     ApiTokensModule,
     SavedViewsModule,
     SharedVariablesModule,

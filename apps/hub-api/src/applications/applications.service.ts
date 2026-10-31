@@ -75,6 +75,7 @@ import { parseCustomCert, certCoversHost } from "./custom-cert";
 import { generateEd25519DeployKey } from "../git-sources/ssh-keygen";
 import { assertSafeDockerOptions, validateHostMounts } from "../deploy/docker-options-safety";
 import { AppDatabaseLinksService } from "./app-database-links.service";
+import { AppSecretRefsService } from "./app-secret-refs.service";
 import {
   buildConfigSnapshot,
   diffSnapshots,
@@ -349,6 +350,7 @@ export class ApplicationsService {
     private readonly swarm: SwarmService,
     private readonly dns: DnsAutomationService,
     private readonly dbLinks: AppDatabaseLinksService,
+    private readonly secretRefs: AppSecretRefsService,
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -3322,7 +3324,10 @@ export class ApplicationsService {
     }
     const appEnv = this.appEnv(app);
     const linked = await this.dbLinks.resolveLinkedEnv(app, new Set(Object.keys(appEnv)));
-    return { ...merged, ...linked, ...appEnv }; // shared < linked DB < app-specific
+    // External secret-store refs are fetched fresh and take the HIGHEST precedence: a managed secret wins
+    // over a possibly-stale literal left in the app's plain env. A ref that can't be fetched fails the deploy.
+    const secrets = await this.secretRefs.resolveSecretEnv(app);
+    return { ...merged, ...linked, ...appEnv, ...secrets }; // shared < linked DB < app-env < external secret
   }
 
   /**
