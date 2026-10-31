@@ -9316,6 +9316,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9573,6 +9575,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -9941,6 +9945,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -10264,6 +10270,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -14536,6 +14544,8 @@ export interface operations {
                     /** Format: uri */
                     forwardAuth?: string | null;
                     ipAllowlist?: string[];
+                    pathPrefix?: string | null;
+                    stripPrefix?: boolean;
                 };
             };
         };
@@ -15122,6 +15132,8 @@ export interface operations {
                             forwardAuth: string | null;
                             ipAllowlist: string[];
                             basicAuthUsers: string[];
+                            pathPrefix: string | null;
+                            stripPrefix: boolean;
                             https: boolean;
                             domainKind: string;
                             exposeMode: string;
@@ -15374,6 +15386,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -15695,6 +15709,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -16074,6 +16090,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;
@@ -17122,6 +17140,8 @@ export interface operations {
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
+                        pathPrefix: string | null;
+                        stripPrefix: boolean;
                         https: boolean;
                         domainKind: string;
                         exposeMode: string;

@@ -127,6 +127,12 @@ export interface AppSpec {
    *  plaintext password is never stored). When non-empty, a Traefik basicauth middleware protects the app.
    *  Empty → no middleware (byte-identical). */
   basicAuthUsers?: { user: string; hash: string }[] | null;
+  /** Path-prefix routing: serve the app under <host>/<prefix> (Traefik PathPrefix rule). Null/empty → the
+   *  app answers at the host root (byte-identical to apps with no prefix). */
+  pathPrefix?: string | null;
+  /** When a pathPrefix is set, strip it before forwarding to the backend (so the app sees "/" not "/prefix").
+   *  Defaults to true; set false to pass the full path through. No effect without a pathPrefix. */
+  stripPrefix?: boolean | null;
   /** Cert strategy driving the Traefik router: "http"/"none" → plain HTTP; otherwise HTTPS+LE. */
   certType?: string;
   /** Server's wildcard root (e.g. apps.example.com) — for a le-dns wildcard cert. */
@@ -449,7 +455,12 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
   const base = app.domain.replace(/^www\./i, "");
   const www = `www.${base}`;
   // When a canonical redirect is set, answer for both bare + www hosts.
-  const rule = redirect ? `Host(\`${base}\`) || Host(\`${www}\`)` : `Host(\`${app.domain}\`)`;
+  const hostRuleBare = redirect ? `Host(\`${base}\`) || Host(\`${www}\`)` : `Host(\`${app.domain}\`)`;
+  // Path-prefix routing: add `&& PathPrefix(...)`. Parens wrap a www-canonical OR only when a prefix is
+  // present, so an app WITHOUT a prefix emits the byte-identical old rule (existing snapshots unchanged).
+  const rule = app.pathPrefix
+    ? `${redirect ? `(${hostRuleBare})` : hostRuleBare} && PathPrefix(\`${app.pathPrefix}\`)`
+    : hostRuleBare;
   // Magic domains (and anything pinned to certType "http"/"none") are served over
   // plain HTTP on the `web` entrypoint — no TLS, no Let's Encrypt, no HTTP→HTTPS
   // redirect. Everything else (custom domains, certType "le-http") keeps the HTTPS
@@ -561,6 +572,12 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
     // chain — a disallowed client is rejected before forward-auth/security-headers even run.
     labels.push(`traefik.http.middlewares.${r}-ip.ipallowlist.sourcerange=${ipAllow.join(",")}`);
     mw.unshift(`${r}-ip`);
+  }
+  // Strip the path prefix before forwarding to the backend (app sees "/" not "/prefix"), unless opted out.
+  // Pushed LAST so the auth/security middlewares above still see the full request path.
+  if (app.pathPrefix && app.stripPrefix !== false) {
+    labels.push(`traefik.http.middlewares.${r}-strip.stripprefix.prefixes=${app.pathPrefix}`);
+    mw.push(`${r}-strip`);
   }
   if (mw.length) labels.push(`traefik.http.routers.${r}.middlewares=${mw.join(",")}`);
 

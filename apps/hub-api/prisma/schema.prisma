@@ -964,6 +964,10 @@ model Application {
   // HTTP Basic Auth users as [{user, hash}] — hash is a Traefik-compatible bcrypt htpasswd hash (the
   // plaintext password is never stored). Null/empty = no basic auth. Applies on the next deploy.
   basicAuthUsers Json?
+  // Path-prefix routing: serve the app under <domain>/<pathPrefix> (Traefik PathPrefix). Null = host root.
+  // stripPrefix (default true) removes the prefix before forwarding to the backend. Applies on next deploy.
+  pathPrefix     String?
+  stripPrefix    Boolean      @default(true)
   https          Boolean      @default(true)
   domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"
