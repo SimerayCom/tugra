@@ -2,8 +2,10 @@ import { createPrivateKey, createPublicKey, sign, type KeyObject } from "node:cr
 import {
   channelEntrySchema,
   manifestSchema,
+  noticeSchema,
   verifyUpdateManifest,
   type ChannelEntry,
+  type Notice,
   type VerifiedManifest,
 } from "./update-manifest";
 
@@ -54,20 +56,48 @@ export function buildChannelEntry(input: ChannelEntryInput): ChannelEntry {
   return entry;
 }
 
+export interface NoticeInput {
+  id: string;
+  message: string;
+  severity?: "info" | "warning" | "critical";
+  url?: string;
+  expiresAt?: string;
+}
+
+/** Assemble a schema-clean Notice from publish inputs; empty optionals are OMITTED (like buildChannelEntry). */
+export function buildNotice(input: NoticeInput): Notice {
+  const notice: Notice = { id: input.id, message: input.message, severity: input.severity ?? "info" };
+  if (input.url && input.url.trim()) notice.url = input.url.trim();
+  if (input.expiresAt && input.expiresAt.trim()) notice.expiresAt = input.expiresAt.trim();
+  return notice;
+}
+
 /**
- * Patch ONLY `tugra[channel]` into the current manifest, preserving every other channel byte-for-byte.
- * Tolerant of an absent/empty/first-run `current` (starts from an empty channel map).
+ * Patch `tugra[channel]` into the current manifest (preserving every other channel byte-for-byte) and
+ * resolve the top-level `notice`. Tolerant of an absent/empty/first-run `current`.
+ *  - `channel`/`entry` null → no channel change (notice-only run).
+ *  - `notice` arg: `undefined` → carry the CURRENT notice forward (so a release never silently erases an
+ *    active banner); `null` → clear it; an object → set it.
  */
-export function mergeManifest(current: unknown, channel: string, entry: ChannelEntry): VerifiedManifest {
+export function mergeManifest(
+  current: unknown,
+  channel: string | null,
+  entry: ChannelEntry | null,
+  notice?: Notice | null,
+): VerifiedManifest {
   const base: Record<string, ChannelEntry> = {};
-  if (current && typeof current === "object" && "tugra" in current) {
-    const tugra = (current as { tugra: unknown }).tugra;
-    if (tugra && typeof tugra === "object") {
-      Object.assign(base, tugra as Record<string, ChannelEntry>);
-    }
+  const cur = current && typeof current === "object" ? (current as { tugra?: unknown; notice?: unknown }) : null;
+  if (cur && cur.tugra && typeof cur.tugra === "object") {
+    Object.assign(base, cur.tugra as Record<string, ChannelEntry>);
   }
-  base[channel] = entry;
-  return { tugra: base };
+  if (channel && entry) base[channel] = entry;
+  const out: VerifiedManifest = { tugra: base };
+  let resolved: Notice | undefined;
+  if (notice === undefined) resolved = (cur?.notice as Notice | undefined) ?? undefined; // carry forward
+  else if (notice === null) resolved = undefined; // clear
+  else resolved = notice; // set
+  if (resolved) out.notice = resolved;
+  return out;
 }
 
 /** Validate against the SAME schema the consumer enforces (fail-closed). Returns the parsed data. */
@@ -126,11 +156,12 @@ export interface SignedManifest {
  */
 export function signAndSelfVerify(args: {
   current: unknown;
-  channel: string;
-  entry: ChannelEntry;
+  channel: string | null;
+  entry: ChannelEntry | null;
+  notice?: Notice | null;
   seedB64: string;
 }): SignedManifest {
-  const merged = mergeManifest(args.current, args.channel, args.entry);
+  const merged = mergeManifest(args.current, args.channel, args.entry, args.notice);
   const validated = validateManifest(merged); // fail-closed against the shared schema
   const body = canonicalizeManifest(validated); // deterministic, no trailing newline
   const priv = seedToPrivateKey(args.seedB64);
@@ -140,5 +171,5 @@ export function signAndSelfVerify(args: {
   return { body, sig, publicKeyB64 };
 }
 
-// Re-export so the runner can validate an entry shape if needed without a second import.
-export { channelEntrySchema };
+// Re-export so the runner can validate an entry/notice shape if needed without a second import.
+export { channelEntrySchema, noticeSchema };

@@ -12,11 +12,18 @@
 //     --changelog-url https://github.com/SimerayCom/tugra/releases/tag/v0.2.0 \
 //     --published-at 2026-07-18T00:00:00Z [--min-upgrade-from 1.9.0] \
 //     [--current ./gh-pages/versions.json] --out-dir ./out
+//
+// Notice-only (publish/clear a top-level operator banner WITHOUT a release — re-signs the current file):
+//   UPDATE_SIGNING_KEY=… node scripts/sign-manifest.mjs --notice-only true \
+//     --current ./gh-pages/versions.json --out-dir ./out \
+//     --notice-id 2026-11-02-beta2 --notice-message "beta.2 fixes X — please update" \
+//     --notice-severity warning [--notice-url https://…] [--notice-expires-at 2026-12-01T00:00:00Z]
+//   …or to clear:  --notice-only true --clear-notice true --current … --out-dir …
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { buildChannelEntry, signAndSelfVerify } from "../apps/hub-api/dist/update/manifest-merge.js";
+import { buildChannelEntry, buildNotice, signAndSelfVerify } from "../apps/hub-api/dist/update/manifest-merge.js";
 
 function parseArgs(argv) {
   const out = {};
@@ -35,24 +42,51 @@ if (!seedB64) {
   console.error("sign-manifest: UPDATE_SIGNING_KEY env is required (base64 32-byte ed25519 seed)");
   process.exit(1);
 }
-if (!args.version || !args.channel) {
-  console.error("sign-manifest: --version and --channel are required");
+// Notice-only mode re-signs the EXISTING manifest with just a top-level notice change (no release). A
+// release run (default) leaves `notice` undefined, which carries any active notice forward unchanged.
+const noticeOnly = args["notice-only"] === "true";
+if (!noticeOnly && (!args.version || !args.channel)) {
+  console.error("sign-manifest: --version and --channel are required (or pass --notice-only true)");
   process.exit(1);
 }
 
-const agentSha256 = {};
-if (args["agent-amd64"]) agentSha256.amd64 = args["agent-amd64"];
-if (args["agent-arm64"]) agentSha256.arm64 = args["agent-arm64"];
+// notice: undefined = carry forward; null = clear; object = set.
+let notice;
+if (args["clear-notice"] === "true") {
+  notice = null;
+} else if (args["notice-message"] || args["notice-id"]) {
+  if (!args["notice-id"] || !args["notice-message"]) {
+    console.error("sign-manifest: a notice needs both --notice-id and --notice-message");
+    process.exit(1);
+  }
+  notice = buildNotice({
+    id: args["notice-id"],
+    message: args["notice-message"],
+    severity: args["notice-severity"],
+    url: args["notice-url"],
+    expiresAt: args["notice-expires-at"],
+  });
+}
+if (noticeOnly && notice === undefined) {
+  console.error("sign-manifest: --notice-only needs --notice-id + --notice-message, or --clear-notice true");
+  process.exit(1);
+}
 
-const entry = buildChannelEntry({
-  version: args.version,
-  hubImage: args["hub-image"],
-  webImage: args["web-image"],
-  agentSha256: Object.keys(agentSha256).length ? agentSha256 : undefined,
-  minUpgradeFrom: args["min-upgrade-from"],
-  publishedAt: args["published-at"],
-  changelogUrl: args["changelog-url"],
-});
+let entry = null;
+if (!noticeOnly) {
+  const agentSha256 = {};
+  if (args["agent-amd64"]) agentSha256.amd64 = args["agent-amd64"];
+  if (args["agent-arm64"]) agentSha256.arm64 = args["agent-arm64"];
+  entry = buildChannelEntry({
+    version: args.version,
+    hubImage: args["hub-image"],
+    webImage: args["web-image"],
+    agentSha256: Object.keys(agentSha256).length ? agentSha256 : undefined,
+    minUpgradeFrom: args["min-upgrade-from"],
+    publishedAt: args["published-at"],
+    changelogUrl: args["changelog-url"],
+  });
+}
 
 let current = null;
 if (args.current && existsSync(args.current)) {
@@ -63,10 +97,16 @@ if (args.current && existsSync(args.current)) {
     process.exit(1);
   }
 }
+// Fail-closed: a notice-only run MUST patch an existing manifest, never fabricate an empty one (which
+// would wipe every channel on gh-pages).
+if (noticeOnly && !current) {
+  console.error("sign-manifest: --notice-only requires an existing --current manifest (refusing to wipe channels)");
+  process.exit(1);
+}
 
 let signed;
 try {
-  signed = signAndSelfVerify({ current, channel: args.channel, entry, seedB64 });
+  signed = signAndSelfVerify({ current, channel: noticeOnly ? null : args.channel, entry, notice, seedB64 });
 } catch (e) {
   console.error(`sign-manifest: refusing to publish — sign/self-verify failed: ${e.message}`);
   process.exit(1);

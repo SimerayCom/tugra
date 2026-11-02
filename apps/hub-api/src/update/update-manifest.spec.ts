@@ -97,3 +97,44 @@ describe("verifyUpdateManifest", () => {
     expect(out.tugra.stable.agentSha256).toEqual({ amd64: "deadbeef" });
   });
 });
+
+describe("notice (signed operator banner)", () => {
+  const withNotice = (notice: unknown) => JSON.stringify({ tugra: { stable: { version: "0.2.0" } }, notice });
+
+  it("accepts a valid https notice and returns it", () => {
+    const { priv, pubB64 } = keypair();
+    const raw = withNotice({ id: "n1", message: "hello", severity: "warning", url: "https://tugra.io/x" });
+    const out = verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64);
+    expect(out.notice).toEqual({ id: "n1", message: "hello", severity: "warning", url: "https://tugra.io/x" });
+  });
+
+  it("defaults severity to info when the signed notice omits it", () => {
+    const { priv, pubB64 } = keypair();
+    const raw = withNotice({ id: "n1", message: "hello" });
+    expect(verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64).notice?.severity).toBe("info");
+  });
+
+  it("rejects a non-https notice url (signed but wrong shape)", () => {
+    const { priv, pubB64 } = keypair();
+    const raw = withNotice({ id: "n1", message: "x", url: "javascript:alert(1)" });
+    expect(() => verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64)).toThrow(UpdateVerifyError);
+  });
+
+  it("rejects an over-long message (>500 chars)", () => {
+    const { priv, pubB64 } = keypair();
+    const raw = withNotice({ id: "n1", message: "x".repeat(501) });
+    expect(() => verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64)).toThrow(UpdateVerifyError);
+  });
+
+  it("rejects an unknown severity", () => {
+    const { priv, pubB64 } = keypair();
+    const raw = withNotice({ id: "n1", message: "x", severity: "boom" });
+    expect(() => verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64)).toThrow(UpdateVerifyError);
+  });
+
+  it("a manifest WITHOUT a notice still verifies (optional field)", () => {
+    const { priv, pubB64 } = keypair();
+    const raw = manifest();
+    expect(verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64).notice).toBeUndefined();
+  });
+});
