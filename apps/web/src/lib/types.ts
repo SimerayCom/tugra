@@ -247,6 +247,14 @@ export interface OwnerInstanceSettings {
   edition?: string;
 }
 
+/** A signed operator notice from the release manifest, surfaced to the instance owner. */
+export interface InstanceUpdateNotice {
+  id: string;
+  message: string;
+  severity: "info" | "warning" | "critical";
+  url: string | null;
+}
+
 /** Self-update status (GET /instance/update, PATCH .../update, POST .../update/check). Owner-only. */
 export interface InstanceUpdateStatus {
   /** The running hub version. */
@@ -261,6 +269,8 @@ export interface InstanceUpdateStatus {
   changelogUrl: string | null;
   /** Whether patch releases are applied automatically (the updater is not yet available). */
   autoUpdate: boolean;
+  /** Signed remote operator notice for the tracked channel, or null. */
+  notice: InstanceUpdateNotice | null;
 }
 
 /** Result of POST /instance/update (starting the updater). `started` = queued for the sidecar. */

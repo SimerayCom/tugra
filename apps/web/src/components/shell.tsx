@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import type { InstanceUpdateNotice } from "../lib/types";
 import { useAuth } from "../lib/auth";
 import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
@@ -44,6 +45,7 @@ import {
   Terminal,
   Users,
   Variable,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -387,6 +389,92 @@ function VerifyBanner() {
   );
 }
 
+const NOTICE_DISMISS_KEY = "tugra.noticeDismissed";
+
+/** Whether a notice banner should render: present, and (unless critical) not already dismissed by id. */
+export function noticeVisible(notice: InstanceUpdateNotice | null | undefined, dismissedId: string | null): boolean {
+  if (!notice) return false;
+  if (notice.severity === "critical") return true; // critical is non-dismissible
+  return dismissedId !== notice.id;
+}
+
+/**
+ * Owner-only, dismissible strip for a signed operator notice delivered through the update manifest
+ * (security advisory, "please upgrade to beta.2", etc.). Shares the ["instanceUpdate"] query with the
+ * Settings Updates card, so it adds no extra request. The message is rendered as PLAIN TEXT (it is signed
+ * but still untrusted free text); the optional link is https-only (enforced server-side).
+ */
+function NoticeBanner() {
+  const { user } = useAuth();
+  const t = useT();
+  const isOwner = !!user?.isInstanceOwner;
+  const { data } = useQuery({ queryKey: ["instanceUpdate"], queryFn: () => api.getInstanceUpdate(), enabled: isOwner });
+  const [dismissedId, setDismissedId] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setDismissedId(localStorage.getItem(NOTICE_DISMISS_KEY));
+    } catch {
+      /* no storage → the notice simply stays visible */
+    }
+  }, []);
+  const notice = data?.notice ?? null;
+  if (!isOwner || !noticeVisible(notice, dismissedId) || !notice) return null;
+
+  const tone =
+    notice.severity === "critical" ? "var(--c-r)" : notice.severity === "warning" ? "var(--c-am)" : "var(--c-a)";
+  const label =
+    notice.severity === "critical"
+      ? t("settings.noticeCritical")
+      : notice.severity === "warning"
+        ? t("settings.noticeWarning")
+        : t("settings.noticeInfo");
+  const dismiss = () => {
+    try {
+      localStorage.setItem(NOTICE_DISMISS_KEY, notice.id);
+    } catch {
+      /* ignore */
+    }
+    setDismissedId(notice.id);
+  };
+  return (
+    <div
+      role={notice.severity === "critical" ? "alert" : "status"}
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        padding: "8px 18px",
+        background: `color-mix(in srgb, ${tone} 14%, transparent)`,
+        borderBottom: "1px solid var(--c-bd)",
+        fontSize: 13,
+        color: "var(--c-tx2)",
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 180 }}>
+        <strong style={{ color: tone }}>{label}:</strong> {notice.message}
+      </span>
+      {notice.url && (
+        <a href={notice.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-a)", whiteSpace: "nowrap" }}>
+          {t("settings.noticeLearnMore")}
+        </a>
+      )}
+      {notice.severity !== "critical" && (
+        <button
+          type="button"
+          onClick={dismiss}
+          aria-label={t("settings.noticeDismiss")}
+          title={t("settings.noticeDismiss")}
+          style={{ display: "inline-flex", background: "none", border: "none", cursor: "pointer", color: "var(--c-tx2)", padding: 4 }}
+        >
+          <X size={16} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -419,6 +507,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <TopHeader onMenu={() => setDrawer(true)} showMenu={isMobile} />
         <VerifyBanner />
+        <NoticeBanner />
         <main style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
       {/* In Home mode, ⌘K only offers Home-allowed destinations (a fleet route would just bounce to /home). */}
