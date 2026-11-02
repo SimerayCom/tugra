@@ -10,6 +10,16 @@ const OUTPUT_TAIL = 16_384; // cap stored run output (arbitrary command stdout) 
 const RUNS_KEPT = 50; // per-task run-history retention — prune older rows after each run
 const shq = (v: string): string => `'${v.replaceAll("'", "'\\''")}'`;
 
+// A task command's stdout is arbitrary bytes. Make it storable in a Postgres text column: cap to the tail,
+// strip NUL (0x00, which Postgres text rejects outright), and replace any lone UTF-16 surrogate — including
+// one the tail-cut can leave mid-pair — with U+FFFD, so the finalize write can never reject on the output.
+function sanitizeOutput(raw: string): string {
+  return raw
+    .slice(-OUTPUT_TAIL)
+    .replace(/\u0000/g, "")
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+}
+
 /** Runs a scheduled task inside the app's container via the agent. */
 @Injectable()
 export class ScheduledTaskRunnerService implements OnApplicationBootstrap {
@@ -90,19 +100,23 @@ export class ScheduledTaskRunnerService implements OnApplicationBootstrap {
     // arbitrary command can't bloat the row. Best-effort: never let a history-write error flip the outcome.
     if (runId) {
       const finishedAt = new Date();
-      await this.prisma.scheduledTaskRun
-        .update({
-          where: { id: runId },
-          data: {
-            status: ran ? (exitCode === 0 ? "SUCCESS" : "FAILED") : "FAILED",
-            exitCode: ran ? exitCode : null,
-            output: ran ? output.slice(-OUTPUT_TAIL) : null,
-            error: ran ? null : errorMsg,
-            finishedAt,
-            durationMs: finishedAt.getTime() - startedAt.getTime(),
-          },
-        })
-        .catch(() => undefined);
+      const data = {
+        status: ran ? (exitCode === 0 ? "SUCCESS" : "FAILED") : "FAILED",
+        exitCode: ran ? exitCode : null,
+        output: ran ? sanitizeOutput(output) : null,
+        error: ran ? null : errorMsg,
+        finishedAt,
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+      };
+      // Finalize best-effort, but NEVER leave the row RUNNING: if the write still rejects (e.g. an unforeseen
+      // character the DB won't take), retry once without the output so the run always reaches a terminal row.
+      try {
+        await this.prisma.scheduledTaskRun.update({ where: { id: runId }, data });
+      } catch {
+        await this.prisma.scheduledTaskRun
+          .update({ where: { id: runId }, data: { ...data, output: null, error: data.error ?? "output not stored" } })
+          .catch(() => undefined);
+      }
       await this.pruneRuns(taskId).catch(() => undefined);
     }
 

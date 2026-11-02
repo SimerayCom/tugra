@@ -140,6 +140,15 @@ describe("ScheduledTaskRunnerService", () => {
     expect(stored.length).toBe(16_384);
   });
 
+  it("strips a NUL byte from stored output (Postgres text can't hold 0x00) — run still SUCCESS", async () => {
+    const { svc, runUpdate } = make(jest.fn().mockResolvedValue({ exitCode: 0, output: "a\u0000b\u0000c" }));
+    await svc.runTask("tk1");
+    const data = runUpdate.mock.calls[0][0].data;
+    expect(data.status).toBe("SUCCESS");
+    expect(data.output).toBe("abc");
+    expect(data.output).not.toContain("\u0000");
+  });
+
   it("boot reaper fails runs left RUNNING by a previous hub", async () => {
     const { svc, prisma } = make(jest.fn());
     await svc.onApplicationBootstrap();
