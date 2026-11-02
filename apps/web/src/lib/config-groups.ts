@@ -46,6 +46,7 @@ export type ConfigCardId =
   | "basicAuth"
   | "redirects"
   | "extraPorts"
+  | "containerPort"
   | "customCert"
   | "volumes"
   | "hostMounts"
@@ -119,6 +120,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "basicAuth", group: "domains", visible: (a) => !!a.domain && a.canWrite && !a.isPreview },
   // Custom redirect rules (Traefik redirectregex) — needs a domain + write access, not a preview.
   { id: "redirects", group: "domains", visible: (a) => !!a.domain && a.canWrite && !a.isPreview },
+  // Ingress container port — docker-run apps only (a compose app's port is inferred from its YAML).
+  { id: "containerPort", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
   // Extra published ports (raw TCP/UDP maps) — docker-run apps only (a compose app declares its own ports).
   { id: "extraPorts", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
   // Upload a custom TLS cert for this app's domain (served statically, no ACME). Needs a domain + write access.

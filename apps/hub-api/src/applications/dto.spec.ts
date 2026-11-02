@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetContainerPortSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });
@@ -104,6 +104,24 @@ describe("SetExtraPortsSchema", () => {
     expect(ok([{ hostPort: 80, containerPort: 80, protocol: "tcp" }, { hostPort: 80, containerPort: 81, protocol: "tcp" }])).toBe(false); // dup host:tcp
     expect(ok(Array.from({ length: 21 }, (_, i) => ({ hostPort: 2000 + i, containerPort: 80 })))).toBe(false);
     expect(SetExtraPortsSchema.safeParse({ ports: [{ hostPort: 80, containerPort: 80, foo: 1 }] }).success).toBe(false);
+  });
+});
+
+describe("SetContainerPortSchema", () => {
+  const ok = (containerPort: unknown) => SetContainerPortSchema.safeParse({ containerPort }).success;
+  it("accepts an integer port in 1..65535", () => {
+    expect(ok(1)).toBe(true);
+    expect(ok(80)).toBe(true);
+    expect(ok(3000)).toBe(true);
+    expect(ok(65535)).toBe(true);
+  });
+  it("rejects out-of-range, non-integer, non-number, missing and extra keys", () => {
+    expect(ok(0)).toBe(false);
+    expect(ok(65536)).toBe(false);
+    expect(ok(3000.5)).toBe(false);
+    expect(ok("80")).toBe(false);
+    expect(SetContainerPortSchema.safeParse({}).success).toBe(false);
+    expect(SetContainerPortSchema.safeParse({ containerPort: 80, foo: 1 }).success).toBe(false);
   });
 });
 

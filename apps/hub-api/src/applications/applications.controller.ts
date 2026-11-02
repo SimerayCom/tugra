@@ -61,6 +61,8 @@ import {
   SetWatchPathsSchema,
   SetAutoDeployInput,
   SetAutoDeploySchema,
+  SetContainerPortInput,
+  SetContainerPortSchema,
   SetExtraPortsInput,
   SetExtraPortsSchema,
   SetBasicAuthInput,
@@ -556,6 +558,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetExtraPortsSchema)) body: SetExtraPortsInput,
   ) {
     await this.apps.setExtraPorts(user.userId, id, body.ports);
+    return { ok: true };
+  }
+
+  @Put(":id/container-port")
+  @HttpCode(200)
+  @ApiZodBody(SetContainerPortSchema)
+  async setContainerPort(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetContainerPortSchema)) body: SetContainerPortInput,
+  ) {
+    await this.apps.setContainerPort(user.userId, id, body.containerPort);
     return { ok: true };
   }
 
