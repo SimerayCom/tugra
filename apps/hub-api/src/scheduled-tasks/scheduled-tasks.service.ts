@@ -10,6 +10,7 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx } from "../common/resource-project";
 import { ScheduledTasksSchedulerService } from "./scheduled-tasks.scheduler.service";
+import { ScheduledTaskRunnerService } from "./scheduled-task-runner.service";
 import type { CreateTaskInput, UpdateTaskInput } from "./dto";
 
 export const TaskViewSchema = z.object({
@@ -29,6 +30,7 @@ export class ScheduledTasksService {
     private readonly access: TeamAccessService,
     private readonly scheduler: ScheduledTasksSchedulerService,
     private readonly audit: AuditService,
+    private readonly runner: ScheduledTaskRunnerService,
   ) {}
 
   async list(userId: string, appId: string): Promise<TaskView[]> {
@@ -82,6 +84,18 @@ export class ScheduledTasksService {
     await this.scheduler.unschedule(taskId);
     await this.prisma.scheduledTask.delete({ where: { id: taskId } });
     await this.audit.log({ actor: userId, action: "task.remove", target: appId, meta: { taskId } });
+  }
+
+  /** Trigger a task immediately, out of band of its cron. Runs even when the task is disabled (so an
+   *  operator can test a command or a paused job). The run is fire-and-forget — a task command can take up
+   *  to the runner's timeout, so we don't block the HTTP request on it; the outcome surfaces via the task's
+   *  lastRunAt and the success/failure notification (and, later, run history). */
+  async runNow(userId: string, appId: string, taskId: string): Promise<void> {
+    await this.requireWrite(userId, appId);
+    const task = await this.prisma.scheduledTask.findFirst({ where: { id: taskId, appId } });
+    if (!task) throw new NotFoundException("task not found");
+    await this.audit.log({ actor: userId, action: "task.run_now", target: appId, meta: { taskId } });
+    void this.runner.runTask(taskId, { force: true }).catch(() => undefined);
   }
 
   // ── helpers ──

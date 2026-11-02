@@ -1383,6 +1383,9 @@ export const api = {
   deleteAppTask(id: string, taskId: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/tasks/${taskId}`, { method: "DELETE" });
   },
+  runAppTask(id: string, taskId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/tasks/${taskId}/run`, { method: "POST" });
+  },
   setAppCredentials(
     id: string,
     creds: { gitToken?: string | null; registry?: { url?: string; user: string; token: string } | null },

@@ -60,6 +60,18 @@ export class ScheduledTasksController {
     return this.tasks.update(user.userId, id, taskId, body);
   }
 
+  @Post(":id/tasks/:taskId/run")
+  @RequireScopes("deploy") // triggers the arbitrary `docker exec` command now — same execution surface as create
+  @HttpCode(202)
+  async run(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("taskId") taskId: string,
+  ) {
+    await this.tasks.runNow(user.userId, id, taskId);
+    return { ok: true };
+  }
+
   @Delete(":id/tasks/:taskId")
   @HttpCode(200)
   async remove(

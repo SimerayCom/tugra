@@ -65,4 +65,22 @@ describe("Scheduled tasks (e2e)", () => {
       .send({ name: "bad", schedule: "not-a-cron", command: "echo" })
       .expect(400);
   });
+
+  it("triggers a run now (202, fire-and-forget) and 404s an unknown task", async () => {
+    const created = await request(app.getHttpServer())
+      .post(`/apps/${appId}/tasks`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "manual", schedule: "0 3 * * *", command: "echo run-now" })
+      .expect(201);
+    // the agent is not connected in e2e, so the run itself fails in the background; the request still
+    // accepts the trigger (202) because run-now is fire-and-forget.
+    await request(app.getHttpServer())
+      .post(`/apps/${appId}/tasks/${created.body.id}/run`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(202);
+    await request(app.getHttpServer())
+      .post(`/apps/${appId}/tasks/does-not-exist/run`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
+  });
 });

@@ -89,4 +89,14 @@ describe("ScheduledTaskRunnerService", () => {
     expect(sendCommand).not.toHaveBeenCalled();
     expect(fireForEvent).not.toHaveBeenCalled();
   });
+
+  it("force runs a DISABLED task (manual run-now) — sends the command", async () => {
+    const { svc, sendCommand, fireForEvent } = make(
+      jest.fn().mockResolvedValue({ exitCode: 0, output: "ok" }),
+      { enabled: false },
+    );
+    await svc.runTask("tk1", { force: true });
+    expect(sendCommand).toHaveBeenCalled();
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "scheduled_task_success", expect.objectContaining({ exitCode: 0 }));
+  });
 });

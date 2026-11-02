@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
-import type { AppVolume, HostMount, Application, AppSource, BuildType, Deployment } from "../../../../lib/types";
+import type { AppVolume, HostMount, Application, AppSource, BuildType, Deployment, ScheduledTask } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
 import { relativeTime } from "../../../../lib/fleet";
 import { backupColor, formatSize } from "../../../../lib/backups";
@@ -2064,40 +2064,73 @@ function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[
   );
 }
 
-function ScheduledTasksCard({ id }: { id: string }) {
+function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const toast = useToast();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["appTasks", appId] });
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(task.name);
+  const [schedule, setSchedule] = useState(task.schedule);
+  const [command, setCommand] = useState(task.command);
+  const toggle = useMutation({ mutationFn: (enabled: boolean) => api.updateAppTask(appId, task.id, { enabled }), onSuccess: invalidate });
+  const del = useMutation({ mutationFn: () => api.deleteAppTask(appId, task.id), onSuccess: invalidate });
+  const run = useMutation({
+    mutationFn: () => api.runAppTask(appId, task.id),
+    onSuccess: () => { toast(t("apps.taskRunStarted"), "success"); invalidate(); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
+  });
+  const edit = useMutation({
+    mutationFn: () => api.updateAppTask(appId, task.id, { name, schedule, command }),
+    onSuccess: () => { setEditing(false); invalidate(); },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
+  });
+  const startEdit = () => { setName(task.name); setSchedule(task.schedule); setCommand(task.command); setEditing(true); };
+
+  if (editing) {
+    return (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+        <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} />
+        <Btn onClick={() => edit.mutate()} disabled={edit.isPending || !name.trim() || !schedule.trim() || !command.trim()}>{t("common.save")}</Btn>
+        <Btn variant="ghost" onClick={() => setEditing(false)}>{t("common.cancel")}</Btn>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <input type="checkbox" aria-label={t("apps.taskEnabled")} checked={task.enabled} onChange={(e) => toggle.mutate(e.target.checked)} />
+      <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
+      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
+      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{task.command}</span>
+      {task.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(task.lastRunAt).toLocaleString()}</span>}
+      <IconBtn label={t("apps.taskRunNow")} onClick={() => run.mutate()} disabled={run.isPending}><Play size={14} /></IconBtn>
+      <IconBtn label={t("common.edit")} onClick={startEdit}><Pencil size={14} /></IconBtn>
+      <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}><X size={14} /></IconBtn>
+    </div>
+  );
+}
+
+function ScheduledTasksCard({ id }: { id: string }) {
+  const t = useT();
+  const qc = useQueryClient();
   const { data: tasks = [] } = useQuery({ queryKey: ["appTasks", id], queryFn: () => api.listAppTasks(id) });
   const [name, setName] = useState("");
   const [schedule, setSchedule] = useState("");
   const [command, setCommand] = useState("");
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["appTasks", id] });
   const add = useMutation({
     mutationFn: () => api.createAppTask(id, { name, schedule, command }),
-    onSuccess: () => { setName(""); setSchedule(""); setCommand(""); invalidate(); },
+    onSuccess: () => { setName(""); setSchedule(""); setCommand(""); qc.invalidateQueries({ queryKey: ["appTasks", id] }); },
   });
-  const toggle = useMutation({
-    mutationFn: ({ taskId, enabled }: { taskId: string; enabled: boolean }) => api.updateAppTask(id, taskId, { enabled }),
-    onSuccess: invalidate,
-  });
-  const del = useMutation({ mutationFn: (taskId: string) => api.deleteAppTask(id, taskId), onSuccess: invalidate });
 
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.tasks")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.tasksDesc")}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-        {tasks.map((tk) => (
-          <div key={tk.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={tk.enabled} onChange={(e) => toggle.mutate({ taskId: tk.id, enabled: e.target.checked })} />
-            <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.name}</span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{tk.schedule}</span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{tk.command}</span>
-            {tk.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(tk.lastRunAt).toLocaleString()}</span>}
-            <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(tk.id); }}><X size={14} /></IconBtn>
-          </div>
-        ))}
+        {tasks.map((tk) => <TaskRow key={tk.id} appId={id} task={tk} />)}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} />
