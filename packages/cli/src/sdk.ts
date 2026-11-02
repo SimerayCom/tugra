@@ -1,7 +1,7 @@
 /**
  * Typed SDK surface for the Tugra REST API — generated from the committed OpenAPI contract
  * (`apps/hub-api/openapi.json`) with `openapi-typescript`. Regenerate after the contract changes:
- *   pnpm --filter @tugra/cli generate:api
+ *   pnpm --filter tugra-cli generate:api
  *
  * These are compile-time types only (no runtime client); pair them with any fetch wrapper (e.g.
  * `openapi-fetch`) or with this package's own `ApiClient`. A drift test keeps them in sync with the spec.
