@@ -10,13 +10,15 @@ function keypair(): { priv: KeyObject; pubB64: string } {
 function detachedSig(priv: KeyObject, raw: string): string {
   return sign(null, Buffer.from(raw), priv).toString("base64");
 }
-function manifest(entries: Record<string, { version: string }>): string {
-  return JSON.stringify({ tugra: entries });
+function manifest(entries: Record<string, { version: string }>, notice?: unknown): string {
+  return JSON.stringify(notice === undefined ? { tugra: entries } : { tugra: entries, notice });
 }
 
 /** A mutable InstanceSettings stub with a jest-spied update(). */
-function settingsStub(over: Partial<{ updateChannel: string; cachedLatestVersion: string | null; autoUpdate: boolean }> = {}) {
-  const rec = { updateChannel: "stable", cachedLatestVersion: null as string | null, autoUpdate: false, ...over };
+function settingsStub(
+  over: Partial<{ updateChannel: string; cachedLatestVersion: string | null; autoUpdate: boolean; cachedNotice: unknown }> = {},
+) {
+  const rec = { updateChannel: "stable", cachedLatestVersion: null as string | null, autoUpdate: false, cachedNotice: null as unknown, ...over };
   const update = jest.fn(async (patch: Record<string, unknown>) => {
     Object.assign(rec, patch);
     return rec;
@@ -67,7 +69,7 @@ describe("UpdateService", () => {
     const { svc, st } = withManifest(raw, detachedSig(priv, raw));
     const res = await svc.checkRemote();
     expect(res).toMatchObject({ status: "ok", channel: "stable", latest: "0.2.0", updateAvailable: true });
-    expect(st.update).toHaveBeenCalledWith({ cachedLatestVersion: "0.2.0" });
+    expect(st.update).toHaveBeenCalledWith(expect.objectContaining({ cachedLatestVersion: "0.2.0" }));
     expect(st.rec.cachedLatestVersion).toBe("0.2.0");
   });
 
@@ -77,7 +79,7 @@ describe("UpdateService", () => {
     const { svc, st } = withManifest(raw, detachedSig(priv, raw));
     const res = await svc.checkRemote();
     expect(res).toMatchObject({ status: "ok", latest: "0.2.0", updateAvailable: false });
-    expect(st.update).toHaveBeenCalledWith({ cachedLatestVersion: "0.2.0" }); // cache written, but no update offered
+    expect(st.update).toHaveBeenCalledWith(expect.objectContaining({ cachedLatestVersion: "0.2.0" })); // cache written, but no update offered
   });
 
   it("is non-destructive when the manifest lacks the tracked channel (keeps prior cache, no update)", async () => {
@@ -86,7 +88,8 @@ describe("UpdateService", () => {
     const { svc, st } = withManifest(raw, detachedSig(priv, raw), settings);
     const res = await svc.checkRemote();
     expect(res).toMatchObject({ status: "ok", channel: "stable", latest: "0.1.0" });
-    expect(st.update).not.toHaveBeenCalled(); // prior cache preserved
+    // version cache preserved (a notice-only persist may still run, but never touches cachedLatestVersion)
+    expect(st.update).not.toHaveBeenCalledWith(expect.objectContaining({ cachedLatestVersion: expect.anything() }));
     expect(st.rec.cachedLatestVersion).toBe("0.1.0");
   });
 
@@ -95,7 +98,7 @@ describe("UpdateService", () => {
     const { svc, st } = withManifest(raw, detachedSig(priv, raw));
     const res = await svc.checkRemote();
     expect(res).toMatchObject({ status: "ok", updateAvailable: false });
-    expect(st.update).not.toHaveBeenCalled();
+    expect(st.update).not.toHaveBeenCalledWith(expect.objectContaining({ cachedLatestVersion: expect.anything() }));
   });
 
   it("returns error and does not touch the cache on a bad signature", async () => {
@@ -149,6 +152,7 @@ describe("UpdateService", () => {
       updateAvailable: true,
       changelogUrl: "https://get.tugra.io/changelog",
       autoUpdate: false,
+      notice: null,
     });
     expect(spy).not.toHaveBeenCalled();
   });
@@ -157,7 +161,46 @@ describe("UpdateService", () => {
     const st = settingsStub();
     const svc = new UpdateService(configStub(CFG), st.service);
     const out = await svc.getStatus();
-    expect(out).toMatchObject({ latest: null, updateAvailable: false, changelogUrl: null });
+    expect(out).toMatchObject({ latest: null, updateAvailable: false, changelogUrl: null, notice: null });
+  });
+
+  it("caches a signed notice and surfaces it in getStatus", async () => {
+    const notice = { id: "n1", message: "beta.2 fixes X", severity: "warning", url: "https://tugra.io/x" };
+    const raw = manifest({ stable: { version: "0.2.0" } }, notice);
+    const { svc, st } = withManifest(raw, detachedSig(priv, raw));
+    await svc.checkRemote();
+    expect(st.update).toHaveBeenCalledWith(expect.objectContaining({ cachedNotice: notice }));
+    const out = await svc.getStatus();
+    expect(out.notice).toEqual({ id: "n1", message: "beta.2 fixes X", severity: "warning", url: "https://tugra.io/x" });
+  });
+
+  it("clears the cached notice when the manifest carries none", async () => {
+    const settings = settingsStub({ cachedNotice: { id: "old", message: "x", severity: "info" } });
+    const raw = manifest({ stable: { version: "0.2.0" } }); // no notice
+    const { svc } = withManifest(raw, detachedSig(priv, raw), settings);
+    await svc.checkRemote();
+    expect((await svc.getStatus()).notice).toBeNull();
+  });
+
+  it("surfaces a notice even when the tracked channel has no entry", async () => {
+    const notice = { id: "n2", message: "maintenance window tonight", severity: "info" };
+    const raw = manifest({ beta: { version: "0.3.0-beta.1" } }, notice); // no "stable" entry
+    const { svc, st } = withManifest(raw, detachedSig(priv, raw));
+    await svc.checkRemote();
+    expect(st.rec.cachedNotice).toEqual(notice);
+    expect((await svc.getStatus()).notice).toMatchObject({ id: "n2", severity: "info" });
+  });
+
+  it("getStatus drops an expired notice", async () => {
+    const st = settingsStub({ cachedNotice: { id: "old", message: "x", severity: "info", expiresAt: "2000-01-01T00:00:00Z" } });
+    const svc = new UpdateService(configStub(CFG), st.service);
+    expect((await svc.getStatus()).notice).toBeNull();
+  });
+
+  it("getStatus ignores a malformed cached notice", async () => {
+    const st = settingsStub({ cachedNotice: { message: 123 } });
+    const svc = new UpdateService(configStub(CFG), st.service);
+    expect((await svc.getStatus()).notice).toBeNull();
   });
 
   describe("streaming size-cap (real global.fetch)", () => {

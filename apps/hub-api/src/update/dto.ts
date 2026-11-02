@@ -5,6 +5,15 @@ import { z } from "zod";
  * the first successful signed check populates the cache. `updateAvailable` is computed from the RUNNING
  * build, so a stale/older manifest can never report an update (downgrade guard).
  */
+/** A signed operator notice surfaced to the owner (plain text + optional https link). Null when none/expired. */
+export const UpdateNoticeViewSchema = z.object({
+  id: z.string(),
+  message: z.string(),
+  severity: z.enum(["info", "warning", "critical"]),
+  url: z.string().nullable(),
+});
+export type UpdateNoticeView = z.infer<typeof UpdateNoticeViewSchema>;
+
 export const UpdateStatusViewSchema = z.object({
   current: z.string(),
   latest: z.string().nullable(),
@@ -12,6 +21,7 @@ export const UpdateStatusViewSchema = z.object({
   updateAvailable: z.boolean(),
   changelogUrl: z.string().nullable(),
   autoUpdate: z.boolean(),
+  notice: UpdateNoticeViewSchema.nullable(),
 });
 export type UpdateStatusView = z.infer<typeof UpdateStatusViewSchema>;
 

@@ -1413,6 +1413,7 @@ model InstanceSettings {
   autoUpdate          Boolean   @default(false)
   updateChannel       String    @default("stable")
   cachedLatestVersion String?
+  cachedNotice        Json? // signed top-level operator notice from the update manifest, or null
   apiEnabled          Boolean   @default(true)
   apiAllowedIps       String[]  @default([])
   // OIDC single sign-on (Pro edition). Owner-configured IdP; the client secret is stored encrypted

@@ -56,6 +56,7 @@ describe("instance update status (e2e)", () => {
         updateAvailable: false, // report-only, never a downgrade
         changelogUrl: null,
         autoUpdate: expect.any(Boolean),
+        notice: null, // no signed check has run in test
       });
 
       // a non-owner is forbidden

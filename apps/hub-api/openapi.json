@@ -270,6 +270,37 @@
                     },
                     "autoUpdate": {
                       "type": "boolean"
+                    },
+                    "notice": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "warning",
+                            "critical"
+                          ]
+                        },
+                        "url": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "message",
+                        "severity",
+                        "url"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -278,7 +309,8 @@
                     "channel",
                     "updateAvailable",
                     "changelogUrl",
-                    "autoUpdate"
+                    "autoUpdate",
+                    "notice"
                   ],
                   "additionalProperties": false
                 }
@@ -388,6 +420,37 @@
                     },
                     "autoUpdate": {
                       "type": "boolean"
+                    },
+                    "notice": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "warning",
+                            "critical"
+                          ]
+                        },
+                        "url": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "message",
+                        "severity",
+                        "url"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -396,7 +459,8 @@
                     "channel",
                     "updateAvailable",
                     "changelogUrl",
-                    "autoUpdate"
+                    "autoUpdate",
+                    "notice"
                   ],
                   "additionalProperties": false
                 }
@@ -582,6 +646,37 @@
                     },
                     "autoUpdate": {
                       "type": "boolean"
+                    },
+                    "notice": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "warning",
+                            "critical"
+                          ]
+                        },
+                        "url": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "message",
+                        "severity",
+                        "url"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -590,7 +685,8 @@
                     "channel",
                     "updateAvailable",
                     "changelogUrl",
-                    "autoUpdate"
+                    "autoUpdate",
+                    "notice"
                   ],
                   "additionalProperties": false
                 }
