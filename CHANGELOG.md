@@ -63,6 +63,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   **Existing installs:** your `.env` keeps `UPDATE_MANIFEST_URL`, `UPDATE_PUBLISHER_KEY` and
   `LOCAL_SERVER_PUBLIC_IP` from the previous installer (values are written once). To stop update checks,
   blank those three keys and restart hub-api; leave them to keep update checks on.
+- **Operator notice banner.** A signed, top-level `notice` in the update manifest shows the instance owner
+  a dismissible banner (info / warning / critical) on every page — an announcement decoupled from releases
+  (security advisory, "please upgrade", maintenance). Published or cleared without cutting a release via the
+  **Publish notice** workflow (`gh workflow run notice.yml`); the message is plain text and any link is
+  https-only. A release carries an active notice forward unchanged.
+- **Per-app proxy controls.** Per-app rate limiting, an IP allow-list, HTTP basic-auth, path-prefix routing
+  (serve an app under `<domain>/<prefix>`), and custom regex redirects — all through Traefik middlewares,
+  configured from the app's domain/options card.
+- **More deploy controls.** Tunable health-check timings + expected status; a per-app restart policy; pin a
+  Git deploy to a specific commit SHA; watch-paths (deploy only when matching files change); container
+  ENTRYPOINT/CMD override; Dockerfile build `--target`; extra published ports (multi-port TCP/UDP) for
+  docker-run apps; a per-app auto-deploy switch with Gitea/Forgejo and Bitbucket webhook signatures; exclude
+  env vars from PR previews; and a cap on concurrent PR previews (oldest evicted).
+- **Operator-authored Traefik dynamic config.** A server admin can create/edit/delete raw Traefik dynamic
+  YAML (middlewares, TLS options, services), validated and hot-reloaded into the proxy — server-scoped, so
+  it never reopens the per-app label surface.
+- **External secret stores (Vault).** Reference secrets from HashiCorp Vault, injected at deploy time, with
+  a providers page and a per-app "external secrets" card (Pro).
+- **Backups:** cron-expression schedules and age-based retention, alongside the existing copy-count retention.
+- **Icons everywhere:** upload a custom icon for projects, teams and databases (parity with app icons), and
+  opt in to also remove images when deleting an app (reclaim disk).
+- **Servers:** a description and timezone per server (the timezone drives the cleanup cron), and a default
+  disk-usage monitor auto-provisioned on enrollment.
+- **`tugra-cli` on npm.** The command-line client is published as [`tugra-cli`](https://www.npmjs.com/package/tugra-cli)
+  (`npm i -g tugra-cli`) — drive the hub's REST API from the terminal or CI.
+- **Fixed:** the installer now persists a pinned `TUGRA_VERSION` to `.env`, so a version-pinned install (e.g.
+  a beta) survives restarts instead of drifting back to `:latest`.
+- **Security:** per-app `dockerOptions` can no longer set `traefik.*` labels, `--name`, `--env-file` or
+  `--label-file` — closing a cross-tenant router-hijack surface. The operator dynamic-config editor above is
+  the sanctioned, server-scoped way to author proxy rules.
 
 ## [0.1.3] - 2026-10-20
 
