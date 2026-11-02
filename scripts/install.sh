@@ -6,6 +6,7 @@
 #
 #   ./scripts/install.sh                       # quick start (http, this host's IP)
 #   ./scripts/install.sh --domain tugra.example.com   # behind your TLS reverse proxy (https)
+#   TUGRA_VERSION=0.1.0-beta.1 ./scripts/install.sh    # pin a specific release (e.g. a beta); persisted to .env
 #
 # Flags:
 #   --domain <host>     Serve over https://<host>. By default you bring your own TLS reverse proxy
@@ -487,6 +488,14 @@ fi
 # Agent image ref (the agent re-invokes itself as the sandboxed file helper; hub uses AGENT_IMAGE for installs).
 ensure_env TUGRA_AGENT_IMAGE "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
 ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
+# Pin hub/web/agent to a specific release when TUGRA_VERSION is set (e.g. a beta:
+# TUGRA_VERSION=0.1.0-beta.1 ./scripts/install.sh). Persist it so later `compose up`/reboots keep the pinned
+# tag instead of drifting back to :latest (compose reads ${TUGRA_VERSION:-latest}). set_env (override), not
+# ensure_env: an explicit TUGRA_VERSION on this run is a deliberate repin. A plain install leaves it unset
+# (:latest); the self-updater rewrites this line on each applied update.
+if [ -n "${TUGRA_VERSION:-}" ]; then
+  set_env TUGRA_VERSION "$TUGRA_VERSION"
+fi
 # Signed self-update channel — OPT-IN (off by default). Enable with --enable-update-checks
 # (or TUGRA_ENABLE_UPDATE_CHECKS=1): the hub then fetches ONE ed25519-signed manifest (no identifiers, no
 # version, no payload). Left unset, the update scheduler + agent digest-pin stay inert (env.ts fail-closed)
