@@ -1350,6 +1350,9 @@ describe("ApplicationsService", () => {
     // COMPOSE derives its web port from the YAML, so the setter must refuse it (edit would be a no-op)
     const composePrisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1", source: "COMPOSE" }), update: jest.fn() } } as unknown as PrismaService;
     await expect(make(composePrisma, access, {} as AgentWsServer).setContainerPort("u1", "app1", 3000)).rejects.toBeInstanceOf(BadRequestException);
+    // a preview inherits its port from the parent, so a direct edit is refused
+    const previewPrisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1", source: "GIT", isPreview: true }), update: jest.fn() } } as unknown as PrismaService;
+    await expect(make(previewPrisma, access, {} as AgentWsServer).setContainerPort("u1", "app1", 3000)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it("upsertPreview drops the parent's preview-excluded env keys from the preview's env", async () => {
@@ -1368,6 +1371,19 @@ describe("ApplicationsService", () => {
     const envEnc = create.mock.calls[0][0].data.envEnc as string;
     expect(envEnc).toContain("API_URL");
     expect(envEnc).not.toContain("SECRET"); // the prod secret never reaches the preview
+  });
+
+  it("upsertPreview re-syncs an existing preview's container port from the parent", async () => {
+    const update = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
+    const prisma = { application: { findFirst: jest.fn().mockResolvedValue({ id: "pv1", prNumber: 7 }), update } } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+    const parent = {
+      id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT",
+      previewEnabled: true, domain: "app.example.com", containerPort: 8080, envEnc: JSON.stringify({}),
+    } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    await svc.upsertPreview(parent, 7, "feature-7");
+    expect(update.mock.calls[0][0].data.containerPort).toBe(8080); // preview tracks the parent's (edited) port
   });
 
   it("upsertPreview evicts the oldest preview(s) when a new PR would exceed previewLimit", async () => {
@@ -2984,7 +3000,7 @@ describe("ApplicationsService", () => {
     await svc.upsertPreview(parentApp as never, 5, "feat-v2");
     expect(create).not.toHaveBeenCalled();
     expect(appUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2", gitCommit: null } }),
+      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2", gitCommit: null, containerPort: 80 } }),
     );
   });
 

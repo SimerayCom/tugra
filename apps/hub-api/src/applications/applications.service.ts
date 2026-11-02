@@ -628,7 +628,10 @@ export class ApplicationsService {
         gitSshKeyEnc: sshKey ? this.crypto.encrypt(sshKey.privateKeyOpenSsh) : null,
         gitSshPublicKey: sshKey?.publicKey ?? null,
         hostPort: dto.hostPort ?? null,
-        containerPort: dto.containerPort ?? 80,
+        // Defense in depth: the HTTP create path is zod-bounded (1..65535), but internal callers (the
+        // importer) call create() directly with a raw value, so coerce an out-of-range/missing port to the
+        // default 80 rather than persist a value that would break `docker run -p`/the Traefik port label.
+        containerPort: dto.containerPort && dto.containerPort >= 1 && dto.containerPort <= 65535 ? dto.containerPort : 80,
         domain: expose.domain,
         https: expose.https,
         exposeMode: expose.exposeMode,
@@ -1107,10 +1110,11 @@ export class ApplicationsService {
     const previewDomain = `pr${prNumber}.${this.baseDomain(parent.domain)}`;
     let preview: Application;
     if (existing) {
-      // Re-sync the head branch (a PR can be retargeted) before redeploying.
+      // Re-sync the head branch (a PR can be retargeted) and the ingress container port (the parent's may
+      // have been edited after this preview was created) before redeploying — a preview tracks its parent.
       preview = await this.prisma.application.update({
         where: { id: existing.id },
-        data: { gitBranch: headRef, gitCommit: null }, // a preview tracks the PR head, never a pinned commit
+        data: { gitBranch: headRef, gitCommit: null, containerPort: parent.containerPort }, // a preview tracks the PR head, never a pinned commit
       });
     } else {
       // Copy the parent's env MINUS any keys it marks preview-excluded, so prod secrets never land in an
@@ -2666,6 +2670,7 @@ export class ApplicationsService {
   async setContainerPort(userId: string, id: string, containerPort: number): Promise<void> {
     const app = await this.requireWrite(userId, id);
     if (app.source === "COMPOSE") throw new BadRequestException("a compose app's port comes from its compose file");
+    if (app.isPreview) throw new BadRequestException("a preview app's port is inherited from its parent app");
     await this.prisma.application.update({ where: { id }, data: { containerPort } });
     await this.audit.log({ actor: userId, action: "app.container_port.update", target: id, meta: { containerPort } });
   }

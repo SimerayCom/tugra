@@ -96,9 +96,10 @@ describe("parsers", () => {
     // different host, or same host with a different path/port, stay distinct
     expect(parseFqdns("https://x.com,https://x.com/admin").length).toBe(2);
   });
-  it("parsePorts keeps positive integers only", () => {
+  it("parsePorts keeps positive in-range integers only", () => {
     expect(parsePorts("3000,8080")).toEqual([3000, 8080]);
     expect(parsePorts("")).toEqual([]);
+    expect(parsePorts("70000,0,-1,80")).toEqual([80]); // drop out-of-range (>65535), zero and negative
   });
   it("versionFromImage extracts the tag version, robust to registry host:port and digests", () => {
     expect(versionFromImage("postgres:17-alpine")).toBe("17");

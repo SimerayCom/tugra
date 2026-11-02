@@ -215,7 +215,7 @@ export function parsePorts(s: string | null | undefined): number[] {
   return s
     .split(",")
     .map((x) => parseInt(x.trim(), 10))
-    .filter((n) => Number.isInteger(n) && n > 0);
+    .filter((n) => Number.isInteger(n) && n > 0 && n <= 65535);
 }
 
 /** First version-looking token of an image TAG: "postgres:17-alpine" → "17". Robust against a registry
