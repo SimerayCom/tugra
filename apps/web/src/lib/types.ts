@@ -1092,6 +1092,8 @@ export interface Application {
   gpus: string | null;
   deployTimeoutSec: number | null;
   dockerOptions: string | null;
+  /** Instance-owner opted this app into privileged docker options (--privileged, host devices, docker.sock…). Default false. */
+  allowPrivilegedDockerOptions: boolean;
   // Pre/post-deploy hook commands (writer-only in the API → null for read-only members). Single-server apps.
   preDeployCommand: string | null;
   postDeployCommand: string | null;

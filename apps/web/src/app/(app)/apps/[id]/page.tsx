@@ -26,6 +26,7 @@ import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
+import { useAuth } from "../../../../lib/auth";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv, duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
@@ -377,7 +378,7 @@ export default function AppDetailPage() {
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
     ),
     buildArgs: () => <BuildArgsCard id={id} />,
-    dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} />,
+    dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} allowPrivileged={appData.allowPrivilegedDockerOptions} />,
     containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
     restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
@@ -1775,19 +1776,42 @@ function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId
   );
 }
 
-function DockerOptionsCard({ id, dockerOptions }: { id: string; dockerOptions: string | null }) {
+function DockerOptionsCard({ id, dockerOptions, allowPrivileged }: { id: string; dockerOptions: string | null; allowPrivileged: boolean }) {
   const t = useT();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isOwner = !!user?.isInstanceOwner;
+  const confirm = useConfirm();
   const [val, setVal] = useState(dockerOptions ?? "");
+  // Keep the field in sync when the server changes the stored value out from under it — e.g. disabling the
+  // privileged override clears privileged options server-side, so the stale text must not linger.
+  useEffect(() => setVal(dockerOptions ?? ""), [dockerOptions]);
   const save = useMutation({
     mutationFn: () => api.setAppDockerOptions(id, val.trim() || null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
+  // Host-privilege gate — INSTANCE OWNER only (the hub re-checks session + owner; this toggle is a render gate).
+  const togglePriv = useMutation({
+    mutationFn: (allow: boolean) => api.setAppAllowPrivilegedDockerOptions(id, allow),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  const onTogglePriv = async (next: boolean) => {
+    if (next && !(await confirm({ title: t("apps.privilegedConfirmTitle"), body: t("apps.privilegedConfirmBody"), danger: true }))) return;
+    togglePriv.mutate(next);
+  };
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.dockerOptions")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.dockerOptionsDesc")}</p>
+      {isOwner && (
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px", cursor: "pointer" }}>
+          <input type="checkbox" checked={allowPrivileged} disabled={togglePriv.isPending} onChange={(e) => onTogglePriv(e.target.checked)} />
+          <span>{t("apps.privilegedToggle")}</span>
+        </label>
+      )}
+      {allowPrivileged && <p style={{ fontSize: 12, color: "var(--c-r)", margin: "0 0 12px" }}>{t("apps.privilegedHint")}</p>}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input
           style={{ ...envField, flex: 1 }}

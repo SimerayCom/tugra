@@ -133,6 +133,10 @@ export const SetDockerOptionsSchema = z.object({
 });
 export type SetDockerOptionsInput = z.infer<typeof SetDockerOptionsSchema>;
 
+// Instance-owner-only toggle that lifts the docker-options host-escape denylist for one app.
+export const SetAllowPrivilegedDockerOptionsSchema = z.object({ allow: z.boolean() }).strict();
+export type SetAllowPrivilegedDockerOptionsInput = z.infer<typeof SetAllowPrivilegedDockerOptionsSchema>;
+
 // Pre/post-deploy hook commands. Arbitrary shell run inside a container of the app's image (pre: a
 // one-shot container before the swap, e.g. DB migrations; post: inside the live container after the
 // health gate). NUL bytes are rejected (they would break the shell `-c` arg); length is capped. null

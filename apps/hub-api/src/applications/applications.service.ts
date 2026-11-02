@@ -169,6 +169,7 @@ export const AppViewSchema = z.object({
   gpus: z.string().nullable(),
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
+  allowPrivilegedDockerOptions: z.boolean(),
   preDeployCommand: z.string().nullable(), // write-gated in view() (exec-power, may embed internal paths)
   postDeployCommand: z.string().nullable(),
   // Container command override (exec-form argv) — write-gated in view() (args can embed credentials).
@@ -687,6 +688,9 @@ export class ApplicationsService {
     if (!server) throw new NotFoundException("server not found");
 
     const warnings: string[] = [];
+    if (src.allowPrivilegedDockerOptions && src.dockerOptions) {
+      warnings.push("Privileged Docker options were not copied — the clone starts non-privileged; an owner can re-enable it.");
+    }
     const name = this.cloneName(src.name, input.name);
     const composeWebService = src.source === "COMPOSE" ? (this.composeWeb(src)?.service ?? null) : null;
     // Fresh exposure — the domain is NEVER copied (two apps on one host = a Traefik router clash); a custom
@@ -768,7 +772,9 @@ export class ApplicationsService {
           env: {} as Prisma.InputJsonValue,
           envEnc: src.envEnc,
           buildArgsEnc: src.buildArgsEnc,
-          dockerOptions: src.dockerOptions,
+          // The clone resets to non-privileged (allowPrivilegedDockerOptions defaults false), so NEVER copy
+          // host-privileged options into it — they'd be unrunnable (deploy re-validates) and a silent escalation.
+          dockerOptions: src.allowPrivilegedDockerOptions ? null : src.dockerOptions,
           dbNetwork: src.dbNetwork,
           // A copied host port would clash on the same server; cleared (re-allocation is a follow-up).
           hostPort: null,
@@ -1387,6 +1393,10 @@ export class ApplicationsService {
   private async executeDeploy(dep: Deployment, app: Application, actor: string, noCache: boolean) {
     this.deployLogs.begin(app.id);
     try {
+      // Fail-closed: re-validate the STORED dockerOptions against the app's CURRENT privileged flag on every
+      // deploy. If the owner revoked the override (or a path stored privileged options without the flag), the
+      // deploy fails here instead of silently running --privileged/host binds again. No-op for COMPOSE/null.
+      assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
       const isCompose = app.source === "COMPOSE";
       // COMPOSE-from-git: the compose file is cloned + rendered + validated on the agent rather than read from
       // a stored composeFile. It routes only through explicit per-service domains (there is no stored YAML to
@@ -1706,6 +1716,10 @@ export class ApplicationsService {
   async rollback(userId: string, id: string, targetDeploymentId: string) {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     await this.ensureNoActiveDeploy(id); // don't race a running deploy/rollback (both write app.composeFile for compose)
+    // Fail-closed, same as executeDeploy: a rollback re-runs the stored dockerOptions via `docker run`, so
+    // re-validate them against the app's CURRENT privileged flag (covers the classic AND swarm paths, since
+    // the clusterId branch below is reached only after this). A revoked override can never run here.
+    assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
     const isCompose = app.source === "COMPOSE";
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
@@ -2364,8 +2378,10 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id);
     // Validate at set-time (clear 400 now, not a failed deploy later): reject an unterminated quote AND any
     // host-escaping flag (--privileged, docker.sock/host-path bind, host namespaces, host devices,
-    // non-allowlisted --cap-add). Shell-injection itself is neutralized at deploy time by dockerOptionsArgs.
-    assertSafeDockerOptions(dockerOptions);
+    // non-allowlisted --cap-add) — UNLESS the instance owner opted this app in (flag read from the DB row,
+    // never the request, so a member can't self-grant). The traefik.*/--name/--env-file blocks still apply.
+    // Shell-injection itself is neutralized at deploy time by dockerOptionsArgs.
+    assertSafeDockerOptions(dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
     // A DB-network-linked app manages its own --network; a conflicting one here would be ambiguous.
     if (app.dbNetwork && hasNetworkOpt(dockerOptions)) {
       throw new BadRequestException("this app is linked to the managed-DB network — remove --network here, or unlink the DB network first");
@@ -2378,6 +2394,30 @@ export class ApplicationsService {
     }
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
+  }
+
+  /**
+   * Flip the per-app host-privilege gate. INSTANCE-OWNER ONLY, over a session — enforced by the controller's
+   * JwtAuthGuard + InstanceOwnerGuard (never a PAT, never an apps:config member), so a stolen/low-scope token
+   * can't grant host root. Turning it OFF re-validates the stored dockerOptions strictly and CLEARS them if
+   * they'd no longer pass, so a revoked override can never leave privileged flags runnable on the next deploy.
+   */
+  async setAllowPrivilegedDockerOptions(ownerId: string, id: string, allow: boolean): Promise<void> {
+    const app = await this.prisma.application.findUnique({ where: { id } });
+    if (!app) throw new NotFoundException("app not found");
+    let clearedOptions = false;
+    if (!allow && app.dockerOptions) {
+      try {
+        assertSafeDockerOptions(app.dockerOptions); // strict (no override) — do the stored options still pass?
+      } catch {
+        clearedOptions = true; // they're privileged → clear them so a later redeploy can't run them
+      }
+    }
+    await this.prisma.application.update({
+      where: { id },
+      data: { allowPrivilegedDockerOptions: allow, ...(clearedOptions ? { dockerOptions: null } : {}) },
+    });
+    await this.audit.log({ actor: ownerId, action: "app.allow_privileged_docker_options.update", target: id, meta: { allow, clearedOptions } });
   }
 
   /** Set the pre/post-deploy hook commands. Arbitrary shell, so: write-gated, trimmed (empty → null to
@@ -3783,6 +3823,7 @@ export class ApplicationsService {
       gpus: app.gpus,
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,
+      allowPrivilegedDockerOptions: app.allowPrivilegedDockerOptions,
       // Hooks are deploy-time exec power and may embed internal paths → writer-only (like composeFile).
       preDeployCommand: canWrite ? app.preDeployCommand : null,
       postDeployCommand: canWrite ? app.postDeployCommand : null,
