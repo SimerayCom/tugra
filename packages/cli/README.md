@@ -1,4 +1,4 @@
-# @tugra/cli
+# tugra-cli
 
 The command-line client for [Tugra](https://github.com/SimerayCom/tugra), the self-hostable server
 control plane. Talk to your hub's REST API from the terminal or CI — list servers, deploy and restart
@@ -7,11 +7,11 @@ apps, tail logs, run backups. MIT-licensed.
 ## Install
 
 ```bash
-npm i -g @tugra/cli
+npm i -g tugra-cli
 ```
 
 Published to npm with the first tagged release; until then, build from a checkout
-(`pnpm --filter @tugra/cli build` and run `node packages/cli/dist/index.js`).
+(`pnpm --filter tugra-cli build` and run `node packages/cli/dist/index.js`).
 
 ## Authenticate
 

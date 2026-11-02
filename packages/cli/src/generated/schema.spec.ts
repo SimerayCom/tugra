@@ -5,7 +5,7 @@ import * as path from "node:path";
 
 // The generated types are a pure, deterministic function of the committed OpenAPI contract. This guard
 // regenerates them from the current openapi.json and asserts the committed file is byte-identical — so it
-// fails whenever the API surface changed but nobody ran `pnpm --filter @tugra/cli generate:api`. The
+// fails whenever the API surface changed but nobody ran `pnpm --filter tugra-cli generate:api`. The
 // openapi-typescript version is lockfile-pinned, so the output is reproducible in CI.
 const SPEC = path.resolve(__dirname, "../../../../apps/hub-api/openapi.json");
 const SCHEMA = path.resolve(__dirname, "schema.ts");

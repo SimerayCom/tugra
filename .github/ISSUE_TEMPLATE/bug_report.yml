@@ -14,7 +14,7 @@ body:
         - Hub API (control plane)
         - Web dashboard
         - Agent (on a managed server)
-        - CLI (@tugra/cli)
+        - CLI (tugra-cli)
         - App templates / store
         - Install / upgrade
         - Docs

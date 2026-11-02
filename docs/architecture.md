@@ -11,7 +11,7 @@ shared/client packages, deployed as a Docker Compose stack.
 | `apps/web/` | The web UI — Next.js. |
 | `agent/` | The per-server agent — a single Go binary. |
 | `packages/shared/` | `@tugra/shared` — types + helpers shared by hub and web. |
-| `packages/cli/` | `@tugra/cli` — the `tugra` command-line client. |
+| `packages/cli/` | `tugra-cli` — the `tugra` command-line client. |
 | `deploy/` | Production `docker-compose.yml` + Dockerfiles + the update sidecar. |
 | `scripts/` | `install.sh`, `update.sh`, release tooling. |
 | `.github/workflows/` | CI (`ci.yml`) and the release pipeline (`release.yml`). |
