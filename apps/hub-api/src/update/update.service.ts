@@ -2,9 +2,10 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { appVersion, isNewer, parseVersion } from "@tugra/shared";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { MAX_MANIFEST_BYTES, MAX_SIG_BYTES, UpdateVerifyError, verifyUpdateManifest } from "./update-manifest";
+import { Prisma } from "@prisma/client";
+import { MAX_MANIFEST_BYTES, MAX_SIG_BYTES, UpdateVerifyError, noticeSchema, verifyUpdateManifest } from "./update-manifest";
 import type { ChannelEntry, VerifiedManifest } from "./update-manifest";
-import type { UpdateStatusView } from "./dto";
+import type { UpdateNoticeView, UpdateStatusView } from "./dto";
 
 export type CheckResult =
   | { status: "unconfigured" }
@@ -60,17 +61,26 @@ export class UpdateService {
       return this.fail("fetch", e);
     }
 
-    let manifest: { tugra: Record<string, { version: string }> };
+    let manifest: VerifiedManifest;
     try {
       manifest = verifyUpdateManifest(manifestBody, sigBody, key);
     } catch (e) {
       return this.fail(e instanceof UpdateVerifyError ? e.reason : "verify", e);
     }
 
+    // Top-level operator notice: independent of the channel entry — persist it (incl. clearing to null) on
+    // every successful verify, so a set/clear propagates even when the tracked channel has no entry.
+    const cachedNotice = manifest.notice ? (manifest.notice as Prisma.InputJsonValue) : Prisma.JsonNull;
+
     const entry = manifest.tugra[channel];
     if (!entry) {
-      // Non-destructive: an unknown/absent channel must not blank a previously good cache.
+      // Non-destructive on the VERSION cache: an unknown/absent channel must not blank a good version.
       this.logger.warn(`update manifest has no entry for channel "${channel}" — keeping cached version`);
+      try {
+        await this.settings.update({ cachedNotice });
+      } catch (e) {
+        return this.fail("persist", e);
+      }
       const current = appVersion();
       const latest = s.cachedLatestVersion ?? current;
       return { status: "ok", channel, current, latest, updateAvailable: this.available(s.cachedLatestVersion, current) };
@@ -78,14 +88,15 @@ export class UpdateService {
 
     const latest = entry.version;
     // Never cache a version we can't even parse (a signed-but-garbage entry would pollute the status).
-    if (parseVersion(latest)) {
-      try {
-        await this.settings.update({ cachedLatestVersion: latest });
-      } catch (e) {
-        return this.fail("persist", e); // never throw: a failed write simply leaves the prior cache
+    try {
+      if (parseVersion(latest)) {
+        await this.settings.update({ cachedLatestVersion: latest, cachedNotice });
+      } else {
+        this.logger.warn(`update manifest channel "${channel}" has an unparseable version — not caching`);
+        await this.settings.update({ cachedNotice });
       }
-    } else {
-      this.logger.warn(`update manifest channel "${channel}" has an unparseable version — not caching`);
+    } catch (e) {
+      return this.fail("persist", e); // never throw: a failed write simply leaves the prior cache
     }
 
     const current = appVersion();
@@ -149,11 +160,21 @@ export class UpdateService {
       updateAvailable: this.available(latest, current),
       changelogUrl: this.config.get<string>("UPDATE_CHANGELOG_URL") ?? null,
       autoUpdate: s.autoUpdate,
+      notice: this.liveNotice(s.cachedNotice),
     };
   }
 
   private available(latest: string | null | undefined, current: string): boolean {
     return !!latest && isNewer(latest, current);
+  }
+
+  /** Validate the cached notice Json against the signed schema and drop it if malformed or expired. */
+  private liveNotice(cached: unknown): UpdateNoticeView | null {
+    const parsed = noticeSchema.safeParse(cached);
+    if (!parsed.success) return null;
+    const n = parsed.data;
+    if (n.expiresAt && Date.parse(n.expiresAt) <= Date.now()) return null; // expired → drop
+    return { id: n.id, message: n.message, severity: n.severity, url: n.url ?? null };
   }
 
   /** versions.json → versions.json.sig — the installer derives the sig URL the same way. */

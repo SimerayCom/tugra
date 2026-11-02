@@ -4671,6 +4671,13 @@ export interface operations {
                         updateAvailable: boolean;
                         changelogUrl: string | null;
                         autoUpdate: boolean;
+                        notice: {
+                            id: string;
+                            message: string;
+                            /** @enum {string} */
+                            severity: "info" | "warning" | "critical";
+                            url: string | null;
+                        } | null;
                     };
                 };
             };
@@ -4800,6 +4807,13 @@ export interface operations {
                         updateAvailable: boolean;
                         changelogUrl: string | null;
                         autoUpdate: boolean;
+                        notice: {
+                            id: string;
+                            message: string;
+                            /** @enum {string} */
+                            severity: "info" | "warning" | "critical";
+                            url: string | null;
+                        } | null;
                     };
                 };
             };
@@ -4871,6 +4885,13 @@ export interface operations {
                         updateAvailable: boolean;
                         changelogUrl: string | null;
                         autoUpdate: boolean;
+                        notice: {
+                            id: string;
+                            message: string;
+                            /** @enum {string} */
+                            severity: "info" | "warning" | "critical";
+                            url: string | null;
+                        } | null;
                     };
                 };
             };
