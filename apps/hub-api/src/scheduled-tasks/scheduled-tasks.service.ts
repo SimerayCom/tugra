@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
-import { Application, ScheduledTask } from "@prisma/client";
+import { Application, ScheduledTask, ScheduledTaskRun } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -22,6 +22,19 @@ export const TaskViewSchema = z.object({
   lastRunAt: z.date().nullable(),
 });
 export type TaskView = z.infer<typeof TaskViewSchema>;
+
+export const TaskRunViewSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  trigger: z.string(),
+  exitCode: z.number().nullable(),
+  output: z.string().nullable(),
+  error: z.string().nullable(),
+  startedAt: z.date(),
+  finishedAt: z.date().nullable(),
+  durationMs: z.number().nullable(),
+});
+export type TaskRunView = z.infer<typeof TaskRunViewSchema>;
 
 @Injectable()
 export class ScheduledTasksService {
@@ -95,7 +108,21 @@ export class ScheduledTasksService {
     const task = await this.prisma.scheduledTask.findFirst({ where: { id: taskId, appId } });
     if (!task) throw new NotFoundException("task not found");
     await this.audit.log({ actor: userId, action: "task.run_now", target: appId, meta: { taskId } });
-    void this.runner.runTask(taskId, { force: true }).catch(() => undefined);
+    void this.runner.runTask(taskId, { force: true, trigger: "manual" }).catch(() => undefined);
+  }
+
+  /** Execution history for a task (newest first). Gated to writers (apps:config) + read:secrets at the
+   *  controller, because a run's `output` is an arbitrary command's stdout and can carry app secrets. */
+  async listRuns(userId: string, appId: string, taskId: string): Promise<TaskRunView[]> {
+    await this.requireWrite(userId, appId);
+    const task = await this.prisma.scheduledTask.findFirst({ where: { id: taskId, appId } });
+    if (!task) throw new NotFoundException("task not found");
+    const runs = await this.prisma.scheduledTaskRun.findMany({
+      where: { taskId },
+      orderBy: { startedAt: "desc" },
+      take: 50,
+    });
+    return runs.map(runView);
   }
 
   // ── helpers ──
@@ -129,5 +156,19 @@ function view(t: ScheduledTask): TaskView {
     command: t.command,
     enabled: t.enabled,
     lastRunAt: t.lastRunAt,
+  };
+}
+
+function runView(r: ScheduledTaskRun): TaskRunView {
+  return {
+    id: r.id,
+    status: r.status,
+    trigger: r.trigger,
+    exitCode: r.exitCode,
+    output: r.output,
+    error: r.error,
+    startedAt: r.startedAt,
+    finishedAt: r.finishedAt,
+    durationMs: r.durationMs,
   };
 }

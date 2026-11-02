@@ -96,7 +96,7 @@ describe("ScheduledTasksService", () => {
     const runner = { runTask: jest.fn().mockResolvedValue(undefined) } as unknown as ScheduledTaskRunnerService;
     await make(prisma, access, scheduler, runner).runNow("u1", "app1", "tk1");
     expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
-    expect(runner.runTask).toHaveBeenCalledWith("tk1", { force: true });
+    expect(runner.runTask).toHaveBeenCalledWith("tk1", { force: true, trigger: "manual" });
   });
 
   it("runNow 404s a task that belongs to another app", async () => {
@@ -109,5 +109,32 @@ describe("ScheduledTasksService", () => {
     const runner = { runTask: jest.fn() } as unknown as ScheduledTaskRunnerService;
     await expect(make(prisma, access, scheduler, runner).runNow("u1", "app1", "nope")).rejects.toThrow(/not found/);
     expect(runner.runTask).not.toHaveBeenCalled();
+  });
+
+  it("listRuns requires write, scopes the task to the app, and maps the history rows", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { id: "r1", status: "SUCCESS", trigger: "manual", exitCode: 0, output: "ok", error: null, startedAt: new Date(), finishedAt: new Date(), durationMs: 12 },
+    ]);
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      scheduledTask: { findFirst: jest.fn().mockResolvedValue({ id: "tk1", appId: "app1" }) },
+      scheduledTaskRun: { findMany },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
+    const runs = await make(prisma, access, scheduler).listRuns("u1", "app1", "tk1");
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { taskId: "tk1" } }));
+    expect(runs[0]).toMatchObject({ id: "r1", status: "SUCCESS", exitCode: 0 });
+  });
+
+  it("listRuns 404s a task that belongs to another app", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      scheduledTask: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
+    await expect(make(prisma, access, scheduler).listRuns("u1", "app1", "nope")).rejects.toThrow(/not found/);
   });
 });

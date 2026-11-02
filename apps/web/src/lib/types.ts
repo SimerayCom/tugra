@@ -935,6 +935,18 @@ export interface ScheduledTask {
   lastRunAt: string | null;
 }
 
+export interface ScheduledTaskRun {
+  id: string;
+  status: string; // RUNNING | SUCCESS | FAILED
+  trigger: string; // schedule | manual
+  exitCode: number | null;
+  output: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
 export interface ProjectResource {
   id: string;
   name: string;

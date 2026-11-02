@@ -7,6 +7,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
 
 function make(sendCommand: jest.Mock, over: Record<string, unknown> = {}, update = jest.fn().mockResolvedValue({})) {
+  const runUpdate = jest.fn().mockResolvedValue({});
   const prisma = {
     scheduledTask: {
       findUnique: jest.fn().mockResolvedValue({
@@ -20,6 +21,13 @@ function make(sendCommand: jest.Mock, over: Record<string, unknown> = {}, update
       }),
       update,
     },
+    scheduledTaskRun: {
+      create: jest.fn().mockResolvedValue({ id: "run1" }),
+      update: runUpdate,
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   } as unknown as PrismaService;
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
   const svc = new ScheduledTaskRunnerService(
@@ -28,7 +36,7 @@ function make(sendCommand: jest.Mock, over: Record<string, unknown> = {}, update
     audit,
     { fireForEvent } as unknown as NotificationsService,
   );
-  return { svc, update, fireForEvent, sendCommand };
+  return { svc, update, fireForEvent, sendCommand, runUpdate, prisma };
 }
 
 describe("ScheduledTaskRunnerService", () => {
@@ -98,5 +106,46 @@ describe("ScheduledTaskRunnerService", () => {
     await svc.runTask("tk1", { force: true });
     expect(sendCommand).toHaveBeenCalled();
     expect(fireForEvent).toHaveBeenCalledWith("t1", "scheduled_task_success", expect.objectContaining({ exitCode: 0 }));
+  });
+
+  it("records a SUCCESS run with exit code, output and the trigger", async () => {
+    const { svc, runUpdate } = make(jest.fn().mockResolvedValue({ exitCode: 0, output: "all good" }));
+    await svc.runTask("tk1", { trigger: "manual" });
+    expect(runUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "run1" }, data: expect.objectContaining({ status: "SUCCESS", exitCode: 0, output: "all good" }) }),
+    );
+  });
+
+  it("records a FAILED run on a non-zero exit (output kept)", async () => {
+    const { svc, runUpdate } = make(jest.fn().mockResolvedValue({ exitCode: 7, output: "boom" }));
+    await svc.runTask("tk1");
+    expect(runUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", exitCode: 7 }) }),
+    );
+  });
+
+  it("records a FAILED run with a null exit code + error message on a transport failure", async () => {
+    const { svc, runUpdate } = make(jest.fn().mockRejectedValue(new Error("agent offline")));
+    await svc.runTask("tk1");
+    expect(runUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", exitCode: null, output: null, error: "agent offline" }) }),
+    );
+  });
+
+  it("caps stored output to the last 16 KB", async () => {
+    const big = "x".repeat(20_000);
+    const { svc, runUpdate } = make(jest.fn().mockResolvedValue({ exitCode: 0, output: big }));
+    await svc.runTask("tk1");
+    const stored = runUpdate.mock.calls[0][0].data.output as string;
+    expect(stored.length).toBe(16_384);
+  });
+
+  it("boot reaper fails runs left RUNNING by a previous hub", async () => {
+    const { svc, prisma } = make(jest.fn());
+    await svc.onApplicationBootstrap();
+    const updateMany = (prisma as unknown as { scheduledTaskRun: { updateMany: jest.Mock } }).scheduledTaskRun.updateMany;
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: "RUNNING" }, data: expect.objectContaining({ status: "FAILED" }) }),
+    );
   });
 });
