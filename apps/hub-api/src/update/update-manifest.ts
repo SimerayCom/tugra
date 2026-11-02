@@ -23,15 +23,37 @@ export const channelEntrySchema = z.object({
   notes: z.string().optional(),
 });
 
+/** Max length of an operator notice message (plain text). Bounded well under MAX_MANIFEST_BYTES. */
+export const NOTICE_MESSAGE_MAX = 500;
+
+/**
+ * An operator-authored announcement banner, delivered through the SAME signed manifest and shown by the
+ * hub to the instance owner — decoupled from releases (TOP-LEVEL, a sibling of `tugra`), so it is readable
+ * even when the instance's tracked channel has no entry, and is NOT wiped when a channel is released.
+ */
+export const noticeSchema = z.object({
+  id: z.string().min(1).max(64), // stable id; the UI remembers per-viewer dismissal by it, a new id re-shows
+  message: z.string().min(1).max(NOTICE_MESSAGE_MAX), // PLAIN TEXT — never rendered as HTML
+  severity: z.enum(["info", "warning", "critical"]).default("info"),
+  // https-only: z.string().url() alone ACCEPTS javascript:/data: URLs — the refine is the real gate.
+  url: z.string().url().max(2048).refine((u) => u.startsWith("https://"), "notice url must be https").optional(),
+  expiresAt: z.string().datetime().optional(), // ISO 8601; the consumer ignores an expired notice
+});
+
 // `tugra` maps a channel name ("stable" | "beta" | …) → its latest published entry. Open record so a new
 // channel never fails validation; the service only reads the channel the instance is configured to track.
+// `notice` is an optional top-level operator banner (see noticeSchema) — optional so old hubs/manifests
+// keep working (z.object is non-strict: an unknown key is stripped, never rejected).
 export const manifestSchema = z.object({
   tugra: z.record(z.string(), channelEntrySchema),
+  notice: noticeSchema.optional(),
 });
 
 export type ChannelEntry = z.infer<typeof channelEntrySchema>;
+export type Notice = z.infer<typeof noticeSchema>;
 export interface VerifiedManifest {
   tugra: Record<string, ChannelEntry>;
+  notice?: Notice;
 }
 
 /** A typed failure carrying a short machine reason (never the raw body) for logging. */

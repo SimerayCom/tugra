@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import {
   buildChannelEntry,
+  buildNotice,
   canonicalizeManifest,
   mergeManifest,
   seedToPrivateKey,
@@ -8,7 +9,7 @@ import {
   signAndSelfVerify,
   validateManifest,
 } from "./manifest-merge";
-import { verifyUpdateManifest, UpdateVerifyError } from "./update-manifest";
+import { verifyUpdateManifest, UpdateVerifyError, type Notice } from "./update-manifest";
 
 // A base64 32-byte ed25519 seed (the UPDATE_SIGNING_KEY format), and its derived public key.
 function keypair(): { seedB64: string; publicKeyB64: string } {
@@ -105,5 +106,74 @@ describe("manifest-merge", () => {
     // beta sorts before stable; within an entry, changelogUrl < notes < version.
     expect(body.indexOf('"beta"')).toBeLessThan(body.indexOf('"stable"'));
     expect(body.indexOf('"changelogUrl"')).toBeLessThan(body.indexOf('"notes"'));
+  });
+
+  it("buildNotice omits empty optionals and defaults severity to info", () => {
+    expect(buildNotice({ id: "a", message: "m" })).toEqual({ id: "a", message: "m", severity: "info" });
+    expect(buildNotice({ id: "a", message: "m", severity: "critical", url: " https://x.io ", expiresAt: " 2026-12-01T00:00:00Z " })).toEqual({
+      id: "a",
+      message: "m",
+      severity: "critical",
+      url: "https://x.io",
+      expiresAt: "2026-12-01T00:00:00Z",
+    });
+  });
+
+  it("carries an existing notice FORWARD across a channel release (notice arg omitted)", () => {
+    const { seedB64, publicKeyB64 } = keypair();
+    const current = {
+      tugra: { beta: buildChannelEntry({ version: "0.1.0-beta.1" }) },
+      notice: { id: "n1", message: "hi", severity: "info" },
+    };
+    const { body, sig } = signAndSelfVerify({
+      current,
+      channel: "beta",
+      entry: buildChannelEntry({ version: "0.1.0-beta.2" }),
+      seedB64,
+    });
+    const v = verifyUpdateManifest(body, sig, publicKeyB64);
+    expect(v.tugra.beta.version).toBe("0.1.0-beta.2");
+    expect(v.notice).toEqual({ id: "n1", message: "hi", severity: "info" });
+  });
+
+  it("SET a notice (notice-only run: channel/entry null) preserves all channels", () => {
+    const { seedB64, publicKeyB64 } = keypair();
+    const current = {
+      tugra: { beta: buildChannelEntry({ version: "0.1.0-beta.1" }), stable: buildChannelEntry({ version: "1.0.0" }) },
+    };
+    const notice = buildNotice({ id: "n2", message: "please update", severity: "warning", url: "https://tugra.io/x" });
+    const { body, sig } = signAndSelfVerify({ current, channel: null, entry: null, notice, seedB64 });
+    const v = verifyUpdateManifest(body, sig, publicKeyB64);
+    expect(Object.keys(v.tugra).sort()).toEqual(["beta", "stable"]);
+    expect(v.notice).toEqual({ id: "n2", message: "please update", severity: "warning", url: "https://tugra.io/x" });
+  });
+
+  it("CLEAR a notice (notice: null) removes it but keeps channels", () => {
+    const { seedB64, publicKeyB64 } = keypair();
+    const current = {
+      tugra: { beta: buildChannelEntry({ version: "0.1.0-beta.1" }) },
+      notice: { id: "n1", message: "x", severity: "info" },
+    };
+    const { body, sig } = signAndSelfVerify({ current, channel: null, entry: null, notice: null, seedB64 });
+    const v = verifyUpdateManifest(body, sig, publicKeyB64);
+    expect(v.notice).toBeUndefined();
+    expect(v.tugra.beta.version).toBe("0.1.0-beta.1");
+    expect(body.includes("notice")).toBe(false);
+  });
+
+  it("signAndSelfVerify refuses a notice with a non-https url (fail-closed)", () => {
+    const { seedB64 } = keypair();
+    const current = { tugra: { beta: buildChannelEntry({ version: "0.1.0-beta.1" }) } };
+    const bad: Notice = { id: "n", message: "m", severity: "info", url: "javascript:alert(1)" };
+    expect(() => signAndSelfVerify({ current, channel: null, entry: null, notice: bad, seedB64 })).toThrow();
+  });
+
+  it("canonical body orders top-level notice before tugra", () => {
+    const m = validateManifest({
+      tugra: { stable: { version: "1.0.0" } },
+      notice: { id: "n", message: "m", severity: "info" },
+    });
+    const body = canonicalizeManifest(m);
+    expect(body.indexOf('"notice"')).toBeLessThan(body.indexOf('"tugra"'));
   });
 });
