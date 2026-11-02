@@ -75,3 +75,25 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
   updates its `UPDATE_PUBLISHER_KEY`. Treat the signing key as long-lived.
 - The four Dockerfiles live in [`deploy/`](../deploy/) (committed). The copies under `local/` are only for
   local dev and are redundant with these.
+
+## Publishing an operator notice (no release)
+
+A top-level `notice` in the signed manifest shows a banner to every instance owner (on their next signed
+check), decoupled from releases — e.g. "beta.2 fixes a critical bug, please update" or a maintenance note.
+Publish or clear it from the **Publish notice** workflow
+([`.github/workflows/notice.yml`](../.github/workflows/notice.yml)), which re-signs the existing
+`versions.json` on gh-pages without building images:
+
+```sh
+# set a notice
+gh workflow run notice.yml -f id=2026-11-02-beta2 \
+  -f message="beta.2 fixes a deploy bug — please update" -f severity=warning \
+  -f url=https://github.com/SimerayCom/tugra/releases/tag/v0.1.0-beta.2
+# clear it
+gh workflow run notice.yml -f clear=true
+```
+
+Notes: it runs only from `main`; a **new `id`** re-shows a banner a viewer had dismissed; `critical` is not
+dismissible; the message is plain text (<=500 chars) and any link must be `https://`. A release carries an
+active notice forward unchanged (it is never silently erased by the next version). Protect the `release`
+Environment (required reviewers / branch) so only trusted dispatches can sign.

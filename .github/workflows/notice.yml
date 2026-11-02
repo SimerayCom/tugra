@@ -1,0 +1,107 @@
+name: Publish notice
+
+# Publishes (or clears) the top-level operator `notice` in the signed update manifest on gh-pages WITHOUT
+# cutting a release or building images. It re-signs the EXISTING versions.json with the notice change via
+# scripts/sign-manifest.mjs --notice-only, which REFUSES a missing manifest (so it can never fabricate an
+# empty one that would wipe the channels). Manual dispatch only; the hub shows the notice to the instance
+# owner on its next signed check.
+on:
+  workflow_dispatch:
+    inputs:
+      clear:
+        description: "Clear the current notice instead of setting one"
+        type: boolean
+        default: false
+      id:
+        description: "Stable notice id (a NEW id re-shows a dismissed banner), e.g. 2026-11-02-beta2"
+        required: false
+      message:
+        description: "Notice text — plain text, <=500 chars (required unless clearing)"
+        required: false
+      severity:
+        description: "Severity"
+        type: choice
+        options: [info, warning, critical]
+        default: info
+      url:
+        description: "Optional https link shown as 'Learn more'"
+        required: false
+      expires_at:
+        description: "Optional ISO expiry, e.g. 2026-12-01T00:00:00Z (the hub ignores the notice after this)"
+        required: false
+
+# Least privilege: the job alone needs contents:write for the gh-pages push.
+permissions:
+  contents: read
+
+# Serialize with the release pipeline's manifest writer so the two gh-pages writers never race the
+# non-force push (a loser would hard-fail rather than corrupt).
+concurrency:
+  group: manifest-publish
+  cancel-in-progress: false
+
+jobs:
+  publish-notice:
+    runs-on: ubuntu-latest
+    # Only from main: a dispatch on another ref would run that ref's copy of this file with the signing key.
+    # The real boundary is a protected `release` Environment (set required reviewers / branch in repo
+    # settings); this `if` is the safety net, matching release.yml's guidance.
+    if: github.ref == 'refs/heads/main'
+    environment: release
+    permissions:
+      contents: write # push to gh-pages
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Compile the pure signer core (scripts/sign-manifest.mjs imports apps/hub-api/dist).
+      - run: pnpm --filter @tugra/shared build && pnpm --filter @tugra/hub-api build
+      - name: Re-sign the manifest with the notice change
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          # Pass inputs via env — NEVER interpolate ${{ inputs.* }} into the shell (free text = injection).
+          CLEAR: ${{ inputs.clear }}
+          NOTICE_ID: ${{ inputs.id }}
+          NOTICE_MESSAGE: ${{ inputs.message }}
+          NOTICE_SEVERITY: ${{ inputs.severity }}
+          NOTICE_URL: ${{ inputs.url }}
+          NOTICE_EXPIRES_AT: ${{ inputs.expires_at }}
+        run: |
+          set -euo pipefail
+          # The current manifest MUST exist — notice-only refuses to fabricate one (would wipe channels).
+          git fetch origin gh-pages --depth 1
+          git show origin/gh-pages:versions.json > current.json
+          args=(--notice-only true --current current.json --out-dir out)
+          if [ "$CLEAR" = "true" ]; then
+            args+=(--clear-notice true)
+          else
+            [ -n "$NOTICE_ID" ] && [ -n "$NOTICE_MESSAGE" ] || { echo "notice: id and message are required unless clearing"; exit 1; }
+            args+=(--notice-id "$NOTICE_ID" --notice-message "$NOTICE_MESSAGE" --notice-severity "$NOTICE_SEVERITY")
+            [ -n "$NOTICE_URL" ] && args+=(--notice-url "$NOTICE_URL") || true
+            [ -n "$NOTICE_EXPIRES_AT" ] && args+=(--notice-expires-at "$NOTICE_EXPIRES_AT") || true
+          fi
+          node scripts/sign-manifest.mjs "${args[@]}"
+      - name: Publish to gh-pages
+        env:
+          ACTION: ${{ inputs.clear && 'clear' || 'set' }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tmp="$(mktemp -d)"; cp out/versions.json out/versions.json.sig "$tmp/"
+          git fetch origin gh-pages --depth 1
+          git checkout gh-pages
+          cp "$tmp/versions.json" "$tmp/versions.json.sig" .
+          if git diff --quiet; then
+            echo "notice: manifest already in the requested state — nothing to publish"
+            exit 0
+          fi
+          git add versions.json versions.json.sig
+          git commit -m "notice: ${ACTION} operator banner"
+          git push origin gh-pages
