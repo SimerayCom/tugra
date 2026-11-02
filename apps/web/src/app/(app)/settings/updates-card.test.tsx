@@ -18,6 +18,7 @@ const STATUS: InstanceUpdateStatus = {
   updateAvailable: true,
   changelogUrl: "https://get.tugra.io/changelog",
   autoUpdate: false,
+  notice: null,
 };
 
 function sseResponse(frames: string[]): Response {

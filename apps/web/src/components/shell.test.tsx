@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { NAV, DESTS } from "./shell";
+import { NAV, DESTS, noticeVisible } from "./shell";
+import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
 import en from "../i18n/locales/en";
@@ -59,6 +60,27 @@ describe("command palette destinations", () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
     for (const d of DESTS) {
       expect(translate(en, d.labelKey), `${d.labelKey} has no en string`).not.toBe(d.labelKey);
+    }
+  });
+});
+
+describe("notice banner visibility", () => {
+  const n = (over: Partial<InstanceUpdateNotice> = {}): InstanceUpdateNotice => ({
+    id: "n1",
+    message: "m",
+    severity: "info",
+    url: null,
+    ...over,
+  });
+  it("hidden when there is no notice", () => expect(noticeVisible(null, null)).toBe(false));
+  it("shown for a fresh notice", () => expect(noticeVisible(n(), null)).toBe(true));
+  it("hidden once dismissed by id", () => expect(noticeVisible(n(), "n1")).toBe(false));
+  it("re-shows when the notice id changes", () => expect(noticeVisible(n({ id: "n2" }), "n1")).toBe(true));
+  it("critical is non-dismissible (always shown)", () => expect(noticeVisible(n({ severity: "critical" }), "n1")).toBe(true));
+
+  it("every notice severity label resolves in en", () => {
+    for (const key of ["noticeInfo", "noticeWarning", "noticeCritical", "noticeDismiss", "noticeLearnMore"]) {
+      expect(translate(en, `settings.${key}`), `settings.${key} has no en string`).not.toBe(`settings.${key}`);
     }
   });
 });
