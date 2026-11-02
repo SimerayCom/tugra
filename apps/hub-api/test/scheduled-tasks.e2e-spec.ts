@@ -83,4 +83,21 @@ describe("Scheduled tasks (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(404);
   });
+
+  it("serves run history (empty for a fresh task) and 404s an unknown task", async () => {
+    const created = await request(app.getHttpServer())
+      .post(`/apps/${appId}/tasks`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "hist", schedule: "0 4 * * *", command: "echo hist" })
+      .expect(201);
+    const runs = await request(app.getHttpServer())
+      .get(`/apps/${appId}/tasks/${created.body.id}/runs`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(Array.isArray(runs.body)).toBe(true);
+    await request(app.getHttpServer())
+      .get(`/apps/${appId}/tasks/nope/runs`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
+  });
 });

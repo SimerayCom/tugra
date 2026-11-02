@@ -17,7 +17,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
-import { ScheduledTasksService, TaskViewSchema } from "./scheduled-tasks.service";
+import { ScheduledTasksService, TaskViewSchema, TaskRunViewSchema } from "./scheduled-tasks.service";
 import { CreateTaskInput, CreateTaskSchema, UpdateTaskInput, UpdateTaskSchema } from "./dto";
 
 @ApiTags("scheduled-tasks")
@@ -70,6 +70,13 @@ export class ScheduledTasksController {
   ) {
     await this.tasks.runNow(user.userId, id, taskId);
     return { ok: true };
+  }
+
+  @Get(":id/tasks/:taskId/runs")
+  @RequireScopes("read:secrets") // a run's output is arbitrary command stdout → can carry app secrets
+  @ApiZodResponse(TaskRunViewSchema, { isArray: true })
+  runs(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("taskId") taskId: string) {
+    return this.tasks.listRuns(user.userId, id, taskId);
   }
 
   @Delete(":id/tasks/:taskId")

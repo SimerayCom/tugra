@@ -1216,8 +1216,28 @@ model ScheduledTask {
   enabled     Boolean      @default(true)
   lastRunAt   DateTime?
   createdAt   DateTime     @default(now())
+  runs        ScheduledTaskRun[]
 
   @@index([appId])
+}
+
+// One execution of a scheduled task (cron or manual run-now), for the history view. `output` can carry the
+// app's secrets (an arbitrary command's stdout), so it is only ever served behind read:secrets + a writer.
+// Pruned to the last N per task by the runner; status is a plain string ("RUNNING" | "SUCCESS" | "FAILED").
+model ScheduledTaskRun {
+  id         String        @id @default(cuid())
+  task       ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId     String
+  status     String        @default("RUNNING") // RUNNING | SUCCESS | FAILED
+  trigger    String        // "schedule" | "manual"
+  exitCode   Int?          // null when the command never ran (transport failure)
+  output     String?       // tail-capped; may contain secrets → never shipped to notifications
+  error      String?       // transport/timeout message when the command never ran
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  @@index([taskId, startedAt])
 }
 
 model Deployment {

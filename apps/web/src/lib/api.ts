@@ -69,6 +69,7 @@ import type {
   Project,
   Role,
   ScheduledTask,
+  ScheduledTaskRun,
   ServerStatus,
   ServerView,
   SharedVariable,
@@ -1385,6 +1386,9 @@ export const api = {
   },
   runAppTask(id: string, taskId: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/tasks/${taskId}/run`, { method: "POST" });
+  },
+  listAppTaskRuns(id: string, taskId: string) {
+    return apiFetch<ScheduledTaskRun[]>(`/apps/${id}/tasks/${taskId}/runs`);
   },
   setAppCredentials(
     id: string,

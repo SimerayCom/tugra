@@ -48,7 +48,7 @@ import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
   RotateCw, Play, RefreshCw, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
-  Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, type LucideIcon,
+  Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, History, type LucideIcon,
 } from "lucide-react";
 
 // Icon per Configuration sub-nav group. Kept here (not in config-groups.ts) so that pure, tested file
@@ -2064,6 +2064,40 @@ function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[
   );
 }
 
+function taskRunColor(status: string): string {
+  if (status === "SUCCESS") return "var(--c-g)";
+  if (status === "FAILED") return "var(--c-r)";
+  return "var(--c-am)"; // RUNNING
+}
+
+function TaskRunHistory({ appId, taskId }: { appId: string; taskId: string }) {
+  const t = useT();
+  const { data: runs = [], isLoading, isError } = useQuery({
+    queryKey: ["appTaskRuns", appId, taskId],
+    queryFn: () => api.listAppTaskRuns(appId, taskId),
+  });
+  if (isLoading) return <div style={{ paddingLeft: 24 }}><Spinner /></div>;
+  if (isError) return <div style={{ paddingLeft: 24, fontSize: 12, color: "var(--c-r)" }}>{t("apps.taskRunsError")}</div>;
+  if (!runs.length) return <div style={{ paddingLeft: 24, fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.taskRunsEmpty")}</div>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingLeft: 24 }}>
+      {runs.map((r) => (
+        <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 4, borderLeft: "2px solid var(--c-bd)", paddingLeft: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 11 }}>
+            <span style={{ color: taskRunColor(r.status), fontWeight: 600 }}>{t(`apps.taskStatus_${r.status}`)}</span>
+            <Badge tone="muted">{r.trigger === "manual" ? t("apps.taskTriggerManual") : t("apps.taskTriggerSchedule")}</Badge>
+            {r.exitCode != null && <span className="mono" style={{ color: "var(--c-tx3)" }}>{t("apps.taskExitCode")}: {r.exitCode}</span>}
+            <span style={{ color: "var(--c-tx3)" }} title={new Date(r.startedAt).toLocaleString()}>{relativeTime(r.startedAt)}</span>
+            {r.durationMs != null && <span style={{ color: "var(--c-tx3)" }}>{Math.round(r.durationMs / 100) / 10}s</span>}
+          </div>
+          {r.error && <span style={{ fontSize: 11, color: "var(--c-r)" }}>{r.error}</span>}
+          {r.output && <pre className="mono" style={{ ...TERMINAL_PRE_STYLE, maxHeight: 180, fontSize: 11, margin: 0 }}>{r.output}</pre>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
   const t = useT();
   const qc = useQueryClient();
@@ -2071,6 +2105,7 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
   const toast = useToast();
   const invalidate = () => qc.invalidateQueries({ queryKey: ["appTasks", appId] });
   const [editing, setEditing] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [name, setName] = useState(task.name);
   const [schedule, setSchedule] = useState(task.schedule);
   const [command, setCommand] = useState(task.command);
@@ -2078,7 +2113,12 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
   const del = useMutation({ mutationFn: () => api.deleteAppTask(appId, task.id), onSuccess: invalidate });
   const run = useMutation({
     mutationFn: () => api.runAppTask(appId, task.id),
-    onSuccess: () => { toast(t("apps.taskRunStarted"), "success"); invalidate(); },
+    onSuccess: () => {
+      toast(t("apps.taskRunStarted"), "success");
+      invalidate();
+      // the run finishes asynchronously; give it a moment, then refresh the history so the new row appears.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["appTaskRuns", appId, task.id] }), 1500);
+    },
     onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
   });
   const edit = useMutation({
@@ -2100,15 +2140,19 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
     );
   }
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <input type="checkbox" aria-label={t("apps.taskEnabled")} checked={task.enabled} onChange={(e) => toggle.mutate(e.target.checked)} />
-      <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
-      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
-      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{task.command}</span>
-      {task.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(task.lastRunAt).toLocaleString()}</span>}
-      <IconBtn label={t("apps.taskRunNow")} onClick={() => run.mutate()} disabled={run.isPending}><Play size={14} /></IconBtn>
-      <IconBtn label={t("common.edit")} onClick={startEdit}><Pencil size={14} /></IconBtn>
-      <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}><X size={14} /></IconBtn>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="checkbox" aria-label={t("apps.taskEnabled")} checked={task.enabled} onChange={(e) => toggle.mutate(e.target.checked)} />
+        <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
+        <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
+        <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{task.command}</span>
+        {task.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(task.lastRunAt).toLocaleString()}</span>}
+        <IconBtn label={t("apps.taskRunNow")} onClick={() => run.mutate()} disabled={run.isPending}><Play size={14} /></IconBtn>
+        <IconBtn label={t("apps.taskHistory")} onClick={() => setShowHistory((v) => !v)}><History size={14} /></IconBtn>
+        <IconBtn label={t("common.edit")} onClick={startEdit}><Pencil size={14} /></IconBtn>
+        <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}><X size={14} /></IconBtn>
+      </div>
+      {showHistory && <TaskRunHistory appId={appId} taskId={task.id} />}
     </div>
   );
 }
