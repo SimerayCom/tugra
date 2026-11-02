@@ -271,6 +271,18 @@ describe("ApplicationsService", () => {
     expect(submitDeploy).not.toHaveBeenCalled();
   });
 
+  it("validates a pasted compose on create even when a templateSlug is supplied (no bypass)", async () => {
+    const { prisma, access } = createDeps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    // A client-settable templateSlug must NOT exempt a client-supplied composeFile from assertSafeCompose:
+    // curated templates install via installTemplate() with a server-built compose, never through create().
+    const evil = "services:\n  x:\n    image: nginx\n    privileged: true\n";
+    await expect(
+      svc.create("u1", { name: "evil", serverId: "s1", source: "COMPOSE", composeFile: evil, templateSlug: "legit-looking" }),
+    ).rejects.toThrow(/privileged/);
+    expect(prisma.application.create as jest.Mock).not.toHaveBeenCalled();
+  });
+
   it("still creates successfully when the best-effort deploy fails (agent offline)", async () => {
     const { prisma, access } = createDeps();
     const svc = make(prisma, access, {} as AgentWsServer);
