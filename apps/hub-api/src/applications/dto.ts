@@ -508,6 +508,14 @@ export const SetExtraPortsSchema = z.object({
 }).strict();
 export type SetExtraPortsInput = z.infer<typeof SetExtraPortsSchema>;
 
+// The ingress container port an IMAGE/GIT app listens on inside the container (proxy routes here). Editable
+// after create so a wrong imported value (default 80) can be fixed without recreating the app. COMPOSE apps
+// infer this from their YAML, so the setter rejects them.
+export const SetContainerPortSchema = z.object({
+  containerPort: z.number().int().min(1).max(65535),
+}).strict();
+export type SetContainerPortInput = z.infer<typeof SetContainerPortSchema>;
+
 // Lenient hostname: labels split by dots, at least one dot, no scheme/port/path.
 export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 export const SetDomainSchema = z.object({

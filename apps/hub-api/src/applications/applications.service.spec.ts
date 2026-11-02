@@ -1341,6 +1341,17 @@ describe("ApplicationsService", () => {
     await expect(make(composePrisma, access, {} as AgentWsServer).setRestartPolicy("u1", "app1", "always")).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("setContainerPort stores the port for IMAGE/GIT and refuses COMPOSE", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1", source: "IMAGE" }), update } } as unknown as PrismaService;
+    await make(prisma, access, {} as AgentWsServer).setContainerPort("u1", "app1", 3000);
+    expect(update.mock.calls[0][0].data.containerPort).toBe(3000);
+    // COMPOSE derives its web port from the YAML, so the setter must refuse it (edit would be a no-op)
+    const composePrisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, teamId: "t1", source: "COMPOSE" }), update: jest.fn() } } as unknown as PrismaService;
+    await expect(make(composePrisma, access, {} as AgentWsServer).setContainerPort("u1", "app1", 3000)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("upsertPreview drops the parent's preview-excluded env keys from the preview's env", async () => {
     const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
     const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;

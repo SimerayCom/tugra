@@ -1044,6 +1044,9 @@ export const api = {
   setAppExtraPorts(id: string, ports: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/extra-ports`, { method: "PUT", body: JSON.stringify({ ports }) });
   },
+  setAppContainerPort(id: string, containerPort: number) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/container-port`, { method: "PUT", body: JSON.stringify({ containerPort }) });
+  },
   setAppBasicAuth(id: string, users: { user: string; password: string }[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/basic-auth`, { method: "PUT", body: JSON.stringify({ users }) });
   },

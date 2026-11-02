@@ -2658,6 +2658,18 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.extra_ports.update", target: id, meta: { count: ports.length } });
   }
 
+  /** Set the ingress container port an IMAGE/GIT app listens on inside the container (the proxy's
+   *  loadbalancer target, the -p mapping and the default health probe all derive from it). Editable after
+   *  create so a wrong value (e.g. an import that defaulted to 80) can be fixed without recreating the app.
+   *  COMPOSE apps are rejected — toSpec derives their web port from the YAML, so a stored value is ignored
+   *  and editing it would silently do nothing. Applies on the NEXT deploy (the labels/-p are baked in at run). */
+  async setContainerPort(userId: string, id: string, containerPort: number): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source === "COMPOSE") throw new BadRequestException("a compose app's port comes from its compose file");
+    await this.prisma.application.update({ where: { id }, data: { containerPort } });
+    await this.audit.log({ actor: userId, action: "app.container_port.update", target: id, meta: { containerPort } });
+  }
+
   /** Replace the app's watch paths (monorepo deploy-trigger globs). Git-sourced apps only (a GIT build or a
    *  COMPOSE-from-git app) — watch paths gate webhook pushes, which an IMAGE or pasted-COMPOSE app never has.
    *  An empty array clears them (back to deploy-on-every-push). Applies to the NEXT push. */

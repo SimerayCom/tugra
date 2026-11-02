@@ -452,6 +452,7 @@ export default function AppDetailPage() {
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
     redirects: () => <RedirectsCard id={id} redirects={appData.redirects} />,
+    containerPort: () => <ContainerPortCard id={id} containerPort={appData.containerPort} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
   };
@@ -1899,6 +1900,39 @@ function RestartPolicyCard({ id, restartPolicy }: { id: string; restartPolicy: s
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.restartPolicyRedeploy")}</div>}
+    </Card>
+  );
+}
+
+function ContainerPortCard({ id, containerPort }: { id: string; containerPort: number | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [val, setVal] = useState<string>(String(containerPort ?? 80));
+  useEffect(() => setVal(String(containerPort ?? 80)), [containerPort]);
+  const n = Number(val);
+  const valid = /^\d+$/.test(val.trim()) && Number.isInteger(n) && n >= 1 && n <= 65535;
+  const save = useMutation({
+    mutationFn: () => api.setAppContainerPort(id, n),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  return (
+    <Card style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.containerPort")}</div>
+      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.containerPortCardDesc")}</p>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          aria-label={t("apps.containerPort")}
+          inputMode="numeric"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          placeholder="80"
+          style={{ ...envField, maxWidth: 160 }}
+        />
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !valid}>{t("apps.save")}</Btn>
+      </div>
+      {!valid && val.trim() !== "" && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.containerPortInvalid")}</div>}
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.containerPortRedeploy")}</div>}
     </Card>
   );
 }

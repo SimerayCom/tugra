@@ -423,6 +423,51 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--health-cmd");
   });
 
+  it("edits the container port after create and re-emits it on the next deploy; rejects COMPOSE", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "portedit", serverId, image: "nginx:alpine", hostPort: 8137 }) // containerPort defaults to 80
+      .expect(201);
+    const appId = appRes.body.id;
+    expect(appRes.body.containerPort).toBe(80);
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/container-port`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ containerPort: 3000 })
+      .expect(200);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/apps/${appId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(detail.body.containerPort).toBe(3000);
+
+    // out-of-range is rejected by the DTO
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/container-port`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ containerPort: 70000 })
+      .expect(400);
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${appId}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await waitForCommand(commands, "-p 8137:3000"); // the published mapping now targets the edited port
+
+    // a COMPOSE app's port comes from its YAML → the setter refuses it
+    const stackRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "portstack", serverId, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx:alpine\n    ports:\n      - 8098:80" })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/apps/${stackRes.body.id}/container-port`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ containerPort: 3000 })
+      .expect(400);
+  });
+
   it("rejects a CMD health check with no command (400)", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")
