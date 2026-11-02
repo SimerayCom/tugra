@@ -19,6 +19,7 @@ import { DeploymentReconcileService } from "./deployment-reconcile.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
 import { PanelTlsController } from "./panel-tls.controller";
+import { AppPrivilegedController } from "./app-privileged.controller";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
@@ -26,7 +27,7 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule],
-  controllers: [ApplicationsController, PanelTlsController],
+  controllers: [ApplicationsController, PanelTlsController, AppPrivilegedController],
   providers: [
     ApplicationsService,
     AppDatabaseLinksService,

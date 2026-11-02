@@ -115,4 +115,85 @@ describe("assertSafeDockerOptions", () => {
   });
 
   it("fails closed on an unterminated quote", () => bad('--label "oops', /unterminated/));
+
+  // Short-flag ATTACHED / BUNDLED value forms — pflag accepts `-vSRC:DST` and `-lKEY=VAL`, so these must be
+  // classified as -v / -l, not slip past the switch as an unknown whole-token name (the historic bypass).
+  it("blocks attached short-flag host binds (-v/:/host, -v=/:/host, docker.sock)", () => {
+    bad("-v/:/host", /sensitive host path/);
+    bad("-v=/:/host", /sensitive host path/);
+    bad("-v/var/run/docker.sock:/var/run/docker.sock", /docker socket/);
+    bad("-v/etc:/etc", /sensitive host path/);
+  });
+  it("blocks a traefik label in the attached short form (-ltraefik.x=…)", () => {
+    bad("-ltraefik.http.routers.x.rule=Host(`victim.com`)", /traefik/);
+    bad("-l=traefik.enable=true", /traefik/);
+  });
+  it("resolves a gated short flag hidden behind boolean shorts in a cluster (-itv/:/host)", () => {
+    bad("-itv/:/host", /sensitive host path/);
+  });
+  it("fails closed on an unrecognized short flag in a cluster", () => {
+    bad("-zv/:/host", /unrecognized short flag/);
+    bad("-q /tmp", /unrecognized short flag/);
+  });
+  it("does not false-positive on legit attached non-gated shorts or all-boolean clusters", () => {
+    ok("-emyvar=1"); // -e (env) attached value — not gated
+    ok("-elower_case_value=1"); // value contains v/l letters but belongs to -e, not a volume
+    ok("-dit"); // all-boolean cluster
+    ok("-vmyvol:/data"); // attached named volume (no leading / → safe)
+    ok("-lcom.example.k=v"); // attached non-traefik label
+  });
+
+  // --mount CSV parsing must not trust a spoofable `type=` field.
+  it("blocks --mount binds regardless of type= casing / duplication / quoting", () => {
+    bad("--mount Type=BIND,Source=/etc,target=/e", /sensitive host path/);
+    bad("--mount type=volume,type=bind,source=/root,target=/r", /sensitive host path/);
+    bad('--mount source="/root",target=/r', /sensitive host path/);
+    bad("--mount type=bind,src=/var/run/docker.sock,target=/s", /docker socket/);
+  });
+  it("still allows a --mount of a named volume or a safe host path", () => {
+    ok("--mount type=volume,source=myvol,target=/data");
+    ok("--mount type=bind,source=/mnt/media,target=/media");
+  });
+
+  // --volumes-from borrows another container's mounts (incl. the agent's docker.sock) — a host escape.
+  it("blocks --volumes-from in both attached and separate forms", () => {
+    bad("--volumes-from other", /volumes-from/);
+    bad("--volumes-from=tugra_agent", /volumes-from/);
+  });
+});
+
+describe("assertSafeDockerOptions — owner privileged override", () => {
+  const allow = (s: string) => expect(() => assertSafeDockerOptions(s, { allowPrivileged: true })).not.toThrow();
+  const stillBad = (s: string, re?: RegExp) =>
+    expect(() => assertSafeDockerOptions(s, { allowPrivileged: true })).toThrow(re ?? /disallowed flag|unterminated/);
+
+  it("allows the whole host-escape class when the owner opted in", () => {
+    allow("--privileged");
+    allow("--cap-add SYS_ADMIN --device=/dev/fuse --security-opt apparmor:unconfined"); // the Coolify FUSE example
+    allow("--device /dev/kvm");
+    allow("--network host");
+    allow("--pid host");
+    allow("-v /var/run/docker.sock:/var/run/docker.sock");
+    allow("-v /:/host");
+    allow("-v/:/host"); // attached short form resolves to -v and is permitted under the override
+    allow("-itv/:/host"); // bundled behind boolean shorts
+    allow("--mount type=bind,source=/etc,target=/etc");
+    allow("--volumes-from other"); // borrowing mounts is the owner's call once opted in
+  });
+
+  it("STILL blocks the Tugra-integrity class even WITH the override", () => {
+    stillBad("--label traefik.http.routers.x.rule=Host(`victim.com`)", /traefik/);
+    stillBad("-ltraefik.http.routers.x.rule=Host(`victim.com`)", /traefik/); // attached short form
+    stillBad("--label-file /tmp/labels", /label-file/);
+    stillBad("--name squatted", /name/);
+    stillBad("--env-file /root/tugra/.env", /env-file/);
+  });
+
+  it("the default (no opts) stays byte-identical — still blocks the host-escape class", () => {
+    bad("--privileged");
+    bad("--cap-add SYS_ADMIN");
+    bad("-v /var/run/docker.sock:/x");
+  });
+
+  it("still fails closed on an unterminated quote even with the override", () => stillBad('--privileged "oops', /unterminated/));
 });

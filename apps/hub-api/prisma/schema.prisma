@@ -1004,6 +1004,11 @@ model Application {
   envEnc         String?
   buildArgsEnc   String?
   dockerOptions  String?
+  // Host-root escalation gate. false (default) = assertSafeDockerOptions blocks --privileged/--device/
+  // --cap-add/host-ns/docker.sock/host binds. true = the INSTANCE OWNER opted this app in (self-hosted, own
+  // box). Settable ONLY by the instance owner over a session (never a PAT / apps:config member). The
+  // Tugra-integrity flags (traefik.* labels, --name, --env-file) stay blocked regardless.
+  allowPrivilegedDockerOptions Boolean @default(false)
   // IMAGE/GIT classic (docker run) container command override, exec-form argv (string[]). Replaces the image
   // ENTRYPOINT / CMD. containerEntrypoint [] clears the image entrypoint; null on either = image default.
   containerEntrypoint Json?

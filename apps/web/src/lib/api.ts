@@ -1277,6 +1277,13 @@ export const api = {
       body: JSON.stringify({ dockerOptions }),
     });
   },
+  // Instance-owner only (the hub enforces session + owner): lift the docker-options host-escape denylist.
+  setAppAllowPrivilegedDockerOptions(id: string, allow: boolean) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/allow-privileged-docker-options`, {
+      method: "PUT",
+      body: JSON.stringify({ allow }),
+    });
+  },
   setAppDeployHooks(id: string, hooks: { preDeployCommand: string | null; postDeployCommand: string | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/deploy-hooks`, {
       method: "PUT",
