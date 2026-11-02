@@ -3,6 +3,22 @@
   "version": "0.1.0-beta.1",
   "description": "Command-line client for the Tugra self-hosted PaaS.",
   "license": "MIT",
+  "author": "Simeray Ltd",
+  "homepage": "https://tugra.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SimerayCom/tugra.git",
+    "directory": "packages/cli"
+  },
+  "bugs": "https://github.com/SimerayCom/tugra/issues",
+  "keywords": [
+    "tugra",
+    "paas",
+    "cli",
+    "deploy",
+    "self-hosted",
+    "docker"
+  ],
   "bin": {
     "tugra": "./dist/index.js"
   },
