@@ -588,10 +588,12 @@ export class ApplicationsService {
     // exactly one. A git-compose stack has no stored YAML to validate here; it is cloned, rendered and
     // validated (assertSafeCompose over the rendered config) at deploy time instead.
     const isGitCompose = source === "COMPOSE" && !!dto.gitUrl;
-    // A user-pasted compose at create was never validated (only setComposeFile + the importer ran the guard),
-    // so a privileged/host-escaping stack could be installed. Validate it here too; curated templates are
-    // trusted (they install through a different, server-controlled path) so they skip this.
-    if (source === "COMPOSE" && dto.composeFile && !dto.templateSlug) assertSafeCompose(dto.composeFile);
+    // A user-pasted compose must be validated for host escape, ALWAYS. templateSlug is client-settable on
+    // this endpoint, so exempting it (the old `!dto.templateSlug`) let a caller skip the guard by pairing an
+    // arbitrary composeFile with any slug. Curated templates install through a separate, server-controlled
+    // path (installTemplate) that builds the compose from the trusted catalog manifest and never trusts a
+    // client composeFile — so they do not need (and must not get) an exemption here.
+    if (source === "COMPOSE" && dto.composeFile) assertSafeCompose(dto.composeFile);
     const composeWebService =
       source === "COMPOSE" ? (this.composeWeb({ templateSlug: dto.templateSlug, composeFile: dto.composeFile })?.service ?? null) : null;
     const expose = this.resolveExpose(dto, server, source, composeWebService);
