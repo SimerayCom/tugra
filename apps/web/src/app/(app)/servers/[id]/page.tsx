@@ -992,6 +992,7 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
   const st = status.data?.status;
   const refresh = () => qc.invalidateQueries({ queryKey: ["proxy", id] });
   const onResult = (r: { status: ProxyStatus }) => qc.setQueryData(["proxy", id], r);
+  const confirm = useConfirm();
 
   const start = useMutation({ mutationFn: () => api.startProxy(id), onSuccess: onResult });
   const stop = useMutation({ mutationFn: () => api.stopProxy(id), onSuccess: onResult });
@@ -1009,7 +1010,7 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
           <>
             <Btn variant="ghost" icon={Play} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
             <Btn variant="ghost" icon={RotateCw} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
-            <Btn variant="dangerGhost" icon={Square} onClick={() => stop.mutate()} disabled={busy}>{t("servers.proxyStop")}</Btn>
+            <Btn variant="dangerGhost" icon={Square} onClick={async () => { if (await confirm({ body: t("servers.proxyStopConfirm"), danger: true })) stop.mutate(); }} disabled={busy}>{t("servers.proxyStop")}</Btn>
           </>
         )}
       </div>

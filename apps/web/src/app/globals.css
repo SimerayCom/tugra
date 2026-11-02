@@ -72,6 +72,14 @@ body {
   outline: 2px solid var(--c-a);
   outline-offset: 2px;
 }
+/* Live feedback on every Btn (component adds class "tg-btn"): brighten on hover, press down on click.
+   Coolify-style affordance so actions don't feel dead. Disabled buttons stay inert. */
+.tg-btn:not(:disabled):hover {
+  filter: brightness(1.07);
+}
+.tg-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
 .mono {
   font-family: var(--font-mono);
 }
