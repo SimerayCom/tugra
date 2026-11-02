@@ -5,15 +5,22 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { ScheduledTasksSchedulerService } from "./scheduled-tasks.scheduler.service";
+import { ScheduledTaskRunnerService } from "./scheduled-task-runner.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
 
-function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>, scheduler: Partial<ScheduledTasksSchedulerService>) {
+function make(
+  prisma: Partial<PrismaService>,
+  access: Partial<TeamAccessService>,
+  scheduler: Partial<ScheduledTasksSchedulerService>,
+  runner: Partial<ScheduledTaskRunnerService> = { runTask: jest.fn().mockResolvedValue(undefined) },
+) {
   return new ScheduledTasksService(
     prisma as PrismaService,
     access as TeamAccessService,
     scheduler as ScheduledTasksSchedulerService,
     audit,
+    runner as ScheduledTaskRunnerService,
   );
 }
 
@@ -77,5 +84,30 @@ describe("ScheduledTasksService", () => {
     const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
     await make(prisma, access, scheduler).remove("u1", "app1", "tk1");
     expect(scheduler.unschedule).toHaveBeenCalledWith("tk1");
+  });
+
+  it("runNow requires write, finds the task, and fires a forced run", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      scheduledTask: { findFirst: jest.fn().mockResolvedValue({ id: "tk1", appId: "app1" }) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
+    const runner = { runTask: jest.fn().mockResolvedValue(undefined) } as unknown as ScheduledTaskRunnerService;
+    await make(prisma, access, scheduler, runner).runNow("u1", "app1", "tk1");
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(runner.runTask).toHaveBeenCalledWith("tk1", { force: true });
+  });
+
+  it("runNow 404s a task that belongs to another app", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      scheduledTask: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
+    const runner = { runTask: jest.fn() } as unknown as ScheduledTaskRunnerService;
+    await expect(make(prisma, access, scheduler, runner).runNow("u1", "app1", "nope")).rejects.toThrow(/not found/);
+    expect(runner.runTask).not.toHaveBeenCalled();
   });
 });

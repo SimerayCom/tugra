@@ -20,12 +20,15 @@ export class ScheduledTaskRunnerService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async runTask(taskId: string): Promise<void> {
+  /** Run a task once. `force` runs it even when disabled — used by a manual "run now" so an operator can
+   *  test a command (or a paused task) without waiting for the cron; the scheduler always calls it unforced. */
+  async runTask(taskId: string, opts: { force?: boolean } = {}): Promise<void> {
     const task = await this.prisma.scheduledTask.findUnique({
       where: { id: taskId },
       include: { application: true },
     });
-    if (!task || !task.enabled) return;
+    if (!task) return;
+    if (!task.enabled && !opts.force) return;
     const app = task.application;
     const cmd = `docker exec ${containerName(app)} sh -c ${shq(task.command)}`;
 
