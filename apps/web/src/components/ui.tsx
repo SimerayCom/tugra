@@ -26,6 +26,7 @@ export function Btn({
   icon: Icon,
   children,
   style,
+  className,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "ghost" | "danger" | "dangerGhost";
@@ -41,7 +42,7 @@ export function Btn({
     cursor: rest.disabled ? "not-allowed" : "pointer",
     opacity: rest.disabled ? 0.5 : 1,
     border: "1px solid transparent",
-    transition: "filter .15s",
+    transition: "filter .15s, transform .05s",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -65,7 +66,7 @@ export function Btn({
     },
   };
   return (
-    <button type={type} style={{ ...base, ...variants[variant], ...style }} {...rest}>
+    <button type={type} className={["tg-btn", className].filter(Boolean).join(" ")} style={{ ...base, ...variants[variant], ...style }} {...rest}>
       {Icon && <Icon size={14} aria-hidden style={{ flexShrink: 0 }} />}
       {children}
     </button>

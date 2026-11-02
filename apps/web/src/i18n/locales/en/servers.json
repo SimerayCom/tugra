@@ -31,6 +31,7 @@
   "proxyDesc": "The reverse proxy that routes traffic and manages SSL for apps with a domain.",
   "proxyStart": "Start",
   "proxyStop": "Stop",
+  "proxyStopConfirm": "Stop the proxy on this server? Every app and site it routes will go offline until it is started again.",
   "proxyRestart": "Restart",
   "proxyViewLogs": "View logs",
   "proxyDynamic": "Dynamic configuration",
