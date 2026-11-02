@@ -60,9 +60,11 @@ export function Btn({
     // destructive actions in dense rows/toolbars where a solid-red fill would shout and sit
     // dangerously next to a primary button. The real guard stays the confirm step.
     dangerGhost: {
-      background: "var(--c-el)",
+      // Faint red wash + red border so destructive actions read as "danger" at a glance (not just on
+      // hover) without the shout of a solid-red fill. The real guard stays the confirm step.
+      background: "color-mix(in srgb, var(--c-r) 8%, var(--c-el))",
       color: "var(--c-r)",
-      border: "1px solid var(--c-bd)",
+      border: "1px solid color-mix(in srgb, var(--c-r) 35%, var(--c-bd))",
     },
   };
   return (
