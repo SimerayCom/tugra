@@ -161,6 +161,11 @@ jobs:
   publish-manifest:
     needs: build-push
     runs-on: ubuntu-latest
+    # Serialize with the manual notice workflow (same group) so the two gh-pages manifest writers never
+    # race the non-force push — a loser hard-fails instead of corrupting.
+    concurrency:
+      group: manifest-publish
+      cancel-in-progress: false
     permissions:
       contents: write # push to gh-pages
     steps:
