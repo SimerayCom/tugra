@@ -1768,6 +1768,7 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
   const [name, setName] = useState(task.name);
   const [schedule, setSchedule] = useState(task.schedule);
   const [command, setCommand] = useState(task.command);
+  const [timeoutStr, setTimeoutStr] = useState(task.timeoutSec != null ? String(task.timeoutSec) : "");
   const toggle = useMutation({ mutationFn: (enabled: boolean) => api.updateAppTask(appId, task.id, { enabled }), onSuccess: invalidate });
   const del = useMutation({ mutationFn: () => api.deleteAppTask(appId, task.id), onSuccess: invalidate });
   const run = useMutation({
@@ -1781,11 +1782,11 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
     onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
   });
   const edit = useMutation({
-    mutationFn: () => api.updateAppTask(appId, task.id, { name, schedule, command }),
+    mutationFn: () => api.updateAppTask(appId, task.id, { name, schedule, command, timeoutSec: timeoutStr.trim() ? Number(timeoutStr) : null }),
     onSuccess: () => { setEditing(false); invalidate(); },
     onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
   });
-  const startEdit = () => { setName(task.name); setSchedule(task.schedule); setCommand(task.command); setEditing(true); };
+  const startEdit = () => { setName(task.name); setSchedule(task.schedule); setCommand(task.command); setTimeoutStr(task.timeoutSec != null ? String(task.timeoutSec) : ""); setEditing(true); };
 
   if (editing) {
     return (
@@ -1793,6 +1794,7 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
         <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} aria-label={t("apps.taskName")} />
         <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} aria-label={t("apps.taskSchedule")} />
         <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} aria-label={t("apps.taskCommand")} />
+        <input style={{ ...envField, width: 110 }} type="number" min={1} max={3600} placeholder={t("apps.taskTimeout")} title={t("apps.taskTimeoutHint")} value={timeoutStr} onChange={(e) => setTimeoutStr(e.target.value)} aria-label={t("apps.taskTimeout")} />
         <Btn onClick={() => edit.mutate()} disabled={edit.isPending || !name.trim() || !schedule.trim() || !command.trim()}>{t("common.save")}</Btn>
         <Btn variant="ghost" onClick={() => setEditing(false)}>{t("common.cancel")}</Btn>
       </div>
@@ -1805,6 +1807,7 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
         <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{task.command}</span>
+        {task.timeoutSec != null && <span style={{ fontSize: 10, color: "var(--c-tx3)" }} title={t("apps.taskTimeoutHint")}>{t("apps.taskTimeoutShort", { n: task.timeoutSec })}</span>}
         {task.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(task.lastRunAt).toLocaleString()}</span>}
         <IconBtn label={t("apps.taskRunNow")} onClick={() => run.mutate()} disabled={run.isPending}><Play size={14} /></IconBtn>
         <IconBtn label={t("apps.taskHistory")} onClick={() => setShowHistory((v) => !v)}><History size={14} /></IconBtn>
@@ -1823,9 +1826,10 @@ function ScheduledTasksCard({ id }: { id: string }) {
   const [name, setName] = useState("");
   const [schedule, setSchedule] = useState("");
   const [command, setCommand] = useState("");
+  const [timeoutStr, setTimeoutStr] = useState("");
   const add = useMutation({
-    mutationFn: () => api.createAppTask(id, { name, schedule, command }),
-    onSuccess: () => { setName(""); setSchedule(""); setCommand(""); qc.invalidateQueries({ queryKey: ["appTasks", id] }); },
+    mutationFn: () => api.createAppTask(id, { name, schedule, command, timeoutSec: timeoutStr.trim() ? Number(timeoutStr) : null }),
+    onSuccess: () => { setName(""); setSchedule(""); setCommand(""); setTimeoutStr(""); qc.invalidateQueries({ queryKey: ["appTasks", id] }); },
   });
 
   return (
@@ -1837,6 +1841,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
         <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} aria-label={t("apps.taskName")} />
         <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} aria-label={t("apps.taskSchedule")} />
         <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} aria-label={t("apps.taskCommand")} />
+        <input style={{ ...envField, width: 110 }} type="number" min={1} max={3600} placeholder={t("apps.taskTimeout")} title={t("apps.taskTimeoutHint")} value={timeoutStr} onChange={(e) => setTimeoutStr(e.target.value)} aria-label={t("apps.taskTimeout")} />
         <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !schedule || !command}>{t("apps.addTask")}</Btn>
       </div>
       {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}

@@ -932,6 +932,7 @@ export interface ScheduledTask {
   schedule: string;
   command: string;
   enabled: boolean;
+  timeoutSec: number | null;
   lastRunAt: string | null;
 }
 

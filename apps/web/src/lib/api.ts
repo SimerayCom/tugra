@@ -1383,10 +1383,10 @@ export const api = {
   listAppTasks(id: string) {
     return apiFetch<ScheduledTask[]>(`/apps/${id}/tasks`);
   },
-  createAppTask(id: string, task: { name: string; schedule: string; command: string; enabled?: boolean }) {
+  createAppTask(id: string, task: { name: string; schedule: string; command: string; enabled?: boolean; timeoutSec?: number | null }) {
     return apiFetch<ScheduledTask>(`/apps/${id}/tasks`, { method: "POST", body: JSON.stringify(task) });
   },
-  updateAppTask(id: string, taskId: string, patch: { name?: string; schedule?: string; command?: string; enabled?: boolean }) {
+  updateAppTask(id: string, taskId: string, patch: { name?: string; schedule?: string; command?: string; enabled?: boolean; timeoutSec?: number | null }) {
     return apiFetch<ScheduledTask>(`/apps/${id}/tasks/${taskId}`, { method: "PUT", body: JSON.stringify(patch) });
   },
   deleteAppTask(id: string, taskId: string) {

@@ -4123,10 +4123,10 @@ describe("ApplicationsService.clone", () => {
   it("copies scheduled tasks DISABLED", async () => {
     const createMany = jest.fn();
     const { prisma } = clonePrisma({
-      scheduledTask: { findMany: jest.fn().mockResolvedValue([{ id: "t1", appId: "src1", name: "cron", schedule: "0 3 * * *", command: "echo hi", enabled: true }]), createMany },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([{ id: "t1", appId: "src1", name: "cron", schedule: "0 3 * * *", command: "echo hi", enabled: true, timeoutSec: 1800 }]), createMany },
     });
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
-    expect(createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ appId: "clone1", enabled: false, command: "echo hi" })] });
+    expect(createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ appId: "clone1", enabled: false, command: "echo hi", timeoutSec: 1800 })] }); // per-task timeout carried
     expect(res.warnings).toContain("tasks_disabled");
   });
 

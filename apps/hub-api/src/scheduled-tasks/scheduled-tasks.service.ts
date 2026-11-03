@@ -19,6 +19,7 @@ export const TaskViewSchema = z.object({
   schedule: z.string(),
   command: z.string(),
   enabled: z.boolean(),
+  timeoutSec: z.number().nullable(),
   lastRunAt: z.date().nullable(),
 });
 export type TaskView = z.infer<typeof TaskViewSchema>;
@@ -64,6 +65,7 @@ export class ScheduledTasksService {
         schedule: dto.schedule.trim(),
         command: dto.command,
         enabled: dto.enabled ?? true,
+        timeoutSec: dto.timeoutSec ?? null,
       },
     });
     if (task.enabled) await this.scheduler.schedule(task.id, task.schedule);
@@ -82,6 +84,9 @@ export class ScheduledTasksService {
         schedule: dto.schedule?.trim() ?? undefined,
         command: dto.command ?? undefined,
         enabled: dto.enabled ?? undefined,
+        // undefined = keep, null = clear to the 300s default, a number = set. (Not `?? undefined`: that
+        // would turn an explicit null into a no-op and the user could never reset to the default.)
+        timeoutSec: dto.timeoutSec,
       },
     });
     if (task.enabled) await this.scheduler.schedule(task.id, task.schedule);
@@ -155,6 +160,7 @@ function view(t: ScheduledTask): TaskView {
     schedule: t.schedule,
     command: t.command,
     enabled: t.enabled,
+    timeoutSec: t.timeoutSec,
     lastRunAt: t.lastRunAt,
   };
 }

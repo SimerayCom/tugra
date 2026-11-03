@@ -55,6 +55,15 @@ describe("ScheduledTaskRunnerService", () => {
     );
   });
 
+  it("passes the per-task timeout to the agent (default 300s when unset)", async () => {
+    const def = make(jest.fn().mockResolvedValue({ exitCode: 0, output: "" }));
+    await def.svc.runTask("tk1");
+    expect(def.sendCommand.mock.calls[0][3]).toBe(300_000); // no timeoutSec → built-in default
+    const custom = make(jest.fn().mockResolvedValue({ exitCode: 0, output: "" }), { timeoutSec: 1800 });
+    await custom.svc.runTask("tk1");
+    expect(custom.sendCommand.mock.calls[0][3]).toBe(1_800_000); // 1800s → ms
+  });
+
   it("fires scheduled_task_failed on a non-zero exit but STILL records lastRunAt (no side-effect regression)", async () => {
     const { svc, update, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 2, output: "boom" }));
     await svc.runTask("tk1");

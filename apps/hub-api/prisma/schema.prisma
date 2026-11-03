@@ -1220,6 +1220,7 @@ model ScheduledTask {
   schedule    String
   command     String
   enabled     Boolean      @default(true)
+  timeoutSec  Int?         // per-run timeout (seconds); null = the built-in default (300s). Long jobs raise it.
   lastRunAt   DateTime?
   createdAt   DateTime     @default(now())
   runs        ScheduledTaskRun[]
