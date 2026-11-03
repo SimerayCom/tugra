@@ -5,7 +5,7 @@ import { Link2, Unlink } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Btn, Card, EmptyState, Spinner } from "./ui";
+import { Btn, EmptyState, SectionCard, Spinner } from "./ui";
 import { ErrorState } from "./error-state";
 import { IconBtn } from "./icon-btn";
 import { Select, fieldStyle } from "./form";
@@ -56,9 +56,7 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
   const eligible = (databases.data ?? []).filter((d) => d.serverId === serverId && !linkedIds.has(d.id));
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.dbLinksTitle")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("apps.dbLinksDesc")}</p>
+    <SectionCard title={t("apps.dbLinksTitle")} desc={t("apps.dbLinksDesc")}>
 
       {links.isLoading ? (
         <div style={{ display: "flex", justifyContent: "center", padding: "16px 0" }}><Spinner /></div>
@@ -130,6 +128,6 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
         )
       )}
       {list.length > 0 && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 10 }}>{t("apps.dbLinksRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Card } from "./ui";
+import { SectionCard } from "./ui";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -35,9 +35,7 @@ export function EnvironmentCard({
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("projects.assignTitle")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("projects.moveDesc")}</p>
+    <SectionCard title={t("projects.assignTitle")} desc={t("projects.moveDesc")}>
       <select
         style={{ ...field, minWidth: 240 }}
         value={environmentId}
@@ -52,6 +50,6 @@ export function EnvironmentCard({
           )),
         )}
       </select>
-    </Card>
+    </SectionCard>
   );
 }

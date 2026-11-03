@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Btn, Card } from "./ui";
+import { Btn, SectionCard } from "./ui";
 import { PlacementPicker } from "./placement-picker";
 import type { Placement } from "../lib/types";
 
@@ -78,9 +78,7 @@ export function ClusterDeployCard({
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.clusterDeploy")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.clusterDeployDesc")}</p>
+    <SectionCard title={t("apps.clusterDeploy")} desc={t("apps.clusterDeployDesc")}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select
           style={{ ...field, flex: "1 1 200px", minWidth: 160, maxWidth: 260 }}
@@ -159,6 +157,6 @@ export function ClusterDeployCard({
       {clusterId && <PlacementPicker appId={id} clusterId={clusterId} initial={placement} canWrite={true} />}
       {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{save.error instanceof Error ? save.error.message : t("apps.clusterSaveFailed")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }

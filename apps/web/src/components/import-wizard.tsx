@@ -5,7 +5,7 @@ import { TriangleAlert } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Card, Btn, EmptyState, Spinner } from "./ui";
+import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
@@ -81,9 +81,7 @@ export function ImportWizard() {
 
   const busy = connect.isPending || planM.isPending;
   return (
-    <Card style={{ padding: 20, maxWidth: 560 }}>
-      <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("import.sourceCoolify")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 16px" }}>{t("import.sourceCoolifyHint")}</p>
+    <SectionCard title={t("import.sourceCoolify")} desc={t("import.sourceCoolifyHint")} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
 
       <label style={label} htmlFor="imp-team">{t("import.team")}</label>
       <select id="imp-team" style={field} value={effectiveTeam} onChange={(e) => setTeamId(e.target.value)}>
@@ -106,7 +104,7 @@ export function ImportWizard() {
       </Btn>
 
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "16px 0 0" }}>{t("import.localDockerHint")}</p>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -138,11 +136,11 @@ function PlanView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
-      <Card style={{ padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 600, flex: 1 }}>{t("import.planTitle")}</div>
-          <Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>
-        </div>
+      <SectionCard
+        title={t("import.planTitle")}
+        right={<Btn variant="ghost" onClick={onReset}>{t("import.startOver")}</Btn>}
+        style={{ padding: 20, marginBottom: 0 }}
+      >
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Stat label={t("import.apps")} value={s.apps} />
           <Stat label={t("import.databases")} value={s.databases} />
@@ -175,7 +173,7 @@ function PlanView({
         <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || !s.runnable}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
-      </Card>
+      </SectionCard>
 
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
@@ -297,9 +295,7 @@ function MigrateDataCard({ opId }: { opId: string }) {
   });
   const active = !!state?.active;
   return (
-    <Card style={{ padding: 20, maxWidth: 720, marginTop: 16 }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("import.migrateTitle")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("import.migrateDesc")}</p>
+    <SectionCard title={t("import.migrateTitle")} desc={t("import.migrateDesc")} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
       {minted ? (
         <>
           <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 6 }}>{t("import.migrateTokenOnce")}</div>
@@ -317,7 +313,7 @@ function MigrateDataCard({ opId }: { opId: string }) {
           </div>
         </>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -352,9 +348,7 @@ function RemapEnvCard({ opId }: { opId: string }) {
   const changeCount = plan?.apps.reduce((n, a) => n + a.changes.length, 0) ?? 0;
   const manualCount = plan?.apps.reduce((n, a) => n + a.needsManual.length, 0) ?? 0;
   return (
-    <Card style={{ padding: 20, maxWidth: 720, marginTop: 16 }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("import.remapTitle")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("import.remapDesc")}</p>
+    <SectionCard title={t("import.remapTitle")} desc={t("import.remapDesc")} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
 
       {!plan && !result && (
         <Btn onClick={() => preview.mutate()} disabled={preview.isPending}>{preview.isPending ? "…" : t("import.remapPreview")}</Btn>
@@ -404,7 +398,7 @@ function RemapEnvCard({ opId }: { opId: string }) {
           )}
         </>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
