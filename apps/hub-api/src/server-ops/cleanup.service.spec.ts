@@ -87,6 +87,32 @@ describe("CleanupService", () => {
     expect(scheduler.schedule).not.toHaveBeenCalled();
   });
 
+  it("omitting intervalHours keeps the stored value (no unconditional wipe)", async () => {
+    const update = jest.fn().mockResolvedValue({ ...server, cleanupEnabled: true, cleanupCron: "0 4 * * *", cleanupIntervalHours: 6 });
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), scheduleCron: jest.fn(), unschedule: jest.fn() } as unknown as CleanupSchedulerService;
+    await make(prisma, access, {}, scheduler).setConfig("u1", "s1", { enabled: true, cron: "0 4 * * *" });
+    const data = update.mock.calls[0][0].data;
+    expect("cleanupIntervalHours" in data).toBe(false); // omitted → left untouched, not cleared
+    expect(data).toMatchObject({ cleanupEnabled: true, cleanupCron: "0 4 * * *" });
+  });
+
+  it("enabling with no cron or interval gets a default daily cron instead of silently never running", async () => {
+    const update = jest
+      .fn()
+      .mockResolvedValueOnce({ ...server, cleanupEnabled: true, cleanupCron: null, cleanupIntervalHours: null })
+      .mockResolvedValueOnce({ ...server, cleanupEnabled: true, cleanupCron: "0 3 * * *", cleanupIntervalHours: null });
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), scheduleCron: jest.fn(), unschedule: jest.fn() } as unknown as CleanupSchedulerService;
+    await make(prisma, access, {}, scheduler).setConfig("u1", "s1", { enabled: true });
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith({ where: { id: "s1" }, data: { cleanupCron: "0 3 * * *" } });
+    expect(scheduler.scheduleCron).toHaveBeenCalledWith("s1", "0 3 * * *", undefined);
+    expect(scheduler.unschedule).not.toHaveBeenCalled();
+  });
+
   it("setConfigBulk applies to writable servers and skips the rest (role-gated, cross-team)", async () => {
     const update = jest.fn().mockResolvedValue({ cleanupEnabled: true, cleanupIntervalHours: 24 });
     const prisma = {
