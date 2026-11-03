@@ -466,6 +466,7 @@ export default function AppDetailPage() {
     redirects: () => <RedirectsCard id={id} redirects={appData.redirects} />,
     containerPort: () => <ContainerPortCard id={id} containerPort={appData.containerPort} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
+    networkAliases: () => <NetworkAliasesCard id={id} aliases={appData.networkAliases} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
     danger: () => (
       <SectionCard title={t("apps.dangerDeleteTitle")} desc={t("apps.dangerDeleteDesc")} style={{ borderColor: "var(--c-r)" }}>
@@ -2047,6 +2048,38 @@ function AppDescriptionCard({ id, description }: { id: string; description: stri
       <div style={{ marginTop: 8 }}>
         <Btn onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{t("apps.save")}</Btn>
       </div>
+    </SectionCard>
+  );
+}
+
+function NetworkAliasesCard({ id, aliases }: { id: string; aliases: string[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [text, setText] = useState(aliases.join("\n"));
+  useEffect(() => { setText(aliases.join("\n")); }, [aliases]);
+  const parse = (s: string) => Array.from(new Set(s.split(/[\n,]/).map((l) => l.trim().toLowerCase()).filter(Boolean)));
+  const dirty = parse(text).join("\n") !== aliases.join("\n");
+  const save = useMutation({
+    mutationFn: () => api.setAppNetworkAliases(id, parse(text)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  return (
+    <SectionCard title={t("apps.networkAliases")} desc={t("apps.networkAliasesDesc")}>
+      <textarea
+        className="mono"
+        value={text}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={"api\ninternal-cache"}
+        aria-label={t("apps.networkAliases")}
+        style={{ width: "100%", minHeight: 64, maxHeight: 160, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <Btn onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{t("apps.save")}</Btn>
+        <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.networkAliasesHint")}</span>
+      </div>
+      {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
     </SectionCard>
   );
 }

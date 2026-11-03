@@ -48,6 +48,7 @@ export type ConfigCardId =
   | "basicAuth"
   | "redirects"
   | "extraPorts"
+  | "networkAliases"
   | "containerPort"
   | "customCert"
   | "volumes"
@@ -130,6 +131,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "containerPort", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
   // Extra published ports (raw TCP/UDP maps) — docker-run apps only (a compose app declares its own ports).
   { id: "extraPorts", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
+  // Docker network aliases — docker-run apps only (a compose app declares aliases in its YAML), and not for
+  // swarm/cluster apps (the swarm deploy path does not emit --network-alias, so it would be a silent no-op).
+  { id: "networkAliases", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },
   // Upload a custom TLS cert for this app's domain (served statically, no ACME). Needs a domain + write access.
   { id: "customCert", group: "domains", visible: (a) => a.canWrite && !a.isPreview && !!a.domain },
   // Storage

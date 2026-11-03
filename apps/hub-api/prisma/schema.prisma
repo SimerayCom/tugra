@@ -1023,6 +1023,10 @@ model Application {
   // Extra published ports beyond the ingress one: [{hostPort, containerPort, protocol: "tcp"|"udp"}].
   // Emitted as additional docker -p flags (classic apps). Null/empty = just the single ingress port.
   extraPorts     Json?
+  // Docker network aliases → extra `--network-alias` names on the app's user-defined network (tugra-proxy
+  // when it has a domain, else tugra-net when db-linked), so OTHER containers resolve it by these names.
+  // Empty = none. Reset (NOT copied) on clone/preview — a duplicate alias on the shared network collides.
+  networkAliases String[]     @default([])
   domain         String?
   extraDomains   String[]     @default([]) // additional hostnames (aliases) routed to the same container as `domain`
   domainRedirect  String?

@@ -125,6 +125,7 @@ export interface AppSpec {
   // more than one port (metrics, gRPC, a game server's UDP). Emitted as additional `-p` flags. DTO-validated
   // integers + tcp/udp, safe to interpolate. Classic docker-run apps only (compose declares its own ports).
   extraPorts?: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[] | null;
+  networkAliases?: string[] | null; // extra --network-alias names on the app's user-defined network
   /** Opt-in: also attach the container to the node-local managed-DB network (tugra-net) so it resolves
    *  tugra_db_<id> by name. Co-located classic apps only (masked off for swarm in toSpec). */
   dbNetwork?: boolean | null;
@@ -1133,6 +1134,18 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     .map((p) => `-p ${p.hostPort}:${p.containerPort}${p.protocol === "udp" ? "/udp" : ""}`)
     .join(" ");
 
+  // Docker network aliases — extra DNS names other containers resolve this one by. Only emitted when the
+  // app is on a user-defined network (a domain → tugra-proxy, or a db link → tugra-net): `--network-alias`
+  // requires a `--network` on the same `docker run`, and on the default bridge aliases are meaningless.
+  // Names are DTO-validated DNS labels; shell-quoted as defence-in-depth.
+  const onUserNetwork = !!(app.domain || app.dbNetwork);
+  const aliasArgs = onUserNetwork
+    ? (app.networkAliases ?? []).map((a) => `--network-alias ${shq(a)}`).join(" ")
+    : "";
+  // A domain+db app runs on tugra-proxy (aliasArgs above) and is then CONNECTED to tugra-net separately, so
+  // its aliases must be repeated on that connect (`--alias`) or db-net peers couldn't resolve them.
+  const connectAliasArgs = (app.networkAliases ?? []).map((a) => `--alias ${shq(a)}`).join(" ");
+
   // Container command override (exec-form argv). `--entrypoint` replaces the image ENTRYPOINT and takes a
   // single executable, so argv[1..] is prepended to the command args; words AFTER the image ref replace the
   // image CMD (and are never parsed by docker as flags). `[]` resets the entrypoint via `--entrypoint=''`.
@@ -1157,6 +1170,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     dockerOptionsArgs(app.dockerOptions),
     envArg,
     netExpose.trim(),
+    aliasArgs,
     volArgs,
     hostMountArgs,
     shq(ref),
@@ -1175,7 +1189,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   // a bare use (buildRunScript), and an `if <this>; then` gate (rolling/recreate/relabel/rollback) takes its
   // failure branch with no labelled-but-unreachable container left in rotation.
   return app.dbNetwork && app.domain
-    ? `${run} && docker network connect ${DB_NET} ${name} || { docker rm -f ${name} 2>/dev/null; false; }`
+    ? `${run} && docker network connect ${connectAliasArgs ? connectAliasArgs + " " : ""}${DB_NET} ${name} || { docker rm -f ${name} 2>/dev/null; false; }`
     : run;
 }
 

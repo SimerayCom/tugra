@@ -527,6 +527,32 @@ describe("ApplicationsService", () => {
     expect(sentCmd).toContain("set +e"); // it IS health-gated (unlike a plain hard cutover)
   });
 
+  it("an app with network aliases deploys via recreate, not rolling (a rollout would share the alias)", async () => {
+    const na = { ...app, domain: "app.example.com", networkAliases: ["api"], deployStrategy: "ROLLING", rollbackOnFailure: true };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(na), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        if (cap === "deploy") sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(sentCmd).not.toContain("__rollout"); // alias would collide during overlap → recreate
+    expect(sentCmd).toContain("--network-alias 'api'"); // alias still applied on the recreated container
+  });
+
   it("a recreate app (host-port) auto-rolls-back on exit 3: FAILED/AUTO_ROLLBACK but app stays RUNNING", async () => {
     const hp = { ...app, domain: "app.example.com", hostPort: 8080, deployStrategy: "ROLLING", rollbackOnFailure: true };
     const depUpdate = jest.fn().mockResolvedValue({});
@@ -1172,6 +1198,31 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { description: null } }));
     await svc.setDescription("u1", "app1", null);
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { description: null } }));
+  });
+
+  it("replaces network aliases and audits the change", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setNetworkAliases("u1", "app1", ["api", "cache"]);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { networkAliases: ["api", "cache"] } }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.network_aliases.update" }));
+  });
+
+  it("rejects a reserved tugra- alias (would hijack a Tugra-managed container's DNS name)", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setNetworkAliases("u1", "app1", ["ok", "tugra-proxy"])).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses network aliases on a clustered (swarm) app (the swarm path can't emit them)", async () => {
+    const update = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1" }), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setNetworkAliases("u1", "app1", ["api"])).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("stores custom docker options on setDockerOptions", async () => {
@@ -4103,6 +4154,7 @@ describe("ApplicationsService.clone", () => {
     expect(data.status).toBeUndefined(); // DB default NEW — never deployed
     expect(data.isPreview).toBeUndefined(); // DB default false
     expect(data.hostPort).toBeNull(); // reset (would clash on the same server)
+    expect(data.networkAliases).toEqual([]); // reset — a duplicate alias on the shared network collides
     expect(data.volumes).toEqual([{ name: "data", path: "/data" }]); // definition copied (fresh volume via new id)
     expect(data.healthCheckMethod).toBe("POST"); // HTTP method/scheme carried (else a POST/HTTPS-only app's clone fails its first gate)
     expect(data.healthCheckScheme).toBe("https");
