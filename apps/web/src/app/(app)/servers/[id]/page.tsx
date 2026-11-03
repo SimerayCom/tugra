@@ -145,7 +145,7 @@ export default function ServerDetailPage() {
 
       {tab === "overview" && (
         <>
-          <LiveGauges id={id} nowMs={Date.now()} />
+          <LiveGauges id={id} nowMs={Date.now()} canWrite={server.canWrite} onOpenMaintenance={() => setTab("maintenance")} />
           <Card style={{ padding: 16, marginBottom: 20, display: "flex", gap: 28, flexWrap: "wrap" }}>
             <Info label={t("servers.status")} value={server.status} />
             <Info label={t("servers.ipAddress")} value={server.publicIp ?? server.publicIpv6 ?? "—"} />

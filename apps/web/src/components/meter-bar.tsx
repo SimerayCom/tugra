@@ -1,3 +1,4 @@
+import { TriangleAlert } from "lucide-react";
 import type { MetricTone } from "../lib/fleet-view";
 
 const FILL: Record<MetricTone, string> = { ok: "var(--c-g)", warn: "var(--c-am)", crit: "var(--c-r)" };
@@ -15,6 +16,7 @@ export function MeterBar({
   label,
   width = 64,
   grow = false,
+  showToneIcon = false,
 }: {
   value: number | null;
   tone?: MetricTone;
@@ -24,10 +26,14 @@ export function MeterBar({
   width?: number | string;
   /** Let the bar flex to fill its container (used by the overview gauges) instead of a fixed width. */
   grow?: boolean;
+  /** Show a warning glyph next to the value for a warn/crit sample, so severity isn't conveyed by colour
+   *  alone (WCAG 1.4.1). Opt-in so existing callers render byte-identically. */
+  showToneIcon?: boolean;
 }) {
   const w = value === null ? 0 : Math.max(0, Math.min(100, value));
   const fill = stale ? "var(--c-tx3)" : FILL[tone];
   const muted = stale || value === null;
+  const toneIcon = showToneIcon && !stale && (tone === "warn" || tone === "crit");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
       <div
@@ -40,6 +46,7 @@ export function MeterBar({
       >
         {value !== null && <div style={{ width: `${w}%`, height: "100%", background: fill, transition: "width .4s" }} />}
       </div>
+      {toneIcon && <TriangleAlert size={13} color={FILL[tone]} aria-hidden style={{ flexShrink: 0 }} />}
       <span className="mono" style={{ fontSize: 11.5, fontWeight: 600, color: muted ? "var(--c-tx3)" : "var(--c-tx2)" }}>{text}</span>
     </div>
   );

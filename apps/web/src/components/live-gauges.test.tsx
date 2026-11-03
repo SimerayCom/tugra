@@ -1,6 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { buildGauges } from "./live-gauges";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import React from "react";
+import { I18nProvider } from "../i18n/provider";
+import { buildGauges, LiveGauges } from "./live-gauges";
+import { api } from "../lib/api";
 import type { MetricsSample } from "../lib/types";
+
+afterEach(cleanup);
 
 // Identity translator so assertions read on the raw key (the real t() is covered elsewhere).
 const t = (k: string) => k;
@@ -67,5 +74,42 @@ describe("buildGauges", () => {
     const g = buildGauges({ ...base, cpu: NaN as unknown as number }, t);
     expect(g[0].text).toBe("—");
     expect(g[0].value).toBeNull();
+  });
+});
+
+describe("LiveGauges disk-pressure alert", () => {
+  const wrap = (ui: React.ReactNode) => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>{ui}</I18nProvider>
+      </QueryClientProvider>,
+    );
+  };
+  const sample = (diskUsed: number) => [{ ...base, ts: 2000, diskUsed, diskTotal: 100 * 1024 ** 3 }] as MetricsSample[];
+
+  it("shows a crit alert + Clean-now CTA for a writer when disk is critically full", async () => {
+    vi.spyOn(api, "getMetrics").mockResolvedValue(sample(92 * 1024 ** 3));
+    const onOpen = vi.fn();
+    wrap(<LiveGauges id="s1" nowMs={2000} canWrite onOpenMaintenance={onOpen} />);
+    const cta = await screen.findByRole("button", { name: /maintenance/i });
+    fireEvent.click(cta);
+    expect(onOpen).toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("still warns a read-only viewer but shows no CTA", async () => {
+    vi.spyOn(api, "getMetrics").mockResolvedValue(sample(85 * 1024 ** 3));
+    wrap(<LiveGauges id="s1" nowMs={2000} canWrite={false} onOpenMaintenance={vi.fn()} />);
+    await screen.findByRole("status"); // warn strip is shown
+    expect(screen.queryByRole("button", { name: /maintenance/i })).toBeNull();
+  });
+
+  it("shows no alert when disk is well below the threshold", async () => {
+    vi.spyOn(api, "getMetrics").mockResolvedValue(sample(10 * 1024 ** 3));
+    wrap(<LiveGauges id="s1" nowMs={2000} canWrite onOpenMaintenance={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByRole("progressbar").length).toBeGreaterThan(0));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
