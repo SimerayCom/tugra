@@ -79,7 +79,9 @@ export class ScheduledTaskRunnerService implements OnApplicationBootstrap {
     let output = "";
     let errorMsg: string | null = null;
     try {
-      const r = await this.agentWs.sendCommand(app.serverId, cmd, "schedule", TASK_TIMEOUT_MS);
+      // Per-task override (bounded 1..3600s at the DTO), else the built-in default.
+      const timeoutMs = task.timeoutSec ? task.timeoutSec * 1000 : TASK_TIMEOUT_MS;
+      const r = await this.agentWs.sendCommand(app.serverId, cmd, "schedule", timeoutMs);
       ran = true;
       exitCode = r.exitCode;
       output = r.output ?? "";

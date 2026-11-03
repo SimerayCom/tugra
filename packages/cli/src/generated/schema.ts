@@ -30981,6 +30981,7 @@ export interface operations {
                         schedule: string;
                         command: string;
                         enabled: boolean;
+                        timeoutSec: number | null;
                         /** Format: date-time */
                         lastRunAt: string | null;
                     }[];
@@ -31049,6 +31050,7 @@ export interface operations {
                     schedule: string;
                     command: string;
                     enabled?: boolean;
+                    timeoutSec?: number | null;
                 };
             };
         };
@@ -31064,6 +31066,7 @@ export interface operations {
                         schedule: string;
                         command: string;
                         enabled: boolean;
+                        timeoutSec: number | null;
                         /** Format: date-time */
                         lastRunAt: string | null;
                     };
@@ -31142,6 +31145,7 @@ export interface operations {
                     schedule?: string;
                     command?: string;
                     enabled?: boolean;
+                    timeoutSec?: number | null;
                 };
             };
         };
@@ -31157,6 +31161,7 @@ export interface operations {
                         schedule: string;
                         command: string;
                         enabled: boolean;
+                        timeoutSec: number | null;
                         /** Format: date-time */
                         lastRunAt: string | null;
                     };

@@ -44439,6 +44439,10 @@
                       "enabled": {
                         "type": "boolean"
                       },
+                      "timeoutSec": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "lastRunAt": {
                         "type": "string",
                         "format": "date-time",
@@ -44451,6 +44455,7 @@
                       "schedule",
                       "command",
                       "enabled",
+                      "timeoutSec",
                       "lastRunAt"
                     ],
                     "additionalProperties": false
@@ -44553,6 +44558,12 @@
                   },
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "timeoutSec": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "nullable": true
                   }
                 },
                 "required": [
@@ -44588,6 +44599,10 @@
                     "enabled": {
                       "type": "boolean"
                     },
+                    "timeoutSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "lastRunAt": {
                       "type": "string",
                       "format": "date-time",
@@ -44600,6 +44615,7 @@
                     "schedule",
                     "command",
                     "enabled",
+                    "timeoutSec",
                     "lastRunAt"
                   ],
                   "additionalProperties": false
@@ -44721,6 +44737,12 @@
                   },
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "timeoutSec": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -44751,6 +44773,10 @@
                     "enabled": {
                       "type": "boolean"
                     },
+                    "timeoutSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "lastRunAt": {
                       "type": "string",
                       "format": "date-time",
@@ -44763,6 +44789,7 @@
                     "schedule",
                     "command",
                     "enabled",
+                    "timeoutSec",
                     "lastRunAt"
                   ],
                   "additionalProperties": false

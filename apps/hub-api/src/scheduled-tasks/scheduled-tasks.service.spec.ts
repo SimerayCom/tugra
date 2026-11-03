@@ -57,6 +57,24 @@ describe("ScheduledTasksService", () => {
     expect(v.enabled).toBe(true);
   });
 
+  it("persists a per-task timeout on create and clears it with null on update", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "tk1", appId: "app1", name: "x", schedule: "0 2 * * *", command: "echo", enabled: true, timeoutSec: 1800, lastRunAt: null });
+    const update = jest.fn().mockResolvedValue({ id: "tk1", appId: "app1", name: "x", schedule: "0 2 * * *", command: "echo", enabled: true, timeoutSec: null, lastRunAt: null });
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      scheduledTask: { create, findFirst: jest.fn().mockResolvedValue({ id: "tk1", appId: "app1" }), update },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as ScheduledTasksSchedulerService;
+    const svc = make(prisma, access, scheduler);
+    const v = await svc.create("u1", "app1", { name: "x", schedule: "0 2 * * *", command: "echo", timeoutSec: 1800 });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ timeoutSec: 1800 }) }));
+    expect(v.timeoutSec).toBe(1800);
+    // null explicitly clears to the default (not a no-op).
+    await svc.update("u1", "app1", "tk1", { timeoutSec: null });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ timeoutSec: null }) }));
+  });
+
   it("unschedules when a task is disabled on update", async () => {
     const updated = { id: "tk1", appId: "app1", name: "x", schedule: "0 2 * * *", command: "echo", enabled: false, lastRunAt: null };
     const prisma = {

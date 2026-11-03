@@ -830,7 +830,7 @@ export class ApplicationsService {
       if (tasks.length > 0) {
         // Copied DISABLED, so the clone never double-runs the source's crons until the user enables them.
         await tx.scheduledTask.createMany({
-          data: tasks.map((t) => ({ appId: app.id, name: t.name, schedule: t.schedule, command: t.command, enabled: false })),
+          data: tasks.map((t) => ({ appId: app.id, name: t.name, schedule: t.schedule, command: t.command, timeoutSec: t.timeoutSec, enabled: false })),
         });
         warnings.push("tasks_disabled");
       }
