@@ -7562,6 +7562,18 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "nixpacksInstallCmd": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "nixpacksBuildCmd": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "nixpacksStartCmd": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "dockerfilePath": {
                         "type": "string",
                         "nullable": true
@@ -8268,6 +8280,9 @@
                       "gitSourceId",
                       "buildType",
                       "buildCommand",
+                      "nixpacksInstallCmd",
+                      "nixpacksBuildCmd",
+                      "nixpacksStartCmd",
                       "dockerfilePath",
                       "dockerBuildTarget",
                       "baseDirectory",
@@ -8634,6 +8649,18 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksInstallCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksBuildCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksStartCmd": {
                       "type": "string",
                       "nullable": true
                     },
@@ -9343,6 +9370,9 @@
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "nixpacksInstallCmd",
+                    "nixpacksBuildCmd",
+                    "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
                     "baseDirectory",
@@ -9779,6 +9809,18 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "nixpacksInstallCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksBuildCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksStartCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "dockerfilePath": {
                       "type": "string",
                       "nullable": true
@@ -10485,6 +10527,9 @@
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "nixpacksInstallCmd",
+                    "nixpacksBuildCmd",
+                    "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
                     "baseDirectory",
@@ -10925,6 +10970,18 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "nixpacksInstallCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksBuildCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksStartCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "dockerfilePath": {
                       "type": "string",
                       "nullable": true
@@ -11631,6 +11688,9 @@
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "nixpacksInstallCmd",
+                    "nixpacksBuildCmd",
+                    "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
                     "baseDirectory",
@@ -15027,6 +15087,24 @@
                     "minLength": 1,
                     "maxLength": 512,
                     "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+                    "nullable": true
+                  },
+                  "nixpacksInstallCmd": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "nullable": true
+                  },
+                  "nixpacksBuildCmd": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "nullable": true
+                  },
+                  "nixpacksStartCmd": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
                     "nullable": true
                   },
                   "baseDirectory": {
@@ -19233,6 +19311,18 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "nixpacksInstallCmd": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "nixpacksBuildCmd": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "nixpacksStartCmd": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "dockerfilePath": {
                           "type": "string",
                           "nullable": true
@@ -19939,6 +20029,9 @@
                         "gitSourceId",
                         "buildType",
                         "buildCommand",
+                        "nixpacksInstallCmd",
+                        "nixpacksBuildCmd",
+                        "nixpacksStartCmd",
                         "dockerfilePath",
                         "dockerBuildTarget",
                         "baseDirectory",
@@ -20235,6 +20328,18 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksInstallCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksBuildCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksStartCmd": {
                       "type": "string",
                       "nullable": true
                     },
@@ -20944,6 +21049,9 @@
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "nixpacksInstallCmd",
+                    "nixpacksBuildCmd",
+                    "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
                     "baseDirectory",
@@ -21310,6 +21418,18 @@
                         ]
                       },
                       "buildCommand": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "nixpacksInstallCmd": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "nixpacksBuildCmd": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "nixpacksStartCmd": {
                         "type": "string",
                         "nullable": true
                       },
@@ -22019,6 +22139,9 @@
                       "gitSourceId",
                       "buildType",
                       "buildCommand",
+                      "nixpacksInstallCmd",
+                      "nixpacksBuildCmd",
+                      "nixpacksStartCmd",
                       "dockerfilePath",
                       "dockerBuildTarget",
                       "baseDirectory",
@@ -22470,6 +22593,18 @@
                       ]
                     },
                     "buildCommand": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksInstallCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksBuildCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksStartCmd": {
                       "type": "string",
                       "nullable": true
                     },
@@ -23179,6 +23314,9 @@
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "nixpacksInstallCmd",
+                    "nixpacksBuildCmd",
+                    "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
                     "baseDirectory",
@@ -24750,6 +24888,18 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "nixpacksInstallCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksBuildCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "nixpacksStartCmd": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "dockerfilePath": {
                       "type": "string",
                       "nullable": true
@@ -25456,6 +25606,9 @@
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
+                    "nixpacksInstallCmd",
+                    "nixpacksBuildCmd",
+                    "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
                     "baseDirectory",

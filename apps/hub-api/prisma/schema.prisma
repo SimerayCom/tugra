@@ -960,6 +960,11 @@ model Application {
   previewLimit   Int?
   buildCommand   String?
   outputDir      String?
+  // NIXPACKS build pack: first-class install/build/start command overrides → injected as NIXPACKS_INSTALL_CMD
+  // / NIXPACKS_BUILD_CMD / NIXPACKS_START_CMD build env. Null = Nixpacks auto-detection (today's behaviour).
+  nixpacksInstallCmd String?
+  nixpacksBuildCmd   String?
+  nixpacksStartCmd   String?
   composeFile    String?
   // COMPOSE-from-git: when set (with source=COMPOSE + gitUrl), the compose file lives in the cloned repo at
   // this repo-relative path instead of being pasted/stored in composeFile. The two are mutually exclusive;

@@ -1647,7 +1647,7 @@ describe("ApplicationsService", () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile" });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: null, buildCommand: null, outputDir: null, baseDirectory: null } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: null, buildCommand: null, outputDir: null, nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null, baseDirectory: null } }));
   });
 
   it("setBuild STATIC sets command/output and clears the dockerfile path", async () => {
@@ -1655,7 +1655,18 @@ describe("ApplicationsService", () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "DOCKERFILE", dockerfilePath: "Dockerfile" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "STATIC", buildCommand: "npm run build", outputDir: "build" });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, dockerBuildTarget: null, buildCommand: "npm run build", outputDir: "build", baseDirectory: null } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, dockerBuildTarget: null, buildCommand: "npm run build", outputDir: "build", nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null, baseDirectory: null } }));
+  });
+
+  it("setBuild NIXPACKS persists the command overrides (and a non-nixpacks type clears them)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "NIXPACKS" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setBuild("u1", "app1", { buildType: "NIXPACKS", nixpacksInstallCmd: "npm ci", nixpacksBuildCmd: "npm run build", nixpacksStartCmd: "node server.js" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ buildType: "NIXPACKS", nixpacksInstallCmd: "npm ci", nixpacksBuildCmd: "npm run build", nixpacksStartCmd: "node server.js" }) }));
+    await svc.setBuild("u1", "app1", { buildType: "DOCKERFILE", dockerfilePath: "Dockerfile" });
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ buildType: "DOCKERFILE", nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null }) }));
   });
 
   it("setBuild persists the monorepo baseDirectory and clears it when omitted (replace semantics)", async () => {
@@ -3142,10 +3153,11 @@ describe("ApplicationsService", () => {
       }),
     } as unknown as AgentWsServer;
     const svc = make(prisma, {} as TeamAccessService, agentWs);
-    await svc.upsertPreview({ ...parentApp, gitSourceId: "gs1" } as never, 5, "feature-x");
+    await svc.upsertPreview({ ...parentApp, gitSourceId: "gs1", nixpacksBuildCmd: "npm run build" } as never, 5, "feature-x");
 
     const data = create.mock.calls[0][0].data;
     expect(data.isPreview).toBe(true);
+    expect(data.nixpacksBuildCmd).toBe("npm run build"); // a preview builds the same way as its parent
     expect(data.parentAppId).toBe("parent1");
     expect(data.prNumber).toBe(5);
     expect(data.gitBranch).toBe("feature-x");

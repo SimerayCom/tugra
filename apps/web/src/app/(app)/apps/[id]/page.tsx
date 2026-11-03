@@ -389,7 +389,7 @@ export default function AppDetailPage() {
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
     source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} gitCommit={appData.gitCommit} image={appData.image} composePath={appData.composePath} />,
-    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} />,
+    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} nixpacksInstallCmd={appData.nixpacksInstallCmd} nixpacksBuildCmd={appData.nixpacksBuildCmd} nixpacksStartCmd={appData.nixpacksStartCmd} />,
     buildConfig: () => (
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
     ),
@@ -1309,7 +1309,7 @@ function normalizeBaseDir(s: string): string | null {
   return v || null;
 }
 
-function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, baseDirectory, buildCommand, outputDir }: { id: string; buildType: BuildType; dockerfilePath: string | null; dockerBuildTarget: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null }) {
+function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, baseDirectory, buildCommand, outputDir, nixpacksInstallCmd, nixpacksBuildCmd, nixpacksStartCmd }: { id: string; buildType: BuildType; dockerfilePath: string | null; dockerBuildTarget: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null; nixpacksInstallCmd: string | null; nixpacksBuildCmd: string | null; nixpacksStartCmd: string | null }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1319,6 +1319,9 @@ function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, b
   const [base, setBase] = useState(baseDirectory ?? "");
   const [cmd, setCmd] = useState(buildCommand ?? "");
   const [out, setOut] = useState(outputDir ?? "");
+  const [nixInstall, setNixInstall] = useState(nixpacksInstallCmd ?? "");
+  const [nixBuild, setNixBuild] = useState(nixpacksBuildCmd ?? "");
+  const [nixStart, setNixStart] = useState(nixpacksStartCmd ?? "");
   const save = useMutation({
     mutationFn: () =>
       api.setAppBuild(id, {
@@ -1327,6 +1330,7 @@ function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, b
         baseDirectory: normalizeBaseDir(base),
         ...(type === "DOCKERFILE" ? { dockerfilePath: dockerfile.trim() || null, dockerBuildTarget: target.trim() || null } : {}),
         ...(type === "STATIC" ? { buildCommand: cmd.trim() || null, outputDir: out.trim() || null } : {}),
+        ...(type === "NIXPACKS" ? { nixpacksInstallCmd: nixInstall.trim() || null, nixpacksBuildCmd: nixBuild.trim() || null, nixpacksStartCmd: nixStart.trim() || null } : {}),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
@@ -1355,8 +1359,16 @@ function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, b
             <input style={{ ...envField, width: 160 }} placeholder={t("apps.outputDir")} value={out} onChange={(e) => setOut(e.target.value)} aria-label={t("apps.outputDir")} />
           </>
         )}
+        {type === "NIXPACKS" && (
+          <>
+            <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.nixpacksInstallCmd")} value={nixInstall} onChange={(e) => setNixInstall(e.target.value)} aria-label={t("apps.nixpacksInstallCmd")} />
+            <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.nixpacksBuildCmd")} value={nixBuild} onChange={(e) => setNixBuild(e.target.value)} aria-label={t("apps.nixpacksBuildCmd")} />
+            <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.nixpacksStartCmd")} value={nixStart} onChange={(e) => setNixStart(e.target.value)} aria-label={t("apps.nixpacksStartCmd")} />
+          </>
+        )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      {type === "NIXPACKS" && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.nixpacksCmdHint")}</p>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
     </SectionCard>
   );

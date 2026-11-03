@@ -56,6 +56,10 @@ export interface AppSpec {
   baseDirectory?: string | null; // GIT monorepo: build context/root = `${bd}/${baseDirectory}`; null → repo root
   buildCommand?: string | null;
   outputDir?: string | null;
+  // NIXPACKS install/build/start command overrides → NIXPACKS_*_CMD build env (null = auto-detect).
+  nixpacksInstallCmd?: string | null;
+  nixpacksBuildCmd?: string | null;
+  nixpacksStartCmd?: string | null;
   composeFile?: string | null;
   healthCmd?: string | null;
   /** Deploy-gate health check policy. type null = auto (healthCmd→CMD, domain→HTTP, else
@@ -890,15 +894,29 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       // The plan lives OUTSIDE bd (a sibling path) so Nixpacks' `COPY . /app` never bakes it
       // into the image; it's removed after the build.
       const plan = `/etc/tugra/builds/${app.id}.plan.json`;
+      // First-class command overrides → NIXPACKS_*_CMD env, passed to BOTH plan and build (alongside the
+      // user's build args). shq makes each `K=V` one shell word; the command runs inside Nixpacks' build
+      // container (the install/build/start phase), never in this deploy shell.
+      const nixpacksCmdEnv = (
+        [
+          ["NIXPACKS_INSTALL_CMD", app.nixpacksInstallCmd],
+          ["NIXPACKS_BUILD_CMD", app.nixpacksBuildCmd],
+          ["NIXPACKS_START_CMD", app.nixpacksStartCmd],
+        ] as const
+      )
+        .filter(([, v]) => v)
+        .map(([k, v]) => `--env ${shq(`${k}=${v}`)}`)
+        .join(" ");
+      const nixEnv = nixpacksCmdEnv ? `${buildEnvFlags} ${nixpacksCmdEnv}` : buildEnvFlags;
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
-        `nixpacks plan -f json${buildEnvFlags} ${base} > ${plan}`,
+        `nixpacks plan -f json${nixEnv} ${base} > ${plan}`,
         "if command -v jq >/dev/null 2>&1; then",
         `  jq '.phases.setup.aptPkgs = ((.phases.setup.aptPkgs // []) + ["curl","wget"] | unique)' ${plan} > ${plan}.tmp && mv ${plan}.tmp ${plan}`,
         "else",
         '  echo "TUGRA: jq not found — skipping curl/wget health-tool injection into the Nixpacks plan" >&2',
         "fi",
-        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${buildEnvFlags} ${base}`,
+        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${nixEnv} ${base}`,
         `rm -f ${plan} ${plan}.tmp`,
       );
     }

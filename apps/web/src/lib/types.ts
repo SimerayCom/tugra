@@ -1079,6 +1079,9 @@ export interface Application {
   gitSourceId: string | null;
   buildType: BuildType;
   buildCommand: string | null;
+  nixpacksInstallCmd: string | null;
+  nixpacksBuildCmd: string | null;
+  nixpacksStartCmd: string | null;
   dockerfilePath: string | null;
   dockerBuildTarget: string | null;
   baseDirectory: string | null;

@@ -145,6 +145,9 @@ export const AppViewSchema = z.object({
   gitSourceId: z.string().nullable(), // linked GitHub App installation (private-repo token minting), if any
   buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
   buildCommand: z.string().nullable(),
+  nixpacksInstallCmd: z.string().nullable(),
+  nixpacksBuildCmd: z.string().nullable(),
+  nixpacksStartCmd: z.string().nullable(),
   dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
   dockerBuildTarget: z.string().nullable(), // DOCKERFILE build: multi-stage target stage
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
@@ -743,6 +746,9 @@ export class ApplicationsService {
           baseDirectory: src.baseDirectory,
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
+          nixpacksInstallCmd: src.nixpacksInstallCmd,
+          nixpacksBuildCmd: src.nixpacksBuildCmd,
+          nixpacksStartCmd: src.nixpacksStartCmd,
           watchPaths: src.watchPaths, // keep the clone's monorepo deploy-trigger globs
           autoDeploy: src.autoDeploy,
           composeFile: src.composeFile,
@@ -1157,6 +1163,11 @@ export class ApplicationsService {
           baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
           buildCommand: parent.buildCommand,
           outputDir: parent.outputDir,
+          // A preview must build the same way as its parent — carry the Nixpacks command overrides too
+          // (build config, no collision; else the preview would fall back to Nixpacks auto-detect).
+          nixpacksInstallCmd: parent.nixpacksInstallCmd,
+          nixpacksBuildCmd: parent.nixpacksBuildCmd,
+          nixpacksStartCmd: parent.nixpacksStartCmd,
           // A preview must start the same command as its parent.
           containerEntrypoint: (parent.containerEntrypoint ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           containerCommand: (parent.containerCommand ?? Prisma.JsonNull) as Prisma.InputJsonValue,
@@ -2732,6 +2743,10 @@ export class ApplicationsService {
         dockerBuildTarget: input.buildType === "DOCKERFILE" ? input.dockerBuildTarget ?? null : null,
         buildCommand: input.buildType === "STATIC" ? input.buildCommand ?? null : null,
         outputDir: input.buildType === "STATIC" ? input.outputDir ?? null : null,
+        // Nixpacks command overrides — only for the NIXPACKS pack (nulled otherwise, like the per-type fields above).
+        nixpacksInstallCmd: input.buildType === "NIXPACKS" ? input.nixpacksInstallCmd ?? null : null,
+        nixpacksBuildCmd: input.buildType === "NIXPACKS" ? input.nixpacksBuildCmd ?? null : null,
+        nixpacksStartCmd: input.buildType === "NIXPACKS" ? input.nixpacksStartCmd ?? null : null,
         // The monorepo base directory applies to every build type, so it sits outside the per-type ternaries.
         baseDirectory: input.baseDirectory ?? null,
       },
@@ -3731,6 +3746,9 @@ export class ApplicationsService {
       dockerBuildTarget: app.dockerBuildTarget,
       baseDirectory: app.baseDirectory,
       buildCommand: app.buildCommand,
+      nixpacksInstallCmd: app.nixpacksInstallCmd,
+      nixpacksBuildCmd: app.nixpacksBuildCmd,
+      nixpacksStartCmd: app.nixpacksStartCmd,
       outputDir: app.outputDir,
       composeFile: app.composeFile,
       composePath: app.composePath,
@@ -3945,6 +3963,9 @@ export class ApplicationsService {
       gitSourceId: app.gitSourceId,
       buildType: app.buildType,
       buildCommand: app.buildCommand,
+      nixpacksInstallCmd: app.nixpacksInstallCmd,
+      nixpacksBuildCmd: app.nixpacksBuildCmd,
+      nixpacksStartCmd: app.nixpacksStartCmd,
       dockerfilePath: app.dockerfilePath,
       dockerBuildTarget: app.dockerBuildTarget,
       baseDirectory: app.baseDirectory,

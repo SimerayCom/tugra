@@ -9553,6 +9553,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -9835,6 +9838,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -10228,6 +10234,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -10576,6 +10585,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -13168,6 +13180,9 @@ export interface operations {
                     dockerBuildTarget?: string | null;
                     buildCommand?: string | null;
                     outputDir?: string | null;
+                    nixpacksInstallCmd?: string | null;
+                    nixpacksBuildCmd?: string | null;
+                    nixpacksStartCmd?: string | null;
                     baseDirectory?: string | null;
                 };
             };
@@ -15956,6 +15971,9 @@ export interface operations {
                             /** @enum {string} */
                             buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                             buildCommand: string | null;
+                            nixpacksInstallCmd: string | null;
+                            nixpacksBuildCmd: string | null;
+                            nixpacksStartCmd: string | null;
                             dockerfilePath: string | null;
                             dockerBuildTarget: string | null;
                             baseDirectory: string | null;
@@ -16233,6 +16251,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -16579,6 +16600,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -16983,6 +17007,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;
@@ -18135,6 +18162,9 @@ export interface operations {
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
                         buildCommand: string | null;
+                        nixpacksInstallCmd: string | null;
+                        nixpacksBuildCmd: string | null;
+                        nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
                         baseDirectory: string | null;

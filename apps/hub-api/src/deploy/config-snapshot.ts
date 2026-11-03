@@ -16,6 +16,9 @@ export interface ConfigSnapshot {
   dockerfilePath?: string | null;
   baseDirectory?: string | null;
   buildCommand?: string | null;
+  nixpacksInstallCmd?: string | null;
+  nixpacksBuildCmd?: string | null;
+  nixpacksStartCmd?: string | null;
   outputDir?: string | null;
   composeFile?: string | null;
   composePath?: string | null;
@@ -63,6 +66,9 @@ const SCALAR_FIELDS = [
   "dockerfilePath",
   "baseDirectory",
   "buildCommand",
+  "nixpacksInstallCmd",
+  "nixpacksBuildCmd",
+  "nixpacksStartCmd",
   "outputDir",
   "composeFile",
   "composePath",
@@ -96,6 +102,9 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     dockerfilePath: spec.dockerfilePath ?? null,
     baseDirectory: spec.baseDirectory ?? null,
     buildCommand: spec.buildCommand ?? null,
+    nixpacksInstallCmd: spec.nixpacksInstallCmd ?? null,
+    nixpacksBuildCmd: spec.nixpacksBuildCmd ?? null,
+    nixpacksStartCmd: spec.nixpacksStartCmd ?? null,
     outputDir: spec.outputDir ?? null,
     composeFile: spec.composeFile ?? null,
     composePath: spec.composePath ?? null,
