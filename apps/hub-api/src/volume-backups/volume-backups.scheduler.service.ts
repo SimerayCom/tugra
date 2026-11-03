@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 
@@ -27,7 +28,7 @@ export class VolumeBackupSchedulerService implements OnApplicationBootstrap, OnM
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async (job) => { await this.runner.runBackup(job.data.appId as string); }, { connection });
 
     const apps = await this.prisma.application.findMany({

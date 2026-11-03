@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Job, Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
@@ -87,7 +88,7 @@ export class NotificationQueueService implements OnApplicationBootstrap, OnModul
     // BullMQ worker/Redis are disabled in tests; delivery runs inline (see enqueue/deliverNow).
     if (process.env.NODE_ENV === "test") return;
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker<DeliverJob>(QUEUE, (job) => this.handleJob(job), { connection });
     this.worker.on("failed", (job, err) => void this.handleFailed(job, err));
     this.worker.on("error", (err) => this.logger.error(`worker error: ${err.message}`));

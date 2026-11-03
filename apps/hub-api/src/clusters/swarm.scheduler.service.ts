@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
 import { SwarmService } from "./swarm.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -59,7 +60,7 @@ export class SwarmSchedulerService implements OnApplicationBootstrap, OnModuleDe
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests (house convention)
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.runTick(); }, { connection });
     const intervalSec = this.config.get<number>("SWARM_STATUS_INTERVAL_SEC") ?? 60;
     await this.queue.add("swarm-status", {}, { repeat: { every: intervalSec * 1000 } });

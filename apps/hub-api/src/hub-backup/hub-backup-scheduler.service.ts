@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
 import { HubBackupRunnerService } from "./hub-backup-runner.service";
 
@@ -28,7 +29,7 @@ export class HubBackupSchedulerService implements OnApplicationBootstrap, OnModu
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return; // driven directly via POST /instance/backup/run in tests
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.runner.runBackup("scheduler"); }, { connection });
     const cfg = await this.prisma.hubBackupConfig.findUnique({ where: { id: "singleton" } });
     await this.apply(cfg ?? null);

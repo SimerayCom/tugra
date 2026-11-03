@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { RetentionRunnerService } from "./retention-runner.service";
 
 const QUEUE = "retention-prune";
@@ -38,7 +39,7 @@ export class RetentionSchedulerService
     if (process.env.NODE_ENV === "test") return;
 
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => this.runner.prune(), { connection });
     await this.queue.add("retention-prune", {}, { repeat: { every: HOURLY_MS } });
     this.logger.log("scheduled hourly metrics/heartbeat retention prune");
