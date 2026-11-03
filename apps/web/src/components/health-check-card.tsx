@@ -13,13 +13,14 @@ import { ConfigCard, Field, NumberInput, TextInput, fieldStyle, useSaveFeedback 
  */
 const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
 
-export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCheckPort, healthCheckMethod, healthCheckScheme, healthCmd, timings }: {
+export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCheckPort, healthCheckMethod, healthCheckScheme, healthCheckResponseText, healthCmd, timings }: {
   id: string;
   healthCheckType: string | null;
   healthCheckPath: string | null;
   healthCheckPort: number | null;
   healthCheckMethod: string | null;
   healthCheckScheme: string | null;
+  healthCheckResponseText: string | null;
   healthCmd: string | null;
   timings: { interval: number | null; timeout: number | null; retries: number | null; startPeriod: number | null; expectedStatus: number | null };
 }) {
@@ -36,6 +37,7 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
   // "" = default (GET / http). Stored values are a fixed allow-list, so the raw string round-trips.
   const [method, setMethod] = useState(healthCheckMethod ?? "");
   const [scheme, setScheme] = useState(healthCheckScheme ?? "");
+  const [responseText, setResponseText] = useState(healthCheckResponseText ?? "");
   const [cmd, setCmd] = useState(healthCmd ?? "");
   const [interval, setInterval] = useState(num(timings.interval));
   const [timeout, setTimeout] = useState(num(timings.timeout));
@@ -50,6 +52,7 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
     port !== num(healthCheckPort) ||
     method !== (healthCheckMethod ?? "") ||
     scheme !== (healthCheckScheme ?? "") ||
+    responseText.trim() !== (healthCheckResponseText ?? "") ||
     cmd.trim() !== (healthCmd ?? "") ||
     interval !== num(timings.interval) ||
     timeout !== num(timings.timeout) ||
@@ -65,6 +68,7 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
         port: type === "HTTP" && port ? Number(port) : null,
         method: type === "HTTP" ? method || null : null,
         scheme: type === "HTTP" ? scheme || null : null,
+        responseText: type === "HTTP" ? responseText.trim() || null : null,
         command: type === "CMD" ? cmd.trim() || null : null,
         interval: toNum(interval),
         timeout: toNum(timeout),
@@ -110,6 +114,9 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
             </Field>
             <Field label={t("apps.healthCheckPort")} style={item}>
               <NumberInput min={1} max={65535} value={port} onChange={(e) => setPort(e.target.value)} />
+            </Field>
+            <Field label={t("apps.healthCheckResponseText")} hint={t("apps.healthCheckResponseTextHint")} style={{ flex: "1 1 100%", minWidth: 0 }}>
+              <TextInput value={responseText} onChange={(e) => setResponseText(e.target.value)} spellCheck={false} autoComplete="off" placeholder={t("apps.healthCheckResponseTextPlaceholder")} />
             </Field>
           </>
         )}

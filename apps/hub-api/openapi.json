@@ -7615,6 +7615,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "healthCheckResponseText": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "healthInterval": {
                         "type": "number",
                         "nullable": true
@@ -8267,6 +8271,7 @@
                       "healthCheckPort",
                       "healthCheckMethod",
                       "healthCheckScheme",
+                      "healthCheckResponseText",
                       "healthInterval",
                       "healthTimeout",
                       "healthRetries",
@@ -8670,6 +8675,10 @@
                       "nullable": true
                     },
                     "healthCheckScheme": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "healthCheckResponseText": {
                       "type": "string",
                       "nullable": true
                     },
@@ -9325,6 +9334,7 @@
                     "healthCheckPort",
                     "healthCheckMethod",
                     "healthCheckScheme",
+                    "healthCheckResponseText",
                     "healthInterval",
                     "healthTimeout",
                     "healthRetries",
@@ -9798,6 +9808,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "healthCheckResponseText": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "healthInterval": {
                       "type": "number",
                       "nullable": true
@@ -10450,6 +10464,7 @@
                     "healthCheckPort",
                     "healthCheckMethod",
                     "healthCheckScheme",
+                    "healthCheckResponseText",
                     "healthInterval",
                     "healthTimeout",
                     "healthRetries",
@@ -10927,6 +10942,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "healthCheckResponseText": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "healthInterval": {
                       "type": "number",
                       "nullable": true
@@ -11579,6 +11598,7 @@
                     "healthCheckPort",
                     "healthCheckMethod",
                     "healthCheckScheme",
+                    "healthCheckResponseText",
                     "healthInterval",
                     "healthTimeout",
                     "healthRetries",
@@ -15807,6 +15827,12 @@
                     ],
                     "nullable": true
                   },
+                  "responseText": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[^\\n\\r\\0]+$",
+                    "nullable": true
+                  },
                   "command": {
                     "type": "string",
                     "minLength": 1,
@@ -18982,6 +19008,10 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "healthCheckResponseText": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "healthInterval": {
                           "type": "number",
                           "nullable": true
@@ -19634,6 +19664,7 @@
                         "healthCheckPort",
                         "healthCheckMethod",
                         "healthCheckScheme",
+                        "healthCheckResponseText",
                         "healthInterval",
                         "healthTimeout",
                         "healthRetries",
@@ -19967,6 +19998,10 @@
                       "nullable": true
                     },
                     "healthCheckScheme": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "healthCheckResponseText": {
                       "type": "string",
                       "nullable": true
                     },
@@ -20622,6 +20657,7 @@
                     "healthCheckPort",
                     "healthCheckMethod",
                     "healthCheckScheme",
+                    "healthCheckResponseText",
                     "healthInterval",
                     "healthTimeout",
                     "healthRetries",
@@ -21025,6 +21061,10 @@
                         "nullable": true
                       },
                       "healthCheckScheme": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "healthCheckResponseText": {
                         "type": "string",
                         "nullable": true
                       },
@@ -21680,6 +21720,7 @@
                       "healthCheckPort",
                       "healthCheckMethod",
                       "healthCheckScheme",
+                      "healthCheckResponseText",
                       "healthInterval",
                       "healthTimeout",
                       "healthRetries",
@@ -22168,6 +22209,10 @@
                       "nullable": true
                     },
                     "healthCheckScheme": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "healthCheckResponseText": {
                       "type": "string",
                       "nullable": true
                     },
@@ -22823,6 +22868,7 @@
                     "healthCheckPort",
                     "healthCheckMethod",
                     "healthCheckScheme",
+                    "healthCheckResponseText",
                     "healthInterval",
                     "healthTimeout",
                     "healthRetries",
@@ -24431,6 +24477,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "healthCheckResponseText": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "healthInterval": {
                       "type": "number",
                       "nullable": true
@@ -25083,6 +25133,7 @@
                     "healthCheckPort",
                     "healthCheckMethod",
                     "healthCheckScheme",
+                    "healthCheckResponseText",
                     "healthInterval",
                     "healthTimeout",
                     "healthRetries",

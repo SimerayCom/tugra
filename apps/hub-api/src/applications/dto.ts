@@ -291,6 +291,17 @@ export const SetHealthCheckSchema = z
     // HTTP scheme for the probe. null/"http" = plain HTTP. "https" probes over TLS with cert
     // verification skipped (curl -k) so a self-signed/internal HTTPS health endpoint still checks.
     scheme: z.enum(["http", "https"]).nullable().optional(),
+    // HTTP check: require this literal substring in the response body (null = status-only; the web card
+    // sends null, never ""). It is matched with `grep -F` (fixed string, no regex) against the body and
+    // single-quoted at the call site, so it is injection-safe; newlines/CR/NUL are rejected so it can never
+    // break the one-line probe, and a whitespace-only needle is rejected (it would match almost any body).
+    responseText: z
+      .string()
+      .max(200)
+      .regex(/^[^\n\r\0]+$/, "responseText must be a single line without control characters")
+      .refine((v) => v.trim().length > 0, "responseText cannot be only whitespace")
+      .nullable()
+      .optional(),
     command: z.string().min(1).max(1000).nullable().optional(),
     // Timing knobs (seconds), null = use the built-in default. Bounded so a typo can't wedge a deploy for
     // hours: a slow-booting app raises startPeriod/retries; interval/timeout tune the poll cadence.
