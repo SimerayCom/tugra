@@ -1462,8 +1462,24 @@ export function buildAppImagesRemoveScript(app: { id: string }): string {
 
 /** Remove an image by its exact stored tag — a rollback records the TARGET's tag, not its own
  *  deployment id, so pruning must key off the recorded tag rather than reconstruct it. */
-export function buildImageRemoveScriptForTag(tag: string): string {
-  return `docker rmi ${shq(tag)} 2>/dev/null || true`;
+/** Remove one or more of an app's OWN image tags (keep-N pruning / teardown). Every tag must sit in the app's
+ *  `tugra_<id>:` namespace — as a bare local tag, or as the trailing segment of a registry ref
+ *  (`<host>/<ns>/tugra_<id>:<v>`) — so a tampered DB row can never `rmi` an arbitrary image. No `-f`: plain
+ *  `docker rmi` refuses to drop the last tag of an image a running container still uses (a free safety net),
+ *  and an already-absent tag is a no-op, so retrying is idempotent. Exits non-zero ONLY when a tag that was
+ *  present failed to remove, so the caller can gate on success. */
+export function buildImageRemoveScriptForTags(appId: string, tags: Array<string | null | undefined>): string {
+  const seg = `${containerName({ id: appId })}:`; // tugra_<id>:
+  const uniq = [...new Set(tags.filter((t): t is string => !!t && (t.startsWith(seg) || t.includes(`/${seg}`))))];
+  if (uniq.length === 0) return "exit 0";
+  // Try the rmi; treat ONLY an explicit "No such image" as success (the tag is already gone → idempotent).
+  // Any other failure — the daemon is down/unreachable, a permission error, or the image is in use by a
+  // running container (rmi has no -f) — sets rc=1 so the caller does NOT forget a tag whose image is still
+  // on disk. (A plain `docker image inspect` existence test can't tell "absent" from "daemon down".)
+  const lines = uniq.map(
+    (t) => `if ! out=$(docker rmi ${shq(t)} 2>&1); then printf %s "$out" | grep -qi 'no such image' || rc=1; fi`,
+  );
+  return `rc=0\n${lines.join("\n")}\nexit $rc`;
 }
 
 export const PROXY_DNS_ENV_DIR = "/etc/tugra/proxy";

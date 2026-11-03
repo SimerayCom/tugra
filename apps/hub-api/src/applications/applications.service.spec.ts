@@ -4290,3 +4290,66 @@ describe("ApplicationsService — COMPOSE-from-git", () => {
     expect(create.mock.calls[0][0].data.composePath).toBe("docker-compose.yml");
   });
 });
+
+describe("ApplicationsService.pruneImages (keep-N, aliasing-safe)", () => {
+  const prune = (svc: ReturnType<typeof make>) =>
+    (svc as unknown as { pruneImages: (a: unknown) => Promise<void> }).pruneImages.bind(svc);
+  const theApp = { ...app, id: "app1", serverId: "s1" };
+  // newest-first rows d0..d(n-1), each with its own local tag.
+  const rows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `d${i}`, status: "SUCCESS", imageTag: `tugra_app1:d${i}`, registryImage: null, createdAt: new Date(n - i) }));
+
+  it("rmi's the stale (beyond newest-5) tags and nulls their records on success; keeps the newest 5", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue(rows(7)), update } } as unknown as PrismaService;
+    const sent: string[] = [];
+    const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+    await prune(make(prisma, {} as TeamAccessService, agentWs))(theApp);
+    expect(sent.join("\n")).toContain("tugra_app1:d5");
+    expect(sent.join("\n")).toContain("tugra_app1:d6");
+    expect(update).toHaveBeenCalledWith({ where: { id: "d5" }, data: { imageTag: null } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "d6" }, data: { imageTag: null } });
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "d0" } }));
+  });
+
+  it("does NOT null the record when the rmi fails — keeps the rollback record, retries next prune", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue(rows(6)), update } } as unknown as PrismaService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 1, output: "boom" }) } as unknown as AgentWsServer;
+    await prune(make(prisma, {} as TeamAccessService, agentWs))(theApp);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("never rmi's a tag a RETAINED row still references (rollback aliasing) but still forgets the stale record", async () => {
+    const deployments = [...rows(5), { id: "d5", status: "SUCCESS", imageTag: "tugra_app1:d0", registryImage: null, createdAt: new Date(0) }];
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue(deployments), update } } as unknown as PrismaService;
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    await prune(make(prisma, {} as TeamAccessService, { sendCommand: send } as unknown as AgentWsServer))(theApp);
+    expect(send).not.toHaveBeenCalled(); // d0's tag is protected by the kept window → no rmi
+    expect(update).toHaveBeenCalledWith({ where: { id: "d5" }, data: { imageTag: null } });
+  });
+
+  it("also rmi's the registry ref (frees layers) while keeping registryImage in the DB for rollback-pull", async () => {
+    const deployments = [...rows(5), { id: "d5", status: "SUCCESS", imageTag: "tugra_app1:d5", registryImage: "ghcr.io/org/tugra_app1:d5", createdAt: new Date(0) }];
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue(deployments), update } } as unknown as PrismaService;
+    let sent = "";
+    const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent = cmd; return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+    await prune(make(prisma, {} as TeamAccessService, agentWs))(theApp);
+    expect(sent).toContain("tugra_app1:d5");
+    expect(sent).toContain("ghcr.io/org/tugra_app1:d5");
+    expect(update).toHaveBeenCalledWith({ where: { id: "d5" }, data: { imageTag: null } }); // only imageTag nulled
+  });
+
+  it("skips entirely while a deploy/rollback is in flight (a RUNNING row), to avoid racing it", async () => {
+    const findMany = jest.fn().mockResolvedValue(rows(7));
+    const update = jest.fn().mockResolvedValue({});
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const prisma = { deployment: { count: jest.fn().mockResolvedValue(1), findMany, update } } as unknown as PrismaService;
+    await prune(make(prisma, {} as TeamAccessService, { sendCommand: send } as unknown as AgentWsServer))(theApp);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+});

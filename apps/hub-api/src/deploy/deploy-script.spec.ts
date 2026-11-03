@@ -46,6 +46,7 @@ import {
   gitUrlHost,
   logRotationArgs,
   LOG_ROTATION_ARGS,
+  buildImageRemoveScriptForTags,
   type AppSpec,
 } from "./deploy-script";
 
@@ -1740,6 +1741,36 @@ describe("dbNetwork — managed-DB network attach (S4d-4)", () => {
     const s = buildRollingDeployScript({ ...domained, dbNetwork: true }, "v2", { probe: { kind: "stableWait" }, ...gate });
     expect(s).toContain("docker network create tugra-net");
     expect(s).toMatch(/&& docker network connect tugra-net \S+/);
+  });
+});
+
+describe("buildImageRemoveScriptForTags", () => {
+  it("rmi's each tag, treats only 'no such image' as success (no -f), and exits non-zero on any other failure", () => {
+    const s = buildImageRemoveScriptForTags("abc", ["tugra_abc:v1", "tugra_abc:v2"]);
+    expect(s).toContain("if ! out=$(docker rmi 'tugra_abc:v1' 2>&1); then printf %s \"$out\" | grep -qi 'no such image' || rc=1; fi");
+    expect(s).toContain("exit $rc");
+    expect(s).not.toContain("rmi -f");
+    expect(s).not.toContain("docker rmi 'tugra_abc:v1' 2>/dev/null || true"); // not the old untag-only form
+    expect(s).not.toContain("docker image inspect"); // a plain existence test can't tell absent from daemon-down
+  });
+
+  it("accepts a registry ref whose trailing segment is the app's namespace, dedupes, and drops foreign tags", () => {
+    const s = buildImageRemoveScriptForTags("abc", [
+      "tugra_abc:v1",
+      "ghcr.io/org/tugra_abc:v1", // registry ref for THIS app → kept
+      "tugra_abc:v1", // duplicate → collapsed
+      "nginx:latest", // foreign → dropped
+      "ghcr.io/org/tugra_other:v1", // another app's namespace → dropped
+    ]);
+    expect(s).toContain("'tugra_abc:v1'");
+    expect(s).toContain("'ghcr.io/org/tugra_abc:v1'");
+    expect(s).not.toContain("nginx:latest");
+    expect(s).not.toContain("tugra_other");
+    expect(s.match(/docker rmi 'tugra_abc:v1'/g)?.length).toBe(1); // deduped
+  });
+
+  it("is a no-op when no tag is in the app's namespace", () => {
+    expect(buildImageRemoveScriptForTags("abc", ["nginx:latest", null, ""])).toBe("exit 0");
   });
 });
 
