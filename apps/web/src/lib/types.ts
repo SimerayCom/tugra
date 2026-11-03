@@ -1092,6 +1092,8 @@ export interface Application {
   healthCheckType: string | null;
   healthCheckPath: string | null;
   healthCheckPort: number | null;
+  healthCheckMethod: string | null;
+  healthCheckScheme: string | null;
   healthInterval: number | null;
   healthTimeout: number | null;
   healthRetries: number | null;

@@ -21,7 +21,7 @@ const wrap = (ui: React.ReactNode) =>
     </QueryClientProvider>,
   );
 
-const base = { id: "a1", healthCheckType: null, healthCheckPath: null, healthCheckPort: null, healthCmd: null, timings: { interval: null, timeout: null, retries: null, startPeriod: null, expectedStatus: null } };
+const base = { id: "a1", healthCheckType: null, healthCheckPath: null, healthCheckPort: null, healthCheckMethod: null, healthCheckScheme: null, healthCmd: null, timings: { interval: null, timeout: null, retries: null, startPeriod: null, expectedStatus: null } };
 
 describe("HealthCheckCard", () => {
   it("labels the HTTP path and port fields (were placeholder-only)", () => {
@@ -39,6 +39,31 @@ describe("HealthCheckCard", () => {
   it("hides the timings for a NONE check", () => {
     wrap(<HealthCheckCard {...base} healthCheckType="NONE" />);
     expect(screen.queryByLabelText("Interval (s)")).toBeNull();
+  });
+
+  it("shows Scheme + Method only for an HTTP check, and PUTs the chosen values", async () => {
+    const set = vi.spyOn(api, "setAppHealthCheck").mockResolvedValue({ ok: true });
+    wrap(<HealthCheckCard {...base} healthCheckType="HTTP" healthCheckPath="/health" />);
+    const scheme = screen.getByLabelText("Scheme");
+    const method = screen.getByLabelText("Method");
+    fireEvent.change(scheme, { target: { value: "https" } });
+    fireEvent.change(method, { target: { value: "POST" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", expect.objectContaining({ type: "HTTP", scheme: "https", method: "POST" })));
+  });
+
+  it("hides Scheme + Method for a CMD check (HTTP-only fields)", () => {
+    wrap(<HealthCheckCard {...base} healthCheckType="CMD" />);
+    expect(screen.queryByLabelText("Scheme")).toBeNull();
+    expect(screen.queryByLabelText("Method")).toBeNull();
+  });
+
+  it("sends method/scheme as null when left at default on an HTTP check", async () => {
+    const set = vi.spyOn(api, "setAppHealthCheck").mockResolvedValue({ ok: true });
+    wrap(<HealthCheckCard {...base} healthCheckType="HTTP" healthCheckPath="/health" />);
+    fireEvent.change(screen.getByLabelText("Interval (s)"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", expect.objectContaining({ method: null, scheme: null })));
   });
 
   it("gates Save until a timing changes, then PUTs the check", async () => {

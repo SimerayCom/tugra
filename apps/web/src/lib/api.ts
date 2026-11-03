@@ -1332,6 +1332,7 @@ export const api = {
     id: string,
     hc: {
       type?: string | null; path?: string | null; port?: number | null; command?: string | null;
+      method?: string | null; scheme?: string | null;
       interval?: number | null; timeout?: number | null; retries?: number | null; startPeriod?: number | null; expectedStatus?: number | null;
     },
   ) {

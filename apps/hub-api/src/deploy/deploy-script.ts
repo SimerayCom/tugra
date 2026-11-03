@@ -63,6 +63,9 @@ export interface AppSpec {
   healthCheckType?: string | null;
   healthCheckPath?: string | null;
   healthCheckPort?: number | null;
+  // HTTP probe method (null/"GET" = GET) and scheme (null/"http" = plain HTTP; "https" = TLS, curl -k).
+  healthCheckMethod?: string | null;
+  healthCheckScheme?: string | null;
   // Tunable health timings (seconds; null = built-in default) driving both the deploy gate and the
   // container's docker --health-* flags; expectedStatus pins the HTTP probe to one status code.
   healthInterval?: number | null;
@@ -1244,7 +1247,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
 /** How to health-check a container before treating a deploy as live. */
 export type HealthProbe =
   | { kind: "native" } // the container has a --health-cmd; poll docker's health status
-  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean; expectedStatus?: number | null; timeoutSec?: number } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
+  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean; expectedStatus?: number | null; timeoutSec?: number; method?: string | null; scheme?: string | null } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
   | { kind: "stableWait" }; // no port/health-cmd → require it to stay Running
 
 /** Timing knobs for the health gate. */
@@ -1280,7 +1283,7 @@ export function resolveHealthProbe(app: AppSpec): HealthProbe {
     // reaches this app's container). Host-port app: probe localhost over the host network —
     // pinned to the app's OWN published port, never an arbitrary one, so it can't be turned
     // into a host-wide localhost port scanner.
-    const extra = { expectedStatus: app.healthExpectedStatus ?? null, timeoutSec: app.healthTimeout ?? 5 };
+    const extra = { expectedStatus: app.healthExpectedStatus ?? null, timeoutSec: app.healthTimeout ?? 5, method: app.healthCheckMethod ?? null, scheme: app.healthCheckScheme ?? null };
     if (app.domain) return { kind: "httpExternal", port: app.healthCheckPort ?? app.containerPort ?? 80, path, ...extra };
     if (app.hostPort) return { kind: "httpExternal", port: app.hostPort, path, onHost: true, ...extra };
     return { kind: "stableWait" }; // HTTP configured but no reachable endpoint
@@ -1313,9 +1316,18 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
     // (curl → "000") or a 5xx counts as unhealthy.
     const net = probe.onHost ? "host" : PROXY_NETWORK;
     const host = probe.onHost ? "localhost" : target;
+    // "https" probes over TLS; -k skips cert verification so a self-signed/internal endpoint (or a cert
+    // issued for the public host, not the container name we dial) still checks. Default stays plain HTTP.
+    const scheme = probe.scheme === "https" ? "https" : "http";
+    const insecure = scheme === "https" ? "-k " : "";
+    // Method: GET by default. HEAD MUST use -I/--head, not `-X HEAD`: with `-X HEAD` curl keeps waiting
+    // for a response body a HEAD never sends, stalls to --max-time, exits non-zero and the probe reads as
+    // unhealthy. Other non-GET methods pass as `-X <METHOD>`. The value is a fixed server-side allow-list
+    // (GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS), so it is a safe bare token here.
+    const methodArg = probe.method === "HEAD" ? "-I " : probe.method && probe.method !== "GET" ? `-X ${probe.method} ` : "";
     // Single-quote the URL so the probe path can never break out of the docker-run word
     // even if the path validation is ever loosened (defence-in-depth).
-    const url = shq(`http://${host}:${probe.port}${probe.path}`);
+    const url = shq(`${scheme}://${host}:${probe.port}${probe.path}`);
     const maxTime = probe.timeoutSec ?? 5;
     // Default "healthy" = any code below 500 (a booted app often answers 404/401/400 on the probe path);
     // when the app pins an exact expected status, require exactly that code instead.
@@ -1324,7 +1336,7 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
       : `[ "$code" != "000" ] && [ "$code" -lt 500 ]`;
     lines.push(
       `for i in $(seq 1 ${t.retries}); do`,
-      `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time ${maxTime} ${url} 2>/dev/null || echo 000)`,
+      `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} ${methodArg}${insecure}-s -o /dev/null -w '%{http_code}' --max-time ${maxTime} ${url} 2>/dev/null || echo 000)`,
       `  if ${pass}; then healthy=1; break; fi`,
       `  sleep ${t.intervalSec}`,
       "done",

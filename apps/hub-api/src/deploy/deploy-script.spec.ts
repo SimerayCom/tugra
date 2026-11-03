@@ -601,6 +601,8 @@ describe("deploy-script", () => {
         path: "/",
         expectedStatus: null,
         timeoutSec: 5,
+        method: null,
+        scheme: null,
       });
       expect(resolveHealthProbe(base)).toEqual({ kind: "stableWait" });
     });
@@ -617,6 +619,8 @@ describe("deploy-script", () => {
         path: "/up",
         expectedStatus: null,
         timeoutSec: 5,
+        method: null,
+        scheme: null,
       });
       // HTTP on a host-port app probes localhost over the host network, pinned to the app's
       // OWN published port — a custom healthCheckPort is IGNORED so it can't scan other ports
@@ -627,6 +631,8 @@ describe("deploy-script", () => {
         onHost: true,
         expectedStatus: null,
         timeoutSec: 5,
+        method: null,
+        scheme: null,
       });
       // HTTP configured but nothing reachable (no domain, no host port) → liveness wait
       expect(resolveHealthProbe({ ...base, healthCheckType: "HTTP" })).toEqual({ kind: "stableWait" });
@@ -637,6 +643,34 @@ describe("deploy-script", () => {
       const joined = s.join("\n");
       expect(joined).toContain(`docker run --rm --network host ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://localhost:8080/health'`);
       expect(joined).not.toContain("tugra-proxy");
+    });
+
+    it("scheme=https probes over TLS with -k and an https:// URL", () => {
+      const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 8443, path: "/health", scheme: "https" }, gate).join("\n");
+      expect(joined).toContain(`${HEALTH_PROBE_IMAGE} -k -s -o /dev/null -w '%{http_code}' --max-time 5 'https://tugra_abc:8443/health'`);
+    });
+
+    it("scheme http/null and method GET/null stay plain (no -k, no -X, http:// URL)", () => {
+      for (const probe of [
+        { kind: "httpExternal", port: 80, path: "/" },
+        { kind: "httpExternal", port: 80, path: "/", scheme: "http", method: "GET" },
+      ] as const) {
+        const joined = buildHealthGateFragment("tugra_abc", probe, gate).join("\n");
+        expect(joined).toContain(`${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc:80/'`);
+        expect(joined).not.toContain("-k ");
+        expect(joined).not.toContain("-X ");
+      }
+    });
+
+    it("a non-GET method is passed as -X; https+POST combine (order: method then -k)", () => {
+      const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 8443, path: "/live", method: "POST", scheme: "https" }, gate).join("\n");
+      expect(joined).toContain(`${HEALTH_PROBE_IMAGE} -X POST -k -s -o /dev/null -w '%{http_code}' --max-time 5 'https://tugra_abc:8443/live'`);
+    });
+
+    it("HEAD uses -I/--head, never `-X HEAD` (which stalls curl waiting for an absent body and fails the gate)", () => {
+      const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/", method: "HEAD" }, gate).join("\n");
+      expect(joined).toContain(`${HEALTH_PROBE_IMAGE} -I -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc:80/'`);
+      expect(joined).not.toContain("-X HEAD");
     });
 
     it("resolveHealthGate uses rolling defaults, overridden per app", () => {
