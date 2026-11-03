@@ -1409,8 +1409,8 @@ function BuildArgsCard({ id }: { id: string }) {
           const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
           return (
             <div key={i} style={{ display: "flex", gap: 6 }}>
-              <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} />
-              <input style={{ ...envField, flex: 1 }} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
+              <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} aria-label={t("apps.envKey")} />
+              <input style={{ ...envField, flex: 1 }} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} aria-label={t("apps.envValue")} />
               <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
             </div>
           );
@@ -1681,8 +1681,8 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input style={{ ...envField, width: 160 }} placeholder={t("apps.volumeName")} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} />
-            <input style={{ ...envField, flex: 1 }} placeholder={t("apps.volumePath")} value={r.path} onChange={(e) => setRow(i, { path: e.target.value })} />
+            <input style={{ ...envField, width: 160 }} placeholder={t("apps.volumeName")} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} aria-label={t("apps.volumeName")} />
+            <input style={{ ...envField, flex: 1 }} placeholder={t("apps.volumePath")} value={r.path} onChange={(e) => setRow(i, { path: e.target.value })} aria-label={t("apps.volumePath")} />
             <button
               onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
               aria-label={t("common.remove")}
@@ -1726,9 +1726,9 @@ function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input style={{ ...envField, flex: 1, minWidth: 150 }} placeholder={t("apps.hostMountHostPath")} value={r.hostPath} onChange={(e) => setRow(i, { hostPath: e.target.value })} />
+            <input style={{ ...envField, flex: 1, minWidth: 150 }} placeholder={t("apps.hostMountHostPath")} value={r.hostPath} onChange={(e) => setRow(i, { hostPath: e.target.value })} aria-label={t("apps.hostMountHostPath")} />
             <span style={{ color: "var(--c-tx3)" }}>→</span>
-            <input style={{ ...envField, flex: 1, minWidth: 150 }} placeholder={t("apps.hostMountContainerPath")} value={r.containerPath} onChange={(e) => setRow(i, { containerPath: e.target.value })} />
+            <input style={{ ...envField, flex: 1, minWidth: 150 }} placeholder={t("apps.hostMountContainerPath")} value={r.containerPath} onChange={(e) => setRow(i, { containerPath: e.target.value })} aria-label={t("apps.hostMountContainerPath")} />
             <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--c-tx2)" }}>
               <input type="checkbox" checked={r.readOnly !== false} onChange={(e) => setRow(i, { readOnly: e.target.checked })} />
               {t("apps.hostMountReadOnly")}
@@ -1821,9 +1821,9 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
   if (editing) {
     return (
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} />
-        <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
-        <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} />
+        <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} aria-label={t("apps.taskName")} />
+        <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} aria-label={t("apps.taskSchedule")} />
+        <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} aria-label={t("apps.taskCommand")} />
         <Btn onClick={() => edit.mutate()} disabled={edit.isPending || !name.trim() || !schedule.trim() || !command.trim()}>{t("common.save")}</Btn>
         <Btn variant="ghost" onClick={() => setEditing(false)}>{t("common.cancel")}</Btn>
       </div>
@@ -1867,9 +1867,9 @@ function ScheduledTasksCard({ id }: { id: string }) {
         {tasks.map((tk) => <TaskRow key={tk.id} appId={id} task={tk} />)}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} />
-        <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} />
-        <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} />
+        <input style={{ ...envField, width: 140 }} placeholder={t("apps.taskName")} value={name} onChange={(e) => setName(e.target.value)} aria-label={t("apps.taskName")} />
+        <input style={{ ...envField, width: 130 }} placeholder={t("apps.taskSchedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)} aria-label={t("apps.taskSchedule")} />
+        <input style={{ ...envField, flex: 1, minWidth: 160 }} placeholder={t("apps.taskCommand")} value={command} onChange={(e) => setCommand(e.target.value)} aria-label={t("apps.taskCommand")} />
         <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !schedule || !command}>{t("apps.addTask")}</Btn>
       </div>
       {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
@@ -2114,7 +2114,7 @@ function DomainOptionsCard({
         {https ? "https://" : "http://"}{domain}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select style={{ ...envField, minWidth: 200 }} value={redirect} onChange={(e) => setRedirect(e.target.value)}>
+        <select style={{ ...envField, minWidth: 200 }} value={redirect} onChange={(e) => setRedirect(e.target.value)} aria-label={t("apps.redirectLabel")}>
           <option value="">{t("apps.redirectNone")}</option>
           <option value="root">{t("apps.redirectRoot")}</option>
           <option value="www">{t("apps.redirectWww")}</option>
@@ -2342,9 +2342,9 @@ function CredentialsCard({
         </div>
       ) : (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input style={{ ...envField, width: 200 }} placeholder={t("apps.registryUrl")} value={url} onChange={(e) => setUrl(e.target.value)} />
-          <input style={{ ...envField, width: 150 }} placeholder={t("apps.registryUser")} value={user} onChange={(e) => setUser(e.target.value)} />
-          <input style={{ ...envField, flex: 1, minWidth: 160 }} type="password" placeholder={t("apps.registryToken")} value={token} onChange={(e) => setToken(e.target.value)} />
+          <input style={{ ...envField, width: 200 }} placeholder={t("apps.registryUrl")} value={url} onChange={(e) => setUrl(e.target.value)} aria-label={t("apps.registryUrl")} />
+          <input style={{ ...envField, width: 150 }} placeholder={t("apps.registryUser")} value={user} onChange={(e) => setUser(e.target.value)} aria-label={t("apps.registryUser")} />
+          <input style={{ ...envField, flex: 1, minWidth: 160 }} type="password" placeholder={t("apps.registryToken")} value={token} onChange={(e) => setToken(e.target.value)} aria-label={t("apps.registryToken")} />
           <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
         </div>
       )}
@@ -2429,7 +2429,7 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
               {volumes.map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
             </select>
           </label>
-          <input style={{ ...volField, width: "100%" }} placeholder="https://…/volume.tar.gz" value={impUrl} onChange={(e) => setImpUrl(e.target.value)} />
+          <input style={{ ...volField, width: "100%" }} placeholder="https://…/volume.tar.gz" value={impUrl} onChange={(e) => setImpUrl(e.target.value)} aria-label={t("apps.volImportUrl")} />
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
               <input type="checkbox" checked={impGzip} onChange={(e) => setImpGzip(e.target.checked)} /> {t("apps.volImportGzip")}
@@ -2437,7 +2437,7 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
               <input type="checkbox" checked={impEnc} onChange={(e) => setImpEnc(e.target.checked)} /> {t("apps.volImportEncrypted")}
             </label>
-            {impEnc && <input style={{ ...volField, flex: 1, minWidth: 160 }} type="password" placeholder={t("apps.volImportKey")} value={impKey} onChange={(e) => setImpKey(e.target.value)} />}
+            {impEnc && <input style={{ ...volField, flex: 1, minWidth: 160 }} type="password" placeholder={t("apps.volImportKey")} value={impKey} onChange={(e) => setImpKey(e.target.value)} aria-label={t("apps.volImportKey")} />}
           </div>
           <div style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.volImportWarn")}</div>
           <div>
