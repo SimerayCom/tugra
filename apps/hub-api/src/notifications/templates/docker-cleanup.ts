@@ -1,6 +1,6 @@
 import { base, clamp, fields, s, type EventTemplate } from "../event";
 
-/** docker_cleanup_success / docker_cleanup_failed — a `docker system prune` maintenance run finished.
+/** docker_cleanup_success / docker_cleanup_failed — a scoped Docker cleanup (image/builder/network prune) finished.
  *  Never critical (@here): maintenance, self-healing on the next cycle even when it fails. */
 export const dockerCleanupTemplate: EventTemplate = {
   render(ev, env) {

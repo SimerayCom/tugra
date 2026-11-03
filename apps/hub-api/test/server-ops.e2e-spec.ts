@@ -77,8 +77,12 @@ describe("Server ops / docker cleanup (e2e)", () => {
       .expect(200);
     expect(res.body.output).toContain("reclaimed");
     await sleep(60);
-    expect(commands.join("\n")).toContain("docker system prune -af");
-    expect(commands.join("\n")).not.toContain("--volumes"); // default off
+    const cmds = commands.join("\n");
+    expect(cmds).toContain("docker image prune -f");
+    expect(cmds).toContain("docker builder prune -af --filter until=168h");
+    expect(cmds).not.toContain("docker system prune"); // scoped: never a blanket system prune
+    expect(cmds).not.toContain("network prune"); // never strands a stopped container's network
+    expect(cmds).not.toContain("volume prune"); // volumes default off
   });
 
   it("saves a cleanup schedule config (with volumes)", async () => {
@@ -102,7 +106,7 @@ describe("Server ops / docker cleanup (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     await sleep(60);
-    expect(commands.join("\n")).toContain("docker system prune -af --volumes");
+    expect(commands.join("\n")).toContain("docker volume prune -f"); // volumes opt-in adds the volume prune step
   });
 
   it("checks proxy status, restarts it, and tails logs via the agent", async () => {

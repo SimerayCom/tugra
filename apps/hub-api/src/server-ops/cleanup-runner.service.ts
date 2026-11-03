@@ -27,7 +27,10 @@ export class CleanupRunnerService {
   }
 
   /**
-   * Run `docker system prune` on a server; records lastCleanupAt. Returns the agent output.
+   * Run a scoped Docker cleanup on a server (dangling-image + build-cache prune — see buildCleanupScript;
+   * never `docker system prune` / container / network / tagged-image prune, so stopped managed containers,
+   * their networks and the hub-managed rollback images all survive); records lastCleanupAt. Returns the
+   * agent output.
    * `respectThreshold` (scheduled runs only): when the server has a cleanupThresholdPct, skip the prune
    * unless the latest reported disk usage is at/above it. A manual "Clean now" passes false → always runs.
    * Unknown disk usage (no metric yet) never skips — better to prune than let a filling disk slip through.
@@ -73,8 +76,33 @@ export class CleanupRunnerService {
   }
 }
 
-/** Pull the human "Total reclaimed space" figure docker prints (e.g. "1.2GB"); "" when absent → dropped. */
+/** Sum every reclaimed-space figure the multi-step cleanup prints — `docker image/volume prune` emit
+ *  "Total reclaimed space: X" and `docker builder prune` emits "Total: X" (a different label) — and
+ *  humanize the sum; "" when nothing parseable → dropped from the notification. */
 function parseReclaimed(output: string): string {
-  const m = output.match(/Total reclaimed space:\s*([\d.]+\s*[A-Za-z]+)/i);
-  return m ? m[1].replace(/\s+/g, " ").trim() : "";
+  const unit: Record<string, number> = {
+    B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12, PB: 1e15,
+    KIB: 1024, MIB: 1024 ** 2, GIB: 1024 ** 3, TIB: 1024 ** 4, PIB: 1024 ** 5,
+  };
+  let bytes = 0;
+  let found = false;
+  for (const m of output.matchAll(/Total(?: reclaimed space)?:\s*([\d.]+)\s*([KMGTP]?i?B)\b/gi)) {
+    const mult = unit[m[2].toUpperCase()];
+    if (mult == null) continue;
+    bytes += parseFloat(m[1]) * mult;
+    found = true;
+  }
+  return found ? humanizeBytes(bytes) : "";
+}
+
+/** Short SI-style byte size for a notification (e.g. "1.2GB", "0B") — mirrors docker's own prune output. */
+function humanizeBytes(n: number): string {
+  if (!(n > 0)) return "0B";
+  const units = ["B", "kB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  while (n >= 1000 && i < units.length - 1) {
+    n /= 1000;
+    i++;
+  }
+  return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)}${units[i]}`;
 }
