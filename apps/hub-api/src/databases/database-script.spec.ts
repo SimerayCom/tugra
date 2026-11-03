@@ -118,6 +118,10 @@ describe("database-script", () => {
       expect(buildDatabaseRunScript(spec("POSTGRES", { hostPort: 5455 }))).toContain("-p 5455:5432");
     });
 
+    it("caps json-file logs so a chatty database can't fill the host disk", () => {
+      expect(buildDatabaseRunScript(spec("POSTGRES"))).toContain("--log-driver json-file --log-opt max-size=10m --log-opt max-file=3");
+    });
+
     it("appends the redis requirepass command after the image", () => {
       const s = buildDatabaseRunScript(spec("REDIS"));
       expect(s).toContain("redis:7-alpine");

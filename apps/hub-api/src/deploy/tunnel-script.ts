@@ -7,7 +7,7 @@
  * Self-contained (own shq/b64) except for PROXY_NETWORK — the whole point is to
  * join Traefik's exact network, so that identifier is single-sourced.
  */
-import { PROXY_NETWORK } from "./deploy-script";
+import { PROXY_NETWORK, LOG_ROTATION_ARGS } from "./deploy-script";
 
 export const TUNNEL_CONTAINER_NAME = "tugra-cfd";
 export const TUNNEL_ENV_DIR = "/etc/tugra/tunnel";
@@ -41,7 +41,7 @@ export function buildTunnelSetupScript(opts: { token: string; image?: string }):
     // base64-transported so the token survives without shell-quoting issues.
     `printf %s ${shq(envB64)} | base64 -d > ${TUNNEL_ENV_PATH}`,
     `chmod 600 ${TUNNEL_ENV_PATH}`,
-    `docker run -d --name ${TUNNEL_CONTAINER_NAME} --restart unless-stopped --network ${PROXY_NETWORK} --env-file ${TUNNEL_ENV_PATH} ${image} tunnel --no-autoupdate run`,
+    `docker run -d --name ${TUNNEL_CONTAINER_NAME} --restart unless-stopped ${LOG_ROTATION_ARGS} --network ${PROXY_NETWORK} --env-file ${TUNNEL_ENV_PATH} ${image} tunnel --no-autoupdate run`,
   ].join("\n");
 }
 

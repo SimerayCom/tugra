@@ -28,6 +28,10 @@ describe("buildTunnelSetupScript", () => {
     expect(s).toContain("tunnel --no-autoupdate run");
   });
 
+  it("caps json-file logs on the connector", () => {
+    expect(buildTunnelSetupScript({ token: "t" })).toContain("--log-driver json-file --log-opt max-size=10m --log-opt max-file=3");
+  });
+
   it("is idempotent: creates the network and removes any pre-existing connector before running", () => {
     const s = buildTunnelSetupScript({ token: "t" });
     expect(s).toContain("docker network create tugra-proxy 2>/dev/null || true");
