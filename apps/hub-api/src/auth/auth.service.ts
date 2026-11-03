@@ -164,6 +164,11 @@ export class AuthService {
         ...ipData,
         // Mirror ServersService DEFAULT_CAPABILITIES (least privilege — the interactive terminal is opt-in).
         capabilities: ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"],
+        // Disk hygiene on by default (mirrors ServersService.insertServer): a daily scoped, rollback-safe
+        // prune above 80% disk that never touches named volumes. Scheduled at the next hub bootstrap.
+        cleanupEnabled: true,
+        cleanupCron: "0 3 * * *",
+        cleanupThresholdPct: 80,
       },
     });
   }

@@ -153,6 +153,13 @@ export class ServersService {
         enrollTokenExpiresAt: new Date(Date.now() + ENROLL_TTL_MS),
         status: ServerStatus.PENDING,
         capabilities: DEFAULT_CAPABILITIES, // least privilege: no terminal by default
+        // Disk hygiene on by default (Coolify parity): a daily scoped prune that only runs above 80% disk.
+        // The prune is rollback-safe and never touches named volumes (cleanupVolumes stays false), so it's
+        // safe out of the box; the operator can retune or disable it. Scheduled at the next hub bootstrap
+        // (or on the next setConfig). Kept in sync with provisionLocalServer and the cleanup-default backfill.
+        cleanupEnabled: true,
+        cleanupCron: "0 3 * * *",
+        cleanupThresholdPct: 80,
         // Set only for cloud-provisioned servers, so a later delete can destroy the VM.
         ...(provisioning ? { provider: provisioning.provider, cloudCredentialId: provisioning.cloudCredentialId } : {}),
       },
