@@ -1799,6 +1799,10 @@ export class ApplicationsService {
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
       const ok = r.exitCode === 0;
+      // The rollback script refuses (exit 7) when the target's LOCAL image is gone, WITHOUT removing the live
+      // container (see buildRunScript), so the current version keeps serving. Don't flip a still-serving app
+      // to FAILED in that case — the rollback failed, but nothing went down.
+      const refusedImageGone = !ok && (r.exitCode === 7 || r.output.includes("TUGRA_ROLLBACK: image"));
       // For compose, the compose YAML IS the deployable source — persist the rolled-back file as the
       // app's current one (DB+disk consistent, so a later restart/redeploy uses it). IMAGE apps keep
       // app.image and re-run an old tag, so nothing to persist there.
@@ -1826,7 +1830,7 @@ export class ApplicationsService {
       });
       await this.prisma.application.update({
         where: { id: app.id },
-        data: { status: ok ? AppStatus.RUNNING : AppStatus.FAILED },
+        data: { status: ok ? AppStatus.RUNNING : refusedImageGone ? app.status : AppStatus.FAILED },
       });
       this.deployLogs.finish(app.id, {
         status: ok ? "SUCCESS" : "FAILED",
