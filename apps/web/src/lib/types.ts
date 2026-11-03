@@ -1065,6 +1065,7 @@ export interface AppConfigMount {
 export interface Application {
   id: string;
   name: string;
+  description: string | null;
   templateSlug: string | null;
   templateLogo: string | null;
   // ISO timestamp when a custom icon was last uploaded (null = no custom icon); cache-busts the icon URL.

@@ -136,6 +136,7 @@ const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name|-v|--volu
 export const AppViewSchema = z.object({
   id: z.string(),
   name: z.string(),
+  description: z.string().nullable(),
   source: z.enum(["IMAGE", "GIT", "COMPOSE"]),
   image: z.string().nullable(),
   gitUrl: z.string().nullable(),
@@ -718,6 +719,7 @@ export class ApplicationsService {
       const app = await tx.application.create({
         data: {
           name,
+          description: src.description,
           teamId: src.teamId,
           serverId: src.serverId,
           environmentId: src.environmentId,
@@ -2459,6 +2461,14 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.name.update", target: id });
   }
 
+  /** Set the app's free-text description (operator note). Trimmed; empty → null. Display-only metadata,
+   *  so it never touches the deploy spec. */
+  async setDescription(userId: string, id: string, description: string | null): Promise<void> {
+    await this.requireWrite(userId, id);
+    await this.prisma.application.update({ where: { id }, data: { description: description?.trim() || null } });
+    await this.audit.log({ actor: userId, action: "app.description.update", target: id });
+  }
+
   async setDockerOptions(userId: string, id: string, dockerOptions: string | null): Promise<void> {
     const app = await this.requireWrite(userId, id);
     // Validate at set-time (clear 400 now, not a failed deploy later): reject an unterminated quote AND any
@@ -3905,6 +3915,7 @@ export class ApplicationsService {
     return {
       id: app.id,
       name: app.name,
+      description: app.description ?? null,
       source: app.source,
       image: app.image,
       gitUrl: app.gitUrl,

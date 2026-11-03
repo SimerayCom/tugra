@@ -1160,6 +1160,20 @@ describe("ApplicationsService", () => {
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.name.update" }));
   });
 
+  it("sets a description (trimmed) and clears it with blank/null", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setDescription("u1", "app1", "  the billing API  ");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { description: "the billing API" } }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.description.update" }));
+    await svc.setDescription("u1", "app1", "   ");
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { description: null } }));
+    await svc.setDescription("u1", "app1", null);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { description: null } }));
+  });
+
   it("stores custom docker options on setDockerOptions", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

@@ -379,6 +379,7 @@ export default function AppDetailPage() {
   const configGroups = visibleConfigGroups(appData);
   const activeSection = resolveTab(sectionRaw, ["overview", ...configGroups.map((g) => g.key)], "overview");
   const renderConfigCard: Record<ConfigCardId, () => ReactNode> = {
+    description: () => <AppDescriptionCard id={id} description={appData.description} />,
     deploySettings: () => (
       <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} imagesToKeep={appData.imagesToKeep} />
     ),
@@ -2012,6 +2013,35 @@ function ExtraDomainsCard({ id, extraDomains }: { id: string; extraDomains: stri
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.extraDomainsRedeploy")}</div>}
+    </SectionCard>
+  );
+}
+
+function AppDescriptionCard({ id, description }: { id: string; description: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [desc, setDesc] = useState(description ?? "");
+  useEffect(() => { setDesc(description ?? ""); }, [description]);
+  const dirty = desc.trim() !== (description ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setAppDescription(id, desc.trim() || null),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  return (
+    <SectionCard title={t("apps.description")} desc={t("apps.descriptionHint")}>
+      <textarea
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        placeholder={t("apps.descriptionPlaceholder")}
+        aria-label={t("apps.description")}
+        maxLength={2000}
+        spellCheck={false}
+        style={{ width: "100%", minHeight: 56, maxHeight: 160, resize: "vertical", fontSize: 13, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+      />
+      <div style={{ marginTop: 8 }}>
+        <Btn onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{t("apps.save")}</Btn>
+      </div>
     </SectionCard>
   );
 }

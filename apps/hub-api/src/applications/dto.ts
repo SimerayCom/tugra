@@ -121,6 +121,13 @@ export const RenameSchema = z.object({
 });
 export type RenameInput = z.infer<typeof RenameSchema>;
 
+// Free-text operator note. Stored verbatim and only ever displayed (never interpolated into a shell/label),
+// so no character restriction beyond a length cap; null/"" clears it.
+export const SetDescriptionSchema = z.object({
+  description: z.string().max(2000).nullable(),
+});
+export type SetDescriptionInput = z.infer<typeof SetDescriptionSchema>;
+
 // A custom app icon: a base64-encoded PNG. The string cap (~96k chars ≈ 70KB decoded) keeps the JSON body
 // under Express's 100KB limit; the real PNG/square/size validation is server-side in ApplicationsService.
 export const SetIconSchema = z.object({

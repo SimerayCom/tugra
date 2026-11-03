@@ -928,6 +928,7 @@ model Application {
   placement      Json?        // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client
   constraintServerId String?   // system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
   name           String
+  description    String?      // free-text operator note shown on the app page (Coolify parity)
   templateSlug   String?      // catalog slug when installed from a template (for its logo)
   // A user-uploaded custom icon lives in the sibling AppIcon table (bytes kept out of this hot row). This
   // nullable marker is set to the upload time and cleared on removal: the app list reads it to know whether

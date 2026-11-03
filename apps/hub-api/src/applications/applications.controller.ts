@@ -47,6 +47,8 @@ import {
   PreviewConfigSchema,
   RenameInput,
   RenameSchema,
+  SetDescriptionInput,
+  SetDescriptionSchema,
   SetIconInput,
   SetIconSchema,
   SetBuildArgsInput,
@@ -417,6 +419,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(RenameSchema)) body: RenameInput,
   ) {
     await this.apps.rename(user.userId, id, body.name);
+    return { ok: true };
+  }
+
+  @Put(":id/description")
+  @HttpCode(200)
+  @ApiZodBody(SetDescriptionSchema)
+  async setDescription(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDescriptionSchema)) body: SetDescriptionInput,
+  ) {
+    await this.apps.setDescription(user.userId, id, body.description);
     return { ok: true };
   }
 
