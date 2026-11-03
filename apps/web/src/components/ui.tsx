@@ -24,6 +24,8 @@ export function Btn({
   // the form (that double-fired mutations). Submit buttons pass type="submit".
   type = "button",
   icon: Icon,
+  iconTone,
+  loading = false,
   children,
   style,
   className,
@@ -32,15 +34,21 @@ export function Btn({
   variant?: "primary" | "ghost" | "danger" | "dangerGhost";
   // Optional leading lucide icon, rendered before the label (decorative, aria-hidden).
   icon?: LucideIcon;
+  // Tint ONLY the leading icon with a semantic hue so a lifecycle action reads at a glance, while
+  // the button chrome stays quiet (Coolify-style coloured icons without a shouting fill).
+  iconTone?: "success" | "warn" | "danger";
+  // Show a spinner in place of the icon and mark the button aria-busy + disabled (keeps the label).
+  loading?: boolean;
 }) {
+  const isDisabled = rest.disabled || loading;
   const base: CSSProperties = {
     fontFamily: "inherit",
     fontSize: 13,
     fontWeight: 600,
     padding: "8px 14px",
     borderRadius: "var(--r1)",
-    cursor: rest.disabled ? "not-allowed" : "pointer",
-    opacity: rest.disabled ? 0.5 : 1,
+    cursor: isDisabled ? "not-allowed" : "pointer",
+    opacity: isDisabled ? 0.5 : 1,
     border: "1px solid transparent",
     transition: "filter .15s, transform .05s",
     display: "inline-flex",
@@ -48,6 +56,7 @@ export function Btn({
     justifyContent: "center",
     gap: 6,
   };
+  const toneColor = iconTone === "success" ? "var(--c-g)" : iconTone === "warn" ? "var(--c-am)" : iconTone === "danger" ? "var(--c-r)" : undefined;
   const variants: Record<string, CSSProperties> = {
     primary: { background: "var(--c-a)", color: "var(--c-on-a)" },
     ghost: {
@@ -68,8 +77,12 @@ export function Btn({
     },
   };
   return (
-    <button type={type} className={["tg-btn", className].filter(Boolean).join(" ")} style={{ ...base, ...variants[variant], ...style }} {...rest}>
-      {Icon && <Icon size={14} aria-hidden style={{ flexShrink: 0 }} />}
+    <button type={type} className={["tg-btn", className].filter(Boolean).join(" ")} aria-busy={loading || undefined} style={{ ...base, ...variants[variant], ...style }} {...rest} disabled={isDisabled}>
+      {loading ? (
+        <span aria-hidden style={{ width: 14, height: 14, flexShrink: 0, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite", opacity: 0.85 }} />
+      ) : (
+        Icon && <Icon size={14} aria-hidden style={{ flexShrink: 0, ...(toneColor ? { color: toneColor } : {}) }} />
+      )}
       {children}
     </button>
   );

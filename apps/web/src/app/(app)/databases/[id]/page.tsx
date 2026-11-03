@@ -164,7 +164,7 @@ export default function DatabaseDetailPage() {
         actions={
           db.canWrite ? (
             <>
-              <Btn icon={db.status === "RUNNING" ? RotateCw : db.status === "STOPPED" ? Play : Rocket} onClick={() => provision.mutate()} disabled={provision.isPending}>
+              <Btn icon={db.status === "RUNNING" ? RotateCw : db.status === "STOPPED" ? Play : Rocket} iconTone={db.status === "RUNNING" ? "warn" : "success"} loading={provision.isPending} onClick={() => provision.mutate()}>
                 {provision.isPending
                   ? t("databases.provisioning")
                   : db.status === "RUNNING" ? t("databases.restart")
@@ -172,7 +172,7 @@ export default function DatabaseDetailPage() {
                   : db.status === "FAILED" ? t("databases.retryProvision")
                   : t("databases.provision")}
               </Btn>
-              <Btn icon={Square} variant="dangerGhost" onClick={() => stop.mutate()} disabled={stop.isPending || db.status !== "RUNNING"}>{t("databases.stop")}</Btn>
+              <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={db.status !== "RUNNING"} onClick={async () => { if (await confirm({ body: t("databases.stopConfirm"), danger: true })) stop.mutate(); }}>{t("databases.stop")}</Btn>
               <Btn icon={Terminal} variant="ghost" onClick={() => setTab("shell")}>{t("databases.openShell")}</Btn>
               <div style={{ position: "relative" }}>
                 <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("databases.more")}><Ellipsis size={16} /></Btn>
