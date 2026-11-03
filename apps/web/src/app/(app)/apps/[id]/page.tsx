@@ -27,12 +27,10 @@ import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
-import { useAuth } from "../../../../lib/auth";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
 import { completeBasicAuthRows, hasIncompleteBasicAuthRow, canSaveBasicAuth, basicAuthSaveRemovesAll } from "../../../../lib/basic-auth";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
-import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
 import { TagsCard } from "../../../../components/tags";
@@ -44,6 +42,9 @@ import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
 import { ExtraPortsCard } from "../../../../components/extra-ports-card";
 import { LimitsCard } from "../../../../components/limits-card";
+import { HealthCheckCard } from "../../../../components/health-check-card";
+import { DockerOptionsCard } from "../../../../components/docker-options-card";
+import { DomainCard } from "../../../../components/domain-card";
 import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
@@ -1427,96 +1428,6 @@ function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-function HealthCheckCard({
-  id,
-  healthCheckType,
-  healthCheckPath,
-  healthCheckPort,
-  healthCmd,
-  timings,
-}: {
-  id: string;
-  healthCheckType: string | null;
-  healthCheckPath: string | null;
-  healthCheckPort: number | null;
-  healthCmd: string | null;
-  timings: { interval: number | null; timeout: number | null; retries: number | null; startPeriod: number | null; expectedStatus: number | null };
-}) {
-  const t = useT();
-  const qc = useQueryClient();
-  // "" = auto (send null); otherwise the explicit type. A legacy app with a command but no
-  // saved type shows as CMD so its command stays visible/editable instead of being hidden.
-  const [type, setType] = useState(healthCheckType ?? (healthCmd ? "CMD" : ""));
-  const [path, setPath] = useState(healthCheckPath ?? "");
-  const [port, setPort] = useState(healthCheckPort != null ? String(healthCheckPort) : "");
-  const [cmd, setCmd] = useState(healthCmd ?? "");
-  const num = (n: number | null) => (n != null ? String(n) : "");
-  const [interval, setInterval] = useState(num(timings.interval));
-  const [timeout, setTimeout] = useState(num(timings.timeout));
-  const [retries, setRetries] = useState(num(timings.retries));
-  const [startPeriod, setStartPeriod] = useState(num(timings.startPeriod));
-  const [expectedStatus, setExpectedStatus] = useState(num(timings.expectedStatus));
-  const toNum = (s: string) => (s.trim() ? Number(s) : null); // empty → reset to default
-  const save = useMutation({
-    mutationFn: () =>
-      api.setAppHealthCheck(id, {
-        type: type || null,
-        path: type === "HTTP" ? path.trim() || null : null,
-        port: type === "HTTP" && port ? Number(port) : null,
-        command: type === "CMD" ? cmd.trim() || null : null,
-        interval: toNum(interval),
-        timeout: toNum(timeout),
-        retries: toNum(retries),
-        startPeriod: toNum(startPeriod),
-        expectedStatus: type === "HTTP" ? toNum(expectedStatus) : null,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
-    meta: { successMessage: t("apps.saved") },
-  });
-
-  return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.healthCheck")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.healthCheckDesc")}</p>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select style={{ ...envField, width: 200 }} value={type} onChange={(e) => setType(e.target.value)} aria-label={t("apps.healthCheckType")}>
-          {["", "NONE", "HTTP", "CMD"].map((v) => (
-            <option key={v || "auto"} value={v}>
-              {t(`apps.healthCheckType_${v || "auto"}`)}
-            </option>
-          ))}
-        </select>
-        {type === "HTTP" && (
-          <>
-            <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.healthCheckPath")} value={path} onChange={(e) => setPath(e.target.value)} />
-            <input style={{ ...envField, width: 130 }} type="number" placeholder={t("apps.healthCheckPort")} value={port} onChange={(e) => setPort(e.target.value)} />
-          </>
-        )}
-        {type === "CMD" && (
-          <input style={{ ...envField, flex: "1 1 100%" }} placeholder={t("apps.healthCmd")} value={cmd} onChange={(e) => setCmd(e.target.value)} />
-        )}
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
-      </div>
-      {type !== "NONE" && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.healthTimings")}</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.healthInterval")} value={interval} onChange={(e) => setInterval(e.target.value)} aria-label={t("apps.healthInterval")} />
-            <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.healthTimeout")} value={timeout} onChange={(e) => setTimeout(e.target.value)} aria-label={t("apps.healthTimeout")} />
-            <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.healthRetries")} value={retries} onChange={(e) => setRetries(e.target.value)} aria-label={t("apps.healthRetries")} />
-            <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.healthStartPeriod")} value={startPeriod} onChange={(e) => setStartPeriod(e.target.value)} aria-label={t("apps.healthStartPeriod")} />
-            {type === "HTTP" && (
-              <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.healthExpectedStatus")} value={expectedStatus} onChange={(e) => setExpectedStatus(e.target.value)} aria-label={t("apps.healthExpectedStatus")} />
-            )}
-          </div>
-          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.healthTimingsHint")}</p>
-        </div>
-      )}
-      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
-  );
-}
-
 function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null }) {
   const t = useT();
   const qc = useQueryClient();
@@ -1602,56 +1513,6 @@ function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId
       </div>
       {teamRegistries.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.buildNoRegistries")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
-  );
-}
-
-function DockerOptionsCard({ id, dockerOptions, allowPrivileged }: { id: string; dockerOptions: string | null; allowPrivileged: boolean }) {
-  const t = useT();
-  const qc = useQueryClient();
-  const { user } = useAuth();
-  const isOwner = !!user?.isInstanceOwner;
-  const confirm = useConfirm();
-  const [val, setVal] = useState(dockerOptions ?? "");
-  // Keep the field in sync when the server changes the stored value out from under it — e.g. disabling the
-  // privileged override clears privileged options server-side, so the stale text must not linger.
-  useEffect(() => setVal(dockerOptions ?? ""), [dockerOptions]);
-  const save = useMutation({
-    mutationFn: () => api.setAppDockerOptions(id, val.trim() || null),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
-    meta: { successMessage: t("apps.saved") },
-  });
-  // Host-privilege gate — INSTANCE OWNER only (the hub re-checks session + owner; this toggle is a render gate).
-  const togglePriv = useMutation({
-    mutationFn: (allow: boolean) => api.setAppAllowPrivilegedDockerOptions(id, allow),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
-    meta: { successMessage: t("apps.saved") },
-  });
-  const onTogglePriv = async (next: boolean) => {
-    if (next && !(await confirm({ title: t("apps.privilegedConfirmTitle"), body: t("apps.privilegedConfirmBody"), danger: true }))) return;
-    togglePriv.mutate(next);
-  };
-  return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.dockerOptions")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.dockerOptionsDesc")}</p>
-      {isOwner && (
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-tx2)", margin: "0 0 10px", cursor: "pointer" }}>
-          <input type="checkbox" checked={allowPrivileged} disabled={togglePriv.isPending} onChange={(e) => onTogglePriv(e.target.checked)} />
-          <span>{t("apps.privilegedToggle")}</span>
-        </label>
-      )}
-      {allowPrivileged && <p style={{ fontSize: 12, color: "var(--c-r)", margin: "0 0 12px" }}>{t("apps.privilegedHint")}</p>}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input
-          style={{ ...envField, flex: 1 }}
-          placeholder="--cap-add=NET_ADMIN --sysctl net.core.somaxconn=1024"
-          value={val}
-          onChange={(e) => setVal(e.target.value)}
-        />
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
-      </div>
-      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.dockerOptionsRedeploy")}</div>}
     </Card>
   );
 }
@@ -2113,42 +1974,6 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: { id: s
         </>
       )}
       {toggle.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(toggle.error as Error).message}</div>}
-    </Card>
-  );
-}
-
-function DomainCard({ id, domain, https }: { id: string; domain: string | null; https: boolean }) {
-  const t = useT();
-  const qc = useQueryClient();
-  const [value, setValue] = useState(domain ?? "");
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["app", id] });
-  const save = useMutation({
-    mutationFn: () => api.setAppDomain(id, cleanDomain(value) || null),
-    onSuccess: invalidate,
-  });
-  const clear = useMutation({
-    mutationFn: () => api.setAppDomain(id, null),
-    onSuccess: () => { setValue(""); invalidate(); },
-  });
-  const pending = save.isPending || clear.isPending;
-
-  return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.setDomain")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.domainRedeployNote")}</p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <input
-          style={{ ...envField, minWidth: 240, flex: 1 }}
-          value={value}
-          placeholder={t("apps.domainPlaceholder")}
-          onChange={(e) => setValue(e.target.value)}
-        />
-        <Btn onClick={() => save.mutate()} disabled={pending || !cleanDomain(value)}>{t("apps.domainSave")}</Btn>
-        {domain && <Btn variant="ghost" onClick={() => clear.mutate()} disabled={pending}>{t("apps.domainClear")}</Btn>}
-      </div>
-      {https && cleanDomain(value) && (
-        <div className="mono" style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 10 }}>https://{cleanDomain(value)}</div>
-      )}
     </Card>
   );
 }
