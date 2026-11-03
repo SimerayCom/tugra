@@ -1049,6 +1049,9 @@ export const api = {
   setAppExtraPorts(id: string, ports: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/extra-ports`, { method: "PUT", body: JSON.stringify({ ports }) });
   },
+  setAppNetworkAliases(id: string, aliases: string[]) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/network-aliases`, { method: "PUT", body: JSON.stringify({ aliases }) });
+  },
   setAppContainerPort(id: string, containerPort: number) {
     return apiFetch<{ ok: true }>(`/apps/${id}/container-port`, { method: "PUT", body: JSON.stringify({ containerPort }) });
   },

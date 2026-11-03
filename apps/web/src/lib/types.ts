@@ -1087,6 +1087,7 @@ export interface Application {
   previewExcludeKeys: string[];
   previewLimit: number | null;
   extraPorts: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[];
+  networkAliases: string[];
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;

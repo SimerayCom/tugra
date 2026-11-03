@@ -221,6 +221,7 @@ export const AppViewSchema = z.object({
   hostPort: z.number().nullable(),
   containerPort: z.number().nullable(),
   extraPorts: z.array(z.object({ hostPort: z.number(), containerPort: z.number(), protocol: z.enum(["tcp", "udp"]) })),
+  networkAliases: z.array(z.string()),
   domain: z.string().nullable(),
   extraDomains: z.array(z.string()), // additional alias hostnames routed to the same container
   domainRedirect: z.string().nullable(),
@@ -792,6 +793,9 @@ export class ApplicationsService {
           dbNetwork: src.dbNetwork,
           // A copied host port would clash on the same server; cleared (re-allocation is a follow-up).
           hostPort: null,
+          // Network aliases are reset, NOT copied: a duplicate alias on the shared user-defined network
+          // would round-robin between the source and the clone. The operator re-adds any it wants.
+          networkAliases: [],
           containerPort: src.containerPort,
           domain: expose.domain,
           https: expose.https,
@@ -1301,6 +1305,7 @@ export class ApplicationsService {
       app.rollbackOnFailure &&
       !app.hostPort &&
       !(Array.isArray(app.extraPorts) && app.extraPorts.length > 0) && // extra published ports can't overlap → recreate
+      !(Array.isArray(app.networkAliases) && app.networkAliases.length > 0) && // a rollout container would share the alias with the old one and round-robin to the not-yet-healthy copy → recreate
       !(app.dockerOptions && RISKY_DOCKER_OPTS.test(app.dockerOptions)) &&
       !app.gpus &&
       this.appVolumes(app).length === 0
@@ -2751,6 +2756,21 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.extra_ports.update", target: id, meta: { count: ports.length } });
   }
 
+  /** Replace the app's docker network aliases (extra DNS names on its user-defined network). Names are
+   *  DTO-validated DNS labels, deduped there. Replace-set; empty clears. Applies on the next deploy. */
+  async setNetworkAliases(userId: string, id: string, aliases: string[]): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    // Swarm/cluster apps deploy via service-script.ts, which does not emit --network-alias, so accepting
+    // them would be a silent no-op — refuse (mirrors setDbNetwork / extra domains).
+    if (app.clusterId) throw new BadRequestException("network aliases aren't supported for clustered (swarm) apps yet");
+    // Defence-in-depth over the DTO: never let a reserved tugra- name onto the shared network (traefik,
+    // the panel routers, the agent, tugra_db_<id>) — a tenant could otherwise hijack their DNS name.
+    const reserved = aliases.find((a) => /^tugra[-_]/i.test(a));
+    if (reserved) throw new BadRequestException(`'${reserved}' is reserved for Tugra-managed containers`);
+    await this.prisma.application.update({ where: { id }, data: { networkAliases: aliases } });
+    await this.audit.log({ actor: userId, action: "app.network_aliases.update", target: id, meta: { count: aliases.length } });
+  }
+
   /** Set the ingress container port an IMAGE/GIT app listens on inside the container (the proxy's
    *  loadbalancer target, the -p mapping and the default health probe all derive from it). Editable after
    *  create so a wrong value (e.g. an import that defaulted to 80) can be fixed without recreating the app.
@@ -3752,6 +3772,7 @@ export class ApplicationsService {
       hostPort: app.hostPort,
       containerPort: web?.port ?? app.containerPort,
       extraPorts: app.source === "COMPOSE" ? null : parseExtraPorts(app.extraPorts),
+      networkAliases: app.source === "COMPOSE" || app.clusterId ? [] : (app.networkAliases ?? []),
       domain: app.domain,
       extraDomains: app.extraDomains ?? [],
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
@@ -3997,6 +4018,7 @@ export class ApplicationsService {
       hostPort: app.hostPort,
       containerPort: app.containerPort,
       extraPorts: parseExtraPorts(app.extraPorts),
+      networkAliases: app.networkAliases ?? [],
       domain: app.domain,
       extraDomains: app.extraDomains ?? [],
       domainRedirect: app.domainRedirect,

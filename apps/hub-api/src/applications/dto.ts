@@ -536,6 +536,27 @@ export const SetExtraPortsSchema = z.object({
 }).strict();
 export type SetExtraPortsInput = z.infer<typeof SetExtraPortsSchema>;
 
+// Docker network aliases: extra DNS names the container answers to on its user-defined network. Each must be
+// a DNS label (lowercase letters/digits/hyphen, not starting/ending with a hyphen) — the same shape Docker
+// accepts for --network-alias — so a value can never inject a flag; it is shell-quoted at the call site too.
+// Replace-set (the whole list each time); empty clears. Capped at 20.
+const DNS_LABEL = z
+  .string()
+  .min(1)
+  .max(63)
+  .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "a network alias must be a DNS label (a-z, 0-9, hyphen)")
+  // SECURITY: a `tugra-`/`tugra_`-prefixed alias on the shared network (tugra-proxy / tugra-net) would add a
+  // second DNS answer for a Tugra-managed container (traefik=tugra-proxy, the panel routers tugra-panel-hub/
+  // -web, the agent, tugra_db_<id>) and let a tenant intercept panel/ingress/other-tenant traffic. Mirror the
+  // compose container_name guard (RESERVED_CONTAINER_NAME = /^tugra[-_]/i).
+  .regex(/^(?!tugra[-_])/i, "a network alias cannot start with 'tugra-' (reserved for Tugra-managed containers)");
+export const SetNetworkAliasesSchema = z
+  .object({
+    aliases: z.array(DNS_LABEL).max(20).refine((a) => new Set(a).size === a.length, { message: "an alias can't repeat" }),
+  })
+  .strict();
+export type SetNetworkAliasesInput = z.infer<typeof SetNetworkAliasesSchema>;
+
 // The ingress container port an IMAGE/GIT app listens on inside the container (proxy routes here). Editable
 // after create so a wrong imported value (default 80) can be fixed without recreating the app. COMPOSE apps
 // infer this from their YAML, so the setter rejects them.

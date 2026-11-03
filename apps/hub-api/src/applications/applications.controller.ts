@@ -67,6 +67,8 @@ import {
   SetContainerPortSchema,
   SetExtraPortsInput,
   SetExtraPortsSchema,
+  SetNetworkAliasesInput,
+  SetNetworkAliasesSchema,
   SetBasicAuthInput,
   SetBasicAuthSchema,
   SetRedirectsInput,
@@ -572,6 +574,18 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetExtraPortsSchema)) body: SetExtraPortsInput,
   ) {
     await this.apps.setExtraPorts(user.userId, id, body.ports);
+    return { ok: true };
+  }
+
+  @Put(":id/network-aliases")
+  @HttpCode(200)
+  @ApiZodBody(SetNetworkAliasesSchema)
+  async setNetworkAliases(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetNetworkAliasesSchema)) body: SetNetworkAliasesInput,
+  ) {
+    await this.apps.setNetworkAliases(user.userId, id, body.aliases);
     return { ok: true };
   }
 

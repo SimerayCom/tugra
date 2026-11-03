@@ -265,6 +265,42 @@ describe("dockerOptionsArgs (shell-injection guard)", () => {
   });
 });
 
+describe("network aliases (--network-alias)", () => {
+  const runLine = (s: string) => s.split("\n").find((l) => l.includes("docker run -d"))!;
+
+  it("emits a --network-alias per name on a routed app (tugra-proxy), shell-quoted", () => {
+    const l = runLine(buildRunScript({ ...base, domain: "x.com", networkAliases: ["api", "internal-cache"] }, "v1"));
+    expect(l).toContain("--network tugra-proxy");
+    expect(l).toContain("--network-alias 'api'");
+    expect(l).toContain("--network-alias 'internal-cache'");
+  });
+
+  it("emits aliases on a db-linked app (tugra-net) even without a domain", () => {
+    const l = runLine(buildRunScript({ ...base, dbNetwork: true, networkAliases: ["api"] }, "v1"));
+    expect(l).toContain("--network tugra-net");
+    expect(l).toContain("--network-alias 'api'");
+  });
+
+  it("emits NO alias on the default bridge (no domain, no db link) — --network-alias would error", () => {
+    const l = runLine(buildRunScript({ ...base, networkAliases: ["api"] }, "v1"));
+    expect(l).not.toContain("--network-alias");
+  });
+
+  it("no aliases → byte-identical run line (no --network-alias token)", () => {
+    const l = runLine(buildRunScript({ ...base, domain: "x.com" }, "v1"));
+    expect(l).not.toContain("--network-alias");
+  });
+
+  it("a domain+db app repeats the aliases on the tugra-net connect (--alias) so db-net peers resolve them", () => {
+    const s = buildRunScript({ ...base, domain: "x.com", dbNetwork: true, networkAliases: ["api"] }, "v1");
+    const connect = s.split("\n").find((l) => l.includes("docker network connect"))!;
+    expect(connect).toContain("--alias 'api'");
+    expect(connect).toContain("tugra-net");
+    const run = runLine(s);
+    expect(run).toContain("--network-alias 'api'"); // and still on tugra-proxy at run
+  });
+});
+
 describe("container command/entrypoint override (exec-form argv)", () => {
   const runLine = (s: string) => s.split("\n").find((l) => l.includes("docker run -d"))!;
 

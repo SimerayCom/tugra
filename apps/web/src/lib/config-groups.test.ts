@@ -139,6 +139,15 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("extraPorts");
   });
 
+  it("networkAliases card is non-compose only (+ write, non-preview)", () => {
+    expect(group(facts(), "domains")!.cardIds).toContain("networkAliases"); // GIT
+    expect(group(facts({ source: "IMAGE" }), "domains")!.cardIds).toContain("networkAliases");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "domains")?.cardIds ?? []).not.toContain("networkAliases");
+    expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("networkAliases");
+    expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("networkAliases");
+    expect(group(facts({ clusterId: "c1" }), "domains")!.cardIds).not.toContain("networkAliases"); // swarm can't emit --network-alias
+  });
+
   it("containerPort card is non-compose only (+ write, non-preview)", () => {
     expect(group(facts(), "domains")!.cardIds).toContain("containerPort"); // GIT
     expect(group(facts({ source: "IMAGE" }), "domains")!.cardIds).toContain("containerPort");
