@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDotenv, toDotenv, duplicateKeys, invalidKeys } from "./dotenv";
+import { parseDotenv, toDotenv, duplicateKeys, invalidKeys, envDirty } from "./dotenv";
 
 describe("parseDotenv", () => {
   it("parses KEY=VALUE, export, and quoted values", () => {
@@ -153,6 +153,30 @@ describe("duplicateKeys", () => {
 
   it("ignores empty keys and returns [] when all keys are unique", () => {
     expect(duplicateKeys([{ key: "A", value: "1" }, { key: "", value: "x" }, { key: "", value: "y" }])).toEqual([]);
+  });
+});
+
+describe("envDirty (save-safety gate)", () => {
+  it("is false while the env has not loaded, so an early Save can't wipe stored vars", () => {
+    // Query pending or errored: data is undefined and rows is still the initial [].
+    expect(envDirty([], undefined)).toBe(false);
+    // Even if the user somehow has rows, an un-loaded stored env must never be overwritten.
+    expect(envDirty([{ key: "A", value: "1" }], undefined)).toBe(false);
+  });
+
+  it("is false when rows match the stored env (nothing to save)", () => {
+    expect(envDirty([], {})).toBe(false);
+    expect(envDirty([{ key: "A", value: "1" }, { key: "B", value: "2" }], { A: "1", B: "2" })).toBe(false);
+    // Order-independent, and empty-key rows are ignored (they aren't persisted).
+    expect(envDirty([{ key: "B", value: "2" }, { key: "A", value: "1" }, { key: "", value: "x" }], { A: "1", B: "2" })).toBe(false);
+  });
+
+  it("is true for any real change: edited value, added key, removed key, cleared all", () => {
+    expect(envDirty([{ key: "A", value: "9" }], { A: "1" })).toBe(true);
+    expect(envDirty([{ key: "A", value: "1" }, { key: "B", value: "2" }], { A: "1" })).toBe(true);
+    expect(envDirty([{ key: "A", value: "1" }], { A: "1", B: "2" })).toBe(true);
+    // Clearing everything is a real change — allowed, but only once the env has loaded.
+    expect(envDirty([], { A: "1" })).toBe(true);
   });
 });
 

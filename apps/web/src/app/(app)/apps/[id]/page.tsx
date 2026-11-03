@@ -28,7 +28,7 @@ import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { useAuth } from "../../../../lib/auth";
 import type { TerminalTarget } from "../../../../lib/ws";
-import { parseDotenv, toDotenv, duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
+import { parseDotenv, toDotenv, duplicateKeys, invalidKeys, envDirty } from "../../../../lib/dotenv";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
 import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
@@ -1273,7 +1273,7 @@ const envField: React.CSSProperties = {
 function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
   const t = useT();
   const qc = useQueryClient();
-  const { data: env } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
+  const { data: env, isLoading, isError, refetch } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
   const [rows, setRows] = useState<{ key: string; value: string }[]>([]);
   const [reveal, setReveal] = useState(false);
   const [query, setQuery] = useState("");
@@ -1307,22 +1307,34 @@ function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
   const dups = duplicateKeys(rows);
   const dupSet = new Set(dups);
   const invalid = invalidKeys(rows);
+  // The server replaces the whole env blob on save, so Save must stay disabled until the env has loaded
+  // (while loading/errored, rows is still [] and a click would PUT {} and wipe everything) and only
+  // enable on a real change.
+  const dirty = envDirty(rows, env);
 
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.env")}</div>
-        <button onClick={() => (bulk ? setBulk(false) : openBulk())} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
-          {bulk ? t("apps.rowEdit") : t("apps.bulkEdit")}
-        </button>
-        {!bulk && (
-          <button onClick={() => setReveal((v) => !v)} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
-            {reveal ? t("apps.hideValues") : t("apps.showValues")}
-          </button>
+        {env && (
+          <>
+            <button onClick={() => (bulk ? setBulk(false) : openBulk())} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
+              {bulk ? t("apps.rowEdit") : t("apps.bulkEdit")}
+            </button>
+            {!bulk && (
+              <button onClick={() => setReveal((v) => !v)} style={{ ...envField, cursor: "pointer", border: "none", background: "transparent", color: "var(--c-tx3)" }}>
+                {reveal ? t("apps.hideValues") : t("apps.showValues")}
+              </button>
+            )}
+          </>
         )}
       </div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t(clusterId ? "apps.envDescSwarm" : "apps.envDesc")}</p>
-      {bulk ? (
+      {isError && !env ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : isLoading || !env ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: "20px 0" }}><Spinner /></div>
+      ) : bulk ? (
         <>
           <textarea
             className="mono"
@@ -1341,24 +1353,28 @@ function EnvCard({ id, clusterId }: { id: string; clusterId?: string | null }) {
           {rows.length > 3 && (
             <input style={{ ...envField, width: "100%", marginBottom: 8 }} placeholder={t("apps.searchKeys")} value={query} onChange={(e) => setQuery(e.target.value)} />
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {visible.map(({ r, i }) => {
-              const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
-              return (
-                <div key={i} style={{ display: "flex", gap: 6 }}>
-                  <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} />
-                  <input style={{ ...envField, flex: 1 }} type={reveal ? "text" : "password"} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
-                  <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
-                </div>
-              );
-            })}
-          </div>
+          {rows.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", padding: "6px 0 2px" }}>{t("apps.envEmpty")}</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {visible.map(({ r, i }) => {
+                const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
+                return (
+                  <div key={i} style={{ display: "flex", gap: 6 }}>
+                    <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} />
+                    <input style={{ ...envField, flex: 1 }} type={reveal ? "text" : "password"} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} />
+                    <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {dups.length > 0 && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.envDupWarning", { keys: dups.join(", ") })}</div>}
           {invalid.length > 0 && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envInvalidWarning", { keys: invalid.join(", ") })}</div>}
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "" }])}>{t("apps.envAdd")}</Btn>
             <div style={{ flex: 1 }} />
-            <Btn onClick={() => save.mutate()} disabled={save.isPending || dups.length > 0}>{t("apps.save")}</Btn>
+            <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || dups.length > 0}>{t("apps.save")}</Btn>
           </div>
           {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
         </>
