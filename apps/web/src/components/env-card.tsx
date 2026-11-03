@@ -54,8 +54,10 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
     setRevealed((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; });
 
   useEffect(() => {
-    if (env) setRows(Object.entries(env).map(([key, value]) => ({ key, value })));
-  }, [env]);
+    // Rows are replaced wholesale from the server, so any per-row reveal would now point at a
+    // different row — re-mask to avoid showing a secret the user never revealed.
+    if (env) { setRows(Object.entries(env).map(([key, value]) => ({ key, value }))); remask(); }
+  }, [env, remask]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -71,8 +73,18 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
   });
 
   const setRow = (i: number, patch: Partial<Row>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  // Remove a row AND fix up the reveal set: drop index i and shift the ones above it down, so a
+  // revealed row below the deleted one doesn't silently expose a different row's secret.
+  const removeRow = (i: number) => {
+    setRows((rs) => rs.filter((_, j) => j !== i));
+    setRevealed((s) => {
+      const n = new Set<number>();
+      for (const idx of s) { if (idx < i) n.add(idx); else if (idx > i) n.add(idx - 1); }
+      return n;
+    });
+  };
   const openBulk = () => { setBulkText(toDotenv(rows)); setBulk(true); };
-  const applyBulk = () => { setRows(parseDotenv(bulkText)); setBulk(false); };
+  const applyBulk = () => { setRows(parseDotenv(bulkText)); setBulk(false); remask(); };
   const copyValue = async (value: string) => {
     const ok = await copyText(value);
     if (ok) toast(t("apps.envCopied"), "success");
@@ -80,7 +92,8 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
   };
 
   const q = query.trim().toLowerCase();
-  const visible = rows.map((r, i) => ({ r, i })).filter(({ r }) => !q || r.key.toLowerCase().includes(q));
+  // Always show a blank-key row (e.g. one just added) so "Add variable" isn't swallowed by an active filter.
+  const visible = rows.map((r, i) => ({ r, i })).filter(({ r }) => !q || !r.key.trim() || r.key.toLowerCase().includes(q));
   // Saving a map keeps only the last value for a duplicate key, so a collision silently drops data —
   // warn and block instead. Invalid names (the server rejects them) are a soft, non-blocking hint.
   const dups = duplicateKeys(rows);
@@ -187,7 +200,7 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
                       <Copy size={14} />
                     </IconBtn>
                     {canWrite && (
-                      <IconBtn label={t("common.remove")} danger onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
+                      <IconBtn label={t("common.remove")} danger onClick={() => removeRow(i)}>
                         <X size={14} />
                       </IconBtn>
                     )}
