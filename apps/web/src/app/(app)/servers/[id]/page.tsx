@@ -702,8 +702,13 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["server", id] });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["server", id] });
+    qc.invalidateQueries({ queryKey: ["server-disk-usage", id] });
+  };
   const clean = useMutation({ mutationFn: () => api.cleanupServer(id), onSuccess: invalidate });
+  // Read-only disk-usage breakdown so the operator can see WHAT is filling the disk; refreshed after a clean.
+  const diskUsage = useQuery({ queryKey: ["server-disk-usage", id], queryFn: () => api.diskUsage(id), staleTime: 30_000, retry: false });
   const save = useMutation({
     // A cron expression (when given) overrides the plain interval server-side; blank clears it. thresholdPct
     // (when set) gates the scheduled run on disk usage; blank clears it.
@@ -723,6 +728,20 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
         {t("servers.cleanupDesc")}
         {server.lastCleanupAt ? ` · ${t("servers.lastCleanup")}: ${new Date(server.lastCleanupAt).toLocaleString()}` : ""}
       </p>
+      {diskUsage.data && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, margin: "0 0 12px", fontSize: 12, color: "var(--c-tx2)" }}>
+          {(["diskImages", "diskContainers", "diskVolumes", "diskBuildCache"] as const).map((label, i) => {
+            const row = [diskUsage.data!.images, diskUsage.data!.containers, diskUsage.data!.volumes, diskUsage.data!.buildCache][i];
+            return (
+              <div key={label}>
+                <span style={{ color: "var(--c-tx3)" }}>{t(`servers.${label}`)}:</span> {row.size}
+                {row.reclaimable && row.reclaimable !== "0B" ? ` (${row.reclaimable} ${t("servers.diskReclaimable")})` : ""}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {diskUsage.isError && <div style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.diskUnavailable")}</div>}
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />

@@ -40,3 +40,58 @@ export function buildCleanupScript({
   if (volumes) steps.push("docker volume prune -f");
   return `rc=0; ${steps.map((s) => `${s} || rc=1`).join("; ")}; exit $rc`;
 }
+
+/** One row of `docker system df` — docker's own human sizes are surfaced as-is (no re-parsing to bytes). */
+export interface DiskUsageRow {
+  totalCount: number;
+  active: number;
+  size: string;
+  reclaimable: string;
+}
+export interface DiskUsage {
+  images: DiskUsageRow;
+  containers: DiskUsageRow;
+  volumes: DiskUsageRow;
+  buildCache: DiskUsageRow;
+}
+
+/** `docker system df` as one JSON object per line (Images / Containers / Local Volumes / Build Cache). Fixed
+ *  command, no user input → no injection surface; single-quoted so the shell leaves the Go-template braces. */
+export function buildDiskUsageScript(): string {
+  return "docker system df --format '{{json .}}'";
+}
+
+const ZERO_ROW: DiskUsageRow = { totalCount: 0, active: 0, size: "0B", reclaimable: "0B" };
+
+/** Parse `docker system df --format '{{json .}}'`. Each line is a JSON object of STRING fields
+ *  (TotalCount/Active/Size/Reclaimable; Reclaimable like "800MB (66%)"). Bad lines are skipped and any
+ *  missing category defaults to zero, so the result always has all four rows. */
+export function parseDiskUsage(output: string): DiskUsage {
+  const result: DiskUsage = { images: { ...ZERO_ROW }, containers: { ...ZERO_ROW }, volumes: { ...ZERO_ROW }, buildCache: { ...ZERO_ROW } };
+  const byType: Record<string, keyof DiskUsage> = { Images: "images", Containers: "containers", "Local Volumes": "volumes", "Build Cache": "buildCache" };
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const key = typeof obj.Type === "string" ? byType[obj.Type] : undefined;
+    if (!key) continue;
+    result[key] = {
+      totalCount: toInt(obj.TotalCount),
+      active: toInt(obj.Active),
+      size: typeof obj.Size === "string" ? obj.Size : "0B",
+      // drop docker's trailing " (NN%)" from Reclaimable → just the size.
+      reclaimable: typeof obj.Reclaimable === "string" ? obj.Reclaimable.replace(/\s*\([^)]*\)\s*$/, "").trim() : "0B",
+    };
+  }
+  return result;
+}
+
+function toInt(v: unknown): number {
+  const n = parseInt(String(v ?? ""), 10);
+  return Number.isFinite(n) ? n : 0;
+}

@@ -252,6 +252,12 @@ export class ServerOpsController {
     return this.cleanup.cleanupNow(user.userId, id);
   }
 
+  // Read-only disk-usage breakdown (docker system df); any team member, no special scope — like proxy status.
+  @Get("disk-usage")
+  diskUsage(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.cleanup.diskUsage(user.userId, id);
+  }
+
   @Put("cleanup-config")
   @HttpCode(200)
   @ApiZodBody(CleanupConfigSchema)

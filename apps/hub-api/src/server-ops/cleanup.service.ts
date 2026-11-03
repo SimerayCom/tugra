@@ -1,12 +1,16 @@
 import {
+  ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
+import { buildDiskUsageScript, parseDiskUsage, type DiskUsage } from "./cleanup-script";
 import { planTargets } from "../bulk/bulk.service";
 import type { CleanupConfigInput } from "./dto";
 
@@ -22,7 +26,23 @@ export class CleanupService {
     private readonly audit: AuditService,
     private readonly runner: CleanupRunnerService,
     private readonly scheduler: CleanupSchedulerService,
+    private readonly agentWs: AgentWsServer,
   ) {}
+
+  /** Read-only disk-usage breakdown (`docker system df`) for the CleanupCard. Any team member may read it;
+   *  reuses the "cleanup" capability (same docker-housekeeping surface, no new capability). An offline agent
+   *  or a non-zero exit surfaces as 503 so the UI shows "unavailable" rather than a 500. */
+  async diskUsage(userId: string, serverId: string): Promise<DiskUsage> {
+    await this.requireRead(userId, serverId);
+    let r: { exitCode: number; output: string };
+    try {
+      r = await this.agentWs.sendCommand(serverId, buildDiskUsageScript(), "cleanup", 60_000);
+    } catch (e) {
+      throw new ServiceUnavailableException(e instanceof Error ? e.message : "agent unreachable");
+    }
+    if (r.exitCode !== 0) throw new ServiceUnavailableException("could not read disk usage");
+    return parseDiskUsage(r.output);
+  }
 
   async cleanupNow(userId: string, serverId: string): Promise<{ output: string }> {
     await this.requireWrite(userId, serverId);
@@ -105,5 +125,13 @@ export class CleanupService {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:ops");
+  }
+
+  private async requireRead(userId: string, serverId: string): Promise<void> {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    if (!(await this.access.teamRole(userId, server.teamId))) {
+      throw new ForbiddenException("not a member of this team");
+    }
   }
 }
