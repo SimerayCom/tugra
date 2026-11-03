@@ -399,6 +399,8 @@
   "deployStrategy_RECREATE": "Recreate (brief downtime)",
   "rollbackOnFailure": "Auto-rollback on a failed health check",
   "rollbackOnFailureDesc": "Off: a failed deploy stays down instead of restoring the previous version.",
+  "imagesToKeep": "Rollback images to keep",
+  "imagesToKeepDesc": "How many past versions to keep for rollback (1–20; blank = 5). Lowering it prunes the extra images on the next deploy; the running version is always kept.",
   "zeroDowntime": "zero-downtime",
   "recreateStrategy": "recreate",
   "clusterDeploy": "Cluster deploy (Docker Swarm)",

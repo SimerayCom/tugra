@@ -366,7 +366,7 @@ export default function AppDetailPage() {
   const activeSection = resolveTab(sectionRaw, ["overview", ...configGroups.map((g) => g.key)], "overview");
   const renderConfigCard: Record<ConfigCardId, () => ReactNode> = {
     deploySettings: () => (
-      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} />
+      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} imagesToKeep={appData.imagesToKeep} />
     ),
     clusterDeploy: () => (
       <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} volumes={appData.volumes} constraintServerId={appData.constraintServerId} />
@@ -1723,13 +1723,14 @@ function HealthCheckCard({
   );
 }
 
-function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure }: { id: string; deployStrategy: string; rollbackOnFailure: boolean }) {
+function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null }) {
   const t = useT();
   const qc = useQueryClient();
   const [strategy, setStrategy] = useState<"ROLLING" | "RECREATE">(deployStrategy === "RECREATE" ? "RECREATE" : "ROLLING");
   const [rollback, setRollback] = useState(rollbackOnFailure);
+  const [keep, setKeep] = useState(imagesToKeep == null ? "" : String(imagesToKeep)); // blank = default (5)
   const save = useMutation({
-    mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback }),
+    mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback, imagesToKeep: keep.trim() === "" ? null : Number(keep) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
@@ -1748,8 +1749,13 @@ function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure }: { id: str
           <input type="checkbox" checked={rollback} onChange={(e) => setRollback(e.target.checked)} />
           {t("apps.rollbackOnFailure")}
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx)" }}>
+          {t("apps.imagesToKeep")}
+          <input type="number" min={1} max={20} placeholder="5" style={{ ...envField, width: 72 }} value={keep} onChange={(e) => setKeep(e.target.value)} aria-label={t("apps.imagesToKeep")} />
+        </label>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.imagesToKeepDesc")}</div>
       {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>

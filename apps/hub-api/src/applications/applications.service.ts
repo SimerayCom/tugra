@@ -126,7 +126,7 @@ const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 // stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
 // easily exceeds the 20s default; give it headroom so a slow-but-successful restart isn't killed mid-way.
 const LIFECYCLE_TIMEOUT_MS = 120_000;
-const DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback
+const DEFAULT_DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback when an app sets no imagesToKeep
 // Default rolling health-gate timing (not yet configurable per app).
 // Raw docker flags that make two overlapping containers impossible (port map, own
 // network/name/ip, or a shared volume mount) → the app can't roll, so we fall back to hard cutover.
@@ -203,6 +203,7 @@ export const AppViewSchema = z.object({
   constraintServerId: z.string().nullable(),
   deployStrategy: z.string(),
   rollbackOnFailure: z.boolean(),
+  imagesToKeep: z.number().nullable(),
   zeroDowntime: z.boolean(),
   templateSlug: z.string().nullable(),
   templateLogo: z.string().nullable(),
@@ -799,6 +800,7 @@ export class ApplicationsService {
           redirects: src.redirects ?? Prisma.JsonNull, // clone the custom redirect rules
           deployStrategy: src.deployStrategy,
           rollbackOnFailure: src.rollbackOnFailure,
+          imagesToKeep: src.imagesToKeep,
           tags: src.tags,
           iconUpdatedAt: icon ? new Date() : null,
           // A fresh webhook (the token is unique; sharing it would double-trigger + collide on the unique index).
@@ -1966,23 +1968,25 @@ export class ApplicationsService {
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
   }
 
-  /** Keep the newest DEPLOY_IMAGE_KEEP rollback images; remove older ones. */
+  /** Keep the newest N rollback images (per-app imagesToKeep, else DEFAULT_DEPLOY_IMAGE_KEEP); remove older. */
   private async pruneImages(app: Application): Promise<void> {
     // Don't prune while a deploy or rollback is in flight for this app: the prune works off a snapshot, and a
     // concurrent rollback could start running a tag this prune is about to rmi. At most one RUNNING row per
     // app (partial unique index); the next successful deploy re-prunes. Fail closed — a count error skips.
     const inFlight = await this.prisma.deployment.count({ where: { appId: app.id, status: "RUNNING" } }).catch(() => 1);
     if (inFlight > 0) return;
+    // Operator-tunable retention, clamped to 1..20 (1 is safe: the live version is always the newest SUCCESS row).
+    const keep = Math.min(20, Math.max(1, app.imagesToKeep ?? DEFAULT_DEPLOY_IMAGE_KEEP));
     const kept = await this.prisma.deployment.findMany({
       where: { appId: app.id, status: "SUCCESS", imageTag: { not: null } },
       orderBy: { createdAt: "desc" },
     });
-    const stale = kept.slice(DEPLOY_IMAGE_KEEP);
+    const stale = kept.slice(keep);
     // A rollback row records its TARGET's tag, so several rows can share ONE tag. Never rmi a tag a RETAINED
     // (newest-N) row still points to — that would strip a live or rollbackable image out from under it; for
     // such a stale row just drop our record of it instead.
     const protectedTags = new Set<string>();
-    for (const w of kept.slice(0, DEPLOY_IMAGE_KEEP)) {
+    for (const w of kept.slice(0, keep)) {
       if (w.imageTag) protectedTags.add(w.imageTag);
       if (w.registryImage) protectedTags.add(w.registryImage);
     }
@@ -3107,7 +3111,7 @@ export class ApplicationsService {
   async setDeploySettings(
     userId: string,
     id: string,
-    cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean },
+    cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
@@ -3115,6 +3119,7 @@ export class ApplicationsService {
       data: {
         ...(cfg.deployStrategy !== undefined ? { deployStrategy: cfg.deployStrategy } : {}),
         ...(cfg.rollbackOnFailure !== undefined ? { rollbackOnFailure: cfg.rollbackOnFailure } : {}),
+        ...(cfg.imagesToKeep !== undefined ? { imagesToKeep: cfg.imagesToKeep } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "app.deploysettings.update", target: id });
@@ -3937,6 +3942,7 @@ export class ApplicationsService {
       constraintServerId: app.constraintServerId,
       deployStrategy: app.deployStrategy,
       rollbackOnFailure: app.rollbackOnFailure,
+      imagesToKeep: app.imagesToKeep,
       // Whether this app will ACTUALLY deploy zero-downtime (rolling) — surfaces the fact
       // that a ROLLING preference silently falls back to recreate for non-eligible apps.
       // Mirrors runDeploy's real decision (`!isCompose && rollingEligible`): a compose app
