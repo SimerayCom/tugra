@@ -46,7 +46,7 @@ describe("config-groups registry", () => {
 });
 
 describe("visibleConfigGroups", () => {
-  it("shows all 7 groups for a GIT app with a domain and volumes", () => {
+  it("shows all 8 groups for a GIT app with a domain and volumes", () => {
     expect(keysOf(facts())).toEqual([
       "general",
       "build",
@@ -55,6 +55,7 @@ describe("visibleConfigGroups", () => {
       "storage",
       "health-resources",
       "automation",
+      "danger",
     ]);
   });
 
@@ -64,9 +65,9 @@ describe("visibleConfigGroups", () => {
     expect(got).toEqual(order.filter((k) => got.includes(k)));
   });
 
-  it("COMPOSE (writable, not preview) shows general, build, environment and domains via expose", () => {
+  it("COMPOSE (writable, not preview) shows general, build, environment, domains (via expose) and danger", () => {
     const f = facts({ source: "COMPOSE", webhookToken: null, domain: null, domainKind: null, volumes: [] });
-    expect(keysOf(f)).toEqual(["general", "build", "environment", "domains"]);
+    expect(keysOf(f)).toEqual(["general", "build", "environment", "domains", "danger"]);
     // general holds only the always-on cards (environment + tags), build only credentials
     expect(group(f, "general")!.cardIds).toEqual(["environment", "tags"]);
     expect(group(f, "build")!.cardIds).toEqual(["credentials"]);
@@ -74,9 +75,9 @@ describe("visibleConfigGroups", () => {
     expect(group(f, "domains")!.cardIds).toEqual(["expose", "serviceDomains"]); // compose gains per-service domains
   });
 
-  it("a locked-down COMPOSE preview app collapses to general, build, environment", () => {
+  it("a locked-down COMPOSE preview app collapses to general, build, environment (+ danger for a writer)", () => {
     const f = facts({ source: "COMPOSE", isPreview: true, webhookToken: null, domain: null, domainKind: null, volumes: [] });
-    expect(keysOf(f)).toEqual(["general", "build", "environment"]);
+    expect(keysOf(f)).toEqual(["general", "build", "environment", "danger"]);
     // preview hides tags, so general is just environment
     expect(group(f, "general")!.cardIds).toEqual(["environment"]);
   });
@@ -224,5 +225,16 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "automation")?.cardIds ?? []).not.toContain("deployHooks");
     expect(group(facts({ clusterId: "c1" }), "automation")!.cardIds).not.toContain("deployHooks");
     expect(group(facts({ isPreview: true }), "automation")!.cardIds).not.toContain("deployHooks");
+  });
+
+  it("danger zone holds only the delete card, is last, shows for any writable app (incl. preview/compose), hidden read-only", () => {
+    // Last group in the registry, so a Coolify migrant finds 'Danger Zone' at the bottom of the sub-nav.
+    expect(CONFIG_GROUPS[CONFIG_GROUPS.length - 1].key).toBe("danger");
+    expect(group(facts(), "danger")!.cardIds).toEqual(["danger"]);
+    // Delete stays available on preview and compose apps (both are still deletable by a writer)…
+    expect(group(facts({ isPreview: true }), "danger")!.cardIds).toEqual(["danger"]);
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "danger")!.cardIds).toEqual(["danger"]);
+    // …and the whole group disappears for a read-only viewer.
+    expect(keysOf(facts({ canWrite: false }))).not.toContain("danger");
   });
 });

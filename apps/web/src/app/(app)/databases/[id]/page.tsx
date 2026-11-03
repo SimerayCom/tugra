@@ -77,6 +77,13 @@ export default function DatabaseDetailPage() {
     onSuccess: () => router.replace("/databases"),
     onError: (e) => toast(errMsg(e), "error"),
   });
+  // Shared by the header "…" menu and the Settings > Danger-zone card, so the typed-name guard and
+  // the keep-volume opt-in live in one place.
+  const confirmAndDelete = async () => {
+    if (!db || del.isPending) return; // guard both entry points (header "…" menu + Settings Danger-zone card) against a double-fire
+    keepVolume.current = false;
+    if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name, checkbox: { label: t("databases.keepVolume"), ref: keepVolume } })) del.mutate();
+  };
   const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups, onError: (e) => toast(errMsg(e), "error") });
   const [moreOpen, setMoreOpen] = useState(false);
   const restore = useMutation({
@@ -182,7 +189,7 @@ export default function DatabaseDetailPage() {
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
-                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => { setMoreOpen(false); keepVolume.current = false; if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name, checkbox: { label: t("databases.keepVolume"), ref: keepVolume } })) del.mutate(); }}>{t("databases.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("databases.delete")}</Btn>
                   </div>
                 )}
               </div>
@@ -287,6 +294,11 @@ export default function DatabaseDetailPage() {
           </div>
           <div style={{ marginTop: 16 }}>
             <TagsCard tags={db.tags} canWrite={db.canWrite} onSave={(next) => tags.mutate(next)} />
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <SectionCard title={t("databases.dangerDeleteTitle")} desc={t("databases.dangerDeleteDesc")} style={{ marginBottom: 0, borderColor: "var(--c-r)" }}>
+              <Btn icon={Trash2} variant="dangerGhost" loading={del.isPending} onClick={() => void confirmAndDelete()}>{t("databases.delete")}</Btn>
+            </SectionCard>
           </div>
         </>
       )}
