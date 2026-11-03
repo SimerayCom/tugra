@@ -146,6 +146,14 @@ export const envSchema = z
   METRICS_RAW_RETENTION_HOURS: z.coerce.number().int().positive().default(48),
   HEARTBEAT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   METRICS_ROLLUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  // Terminal (SUCCESS/FAILED/CANCELLED) deployment rows older than this are pruned — but only once they are
+  // no longer rollback targets (no local tag, registry ref or digest), so the live version and recent
+  // rollbackable images always survive. Each row can carry up to 64KB of logs, so this is the main bound.
+  DEPLOYMENT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  // Delivered/failed notification rows older than this are pruned (PENDING is never touched).
+  NOTIFICATION_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  // Audit log is compliance-sensitive, so it is KEPT FOREVER by default; set > 0 days to opt into pruning.
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(0),
   // Host-port range the install-time allocator draws from when a template needs a published port.
   TUGRA_HOSTPORT_MIN: z.coerce.number().int().positive().default(20000),
   TUGRA_HOSTPORT_MAX: z.coerce.number().int().positive().default(45000),

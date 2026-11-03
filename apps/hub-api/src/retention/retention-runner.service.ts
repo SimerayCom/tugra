@@ -26,13 +26,21 @@ export class RetentionRunnerService {
     heartbeat: number;
     metricRollup: number;
     containerMetricRollup: number;
+    deployment: number;
+    notificationDelivery: number;
+    auditLog: number;
   }> {
     const rawHours = Number(this.config.get("METRICS_RAW_RETENTION_HOURS") ?? 48);
     const hbDays = Number(this.config.get("HEARTBEAT_RETENTION_DAYS") ?? 30);
     const rollupDays = Number(this.config.get("METRICS_ROLLUP_RETENTION_DAYS") ?? 30);
+    const deployDays = Number(this.config.get("DEPLOYMENT_RETENTION_DAYS") ?? 90);
+    const notifDays = Number(this.config.get("NOTIFICATION_RETENTION_DAYS") ?? 30);
+    const auditDays = Number(this.config.get("AUDIT_RETENTION_DAYS") ?? 0);
     const metricsCutoff = new Date(Date.now() - rawHours * 3600_000);
     const hbCutoff = new Date(Date.now() - hbDays * 86_400_000);
     const rollupCutoff = new Date(Date.now() - rollupDays * 86_400_000);
+    const deployCutoff = new Date(Date.now() - deployDays * 86_400_000);
+    const notifCutoff = new Date(Date.now() - notifDays * 86_400_000);
 
     const metric = await this.pruneOlderThan(
       (take) => this.prisma.metric.findMany({ where: { ts: { lt: metricsCutoff } }, select: { id: true }, take }),
@@ -55,13 +63,37 @@ export class RetentionRunnerService {
       (take) => this.prisma.containerMetricRollup.findMany({ where: { bucket: { lt: rollupCutoff } }, select: { id: true }, take }),
       (ids) => this.prisma.containerMetricRollup.deleteMany({ where: { id: { in: ids } } }),
     );
+    // Terminal deployments past the cutoff that are NO LONGER rollback targets (no local tag, registry ref or
+    // digest). A QUEUED/RUNNING row or any still-rollbackable row — including the live version, whose image is
+    // never pruned — is kept, so rollback() and the auto-rollback prev-finder keep working. Each row holds up
+    // to 64KB of logs, so this is the main unbounded-growth bound.
+    const deployment = await this.pruneOlderThan(
+      (take) => this.prisma.deployment.findMany({
+        where: { createdAt: { lt: deployCutoff }, status: { in: ["SUCCESS", "FAILED", "CANCELLED"] }, imageTag: null, registryImage: null, imageDigest: null },
+        select: { id: true },
+        take,
+      }),
+      (ids) => this.prisma.deployment.deleteMany({ where: { id: { in: ids } } }),
+    );
+    // Delivered/failed notification rows past the cutoff; a still-PENDING delivery is never touched.
+    const notificationDelivery = await this.pruneOlderThan(
+      (take) => this.prisma.notificationDelivery.findMany({ where: { createdAt: { lt: notifCutoff }, status: { not: "PENDING" } }, select: { id: true }, take }),
+      (ids) => this.prisma.notificationDelivery.deleteMany({ where: { id: { in: ids } } }),
+    );
+    // Audit log is compliance-sensitive → pruned ONLY when AUDIT_RETENTION_DAYS is explicitly set (> 0).
+    const auditLog = auditDays > 0
+      ? await this.pruneOlderThan(
+          (take) => this.prisma.auditLog.findMany({ where: { createdAt: { lt: new Date(Date.now() - auditDays * 86_400_000) } }, select: { id: true }, take }),
+          (ids) => this.prisma.auditLog.deleteMany({ where: { id: { in: ids } } }),
+        )
+      : 0;
 
-    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup) {
+    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog) {
       this.logger.log(
-        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup}`,
+        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog}`,
       );
     }
-    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup };
+    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog };
   }
 
   /** Page through matching ids and delete them in batches until a short/empty page ends the run. */
