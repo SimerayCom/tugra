@@ -1679,9 +1679,30 @@ describe("ApplicationsService", () => {
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { memoryMb: 256, cpus: 0.5, gpus: "all", deployTimeoutSec: 600 });
+    // Omitted reserve fields are left untouched (undefined-means-keep), not nulled.
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, reserveMemoryMb: null, reserveCpus: null, gpus: "all", deployTimeoutSec: 600 } }),
+      expect.objectContaining({ data: { memoryMb: 256, cpus: 0.5, gpus: "all", deployTimeoutSec: 600 } }),
     );
+  });
+
+  it("setLimits leaves omitted limits untouched (partial update can't wipe)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { cpus: 1 });
+    expect(update.mock.calls[0][0].data).toEqual({ cpus: 1 });
+  });
+
+  it("setHealthCheck leaves omitted type/path/port untouched (partial update can't wipe)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { interval: 10 });
+    const data = update.mock.calls[0][0].data;
+    expect(data).toEqual({ healthInterval: 10 });
+    expect("healthCheckType" in data).toBe(false);
+    expect("healthCheckPath" in data).toBe(false);
+    expect("healthCheckPort" in data).toBe(false);
   });
 
   it("persists swarm resource reservations", async () => {

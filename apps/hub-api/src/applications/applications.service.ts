@@ -2752,12 +2752,14 @@ export class ApplicationsService {
     await this.prisma.application.update({
       where: { id },
       data: {
-        memoryMb: limits.memoryMb ?? null,
-        cpus: limits.cpus ?? null,
-        reserveMemoryMb: limits.reserveMemoryMb ?? null,
-        reserveCpus: limits.reserveCpus ?? null,
-        gpus: limits.gpus || null, // "" (cleared) → null
-        deployTimeoutSec: limits.deployTimeoutSec ?? null,
+        // undefined-means-keep (null clears) so a partial API/MCP update can't wipe untouched limits; the
+        // web card sends the full object, so its behaviour is unchanged.
+        ...(limits.memoryMb !== undefined ? { memoryMb: limits.memoryMb } : {}),
+        ...(limits.cpus !== undefined ? { cpus: limits.cpus } : {}),
+        ...(limits.reserveMemoryMb !== undefined ? { reserveMemoryMb: limits.reserveMemoryMb } : {}),
+        ...(limits.reserveCpus !== undefined ? { reserveCpus: limits.reserveCpus } : {}),
+        ...(limits.gpus !== undefined ? { gpus: limits.gpus || null } : {}), // "" (cleared) → null
+        ...(limits.deployTimeoutSec !== undefined ? { deployTimeoutSec: limits.deployTimeoutSec } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "app.limits.update", target: id });
@@ -2777,9 +2779,12 @@ export class ApplicationsService {
     await this.prisma.application.update({
       where: { id },
       data: {
-        healthCheckType: hc.type ?? null,
-        healthCheckPath: hc.path ?? null,
-        healthCheckPort: hc.port ?? null,
+        // Every field is undefined-means-keep (null clears to auto/default), so an API/MCP caller that
+        // sends only e.g. {interval} no longer silently wipes the type/path/port. The web card always
+        // sends the full object, so its behaviour is unchanged.
+        ...(hc.type !== undefined ? { healthCheckType: hc.type } : {}),
+        ...(hc.path !== undefined ? { healthCheckPath: hc.path } : {}),
+        ...(hc.port !== undefined ? { healthCheckPort: hc.port } : {}),
         // Timing knobs: undefined leaves the column as-is, null clears to the built-in default.
         ...(hc.interval !== undefined ? { healthInterval: hc.interval } : {}),
         ...(hc.timeout !== undefined ? { healthTimeout: hc.timeout } : {}),
