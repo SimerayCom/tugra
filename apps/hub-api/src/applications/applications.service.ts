@@ -158,6 +158,7 @@ export const AppViewSchema = z.object({
   healthCheckPort: z.number().nullable(),
   healthCheckMethod: z.string().nullable(),
   healthCheckScheme: z.string().nullable(),
+  healthCheckResponseText: z.string().nullable(),
   healthInterval: z.number().nullable(),
   healthTimeout: z.number().nullable(),
   healthRetries: z.number().nullable(),
@@ -749,6 +750,7 @@ export class ApplicationsService {
           healthCheckPort: src.healthCheckPort,
           healthCheckMethod: src.healthCheckMethod,
           healthCheckScheme: src.healthCheckScheme,
+          healthCheckResponseText: src.healthCheckResponseText,
           healthInterval: src.healthInterval,
           healthTimeout: src.healthTimeout,
           healthRetries: src.healthRetries,
@@ -1161,6 +1163,7 @@ export class ApplicationsService {
           healthCheckPort: parent.healthCheckPort,
           healthCheckMethod: parent.healthCheckMethod,
           healthCheckScheme: parent.healthCheckScheme,
+          healthCheckResponseText: parent.healthCheckResponseText,
           memoryMb: parent.memoryMb,
           cpus: parent.cpus,
           reserveMemoryMb: parent.reserveMemoryMb,
@@ -2844,7 +2847,7 @@ export class ApplicationsService {
     id: string,
     hc: {
       type?: string | null; path?: string | null; port?: number | null; command?: string | null;
-      method?: string | null; scheme?: string | null;
+      method?: string | null; scheme?: string | null; responseText?: string | null;
       interval?: number | null; timeout?: number | null; retries?: number | null; startPeriod?: number | null; expectedStatus?: number | null;
     },
   ): Promise<void> {
@@ -2858,9 +2861,11 @@ export class ApplicationsService {
         ...(hc.type !== undefined ? { healthCheckType: hc.type } : {}),
         ...(hc.path !== undefined ? { healthCheckPath: hc.path } : {}),
         ...(hc.port !== undefined ? { healthCheckPort: hc.port } : {}),
-        // HTTP method/scheme: undefined keeps the column, null clears to the default (GET / plain HTTP).
+        // HTTP method/scheme/response-text: undefined keeps the column, null clears to the default
+        // (GET / plain HTTP / status-only).
         ...(hc.method !== undefined ? { healthCheckMethod: hc.method } : {}),
         ...(hc.scheme !== undefined ? { healthCheckScheme: hc.scheme } : {}),
+        ...(hc.responseText !== undefined ? { healthCheckResponseText: hc.responseText } : {}),
         // Timing knobs: undefined leaves the column as-is, null clears to the built-in default.
         ...(hc.interval !== undefined ? { healthInterval: hc.interval } : {}),
         ...(hc.timeout !== undefined ? { healthTimeout: hc.timeout } : {}),
@@ -3705,6 +3710,7 @@ export class ApplicationsService {
       healthCheckPort: app.healthCheckPort,
       healthCheckMethod: app.healthCheckMethod,
       healthCheckScheme: app.healthCheckScheme,
+      healthCheckResponseText: app.healthCheckResponseText,
       healthInterval: app.healthInterval,
       healthTimeout: app.healthTimeout,
       healthRetries: app.healthRetries,
@@ -3922,6 +3928,7 @@ export class ApplicationsService {
       healthCheckPort: app.healthCheckPort,
       healthCheckMethod: app.healthCheckMethod,
       healthCheckScheme: app.healthCheckScheme,
+      healthCheckResponseText: app.healthCheckResponseText,
       healthInterval: app.healthInterval,
       healthTimeout: app.healthTimeout,
       healthRetries: app.healthRetries,

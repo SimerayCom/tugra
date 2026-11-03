@@ -66,6 +66,7 @@ export interface AppSpec {
   // HTTP probe method (null/"GET" = GET) and scheme (null/"http" = plain HTTP; "https" = TLS, curl -k).
   healthCheckMethod?: string | null;
   healthCheckScheme?: string | null;
+  healthCheckResponseText?: string | null; // HTTP probe: also require this literal substring in the body
   // Tunable health timings (seconds; null = built-in default) driving both the deploy gate and the
   // container's docker --health-* flags; expectedStatus pins the HTTP probe to one status code.
   healthInterval?: number | null;
@@ -1255,7 +1256,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
 /** How to health-check a container before treating a deploy as live. */
 export type HealthProbe =
   | { kind: "native" } // the container has a --health-cmd; poll docker's health status
-  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean; expectedStatus?: number | null; timeoutSec?: number; method?: string | null; scheme?: string | null } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
+  | { kind: "httpExternal"; port: number; path: string; onHost?: boolean; expectedStatus?: number | null; timeoutSec?: number; method?: string | null; scheme?: string | null; responseText?: string | null } // pinned probe container; onHost → host network + localhost (host-port apps), else tugra-proxy + container name
   | { kind: "stableWait" }; // no port/health-cmd → require it to stay Running
 
 /** Timing knobs for the health gate. */
@@ -1291,7 +1292,7 @@ export function resolveHealthProbe(app: AppSpec): HealthProbe {
     // reaches this app's container). Host-port app: probe localhost over the host network —
     // pinned to the app's OWN published port, never an arbitrary one, so it can't be turned
     // into a host-wide localhost port scanner.
-    const extra = { expectedStatus: app.healthExpectedStatus ?? null, timeoutSec: app.healthTimeout ?? 5, method: app.healthCheckMethod ?? null, scheme: app.healthCheckScheme ?? null };
+    const extra = { expectedStatus: app.healthExpectedStatus ?? null, timeoutSec: app.healthTimeout ?? 5, method: app.healthCheckMethod ?? null, scheme: app.healthCheckScheme ?? null, responseText: app.healthCheckResponseText ?? null };
     if (app.domain) return { kind: "httpExternal", port: app.healthCheckPort ?? app.containerPort ?? 80, path, ...extra };
     if (app.hostPort) return { kind: "httpExternal", port: app.hostPort, path, onHost: true, ...extra };
     return { kind: "stableWait" }; // HTTP configured but no reachable endpoint
@@ -1342,10 +1343,21 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
     const pass = probe.expectedStatus
       ? `[ "$code" = "${probe.expectedStatus}" ]`
       : `[ "$code" != "000" ] && [ "$code" -lt 500 ]`;
+    // Optional response-body match: a SECOND probe fetches the body and greps for the literal needle
+    // (grep -F, single-quoted → injection-safe; `--` guards a needle starting with `-`). ANDed onto the
+    // status check, so the gate passes only when both hold. The status capture above is left byte-for-byte
+    // unchanged (no body/stream parsing of the proven line). Empty/failed body → no match → not healthy.
+    // The body probe is always a plain GET, NOT the status method: a HEAD status check has no body to grep
+    // (its `-I` would make curl print headers, so a needle could match a header or a body string could never
+    // match), and a non-idempotent status method (POST/PUT/…) must not be fired a second time just to read
+    // the body. Scheme is kept (-k for https).
+    const bodyMatch = probe.responseText
+      ? ` && docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} ${insecure}-s --max-time ${maxTime} ${url} 2>/dev/null | grep -qF -- ${shq(probe.responseText)}`
+      : "";
     lines.push(
       `for i in $(seq 1 ${t.retries}); do`,
       `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} ${methodArg}${insecure}-s -o /dev/null -w '%{http_code}' --max-time ${maxTime} ${url} 2>/dev/null || echo 000)`,
-      `  if ${pass}; then healthy=1; break; fi`,
+      `  if ${pass}${bodyMatch}; then healthy=1; break; fi`,
       `  sleep ${t.intervalSec}`,
       "done",
     );

@@ -21,7 +21,7 @@ const wrap = (ui: React.ReactNode) =>
     </QueryClientProvider>,
   );
 
-const base = { id: "a1", healthCheckType: null, healthCheckPath: null, healthCheckPort: null, healthCheckMethod: null, healthCheckScheme: null, healthCmd: null, timings: { interval: null, timeout: null, retries: null, startPeriod: null, expectedStatus: null } };
+const base = { id: "a1", healthCheckType: null, healthCheckPath: null, healthCheckPort: null, healthCheckMethod: null, healthCheckScheme: null, healthCheckResponseText: null, healthCmd: null, timings: { interval: null, timeout: null, retries: null, startPeriod: null, expectedStatus: null } };
 
 describe("HealthCheckCard", () => {
   it("labels the HTTP path and port fields (were placeholder-only)", () => {
@@ -56,6 +56,24 @@ describe("HealthCheckCard", () => {
     wrap(<HealthCheckCard {...base} healthCheckType="CMD" />);
     expect(screen.queryByLabelText("Scheme")).toBeNull();
     expect(screen.queryByLabelText("Method")).toBeNull();
+    expect(screen.queryByLabelText(/Response text/)).toBeNull();
+  });
+
+  it("sends the response text for an HTTP check and null when blank", async () => {
+    const set = vi.spyOn(api, "setAppHealthCheck").mockResolvedValue({ ok: true });
+    const { rerender } = wrap(<HealthCheckCard {...base} healthCheckType="HTTP" healthCheckPath="/health" />);
+    fireEvent.change(screen.getByLabelText(/Response text/), { target: { value: "OK" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", expect.objectContaining({ responseText: "OK" })));
+    set.mockClear();
+    rerender(
+      <QueryClientProvider client={qc}>
+        <I18nProvider><HealthCheckCard {...base} healthCheckType="HTTP" healthCheckPath="/health" healthCheckResponseText="OK" /></I18nProvider>
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText(/Response text/), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", expect.objectContaining({ responseText: null })));
   });
 
   it("sends method/scheme as null when left at default on an HTTP check", async () => {

@@ -970,6 +970,7 @@ model Application {
   healthCheckPort Int?                             // HTTP check port (default container/host port)
   healthCheckMethod String?                        // HTTP check method (null/"GET" = GET); GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS
   healthCheckScheme String?                        // HTTP check scheme (null/"http" = plain HTTP); "https" probes over TLS (curl -k, self-signed ok)
+  healthCheckResponseText String?                  // HTTP check: require this literal substring in the response body (null = status-only)
   // Tunable health-check timings (seconds; null = built-in default). Drive both the deploy health-gate and
   // the container's docker --health-* flags; startPeriod/retries widen the window for a slow-booting app.
   healthInterval    Int?

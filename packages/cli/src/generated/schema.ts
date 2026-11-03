@@ -9534,6 +9534,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -9813,6 +9814,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -10203,6 +10205,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -10548,6 +10551,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -13684,6 +13688,7 @@ export interface operations {
                     method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | null;
                     /** @enum {string|null} */
                     scheme?: "http" | "https" | null;
+                    responseText?: string | null;
                     command?: string | null;
                     interval?: number | null;
                     timeout?: number | null;
@@ -15766,6 +15771,7 @@ export interface operations {
                             healthCheckPort: number | null;
                             healthCheckMethod: string | null;
                             healthCheckScheme: string | null;
+                            healthCheckResponseText: string | null;
                             healthInterval: number | null;
                             healthTimeout: number | null;
                             healthRetries: number | null;
@@ -16040,6 +16046,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -16383,6 +16390,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -16784,6 +16792,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;
@@ -17933,6 +17942,7 @@ export interface operations {
                         healthCheckPort: number | null;
                         healthCheckMethod: string | null;
                         healthCheckScheme: string | null;
+                        healthCheckResponseText: string | null;
                         healthInterval: number | null;
                         healthTimeout: number | null;
                         healthRetries: number | null;

@@ -603,6 +603,7 @@ describe("deploy-script", () => {
         timeoutSec: 5,
         method: null,
         scheme: null,
+        responseText: null,
       });
       expect(resolveHealthProbe(base)).toEqual({ kind: "stableWait" });
     });
@@ -621,6 +622,7 @@ describe("deploy-script", () => {
         timeoutSec: 5,
         method: null,
         scheme: null,
+        responseText: null,
       });
       // HTTP on a host-port app probes localhost over the host network, pinned to the app's
       // OWN published port — a custom healthCheckPort is IGNORED so it can't scan other ports
@@ -633,6 +635,7 @@ describe("deploy-script", () => {
         timeoutSec: 5,
         method: null,
         scheme: null,
+        responseText: null,
       });
       // HTTP configured but nothing reachable (no domain, no host port) → liveness wait
       expect(resolveHealthProbe({ ...base, healthCheckType: "HTTP" })).toEqual({ kind: "stableWait" });
@@ -671,6 +674,39 @@ describe("deploy-script", () => {
       const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/", method: "HEAD" }, gate).join("\n");
       expect(joined).toContain(`${HEALTH_PROBE_IMAGE} -I -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc:80/'`);
       expect(joined).not.toContain("-X HEAD");
+    });
+
+    it("responseText ANDs a body-grep onto the status check (grep -qF, single-quoted, status capture unchanged)", () => {
+      const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/", responseText: "OK healthy" }, gate).join("\n");
+      // status line still byte-for-byte the status-only form (the body check is a second curl)
+      expect(joined).toContain(`code=$(docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc:80/' 2>/dev/null || echo 000)`);
+      // second curl fetches the body and greps for the literal needle, ANDed onto the status pass
+      expect(joined).toContain(`&& docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s --max-time 5 'http://tugra_abc:80/' 2>/dev/null | grep -qF -- 'OK healthy'`);
+    });
+
+    it("no responseText → no body-grep second curl (status-only, unchanged)", () => {
+      const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/" }, gate).join("\n");
+      expect(joined).not.toContain("grep -qF");
+    });
+
+    it("a response needle with a single quote is safely shell-quoted (no injection)", () => {
+      const joined = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/", responseText: "it's up" }, gate).join("\n");
+      expect(joined).toContain(`grep -qF -- 'it'\\''s up'`);
+    });
+
+    it("the body probe is always a plain GET — never the status method (HEAD/POST would mis-read or double-fire)", () => {
+      // HEAD status: status capture uses -I, but the body probe is a GET (no -I) so it reads a real body.
+      const head = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/", method: "HEAD", responseText: "ok" }, gate).join("\n");
+      expect(head).toContain(`-I -s -o /dev/null -w '%{http_code}'`); // status still HEAD
+      expect(head).toContain(`&& docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s --max-time 5 'http://tugra_abc:80/' 2>/dev/null | grep -qF -- 'ok'`); // body probe is GET
+      // POST status: body probe does NOT repeat the POST.
+      const post = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 80, path: "/", method: "POST", responseText: "ok" }, gate).join("\n");
+      expect(post).toContain(`-X POST -s -o /dev/null -w '%{http_code}'`); // status still POST
+      const bodyLine = post.split("\n").find((l) => l.includes("grep -qF"))!;
+      expect(bodyLine).not.toContain("-X POST"); // body probe is a GET, not a second POST
+      // https is still honoured on the body probe.
+      const https = buildHealthGateFragment("tugra_abc", { kind: "httpExternal", port: 8443, path: "/", scheme: "https", responseText: "ok" }, gate).join("\n");
+      expect(https).toContain(`&& docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -k -s --max-time 5 'https://tugra_abc:8443/' 2>/dev/null | grep -qF -- 'ok'`);
     });
 
     it("resolveHealthGate uses rolling defaults, overridden per app", () => {
