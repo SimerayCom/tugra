@@ -535,6 +535,14 @@ describe("AuthService — turnkey local-server auto-provision (LOCAL_AGENT_ENROL
     });
   });
 
+  it("turns disk cleanup on by default for 'This machine' (daily cron, 80% threshold)", async () => {
+    const { prisma, serverCreate } = prismaWithServer();
+    await svc("local-enroll-token-xyz", prisma).register("a@x.io", "password123");
+    expect(serverCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ cleanupEnabled: true, cleanupCron: "0 3 * * *", cleanupThresholdPct: 80 }),
+    });
+  });
+
   it("pins the server's publicIp from the owner's request host (observed) when no env pin is set", async () => {
     const { prisma, serverCreate } = prismaWithServer();
     await svc("local-enroll-token-xyz", prisma).register("a@x.io", "password123", undefined, undefined, "http://203.0.113.9:3001");

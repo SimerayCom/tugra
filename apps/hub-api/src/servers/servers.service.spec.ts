@@ -163,6 +163,16 @@ describe("ServersService.createServer (team role enforced)", () => {
     await svcWith(prisma).createServer("u1", "web", "teamA", undefined, { provider: "hetzner", cloudCredentialId: "cc1" });
     expect(create.mock.calls[0][0].data).toMatchObject({ provider: "hetzner", cloudCredentialId: "cc1" });
   });
+
+  it("turns disk cleanup on by default (daily cron, 80% threshold)", async () => {
+    const create = jest.fn().mockResolvedValue(row("s1", "teamA"));
+    const prisma = {
+      membership: { findUnique: jest.fn().mockResolvedValue({ role: Role.OWNER }) },
+      server: { create },
+    } as unknown as PrismaService;
+    await svcWith(prisma).createServer("u1", "web", "teamA");
+    expect(create.mock.calls[0][0].data).toMatchObject({ cleanupEnabled: true, cleanupCron: "0 3 * * *", cleanupThresholdPct: 80 });
+  });
 });
 
 describe("ServersService.createServersBulk (fleet fan-out)", () => {
