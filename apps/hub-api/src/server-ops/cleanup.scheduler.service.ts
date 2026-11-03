@@ -7,6 +7,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 
@@ -39,9 +40,12 @@ export class CleanupSchedulerService
     this.worker = new Worker(
       QUEUE,
       async (job) => {
+        const serverId = job.data.serverId as string;
+        // Orphan self-heal: the server was deleted → stop this repeatable instead of failing every tick.
+        if (!(await reapIfGone(serverId, () => this.prisma.server.findUnique({ where: { id: serverId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
         // Scheduled runs honour the disk-usage threshold and skip while a deploy is building on this server;
         // a manual "Clean now" does neither.
-        await this.runner.runCleanup(job.data.serverId as string, "scheduler", { respectThreshold: true, skipIfDeploying: true });
+        await this.runner.runCleanup(serverId, "scheduler", { respectThreshold: true, skipIfDeploying: true });
       },
       { connection },
     );

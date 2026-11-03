@@ -7,6 +7,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { BackupRunnerService } from "./backup-runner.service";
 
@@ -46,7 +47,10 @@ export class BackupSchedulerService
     this.worker = new Worker(
       QUEUE,
       async (job) => {
-        await this.runner.runBackup(job.data.databaseId as string);
+        const databaseId = job.data.databaseId as string;
+        // Orphan self-heal: the database was deleted → stop this repeatable instead of failing every tick.
+        if (!(await reapIfGone(databaseId, () => this.prisma.database.findUnique({ where: { id: databaseId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
+        await this.runner.runBackup(databaseId);
       },
       { connection },
     );

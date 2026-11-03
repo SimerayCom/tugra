@@ -7,6 +7,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { ScheduledTaskRunnerService } from "./scheduled-task-runner.service";
 
@@ -39,7 +40,10 @@ export class ScheduledTasksSchedulerService
     this.worker = new Worker(
       QUEUE,
       async (job) => {
-        await this.runner.runTask(job.data.taskId as string);
+        const taskId = job.data.taskId as string;
+        // Orphan self-heal: the task was deleted (e.g. its app cascaded away) → stop this repeatable.
+        if (!(await reapIfGone(taskId, () => this.prisma.scheduledTask.findUnique({ where: { id: taskId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
+        await this.runner.runTask(taskId);
       },
       { connection },
     );
