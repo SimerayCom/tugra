@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Unlink } from "lucide-react";
+import { Link2, Unlink } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Btn, Card, EmptyState } from "./ui";
+import { Btn, Card, EmptyState, Spinner } from "./ui";
+import { ErrorState } from "./error-state";
+import { IconBtn } from "./icon-btn";
 import { Select, fieldStyle } from "./form";
 
 /**
@@ -58,7 +60,12 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.dbLinksTitle")}</div>
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("apps.dbLinksDesc")}</p>
 
-      {list.length === 0 ? (
+      {links.isLoading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: "16px 0" }}><Spinner /></div>
+      ) : links.isError ? (
+        // Don't claim "no databases linked" when the query FAILED — show an error with a retry instead.
+        <ErrorState onRetry={() => links.refetch()} />
+      ) : list.length === 0 ? (
         <EmptyState>{t("apps.dbLinksEmpty")}</EmptyState>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -70,16 +77,16 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
               {l.shadowedBy === "app-env" && <span style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.dbLinksShadowed")}</span>}
               <span style={{ flex: 1 }} />
               {canWrite && (
-                <button onClick={() => unlink.mutate(l.linkId)} disabled={unlink.isPending} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }} aria-label={t("apps.dbLinksUnlink")}>
+                <IconBtn label={t("apps.dbLinksUnlink")} danger disabled={unlink.isPending} onClick={() => unlink.mutate(l.linkId)}>
                   <Unlink size={14} />
-                </button>
+                </IconBtn>
               )}
             </div>
           ))}
         </div>
       )}
 
-      {canWrite && (
+      {canWrite && !links.isLoading && !links.isError && (
         eligible.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -91,7 +98,7 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
                 style={{ minWidth: 200, flex: 1 }}
               />
               <input
-                style={{ ...fieldStyle, width: 220 }}
+                style={{ ...fieldStyle, flex: "1 1 180px", minWidth: 0 }}
                 placeholder={t("apps.dbLinksEnvVarPlaceholder")}
                 value={envVar}
                 onChange={(e) => setEnvVar(e.target.value)}
@@ -106,7 +113,7 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
             </label>
             <div style={{ display: "flex" }}>
               <div style={{ flex: 1 }} />
-              <Btn onClick={() => link.mutate()} disabled={!dbId || link.isPending}>{t("apps.dbLinksLink")}</Btn>
+              <Btn icon={Link2} onClick={() => link.mutate()} disabled={!dbId || link.isPending}>{t("apps.dbLinksLink")}</Btn>
             </div>
           </div>
         ) : (

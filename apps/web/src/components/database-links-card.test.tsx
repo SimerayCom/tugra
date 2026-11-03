@@ -67,4 +67,24 @@ describe("DatabaseLinksCard", () => {
     expect(screen.queryByText("Link")).toBeNull();
     expect(listDbs).not.toHaveBeenCalled(); // picker query disabled for read-only viewers
   });
+
+  it("shows a spinner while loading — not the empty state, and no link form yet", () => {
+    vi.spyOn(api, "getAppDatabaseLinks").mockReturnValue(new Promise<DatabaseLinkView[]>(() => {})); // never resolves
+    vi.spyOn(api, "listDatabases").mockResolvedValue([]);
+    wrap(<DatabaseLinksCard id="a1" serverId="s1" canWrite />);
+    expect(screen.getByRole("status")).toBeTruthy(); // Spinner
+    expect(screen.queryByText(/no databases linked/i)).toBeNull(); // must not claim "empty" mid-load
+    expect(screen.queryByText("Link")).toBeNull(); // link form gated off until the query settles
+  });
+
+  it("shows an error with retry when the links query fails — never a false 'empty'", async () => {
+    const get = vi.spyOn(api, "getAppDatabaseLinks").mockRejectedValue(new Error("boom"));
+    vi.spyOn(api, "listDatabases").mockResolvedValue([]);
+    wrap(<DatabaseLinksCard id="a1" serverId="s1" canWrite />);
+    expect(await screen.findByText(/something went wrong/i)).toBeTruthy();
+    expect(screen.queryByText(/no databases linked/i)).toBeNull(); // a failed fetch is NOT an empty list
+    expect(screen.queryByText("Link")).toBeNull(); // link form gated off on error too
+    fireEvent.click(screen.getByText(/try again/i));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2)); // retry refetches
+  });
 });
