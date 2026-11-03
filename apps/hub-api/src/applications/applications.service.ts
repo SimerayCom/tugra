@@ -1398,6 +1398,11 @@ export class ApplicationsService {
    *  (starts the next QUEUED deploy), so deploys for one app run one-at-a-time, FIFO. */
   private async executeDeploy(dep: Deployment, app: Application, actor: string, noCache: boolean) {
     this.deployLogs.begin(app.id);
+    // Was the app live before this deploy, and did we get as far as sending the deploy command? Used so a
+    // failure BEFORE the container swap (a build/render/validate step — the live container/stack was never
+    // touched) leaves a still-serving app RUNNING instead of flipping it to FAILED.
+    const wasRunning = app.status === AppStatus.RUNNING;
+    let swapAttempted = false;
     try {
       // Fail-closed: re-validate the STORED dockerOptions against the app's CURRENT privileged flag on every
       // deploy. If the owner revoked the override (or a path stored privileged options without the flag), the
@@ -1442,6 +1447,9 @@ export class ApplicationsService {
       // the command build + dispatch (to the manager) + async-rollout classification to SwarmDeployService,
       // then apply the SAME exit-code contract (0 converged / 3 auto-rolled-back / other failed). ──
       if (app.clusterId) {
+        // The swarm dispatch issues a mutating `docker service update`; a throw after this is not a safe
+        // pre-swap failure, so the catch below must not preserve the old status.
+        swapAttempted = true;
         const sd = await this.swarmDeploy.deploy(app, spec, dep.id, {
           noCache,
           timeoutMs: this.deployTimeoutMs(app),
@@ -1516,6 +1524,9 @@ export class ApplicationsService {
       // and refuses to run unless the stack still renders to the exact digest we validated (a TOCTOU lock).
       let gitComposeUp: string | null = null;
       if (isGitCompose) {
+        // The render re-clones (rm -rf's the clone dir, which can be the live stack's build/bind source), so
+        // from here a failure is no longer a safe pre-swap failure.
+        swapAttempted = true;
         this.deployLogs.push(app.id, "Validating compose from the repository...\n");
         const rr = await this.agentWs.sendCommand(
           app.serverId,
@@ -1556,6 +1567,9 @@ export class ApplicationsService {
                 ...resolveHealthGate(spec),
               })
             : buildRunScript(spec, dep.id, true, noCache);
+      // The main deploy command runs on the live server from here; a throw after this (agent offline, timeout)
+      // is not a safe pre-swap failure, so the catch keeps FAILED.
+      swapAttempted = true;
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,
@@ -1699,10 +1713,16 @@ export class ApplicationsService {
             ...this.finishStamp(dep),
           },
         });
-        await this.prisma.application.update({
-          where: { id: app.id },
-          data: { status: AppStatus.FAILED },
-        });
+        // A throw BEFORE anything touched the live container or stack (e.g. a build-server build on another
+        // machine) leaves a running app serving — don't write status at all (and don't clobber a concurrent
+        // Stop/Start). Once the git-compose render, a swarm dispatch or the main deploy command has started,
+        // swapAttempted is true and a throw stays FAILED (conservative: the live state is then unknown).
+        if (swapAttempted || !wasRunning) {
+          await this.prisma.application.update({
+            where: { id: app.id },
+            data: { status: AppStatus.FAILED },
+          });
+        }
         this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
         this.notifyDeploy(app, dep, "deploy_failed").catch(() => {});
       }

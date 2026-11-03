@@ -568,6 +568,52 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("a throw BEFORE the live app is touched (revoked privileged options) leaves a RUNNING app UNTOUCHED", async () => {
+    // assertSafeDockerOptions re-validates stored options at the top of executeDeploy, before anything on the
+    // live server runs. A revoked privileged override makes it throw there — the old container is still
+    // serving, so the app status must NOT be flipped to FAILED (only the deployment is FAILED).
+    const running = { ...app, status: "RUNNING", dockerOptions: "--privileged", allowPrivilegedDockerOptions: false };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(running), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    await flushMicrotasks();
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    // Pre-swap throw (nothing on the live server ran) → app row never written, not flipped to FAILED.
+    expect(appUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("a NON-running app that throws pre-swap is still marked FAILED (nothing to preserve)", async () => {
+    const neverRan = { ...app, status: "NEW", dockerOptions: "--privileged", allowPrivilegedDockerOptions: false };
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(neverRan), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    await flushMicrotasks();
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+  });
+
   it("rollbackOnFailure=false → plain hard cutover (no health gate, no rollback)", async () => {
     const hp = { ...app, domain: "app.example.com", hostPort: 8080, deployStrategy: "ROLLING", rollbackOnFailure: false };
     const findFirst = jest.fn().mockResolvedValue(null);
@@ -4110,6 +4156,38 @@ describe("ApplicationsService — COMPOSE-from-git", () => {
     expect(deployCalls).toHaveLength(1); // render only — the up was never issued
     expect(deployCalls[0].cmd).toContain("config 2>/dev/null");
     expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("a validate rejection on a RUNNING git-compose app marks it FAILED (the render rewrote the clone dir)", async () => {
+    // The git-compose render re-clones (rm -rf's the clone dir, which can be the live stack's build/bind
+    // source), so a render/validate failure is NOT a safe pre-swap failure — the app is marked FAILED.
+    const running = { ...gitComposeApp, status: "RUNNING" };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(running), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const escaping = "services:\n  web:\n    image: nginx\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) =>
+        cmd.includes("config 2>/dev/null") ? Promise.resolve({ exitCode: 0, output: renderOutput(escaping) }) : Promise.resolve({ exitCode: 0, output: "up ok" }),
+      ),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    await flushMicrotasks();
+    // render ran (swapAttempted) before the validate threw → fail-closed: deployment AND app are FAILED.
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
   });
 
   it("fails cleanly when the repo yields no rendered compose (bad path / invalid file)", async () => {
