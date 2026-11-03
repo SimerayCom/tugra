@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@ne
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
+import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 
@@ -29,7 +30,12 @@ export class VolumeBackupSchedulerService implements OnApplicationBootstrap, OnM
     if (process.env.NODE_ENV === "test") return;
     const connection = this.connection();
     this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
-    this.worker = new Worker(QUEUE, async (job) => { await this.runner.runBackup(job.data.appId as string); }, { connection });
+    this.worker = new Worker(QUEUE, async (job) => {
+      const appId = job.data.appId as string;
+      // Orphan self-heal: the app was deleted → stop this repeatable instead of failing every tick.
+      if (!(await reapIfGone(appId, () => this.prisma.application.findUnique({ where: { id: appId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
+      await this.runner.runBackup(appId);
+    }, { connection });
 
     const apps = await this.prisma.application.findMany({
       where: { volumeBackupEnabled: true, volumeBackupIntervalHours: { not: null } },
