@@ -160,12 +160,15 @@ export function SectionCard({
   title,
   desc,
   right,
+  footer,
   children,
   style,
 }: {
   title?: string;
   desc?: string;
   right?: ReactNode;
+  // Optional action bar (e.g. FormActions) rendered under the body, separated by a hairline.
+  footer?: ReactNode;
   children: ReactNode;
   style?: CSSProperties;
 }) {
@@ -174,15 +177,17 @@ export function SectionCard({
       {(title || right) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: desc ? 4 : 12 }}>
           {title && (
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}>
+            // A real heading (was a styled <div>) so the card is a landmark for assistive tech.
+            <h3 style={{ margin: 0, fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}>
               {title}
-            </div>
+            </h3>
           )}
           {right}
         </div>
       )}
       {desc && <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{desc}</p>}
       {children}
+      {footer && <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--c-bd)" }}>{footer}</div>}
     </Card>
   );
 }
