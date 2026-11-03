@@ -932,9 +932,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
   });
 
   return (
-    <Card id="wildcard" style={{ padding: 16, marginTop: 20, scrollMarginTop: 80 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("servers.networkTitle")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.networkDesc")}</p>
+    <SectionCard id="wildcard" title={t("servers.networkTitle")} desc={t("servers.networkDesc")} style={{ marginTop: 20, scrollMarginTop: 80 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
           {t("servers.wildcardDomain")}
@@ -986,7 +984,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
           <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
         </div>
       </div>
-    </Card>
+    </SectionCard>
   );
 }
 
