@@ -43,6 +43,7 @@ import { PageHeader } from "../../../../components/page-header";
 import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
 import { ExtraPortsCard } from "../../../../components/extra-ports-card";
+import { LimitsCard } from "../../../../components/limits-card";
 import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
@@ -1422,54 +1423,6 @@ function BuildArgsCard({ id }: { id: string }) {
         <Btn onClick={() => save.mutate()} disabled={save.isPending || dups.length > 0}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.buildArgsRedeploy")}</div>}
-    </Card>
-  );
-}
-
-function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, gpus, deployTimeoutSec, clusterId }: { id: string; memoryMb: number | null; cpus: number | null; reserveMemoryMb: number | null; reserveCpus: number | null; gpus: string | null; deployTimeoutSec: number | null; clusterId: string | null }) {
-  const t = useT();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [mem, setMem] = useState(memoryMb != null ? String(memoryMb) : "");
-  const [cpu, setCpu] = useState(cpus != null ? String(cpus) : "");
-  const [reserveMem, setReserveMem] = useState(reserveMemoryMb != null ? String(reserveMemoryMb) : "");
-  const [reserveCpu, setReserveCpu] = useState(reserveCpus != null ? String(reserveCpus) : "");
-  const [gpu, setGpu] = useState(gpus ?? "");
-  const [timeout, setTimeoutS] = useState(deployTimeoutSec != null ? String(deployTimeoutSec) : "");
-  const save = useMutation({
-    mutationFn: () =>
-      api.setAppLimits(id, {
-        memoryMb: mem ? Number(mem) : null,
-        cpus: cpu ? Number(cpu) : null,
-        // Swarm-only reservation hints; only sent for a clustered app (inputs are hidden otherwise).
-        reserveMemoryMb: clusterId && reserveMem ? Number(reserveMem) : null,
-        reserveCpus: clusterId && reserveCpu ? Number(reserveCpu) : null,
-        gpus: gpu.trim() || null,
-        deployTimeoutSec: timeout ? Number(timeout) : null,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
-    meta: { successMessage: t("apps.saved") },
-    onError: (e) => toast(e instanceof Error ? e.message : t("apps.limitsSaveFailed"), "error"),
-  });
-
-  return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.limits")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.limitsDesc")}</p>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input style={{ ...envField, width: 150 }} type="number" placeholder={t("apps.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
-        <input style={{ ...envField, width: 130 }} type="number" step="0.1" placeholder={t("apps.cpus")} value={cpu} onChange={(e) => setCpu(e.target.value)} />
-        {clusterId && (
-          <>
-            <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.reserveMemoryMb")} value={reserveMem} onChange={(e) => setReserveMem(e.target.value)} />
-            <input style={{ ...envField, width: 150 }} type="number" step="0.1" placeholder={t("apps.reserveCpus")} value={reserveCpu} onChange={(e) => setReserveCpu(e.target.value)} />
-          </>
-        )}
-        <input style={{ ...envField, width: 180 }} placeholder={t("apps.gpus")} value={gpu} onChange={(e) => setGpu(e.target.value)} />
-        <input style={{ ...envField, width: 170 }} type="number" placeholder={t("apps.deployTimeout")} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
-      </div>
-      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </Card>
   );
 }
