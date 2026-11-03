@@ -16,6 +16,7 @@ export const CONFIG_GROUPS = [
   { key: "storage", labelKey: "apps.cfgGroupStorage" },
   { key: "health-resources", labelKey: "apps.cfgGroupHealthResources" },
   { key: "automation", labelKey: "apps.cfgGroupAutomation" },
+  { key: "danger", labelKey: "apps.cfgGroupDanger" },
 ] as const;
 
 export type ConfigGroupKey = (typeof CONFIG_GROUPS)[number]["key"];
@@ -58,7 +59,8 @@ export type ConfigCardId =
   | "deployHooks"
   | "webhooks"
   | "watchPaths"
-  | "preview";
+  | "preview"
+  | "danger";
 
 /** The subset of an app's detail the gating predicates read. `AppDetail` satisfies this. */
 export interface ConfigGatingFacts {
@@ -144,6 +146,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // Watch paths gate which pushes deploy — git-sourced apps only (a GIT build or a compose-from-git app).
   { id: "watchPaths", group: "automation", visible: (a) => (a.source === "GIT" || isGitCompose(a)) && a.canWrite && !a.isPreview },
   { id: "preview", group: "automation", visible: (a) => !a.isPreview && a.source === "GIT" },
+  // Danger zone — a labelled red area holding Delete, where a Coolify migrant looks for it. The header
+  // "…" menu keeps a Delete shortcut too. Writers only (the whole Configuration tab is writer-gated).
+  { id: "danger", group: "danger", visible: (a) => a.canWrite },
 ];
 
 export interface VisibleConfigGroup {

@@ -11,6 +11,8 @@
   "delete": "Delete",
   "deleteConfirm": "Delete this database and its volume? All data is lost. This cannot be undone.",
   "keepVolume": "Keep the data volume (don't delete the data)",
+  "dangerDeleteTitle": "Delete this database",
+  "dangerDeleteDesc": "Permanently remove this database and (optionally) its data volume. This cannot be undone.",
   "tabOverview": "Overview",
   "tabLogs": "Logs",
   "tabMetrics": "Metrics",

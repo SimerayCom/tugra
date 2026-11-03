@@ -53,14 +53,14 @@ import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
   RotateCw, Play, RefreshCw, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
-  Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, History, type LucideIcon,
+  Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, History, ShieldAlert, type LucideIcon,
 } from "lucide-react";
 
 // Icon per Configuration sub-nav group. Kept here (not in config-groups.ts) so that pure, tested file
 // stays presentation-free.
 const CONFIG_GROUP_ICONS: Record<string, LucideIcon> = {
   general: SlidersHorizontal, build: Hammer, environment: Variable, domains: Globe,
-  storage: HardDrive, "health-resources": HeartPulse, automation: Clock,
+  storage: HardDrive, "health-resources": HeartPulse, automation: Clock, danger: ShieldAlert,
 };
 
 // Post-deploy rollout states the agent reports via the TUGRA_ROLLOUT marker, mapped to a chip colour.
@@ -258,6 +258,18 @@ export default function AppDetailPage() {
     onSuccess: () => router.replace("/apps"),
     onError: (e) => toast(errMsg(e), "error"),
   });
+  // Shared by the header "…" menu and the Danger-zone card, so one delete flow with its typed-name
+  // guard and keep-volumes / remove-images opt-ins lives in a single place.
+  const confirmAndDelete = async () => {
+    if (!appData || del.isPending) return; // guard both entry points (header "…" menu + Danger-zone card) against a double-fire
+    keepVolumes.current = false;
+    removeImages.current = false;
+    // Offer "also remove images" only for Image/Git apps — a compose app's images are its
+    // upstream/compose-built tags, which the hub intentionally never removes.
+    const boxes = [{ label: t("apps.keepVolumes"), ref: keepVolumes }];
+    if (appData.source !== "COMPOSE") boxes.push({ label: t("apps.removeImages"), ref: removeImages });
+    if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: boxes })) del.mutate();
+  };
   const [moreOpen, setMoreOpen] = useState(false);
   const regen = useMutation({
     mutationFn: () => api.regenerateWebhook(id),
@@ -454,6 +466,11 @@ export default function AppDetailPage() {
     containerPort: () => <ContainerPortCard id={id} containerPort={appData.containerPort} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
+    danger: () => (
+      <SectionCard title={t("apps.dangerDeleteTitle")} desc={t("apps.dangerDeleteDesc")} style={{ borderColor: "var(--c-r)" }}>
+        <Btn icon={Trash2} variant="dangerGhost" loading={del.isPending} onClick={() => void confirmAndDelete()}>{t("apps.delete")}</Btn>
+      </SectionCard>
+    ),
   };
 
   return (
@@ -498,16 +515,7 @@ export default function AppDetailPage() {
                     </Btn>
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
                     <Btn icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("apps.clone")}</Btn>
-                    <Btn icon={Trash2} variant="dangerGhost" onClick={async () => {
-                      setMoreOpen(false);
-                      keepVolumes.current = false;
-                      removeImages.current = false;
-                      // Offer "also remove images" only for Image/Git apps — a compose app's images are its
-                      // upstream/compose-built tags, which the hub intentionally never removes.
-                      const boxes = [{ label: t("apps.keepVolumes"), ref: keepVolumes }];
-                      if (appData.source !== "COMPOSE") boxes.push({ label: t("apps.removeImages"), ref: removeImages });
-                      if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: boxes })) del.mutate();
-                    }}>{t("apps.delete")}</Btn>
+                    <Btn icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>
