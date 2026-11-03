@@ -702,11 +702,19 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
 
+  const confirm = useConfirm();
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["server", id] });
     qc.invalidateQueries({ queryKey: ["server-disk-usage", id] });
+    qc.invalidateQueries({ queryKey: ["metrics", id] }); // the disk gauge reads metrics — refresh after a prune
   };
   const clean = useMutation({ mutationFn: () => api.cleanupServer(id), onSuccess: invalidate });
+  // Confirm only the destructive path: a plain prune reclaims dangling layers + build cache (safe), but with
+  // "Also unused volumes" on it can delete volumes, so gate that behind a danger confirm (error prevention).
+  const runClean = async () => {
+    if (server.cleanupVolumes && !(await confirm({ title: t("servers.cleanNow"), body: t("servers.cleanConfirmVolumes"), danger: true, confirmLabel: t("servers.cleanNow") }))) return;
+    clean.mutate();
+  };
   // Read-only disk-usage breakdown so the operator can see WHAT is filling the disk; refreshed after a clean.
   const diskUsage = useQuery({ queryKey: ["server-disk-usage", id], queryFn: () => api.diskUsage(id), staleTime: 30_000, retry: false });
   const save = useMutation({
@@ -720,10 +728,21 @@ function CleanupCard({ id, server }: { id: string; server: ServerView }) {
     <Card style={{ padding: 16, marginTop: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("servers.cleanup")}</div>
-        <Btn onClick={() => clean.mutate()} disabled={clean.isPending}>
+        <Btn onClick={runClean} disabled={clean.isPending}>
           {clean.isPending ? t("servers.cleaning") : t("servers.cleanNow")}
         </Btn>
       </div>
+      {(clean.data || clean.isError) && (
+        <div role="status" aria-live="polite" style={{ fontSize: 12, margin: "0 0 8px", color: !clean.isError && clean.data?.ok ? "var(--c-g, var(--c-tx2))" : "var(--c-r)" }}>
+          {clean.isError
+            ? t("servers.cleanFailed")
+            : clean.data?.ok
+              ? clean.data.reclaimed && clean.data.reclaimed !== "0B"
+                ? t("servers.cleanOk", { reclaimed: clean.data.reclaimed })
+                : t("servers.cleanOkNothing")
+              : `${t("servers.cleanFailed")}${clean.data?.output ? ` — ${clean.data.output.slice(-200)}` : ""}`}
+        </div>
+      )}
       <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
         {t("servers.cleanupDesc")}
         {server.lastCleanupAt ? ` · ${t("servers.lastCleanup")}: ${new Date(server.lastCleanupAt).toLocaleString()}` : ""}

@@ -622,7 +622,7 @@ export const api = {
   },
 
   cleanupServer(id: string) {
-    return apiFetch<{ output: string }>(`/servers/${id}/cleanup`, { method: "POST" });
+    return apiFetch<{ ok: boolean; reclaimed: string; output: string }>(`/servers/${id}/cleanup`, { method: "POST" });
   },
   diskUsage(id: string) {
     return apiFetch<DiskUsage>(`/servers/${id}/disk-usage`);

@@ -44,10 +44,10 @@ export class CleanupService {
     return parseDiskUsage(r.output);
   }
 
-  async cleanupNow(userId: string, serverId: string): Promise<{ output: string }> {
+  async cleanupNow(userId: string, serverId: string): Promise<{ ok: boolean; reclaimed: string; output: string }> {
     await this.requireWrite(userId, serverId);
-    const output = await this.runner.runCleanup(serverId, userId);
-    return { output };
+    // A manual "Clean now" passes no opts → it always runs (no threshold / deploy skip). Forward the outcome.
+    return this.runner.runCleanup(serverId, userId);
   }
 
   async setConfig(userId: string, serverId: string, cfg: CleanupConfigInput): Promise<void> {

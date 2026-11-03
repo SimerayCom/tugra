@@ -79,6 +79,8 @@ describe("Server ops / docker cleanup (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(res.body.output).toContain("reclaimed");
+    expect(res.body.ok).toBe(true);
+    expect(typeof res.body.reclaimed).toBe("string");
     await sleep(60);
     const cmds = commands.join("\n");
     expect(cmds).toContain("docker image prune -f");
