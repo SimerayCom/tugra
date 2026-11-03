@@ -42,7 +42,7 @@ export function DockerOptionsCard({ id, dockerOptions, allowPrivileged }: { id: 
   };
 
   return (
-    <ConfigCard title={t("apps.dockerOptions")} desc={t("apps.dockerOptionsDesc")} dirty={val !== (dockerOptions ?? "")} saving={save.isPending} onSave={() => save.mutate()}>
+    <ConfigCard title={t("apps.dockerOptions")} desc={t("apps.dockerOptionsDesc")} dirty={val.trim() !== (dockerOptions ?? "")} saving={save.isPending} onSave={() => save.mutate()}>
       {isOwner && (
         <div style={{ marginBottom: 10 }}>
           <Checkbox checked={allowPrivileged} disabled={togglePriv.isPending} onChange={onTogglePriv} label={t("apps.privilegedToggle")} />
