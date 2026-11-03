@@ -53,12 +53,20 @@ export class BackupSchedulerService
     const dbs = await this.prisma.database.findMany({
       where: { backupEnabled: true, OR: [{ backupIntervalHours: { not: null } }, { backupCron: { not: null } }] },
     });
+    let ok = 0;
     // A cron expression wins over the plain interval when both are set.
     for (const d of dbs) {
-      if (d.backupCron) await this.scheduleCron(d.id, d.backupCron);
-      else await this.schedule(d.id, (d.backupIntervalHours ?? 24) * 3600);
+      // A bad stored cron must not crash the hub at boot (BullMQ throws inside queue.add; this loop is
+      // unguarded in onApplicationBootstrap). Skip the offending database and keep scheduling the rest.
+      try {
+        if (d.backupCron) await this.scheduleCron(d.id, d.backupCron);
+        else await this.schedule(d.id, (d.backupIntervalHours ?? 24) * 3600);
+        ok++;
+      } catch (e) {
+        this.logger.warn(`skipped backup schedule for database ${d.id} (bad cron "${d.backupCron}"): ${e instanceof Error ? e.message : e}`);
+      }
     }
-    this.logger.log(`scheduled ${dbs.length} database backup(s)`);
+    this.logger.log(`scheduled ${ok}/${dbs.length} database backup(s)`);
   }
 
   async schedule(databaseId: string, intervalSec: number): Promise<void> {

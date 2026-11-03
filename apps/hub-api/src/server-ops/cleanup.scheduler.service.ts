@@ -49,12 +49,20 @@ export class CleanupSchedulerService
         OR: [{ cleanupIntervalHours: { not: null } }, { cleanupCron: { not: null } }],
       },
     });
+    let ok = 0;
     for (const s of servers) {
-      // A cron expression wins over the plain interval when both are set.
-      if (s.cleanupCron) await this.scheduleCron(s.id, s.cleanupCron, s.timezone ?? undefined);
-      else await this.schedule(s.id, (s.cleanupIntervalHours ?? 24) * 3600);
+      // A bad stored cron must not crash the hub at boot (BullMQ throws inside queue.add; this loop is
+      // unguarded in onApplicationBootstrap). Skip the offending server and keep scheduling the rest.
+      try {
+        // A cron expression wins over the plain interval when both are set.
+        if (s.cleanupCron) await this.scheduleCron(s.id, s.cleanupCron, s.timezone ?? undefined);
+        else await this.schedule(s.id, (s.cleanupIntervalHours ?? 24) * 3600);
+        ok++;
+      } catch (e) {
+        this.logger.warn(`skipped cleanup schedule for server ${s.id} (bad cron "${s.cleanupCron}"): ${e instanceof Error ? e.message : e}`);
+      }
     }
-    this.logger.log(`scheduled ${servers.length} docker cleanup(s)`);
+    this.logger.log(`scheduled ${ok}/${servers.length} docker cleanup(s)`);
   }
 
   async schedule(serverId: string, intervalSec: number): Promise<void> {

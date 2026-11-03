@@ -29,6 +29,7 @@
     "argon2": "^0.44.0",
     "bcryptjs": "3.0.2",
     "bullmq": "^5.78.1",
+    "cron-parser": "4.9.0",
     "ioredis": "^5.11.1",
     "jose": "^4.15.9",
     "libsodium-wrappers": "^0.8.4",
