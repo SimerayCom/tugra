@@ -163,6 +163,7 @@ export function SectionCard({
   footer,
   children,
   style,
+  id,
 }: {
   title?: string;
   desc?: string;
@@ -171,9 +172,11 @@ export function SectionCard({
   footer?: ReactNode;
   children: ReactNode;
   style?: CSSProperties;
+  // Optional anchor target for a deep link (e.g. #wildcard), forwarded to the card's root element.
+  id?: string;
 }) {
   return (
-    <Card style={{ padding: 16, marginBottom: 16, ...style }}>
+    <Card id={id} style={{ padding: 16, marginBottom: 16, ...style }}>
       {(title || right) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: desc ? 4 : 12 }}>
           {title && (
