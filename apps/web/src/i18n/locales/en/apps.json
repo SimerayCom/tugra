@@ -210,6 +210,7 @@
   "rebuild": "Rebuild (no cache)",
   "pullRedeploy": "Pull & redeploy",
   "stop": "Stop",
+  "stopConfirm": "Stop this app? It goes offline until you start it again.",
   "rename": "Rename",
   "clone": "Clone",
   "cloneTitle": "Clone application",

@@ -32,6 +32,7 @@
   "provision": "Deploy",
   "provisioning": "Deploying…",
   "stop": "Stop",
+  "stopConfirm": "Stop this database? Apps that depend on it will lose their connection until it is started again.",
   "rename": "Rename",
   "iconTitle": "Custom icon",
   "iconHint": "A square PNG (32–512px). Overrides the engine logo across the panel.",

@@ -1045,9 +1045,9 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
           {st && <StatusPill label={t(`servers.st_${st}`)} color={PROXY_COLOR[st]} />}
           {canWrite && (
             <>
-              <Btn variant="ghost" icon={Play} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
-              <Btn variant="ghost" icon={RotateCw} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
-              <Btn variant="dangerGhost" icon={Square} onClick={async () => { if (await confirm({ body: t("servers.proxyStopConfirm"), danger: true })) stop.mutate(); }} disabled={busy}>{t("servers.proxyStop")}</Btn>
+              <Btn variant="ghost" icon={Play} iconTone="success" loading={start.isPending} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
+              <Btn variant="ghost" icon={RotateCw} iconTone="warn" loading={restart.isPending} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
+              <Btn variant="dangerGhost" icon={Square} loading={stop.isPending} onClick={async () => { if (await confirm({ body: t("servers.proxyStopConfirm"), danger: true })) stop.mutate(); }} disabled={busy}>{t("servers.proxyStop")}</Btn>
             </>
           )}
         </>

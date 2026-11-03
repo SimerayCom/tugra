@@ -52,4 +52,22 @@ describe("Btn", () => {
     fireEvent.click(screen.getByText("Save"));
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
+
+  it("loading marks the button busy + disabled, swaps the icon for a spinner, and blocks clicks", () => {
+    const onClick = vi.fn();
+    const { container } = render(<Btn icon={FolderTree} loading onClick={onClick}>Deploying</Btn>);
+    const btn = screen.getByRole("button", { name: /deploying/i });
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn).toHaveProperty("disabled", true);
+    expect(container.querySelector("svg")).toBeNull(); // lucide icon replaced by the spinner span
+    fireEvent.click(btn);
+    expect(onClick).not.toHaveBeenCalled(); // disabled while loading
+  });
+
+  it("iconTone tints only the leading icon", () => {
+    const { container } = render(<Btn icon={FolderTree} iconTone="success">Start</Btn>);
+    const svg = container.querySelector("svg") as SVGElement;
+    expect(svg).toBeTruthy();
+    expect(svg.style.color).toContain("--c-g"); // success → green token
+  });
 });

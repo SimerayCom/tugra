@@ -80,6 +80,12 @@ body {
 .tg-btn:not(:disabled):active {
   transform: translateY(1px);
 }
+/* Global spin keyframe so inline spinners (e.g. Btn loading) animate even where no Spinner is mounted. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .mono {
   font-family: var(--font-mono);
 }

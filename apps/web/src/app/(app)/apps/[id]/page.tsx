@@ -468,15 +468,15 @@ export default function AppDetailPage() {
           appData.canWrite ? (
             <>
               {primary === "restart" && (
-                <Btn icon={RotateCw} onClick={() => restart.mutate()} disabled={restart.isPending}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
+                <Btn icon={RotateCw} iconTone="warn" loading={restart.isPending} onClick={() => restart.mutate()}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
               )}
               {primary === "start" && (
-                <Btn icon={Play} onClick={() => start.mutate()} disabled={start.isPending}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
+                <Btn icon={Play} iconTone="success" loading={start.isPending} onClick={() => start.mutate()}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
               )}
-              <Btn icon={appData.status === "NEW" ? Rocket : RefreshCw} variant={primary === "deploy" ? "primary" : "ghost"} onClick={() => onDeploy()} disabled={deploy.isPending}>
+              <Btn icon={appData.status === "NEW" ? Rocket : RefreshCw} variant={primary === "deploy" ? "primary" : "ghost"} iconTone={primary === "deploy" ? undefined : "success"} loading={deploy.isPending} onClick={() => onDeploy()}>
                 {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
               </Btn>
-              <Btn icon={Square} variant="dangerGhost" onClick={() => stop.mutate()} disabled={stop.isPending || !isRunning}>{t("apps.stop")}</Btn>
+              <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={!isRunning} onClick={async () => { if (await confirm({ body: t("apps.stopConfirm"), danger: true })) stop.mutate(); }}>{t("apps.stop")}</Btn>
               <Btn
                 icon={Terminal}
                 variant="ghost"
@@ -493,7 +493,7 @@ export default function AppDetailPage() {
                     role="menu"
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
-                    <Btn icon={appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer} variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
+                    <Btn icon={appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer} iconTone="warn" variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
                     <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
