@@ -3122,7 +3122,38 @@ describe("ApplicationsService", () => {
     } as unknown as AgentWsServer;
     await make(prisma, {} as TeamAccessService, agentWs).removePreviewByPr("parent1", 5);
     expect(sentCmd).toContain("docker rm -f tugra_prev1");
+    expect(sentCmd).toContain("docker rmi -f $(docker images --filter=reference='tugra_prev1:*'"); // reclaim the preview's own images
     expect(del).toHaveBeenCalledWith({ where: { id: "prev1" } });
+  });
+
+  it("removePreviewByPr keeps the record (no silent orphan) when the agent teardown is unreachable", async () => {
+    const del = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: {
+        findFirst: jest.fn().mockResolvedValue({ ...parentApp, id: "prev1", isPreview: true }),
+        delete: del,
+      },
+    } as unknown as PrismaService;
+    const agentWs = { sendCommand: jest.fn().mockRejectedValue(new Error("agent offline")) } as unknown as AgentWsServer;
+    // The throw propagates (callers .catch it) — crucially the DB row is NOT deleted, so nothing is orphaned.
+    await expect(make(prisma, {} as TeamAccessService, agentWs).removePreviewByPr("parent1", 5)).rejects.toThrow(/did not converge/);
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("removePreviewByPr on a COMPOSE preview omits the image-removal line (no single tag)", async () => {
+    let sentCmd = "";
+    const prisma = {
+      application: {
+        findFirst: jest.fn().mockResolvedValue({ ...parentApp, id: "prev1", isPreview: true, source: "COMPOSE" }),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+    } as unknown as PrismaService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sentCmd = cmd; return Promise.resolve({ exitCode: 0, output: "" }); }),
+    } as unknown as AgentWsServer;
+    await make(prisma, {} as TeamAccessService, agentWs).removePreviewByPr("parent1", 5);
+    expect(sentCmd).toContain("docker rm -f tugra_prev1");
+    expect(sentCmd).not.toContain("docker rmi");
   });
 
   it("setPreviewEnabled refuses to enable previews without a domain", async () => {
