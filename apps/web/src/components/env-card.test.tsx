@@ -138,4 +138,41 @@ describe("EnvCard", () => {
     fireEvent.change(screen.getByLabelText("Search keys…"), { target: { value: "zzz" } });
     expect(screen.getByText(/no keys match/i)).toBeTruthy();
   });
+
+  it("removing a row re-indexes reveals so another row's secret is not exposed", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1", B: "2", C: "3" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("2");
+    fireEvent.click(screen.getAllByRole("button", { name: "Reveal value" })[1]); // reveal B (index 1)
+    expect((screen.getByDisplayValue("2") as HTMLInputElement).type).toBe("text");
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]); // remove A (index 0)
+    expect((screen.getByDisplayValue("2") as HTMLInputElement).type).toBe("text"); // B stays revealed
+    expect((screen.getByDisplayValue("3") as HTMLInputElement).type).toBe("password"); // C NOT leaked
+  });
+
+  it("re-masks revealed rows when a bulk edit replaces them", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal value" }));
+    expect((screen.getByDisplayValue("1") as HTMLInputElement).type).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: "Bulk edit" }));
+    fireEvent.change(screen.getByLabelText("Bulk edit"), { target: { value: "A=1\nB=2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect((screen.getByDisplayValue("1") as HTMLInputElement).type).toBe("password"); // re-masked after bulk apply
+    expect((screen.getByDisplayValue("2") as HTMLInputElement).type).toBe("password");
+  });
+
+  it("shows a newly added blank row even while a search filter is active", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ ALPHA: "1", BETA: "2", GAMMA: "3", DELTA: "4" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    fireEvent.change(screen.getByLabelText("Search keys…"), { target: { value: "zzz" } });
+    expect(screen.getByText(/no keys match/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    // The blank row is now visible (not swallowed by the filter): a Key input with an empty value exists.
+    const keys = screen.getAllByLabelText("Key") as HTMLInputElement[];
+    expect(keys.some((k) => k.value === "")).toBe(true);
+    expect(screen.queryByText(/no keys match/i)).toBeNull();
+  });
 });
