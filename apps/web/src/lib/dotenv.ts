@@ -127,6 +127,24 @@ export function duplicateKeys(rows: EnvRow[]): string[] {
   return dups;
 }
 
+/**
+ * Whether the env editor may persist `rows`. The server replaces the WHOLE env blob on save, so saving an
+ * empty map wipes every variable. `stored` is the loaded env (react-query `data`): it is `undefined` while
+ * the query is pending OR after it errored, and only then is `rows` still the initial `[]` — so an early or
+ * post-error Save would silently wipe everything. Gate on this: it is false until the env has loaded, and
+ * false when the rows already match what's stored (nothing to save), true only when there's a real change.
+ */
+export function envDirty(rows: EnvRow[], stored: Record<string, string> | undefined): boolean {
+  if (!stored) return false; // not loaded yet, or the load failed — never safe to save
+  const map: Record<string, string> = {};
+  for (const r of rows) if (r.key.trim()) map[r.key.trim()] = r.value;
+  const mapKeys = Object.keys(map);
+  const storedKeys = Object.keys(stored);
+  if (mapKeys.length !== storedKeys.length) return true;
+  for (const k of mapKeys) if (stored[k] !== map[k]) return true;
+  return false;
+}
+
 /** Non-empty keys that aren't valid env var names (the server would reject these). */
 export function invalidKeys(rows: EnvRow[]): string[] {
   const seen = new Set<string>();
