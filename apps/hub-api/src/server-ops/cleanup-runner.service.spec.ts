@@ -69,6 +69,15 @@ describe("CleanupRunnerService.runCleanup", () => {
     );
   });
 
+  it("returns {ok,reclaimed,output} so Clean now can show success vs failure (not a bare string)", async () => {
+    const good = await make(jest.fn().mockResolvedValue({ exitCode: 0, output: "Total reclaimed space: 1.2GB" })).svc.runCleanup("s1");
+    expect(good).toEqual({ ok: true, reclaimed: "1.2GB", output: "Total reclaimed space: 1.2GB" });
+    const bad = await make(jest.fn().mockResolvedValue({ exitCode: 1, output: "prune failed: no space left" })).svc.runCleanup("s1");
+    expect(bad.ok).toBe(false);
+    expect(bad.reclaimed).toBe("");
+    expect(bad.output).toContain("no space left");
+  });
+
   it("scheduled (skipIfDeploying): SKIPS while a deploy is running on this server (as run OR build target)", async () => {
     const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "Total reclaimed space: 1GB" });
     const update = jest.fn().mockResolvedValue({});
@@ -82,7 +91,7 @@ describe("CleanupRunnerService.runCleanup", () => {
     const out = await svc.runCleanup("s1", "scheduler", { respectThreshold: true, skipIfDeploying: true });
     expect(send).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
-    expect(out).toMatch(/skipped.*deploy/i);
+    expect(out).toEqual({ ok: true, reclaimed: "", output: expect.stringMatching(/skipped.*deploy/i) });
     expect(count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "RUNNING" }) }));
     expect(log).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ skipped: true, reason: "deploy_running" }) }));
   });
@@ -115,7 +124,7 @@ describe("CleanupRunnerService.runCleanup", () => {
     const { svc, send } = makeThreshold(80, { diskUsed: 50n, diskTotal: 100n }); // 50%
     const out = await svc.runCleanup("s1", "scheduler", { respectThreshold: true });
     expect(send).not.toHaveBeenCalled();
-    expect(out).toMatch(/skipped.*below threshold 80%/i);
+    expect(out.output).toMatch(/skipped.*below threshold 80%/i);
   });
 
   it("scheduled: RUNS the prune when disk usage is at/above the threshold", async () => {

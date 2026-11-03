@@ -59,10 +59,11 @@ describe("CleanupService", () => {
     const access = {
       requirePermission: jest.fn().mockResolvedValue(undefined),
     } as unknown as TeamAccessService;
-    const runner = { runCleanup: jest.fn().mockResolvedValue("reclaimed 1GB") } as unknown as CleanupRunnerService;
+    const runner = { runCleanup: jest.fn().mockResolvedValue({ ok: true, reclaimed: "1GB", output: "reclaimed 1GB" }) } as unknown as CleanupRunnerService;
     const out = await make(prisma, access, runner).cleanupNow("u1", "s1");
     expect(runner.runCleanup).toHaveBeenCalledWith("s1", "u1");
-    expect(out.output).toBe("reclaimed 1GB");
+    // cleanupNow forwards the runner's outcome so "Clean now" can show success vs failure + the reclaimed size.
+    expect(out).toEqual({ ok: true, reclaimed: "1GB", output: "reclaimed 1GB" });
   });
 
   it("schedules when enabled, unschedules otherwise", async () => {

@@ -41,13 +41,13 @@ export class CleanupRunnerService {
     serverId: string,
     actor = "scheduler",
     opts: { respectThreshold?: boolean; skipIfDeploying?: boolean } = {},
-  ): Promise<string> {
+  ): Promise<{ ok: boolean; reclaimed: string; output: string }> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new Error("server not found");
     if (opts.respectThreshold && server.cleanupThresholdPct != null) {
       const pct = await this.currentDiskPct(serverId);
       if (pct != null && pct < server.cleanupThresholdPct) {
-        return `skipped: disk ${pct.toFixed(0)}% below threshold ${server.cleanupThresholdPct}%`;
+        return { ok: true, reclaimed: "", output: `skipped: disk ${pct.toFixed(0)}% below threshold ${server.cleanupThresholdPct}%` };
       }
     }
     // Don't prune out from under a build: a running deploy on this server (as its run target OR its build
@@ -59,7 +59,7 @@ export class CleanupRunnerService {
         .catch(() => 0);
       if (running > 0) {
         await this.audit.log({ actor, action: "server.cleanup", target: serverId, meta: { ok: true, skipped: true, reason: "deploy_running" } });
-        return `skipped: ${running} deploy(s) running on this server`;
+        return { ok: true, reclaimed: "", output: `skipped: ${running} deploy(s) running on this server` };
       }
     }
     let output = "";
@@ -104,7 +104,9 @@ export class CleanupRunnerService {
         errorTail: ok ? "" : scrubRestoreOutput(output),
       })
       .catch(() => undefined);
-    return output;
+    // Surface the outcome to the caller so "Clean now" can show success vs failure (a failed/timed-out prune
+    // used to return only a string and look successful). Scrub the agent output tail on failure.
+    return { ok, reclaimed, output: ok ? output : scrubRestoreOutput(output) };
   }
 }
 
