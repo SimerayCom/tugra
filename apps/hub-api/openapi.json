@@ -7960,6 +7960,10 @@
                       "rollbackOnFailure": {
                         "type": "boolean"
                       },
+                      "imagesToKeep": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "zeroDowntime": {
                         "type": "boolean"
                       },
@@ -8287,6 +8291,7 @@
                       "constraintServerId",
                       "deployStrategy",
                       "rollbackOnFailure",
+                      "imagesToKeep",
                       "zeroDowntime",
                       "templateSlug",
                       "templateLogo",
@@ -8999,6 +9004,10 @@
                     "rollbackOnFailure": {
                       "type": "boolean"
                     },
+                    "imagesToKeep": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -9326,6 +9335,7 @@
                     "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
+                    "imagesToKeep",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -10105,6 +10115,10 @@
                     "rollbackOnFailure": {
                       "type": "boolean"
                     },
+                    "imagesToKeep": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -10432,6 +10446,7 @@
                     "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
+                    "imagesToKeep",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -11215,6 +11230,10 @@
                     "rollbackOnFailure": {
                       "type": "boolean"
                     },
+                    "imagesToKeep": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -11542,6 +11561,7 @@
                     "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
+                    "imagesToKeep",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -16082,6 +16102,12 @@
                   },
                   "rollbackOnFailure": {
                     "type": "boolean"
+                  },
+                  "imagesToKeep": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -19221,6 +19247,10 @@
                         "rollbackOnFailure": {
                           "type": "boolean"
                         },
+                        "imagesToKeep": {
+                          "type": "number",
+                          "nullable": true
+                        },
                         "zeroDowntime": {
                           "type": "boolean"
                         },
@@ -19548,6 +19578,7 @@
                         "constraintServerId",
                         "deployStrategy",
                         "rollbackOnFailure",
+                        "imagesToKeep",
                         "zeroDowntime",
                         "templateSlug",
                         "templateLogo",
@@ -20190,6 +20221,10 @@
                     "rollbackOnFailure": {
                       "type": "boolean"
                     },
+                    "imagesToKeep": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -20517,6 +20552,7 @@
                     "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
+                    "imagesToKeep",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -21229,6 +21265,10 @@
                       "rollbackOnFailure": {
                         "type": "boolean"
                       },
+                      "imagesToKeep": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "zeroDowntime": {
                         "type": "boolean"
                       },
@@ -21556,6 +21596,7 @@
                       "constraintServerId",
                       "deployStrategy",
                       "rollbackOnFailure",
+                      "imagesToKeep",
                       "zeroDowntime",
                       "templateSlug",
                       "templateLogo",
@@ -22353,6 +22394,10 @@
                     "rollbackOnFailure": {
                       "type": "boolean"
                     },
+                    "imagesToKeep": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -22680,6 +22725,7 @@
                     "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
+                    "imagesToKeep",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -24594,6 +24640,10 @@
                     "rollbackOnFailure": {
                       "type": "boolean"
                     },
+                    "imagesToKeep": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -24921,6 +24971,7 @@
                     "constraintServerId",
                     "deployStrategy",
                     "rollbackOnFailure",
+                    "imagesToKeep",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",

@@ -1133,6 +1133,7 @@ export interface Application {
   constraintServerId: string | null;
   deployStrategy: string;
   rollbackOnFailure: boolean;
+  imagesToKeep: number | null;
   zeroDowntime: boolean;
   environmentId: string;
   projectId: string | null;

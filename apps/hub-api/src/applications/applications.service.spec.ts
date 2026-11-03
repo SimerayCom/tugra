@@ -1825,6 +1825,18 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("setDeploySettings persists imagesToKeep and leaves it untouched when omitted", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await svc.setDeploySettings("u1", "app1", { imagesToKeep: 3 });
+    expect(update.mock.calls[0][0].data).toEqual({ imagesToKeep: 3 });
+    // an update that omits imagesToKeep must not touch the column
+    await svc.setDeploySettings("u1", "app1", { rollbackOnFailure: true });
+    expect("imagesToKeep" in update.mock.calls[1][0].data).toBe(false);
+  });
+
   it("setBuildConfig rejects a build server with no registry configured", async () => {
     const noRegApp = { ...app, registryId: null };
     const prisma = {
@@ -4340,6 +4352,18 @@ describe("ApplicationsService.pruneImages (keep-N, aliasing-safe)", () => {
     expect(sent).toContain("tugra_app1:d5");
     expect(sent).toContain("ghcr.io/org/tugra_app1:d5");
     expect(update).toHaveBeenCalledWith({ where: { id: "d5" }, data: { imageTag: null } }); // only imageTag nulled
+  });
+
+  it("honours a per-app imagesToKeep (keeps 2 instead of the default 5)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue(rows(4)), update } } as unknown as PrismaService;
+    const sent: string[] = [];
+    const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+    await prune(make(prisma, {} as TeamAccessService, agentWs))({ ...theApp, imagesToKeep: 2 });
+    // keep d0,d1 → remove d2,d3
+    expect(update).toHaveBeenCalledWith({ where: { id: "d2" }, data: { imageTag: null } });
+    expect(update).toHaveBeenCalledWith({ where: { id: "d3" }, data: { imageTag: null } });
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: "d1" } }));
   });
 
   it("skips entirely while a deploy/rollback is in flight (a RUNNING row), to avoid racing it", async () => {

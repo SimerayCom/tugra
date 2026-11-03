@@ -218,6 +218,8 @@ export const SetDeploySettingsSchema = z
   .object({
     deployStrategy: z.enum(["ROLLING", "RECREATE"]).optional(),
     rollbackOnFailure: z.boolean().optional(),
+    // Rollback images retained for keep-N pruning; null resets to the built-in default (5).
+    imagesToKeep: z.number().int().min(1).max(20).nullable().optional(),
   })
   .strict();
 export type SetDeploySettingsInput = z.infer<typeof SetDeploySettingsSchema>;

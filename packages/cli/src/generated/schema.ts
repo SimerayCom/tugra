@@ -9608,6 +9608,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -9883,6 +9884,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -10269,6 +10271,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -10610,6 +10613,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -13896,6 +13900,7 @@ export interface operations {
                     /** @enum {string} */
                     deployStrategy?: "ROLLING" | "RECREATE";
                     rollbackOnFailure?: boolean;
+                    imagesToKeep?: number | null;
                 };
             };
         };
@@ -15818,6 +15823,7 @@ export interface operations {
                             constraintServerId: string | null;
                             deployStrategy: string;
                             rollbackOnFailure: boolean;
+                            imagesToKeep: number | null;
                             zeroDowntime: boolean;
                             templateSlug: string | null;
                             templateLogo: string | null;
@@ -16088,6 +16094,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -16427,6 +16434,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -16824,6 +16832,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -17969,6 +17978,7 @@ export interface operations {
                         constraintServerId: string | null;
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
+                        imagesToKeep: number | null;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
