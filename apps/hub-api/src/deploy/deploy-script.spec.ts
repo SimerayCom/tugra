@@ -107,6 +107,19 @@ describe("monorepo base directory (build context/root = bd/baseDirectory)", () =
     expect(buildRunScript({ ...gitBase, buildType: "NIXPACKS" }, "t", true)).toMatch(/^nixpacks build .* \/etc\/tugra\/builds\/abc$/m); // root = bd (not the .plan.json path)
   });
 
+  it("NIXPACKS command overrides inject NIXPACKS_*_CMD env into plan + build (shq'd); none → none", () => {
+    const s = buildRunScript({ ...gitBase, buildType: "NIXPACKS", nixpacksInstallCmd: "npm ci", nixpacksBuildCmd: "npm run build", nixpacksStartCmd: "node server.js" }, "t", true);
+    const plan = s.split("\n").find((l) => l.includes("nixpacks plan"))!;
+    const build = s.split("\n").find((l) => l.includes("nixpacks build"))!;
+    for (const line of [plan, build]) {
+      expect(line).toContain("--env 'NIXPACKS_INSTALL_CMD=npm ci'");
+      expect(line).toContain("--env 'NIXPACKS_BUILD_CMD=npm run build'");
+      expect(line).toContain("--env 'NIXPACKS_START_CMD=node server.js'");
+    }
+    const none = buildRunScript({ ...gitBase, buildType: "NIXPACKS" }, "t", true);
+    expect(none).not.toContain("NIXPACKS_INSTALL_CMD");
+  });
+
   it("DOCKERFILE build --target adds the stage flag (shq'd); none → no flag", () => {
     const withTarget = buildRunScript({ ...gitBase, buildType: "DOCKERFILE", dockerBuildTarget: "production" }, "t", true);
     expect(withTarget).toContain(`--target 'production' -t`);

@@ -56,6 +56,12 @@ describe("buildConfigSnapshot", () => {
     expect(changes).toContainEqual(expect.objectContaining({ field: "gzip", kind: "changed", after: "true" }));
   });
 
+  it("records the nixpacks command overrides so changing one shows in the deploy diff", () => {
+    expect(buildConfigSnapshot(spec({ nixpacksBuildCmd: "npm run build" })).nixpacksBuildCmd).toBe("npm run build");
+    const changes = diffSnapshots(buildConfigSnapshot(spec()), buildConfigSnapshot(spec({ nixpacksBuildCmd: "vite build" })));
+    expect(changes).toContainEqual(expect.objectContaining({ field: "nixpacksBuildCmd", kind: "changed", after: "vite build" }));
+  });
+
   it("fingerprints config-mount content (never stored verbatim)", () => {
     const snap = buildConfigSnapshot(
       spec({

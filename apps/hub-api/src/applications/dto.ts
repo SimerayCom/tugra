@@ -494,12 +494,18 @@ export const SetBuildSchema = z
     dockerBuildTarget: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/, "invalid build target").nullable().optional(),
     buildCommand: BUILD_CMD.nullable().optional(),
     outputDir: REPO_PATH.nullable().optional(),
+    // NIXPACKS install/build/start command overrides (null = Nixpacks auto-detect). Single-line commands,
+    // shq'd into the `--env NIXPACKS_*_CMD=…` flags and run by Nixpacks inside the build container.
+    nixpacksInstallCmd: BUILD_CMD.nullable().optional(),
+    nixpacksBuildCmd: BUILD_CMD.nullable().optional(),
+    nixpacksStartCmd: BUILD_CMD.nullable().optional(),
     // Monorepo build root — valid for every build type, so no type-gated refine (unlike the fields above).
     baseDirectory: BASE_DIR.nullable().optional(),
   })
   .strict()
   .refine((d) => d.buildType === "DOCKERFILE" || (d.dockerfilePath == null && d.dockerBuildTarget == null), { message: "dockerfilePath/dockerBuildTarget apply only to the DOCKERFILE build type" })
-  .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" });
+  .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" })
+  .refine((d) => d.buildType === "NIXPACKS" || (d.nixpacksInstallCmd == null && d.nixpacksBuildCmd == null && d.nixpacksStartCmd == null), { message: "nixpacks command overrides apply only to the NIXPACKS build type" });
 export type SetBuildInput = z.infer<typeof SetBuildSchema>;
 
 // Watch paths: repo-relative glob patterns (leading `!` = exclude) gating whether a push deploys. The charset
