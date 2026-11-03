@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { useIsPro } from "../hooks/useIsPro";
-import { Badge, Btn, Card, EmptyState } from "./ui";
+import { Badge, Btn, EmptyState, SectionCard } from "./ui";
 import { Select, fieldStyle } from "./form";
 
 const ENV_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -54,12 +54,11 @@ export function AppSecretRefsCard({ id, teamId, canWrite }: { id: string; teamId
   const gate = !ready || !isPro;
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
-        {t("apps.secretRefsTitle")}
-        {ready && !isPro && <Badge tone="gold">{t("common.pro")}</Badge>}
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("apps.secretRefsDesc")}</p>
+    <SectionCard
+      title={t("apps.secretRefsTitle")}
+      desc={t("apps.secretRefsDesc")}
+      right={ready && !isPro && <Badge tone="gold">{t("common.pro")}</Badge>}
+    >
 
       {ready && !isPro && <div style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 12px", lineHeight: 1.5 }}>{t("apps.secretRefsProHint")}</div>}
 
@@ -138,6 +137,6 @@ export function AppSecretRefsCard({ id, teamId, canWrite }: { id: string; teamId
         )
       )}
       {list.length > 0 && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 10, lineHeight: 1.5 }}>{t("apps.secretRefsRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }

@@ -6,7 +6,7 @@ import { api } from "../lib/api";
 import type { AppConfigMount } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { useToast } from "./toast";
-import { Btn, Card } from "./ui";
+import { Btn, SectionCard } from "./ui";
 
 /**
  * Edit the CONTENT of a COMPOSE app's config mounts. serviceName and target are server-controlled
@@ -45,9 +45,7 @@ export function ConfigMountsCard({ id, onDeploy }: { id: string; onDeploy: () =>
   if (mounts.isLoading || list.length === 0) return null;
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.cfgMounts.title")}</div>
-      <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 12 }}>{t("apps.cfgMounts.hint")}</div>
+    <SectionCard title={t("apps.cfgMounts.title")} desc={t("apps.cfgMounts.hint")}>
       {list.map((m) => {
         const val = drafts[m.target] ?? m.content;
         const dirty = val !== m.content;
@@ -79,6 +77,6 @@ export function ConfigMountsCard({ id, onDeploy }: { id: string; onDeploy: () =>
       })}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 4 }}>{t("apps.cfgMounts.redeploy")}</div>}
       {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 6 }}>{(save.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }

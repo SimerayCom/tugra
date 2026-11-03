@@ -183,9 +183,7 @@ function AppIconCard({ app, onChanged }: { app: Application; onChanged: () => vo
 
   const busy = processing || save.isPending || remove.isPending;
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("apps.iconTitle")}</div>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 14, maxWidth: 520 }}>{t("apps.iconHint")}</div>
+    <SectionCard title={t("apps.iconTitle")} desc={t("apps.iconHint")}>
       <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span style={{ width: 56, height: 56, borderRadius: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <AppLogo iconUrl={appIconUrl(app.id, app.iconUpdatedAt)} templateSlug={app.templateSlug} templateLogo={app.templateLogo} source={app.source} name={app.name} size={36} />
@@ -210,7 +208,7 @@ function AppIconCard({ app, onChanged }: { app: Application; onChanged: () => vo
           if (f) void onPick(f);
         }}
       />
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -431,11 +429,7 @@ export default function AppDetailPage() {
     scheduledTasks: () => <ScheduledTasksCard id={id} />,
     webhooks: () =>
       appData.webhookToken ? (
-        <Card style={{ padding: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.webhooks")}</div>
-          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>
-            {t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}
-          </p>
+        <SectionCard title={t("apps.webhooks")} desc={t("apps.webhookDesc", { branch: appData.gitBranch ?? "main" })}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <CopyRow label={t("apps.webhookUrl")} value={webhookUrl(appData.webhookToken)} copy={t("apps.copy")} />
             {appData.webhookSecret && (
@@ -452,7 +446,7 @@ export default function AppDetailPage() {
               {t("apps.regenerate")}
             </Btn>
           </div>
-        </Card>
+        </SectionCard>
       ) : null,
     watchPaths: () => <WatchPathsCard id={id} watchPaths={appData.watchPaths} />,
     basicAuth: () => <BasicAuthCard id={id} usernames={appData.basicAuthUsers} />,
@@ -722,10 +716,9 @@ export default function AppDetailPage() {
           {appData.canWrite && <LiveContainerLogsCard id={id} isCompose={appData.source === "COMPOSE"} />}
           {!streamActive &&
             (deployments[0]?.logs ? (
-              <Card style={{ padding: 16 }}>
-                <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.lastDeployLog")}</div>
+              <SectionCard title={t("apps.lastDeployLog")} style={{ marginBottom: 0 }}>
                 <pre className="mono" style={{ ...TERMINAL_PRE_STYLE, maxHeight: 420 }}>{collapseCarriageReturns(deployments[0].logs)}</pre>
-              </Card>
+              </SectionCard>
             ) : (
               !appData.canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
             ))}
@@ -795,9 +788,7 @@ function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: string[] }
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
   });
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.watchPaths")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.watchPathsDesc")}</p>
+    <SectionCard title={t("apps.watchPaths")} desc={t("apps.watchPathsDesc")}>
       <textarea
         className="mono"
         value={text}
@@ -810,7 +801,7 @@ function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: string[] }
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty}>{t("apps.save")}</Btn>
       </div>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -834,9 +825,7 @@ function BasicAuthCard({ id, usernames }: { id: string; usernames: string[] }) {
     save.mutate(completeBasicAuthRows(rows));
   };
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.basicAuth")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.basicAuthDesc")}</p>
+    <SectionCard title={t("apps.basicAuth")} desc={t("apps.basicAuthDesc")}>
       {usernames.length > 0 && (
         <div style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10 }}>{t("apps.basicAuthCurrent", { users: usernames.join(", ") })}</div>
       )}
@@ -860,7 +849,7 @@ function BasicAuthCard({ id, usernames }: { id: string; usernames: string[] }) {
         <Btn onClick={onSave} disabled={save.isPending || !canSaveBasicAuth(rows, usernames.length)}>{t("apps.save")}</Btn>
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.basicAuthReplaceNote")}</p>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -881,9 +870,7 @@ function RedirectsCard({ id, redirects }: { id: string; redirects: { regex: stri
   const patch = (i: number, p: Partial<{ regex: string; replacement: string; permanent: boolean }>) =>
     setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ...p } : x)));
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.redirects")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 10px" }}>{t("apps.redirectsDesc")}</p>
+    <SectionCard title={t("apps.redirects")} desc={t("apps.redirectsDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -904,7 +891,7 @@ function RedirectsCard({ id, redirects }: { id: string; redirects: { regex: stri
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.redirectsHint")}</p>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -918,8 +905,7 @@ function GitComposeSourceCard({ app }: { app: Application }) {
     { label: t("apps.composePath"), value: app.composePath ?? "docker-compose.yml" },
   ];
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("apps.composeFromGit")}</div>
+    <SectionCard title={t("apps.composeFromGit")}>
       <div style={{ display: "grid", gap: 8 }}>
         {rows.map((r) => (
           <div key={r.label} style={{ display: "flex", gap: 12, fontSize: 13 }}>
@@ -929,7 +915,7 @@ function GitComposeSourceCard({ app }: { app: Application }) {
         ))}
       </div>
       <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10 }}>{t("apps.composePathHint")}</div>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -951,19 +937,14 @@ function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id: string
 
   if (!canWrite) {
     return (
-      <Card style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("apps.compose")}</div>
+      <SectionCard title={t("apps.compose")}>
         <pre className="mono" style={{ margin: 0, fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 360, overflowY: "auto" }}>{composeFile}</pre>
-      </Card>
+      </SectionCard>
     );
   }
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.compose")}</div>
-        {dirty && <span style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.composeUnsaved")}</span>}
-      </div>
+    <SectionCard title={t("apps.compose")} right={dirty && <span style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.composeUnsaved")}</span>}>
       <textarea
         className="mono"
         value={text}
@@ -979,7 +960,7 @@ function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id: string
         <Btn onClick={() => { save.mutateAsync().then(() => onDeploy()).catch(() => {}); }} disabled={save.isPending}>{t("apps.composeSaveDeploy")}</Btn>
       </div>
       {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 6 }}>{(save.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1277,9 +1258,7 @@ function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePa
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.source")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.sourceDesc")}</p>
+    <SectionCard title={t("apps.source")} desc={t("apps.sourceDesc")}>
       {gitLike ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input style={{ ...envField, flex: "1 1 320px" }} placeholder={t("apps.sourceGitUrl")} value={url} onChange={(e) => setUrl(e.target.value)} aria-label={t("apps.sourceGitUrl")} />
@@ -1297,7 +1276,7 @@ function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePa
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || (gitLike ? !url.trim() : !img.trim())}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1345,9 +1324,7 @@ function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, b
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.buildSettings")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.buildSettingsDesc")}</p>
+    <SectionCard title={t("apps.buildSettings")} desc={t("apps.buildSettingsDesc")}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select style={{ ...envField, width: 200 }} value={type} onChange={(e) => setType(e.target.value as BuildType)} aria-label={t("apps.buildSettings")}>
           {(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"] as BuildType[]).map((v) => (
@@ -1371,7 +1348,7 @@ function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, b
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1402,9 +1379,7 @@ function BuildArgsCard({ id }: { id: string }) {
   const invalid = invalidKeys(rows);
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.buildArgs")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.buildArgsDesc")}</p>
+    <SectionCard title={t("apps.buildArgs")} desc={t("apps.buildArgsDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {rows.map((r, i) => {
           const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
@@ -1425,7 +1400,7 @@ function BuildArgsCard({ id }: { id: string }) {
         <Btn onClick={() => save.mutate()} disabled={save.isPending || dups.length > 0}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.buildArgsRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1442,9 +1417,7 @@ function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKee
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.deploySettings")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.deploySettingsDesc")}</p>
+    <SectionCard title={t("apps.deploySettings")} desc={t("apps.deploySettingsDesc")}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select style={{ ...envField, width: 220 }} value={strategy} onChange={(e) => setStrategy(e.target.value as "ROLLING" | "RECREATE")} aria-label={t("apps.deployStrategy")}>
           {(["ROLLING", "RECREATE"] as const).map((v) => (
@@ -1464,7 +1437,7 @@ function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKee
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.imagesToKeepDesc")}</div>
       {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1487,9 +1460,7 @@ function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.buildConfig")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.buildConfigDesc")}</p>
+    <SectionCard title={t("apps.buildConfig")} desc={t("apps.buildConfigDesc")}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select style={{ ...envField, width: 240 }} value={reg} onChange={(e) => setReg(e.target.value)} aria-label={t("apps.buildRegistry")}>
           <option value="">{t("apps.buildRegistryNone")}</option>
@@ -1514,7 +1485,7 @@ function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId
       </div>
       {teamRegistries.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.buildNoRegistries")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1538,9 +1509,7 @@ function ContainerCommandCard({ id, entrypoint, command }: { id: string; entrypo
   });
   const field: React.CSSProperties = { ...envField, width: "100%", boxSizing: "border-box", minHeight: 52, resize: "vertical", fontFamily: "monospace" };
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.containerCommand")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.containerCommandDesc")}</p>
+    <SectionCard title={t("apps.containerCommand")} desc={t("apps.containerCommandDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.containerEntrypoint")}</span>
@@ -1557,7 +1526,7 @@ function ContainerCommandCard({ id, entrypoint, command }: { id: string; entrypo
         <div><Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn></div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.containerCommandRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1579,9 +1548,7 @@ function RestartPolicyCard({ id, restartPolicy }: { id: string; restartPolicy: s
     no: t("apps.restartPolicy_no"),
   };
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.restartPolicy")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.restartPolicyDesc")}</p>
+    <SectionCard title={t("apps.restartPolicy")} desc={t("apps.restartPolicyDesc")}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <select aria-label={t("apps.restartPolicy")} value={policy} onChange={(e) => setPolicy(e.target.value)} style={{ ...envField, maxWidth: 240 }}>
           {POLICIES.map((p) => (
@@ -1591,7 +1558,7 @@ function RestartPolicyCard({ id, restartPolicy }: { id: string; restartPolicy: s
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.restartPolicyRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1608,9 +1575,7 @@ function ContainerPortCard({ id, containerPort }: { id: string; containerPort: n
     meta: { successMessage: t("apps.saved") },
   });
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.containerPort")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.containerPortCardDesc")}</p>
+    <SectionCard title={t("apps.containerPort")} desc={t("apps.containerPortCardDesc")}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input
           aria-label={t("apps.containerPort")}
@@ -1624,7 +1589,7 @@ function ContainerPortCard({ id, containerPort }: { id: string; containerPort: n
       </div>
       {!valid && val.trim() !== "" && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.containerPortInvalid")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.containerPortRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1640,9 +1605,7 @@ function DeployHooksCard({ id, pre, post }: { id: string; pre: string | null; po
   });
   const field: React.CSSProperties = { ...envField, width: "100%", boxSizing: "border-box", minHeight: 52, resize: "vertical" };
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.deployHooks")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.deployHooksDesc")}</p>
+    <SectionCard title={t("apps.deployHooks")} desc={t("apps.deployHooksDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.preDeployCommand")}</span>
@@ -1655,7 +1618,7 @@ function DeployHooksCard({ id, pre, post }: { id: string; pre: string | null; po
         <div><Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn></div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.deployHooksRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1676,9 +1639,7 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.volumes")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.volumesDesc")}</p>
+    <SectionCard title={t("apps.volumes")} desc={t("apps.volumesDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1700,7 +1661,7 @@ function VolumesCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
         </div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1721,9 +1682,7 @@ function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.hostMounts")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.hostMountsDesc")}</p>
+    <SectionCard title={t("apps.hostMounts")} desc={t("apps.hostMountsDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1751,7 +1710,7 @@ function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: HostMount[
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10, lineHeight: 1.5 }}>{t("apps.hostMountsHint")}</p>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1861,9 +1820,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.tasks")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.tasksDesc")}</p>
+    <SectionCard title={t("apps.tasks")} desc={t("apps.tasksDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
         {tasks.map((tk) => <TaskRow key={tk.id} appId={id} task={tk} />)}
       </div>
@@ -1874,7 +1831,7 @@ function ScheduledTasksCard({ id }: { id: string }) {
         <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !schedule || !command}>{t("apps.addTask")}</Btn>
       </div>
       {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1911,9 +1868,7 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: { id: s
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.preview")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.previewDesc")}</p>
+    <SectionCard title={t("apps.preview")} desc={t("apps.previewDesc")}>
       {!domain ? (
         <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.previewNeedsDomain")}</div>
       ) : (
@@ -1975,7 +1930,7 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: { id: s
         </>
       )}
       {toggle.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(toggle.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -2000,9 +1955,7 @@ function ServiceDomainsCard({ id }: { id: string }) {
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.serviceDomainsSaveFailed"), "error"),
   });
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.serviceDomains")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.serviceDomainsDesc")}</p>
+    <SectionCard title={t("apps.serviceDomains")} desc={t("apps.serviceDomainsDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {rows.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -2019,7 +1972,7 @@ function ServiceDomainsCard({ id }: { id: string }) {
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.serviceDomainsRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -2037,9 +1990,7 @@ function ExtraDomainsCard({ id, extraDomains }: { id: string; extraDomains: stri
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.extraDomainsSaveFailed"), "error"),
   });
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.extraDomains")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.extraDomainsDesc")}</p>
+    <SectionCard title={t("apps.extraDomains")} desc={t("apps.extraDomainsDesc")}>
       <textarea
         className="mono"
         style={{ ...envField, width: "100%", minHeight: 80, resize: "vertical" }}
@@ -2053,7 +2004,7 @@ function ExtraDomainsCard({ id, extraDomains }: { id: string; extraDomains: stri
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.extraDomainsRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -2108,9 +2059,7 @@ function DomainOptionsCard({
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.domainOptions")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.domainOptionsDesc")}</p>
+    <SectionCard title={t("apps.domainOptions")} desc={t("apps.domainOptionsDesc")}>
       <div className="mono" style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10 }}>
         {https ? "https://" : "http://"}{domain}
       </div>
@@ -2187,7 +2136,7 @@ function DomainOptionsCard({
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.rateLimitDesc")}</p>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -2224,9 +2173,7 @@ function CustomCertCard({
   const ta: React.CSSProperties = { ...envField, width: "100%", minHeight: 88, fontFamily: "monospace", fontSize: 12, resize: "vertical" };
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.customCert")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.customCertDesc")}</p>
+    <SectionCard title={t("apps.customCert")} desc={t("apps.customCertDesc")}>
       {hasCustomCert && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 }}>
           <span className="mono" style={{ fontSize: 12, color: "var(--c-tx2)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "2px 8px" }}>
@@ -2255,7 +2202,7 @@ function CustomCertCard({
       </div>
       {upload.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{(upload.error as Error).message}</div>}
       {(upload.isSuccess || clear.isSuccess) && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -2305,9 +2252,7 @@ function CredentialsCard({
   const rmKey = useMutation({ mutationFn: () => api.removeGitSshKey(id), onSuccess: invalidate });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.credentials")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.credentialsDesc")}</p>
+    <SectionCard title={t("apps.credentials")} desc={t("apps.credentialsDesc")}>
       {sshRepo ? (
         gitSshPublicKey ? (
           <div>
@@ -2352,7 +2297,7 @@ function CredentialsCard({
         </div>
       )}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -2413,16 +2358,18 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
   });
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("apps.volBackups")}</div>
-        <Btn variant="ghost" onClick={() => setShowImport((v) => !v)}>{t("apps.volImport")}</Btn>
-        <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
-          {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
-        </Btn>
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.volBackupsDesc")}</p>
-
+    <SectionCard
+      title={t("apps.volBackups")}
+      desc={t("apps.volBackupsDesc")}
+      right={
+        <>
+          <Btn variant="ghost" onClick={() => setShowImport((v) => !v)}>{t("apps.volImport")}</Btn>
+          <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
+            {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
+          </Btn>
+        </>
+      }
+    >
       {showImport && (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.volImportDesc")}</div>
@@ -2508,6 +2455,6 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
       </div>
       {restore.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(restore.error as Error).message}</div>}
       {exportUrl.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(exportUrl.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }

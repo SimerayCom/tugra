@@ -13,7 +13,7 @@ import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyRow } from "../../../../components/copy-row";
 import { useT } from "../../../../i18n/provider";
-import { Btn, Card, EmptyState, Spinner } from "../../../../components/ui";
+import { Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
@@ -245,9 +245,7 @@ export default function DatabaseDetailPage() {
             <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: 0 }}>{t("databases.provisioningCardBody")}</p>
           </Card>
         ) : db.canWrite && db.connectionUri ? (
-          <Card style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.connection")}</div>
-            <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.connectionDesc")}</p>
+          <SectionCard title={t("databases.connection")} desc={t("databases.connectionDesc")} style={{ marginBottom: 0 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <CopyRow label={t("databases.uri")} value={db.connectionUri} copy={t("databases.copy")} secret />
               {db.internalHost && <CopyRow label={t("databases.host")} value={db.internalHost} copy={t("databases.copy")} />}
@@ -266,7 +264,7 @@ export default function DatabaseDetailPage() {
                 {t("databases.publicPortNoIp", { port: db.hostPort })}
               </p>
             ) : null}
-          </Card>
+          </SectionCard>
         ) : (
           <Card style={{ padding: 16 }}><EmptyState>{t("databases.connectionPending")}</EmptyState></Card>
         )
@@ -300,14 +298,16 @@ export default function DatabaseDetailPage() {
       )}
 
       {tab === "backups" && db.canWrite && db.backupSupported && (
-        <Card style={{ padding: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <div style={{ fontSize: 12, color: "var(--c-tx3)", flex: 1 }}>{t("databases.backups")}</div>
+        <SectionCard
+          title={t("databases.backups")}
+          desc={t("databases.backupsDesc")}
+          style={{ marginBottom: 0 }}
+          right={
             <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
               {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
             </Btn>
-          </div>
-          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.backupsDesc")}</p>
+          }
+        >
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
@@ -410,7 +410,7 @@ export default function DatabaseDetailPage() {
               </div>
             </div>
           )}
-        </Card>
+        </SectionCard>
       )}
     </div>
   );
@@ -462,9 +462,7 @@ function DbLimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd
     onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
   });
   return (
-    <Card style={{ padding: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.limits")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("databases.limitsDesc")}</p>
+    <SectionCard title={t("databases.limits")} desc={t("databases.limitsDesc")} style={{ marginBottom: 0 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input style={{ ...limField, flex: "1 1 100%" }} placeholder={t("databases.healthCmd")} aria-label={t("databases.healthCmd")} value={hc} onChange={(e) => setHc(e.target.value)} />
         <input style={{ ...limField, width: 150 }} type="number" placeholder={t("databases.memoryMb")} aria-label={t("databases.memoryMb")} value={mem} onChange={(e) => setMem(e.target.value)} />
@@ -472,7 +470,7 @@ function DbLimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.limitsRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -485,9 +483,7 @@ function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | nul
     onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
   });
   return (
-    <Card style={{ padding: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("databases.publicPort")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 4px" }}>{t("databases.publicPortDesc")}</p>
+    <SectionCard title={t("databases.publicPort")} desc={t("databases.publicPortDesc")} style={{ marginBottom: 0 }}>
       <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 12px" }}>
         {hostPort != null ? t("databases.publicPortExposed", { port: hostPort }) : t("databases.publicPortInternal")}
       </p>
@@ -496,7 +492,7 @@ function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | nul
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.publicPortRedeploy")}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 

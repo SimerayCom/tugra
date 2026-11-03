@@ -26,7 +26,7 @@ import { fieldStyle } from "../../../../components/form";
 import { TerminalPanel } from "../../../../components/terminal-panel";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
-import { Badge, Btn, Card, EmptyState, Spinner, StatusPill } from "../../../../components/ui";
+import { Badge, Btn, Card, EmptyState, SectionCard, Spinner, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
@@ -319,9 +319,7 @@ function ServerInstallCard({ id }: { id: string }) {
   const phase = installPhase(cmd, waitedMs);
 
   return (
-    <Card style={{ padding: 16 }}>
-      <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>{t("servers.installTitle")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.installDesc")}</p>
+    <SectionCard title={t("servers.installTitle")} desc={t("servers.installDesc")}>
 
       {phase === "expired" ? (
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -351,7 +349,7 @@ function ServerInstallCard({ id }: { id: string }) {
         </>
       )}
       {reissue.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(reissue.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -392,17 +390,21 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
   const toneColor = msg?.tone === "ok" ? "var(--c-g)" : msg?.tone === "warn" ? "var(--c-am)" : "var(--c-r)";
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ fontWeight: 600, flex: 1 }}>{t("patching.agentTitle")}</div>
-        <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{version ?? "—"}</span>
-        <Btn variant="ghost" onClick={run} disabled={update.isPending}>
-          {update.isPending ? t("patching.agentUpdating") : t("patching.agentUpdate")}
-        </Btn>
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: msg ? "0 0 8px" : 0 }}>{t("patching.agentDesc")}</p>
+    <SectionCard
+      title={t("patching.agentTitle")}
+      desc={t("patching.agentDesc")}
+      style={{ marginTop: 20 }}
+      right={
+        <>
+          <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{version ?? "—"}</span>
+          <Btn variant="ghost" onClick={run} disabled={update.isPending}>
+            {update.isPending ? t("patching.agentUpdating") : t("patching.agentUpdate")}
+          </Btn>
+        </>
+      }
+    >
       {msg && <div style={{ fontSize: 13, color: toneColor }}>{msg.text}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -425,12 +427,12 @@ function ServerAuditCard({ id }: { id: string }) {
   if (isLoading) return <Card style={{ padding: 16, marginTop: 20, display: "flex", justifyContent: "center" }}><Spinner /></Card>;
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ fontWeight: 600, flex: 1 }}>{t("audit.title")}</div>
-        {entries.length > 0 && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{shown.length}/{entries.length}</span>}
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.activityDesc")}</p>
+    <SectionCard
+      title={t("audit.title")}
+      desc={t("servers.activityDesc")}
+      style={{ marginTop: 20 }}
+      right={entries.length > 0 && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{shown.length}/{entries.length}</span>}
+    >
       {entries.length === 0 ? (
         <EmptyState>{t("audit.empty")}</EmptyState>
       ) : (
@@ -472,7 +474,7 @@ function ServerAuditCard({ id }: { id: string }) {
           )}
         </>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -498,17 +500,21 @@ function PatchCard({ id }: { id: string }) {
   const runOne = (pkg: string) => { setOutput(""); setApplying(true); upgradeOne.mutate(pkg); };
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ fontWeight: 600, flex: 1 }}>{t("patching.title")}</div>
-        {info?.supported && info.manager && (
-          <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{info.manager}</span>
-        )}
-        <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
-          {check.isPending ? "…" : t("patching.check")}
-        </Btn>
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("patching.desc")}</p>
+    <SectionCard
+      title={t("patching.title")}
+      desc={t("patching.desc")}
+      style={{ marginTop: 20 }}
+      right={
+        <>
+          {info?.supported && info.manager && (
+            <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{info.manager}</span>
+          )}
+          <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
+            {check.isPending ? "…" : t("patching.check")}
+          </Btn>
+        </>
+      }
+    >
 
       {check.isError && <div style={{ color: "var(--c-r)", fontSize: 12 }}>{(check.error as Error).message}</div>}
 
@@ -557,7 +563,7 @@ function PatchCard({ id }: { id: string }) {
       {(applying ? log.lines : output) && (
         <pre className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{applying ? log.lines : output}</pre>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -625,9 +631,7 @@ function LogDrainCard({ id }: { id: string }) {
   });
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("logdrains.title")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("logdrains.desc")}</p>
+    <SectionCard title={t("logdrains.title")} desc={t("logdrains.desc")} style={{ marginTop: 20 }}>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
         {drains.map((d) => (
@@ -646,7 +650,7 @@ function LogDrainCard({ id }: { id: string }) {
         <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !endpoint}>{t("logdrains.add")}</Btn>
       </div>
       {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -666,8 +670,7 @@ function ServerDetailsCard({ id, server }: { id: string; server: ServerView }) {
     meta: { successMessage: t("servers.saved") },
   });
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("servers.details")}</div>
+    <SectionCard title={t("servers.details")}>
       <textarea
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
@@ -681,7 +684,7 @@ function ServerDetailsCard({ id, server }: { id: string; server: ServerView }) {
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "6px 0 0" }}>{t("servers.timezoneHint")}</p>
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -803,9 +806,7 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
   });
   const canDelete = !del.isPending && confirmName === server.name;
   return (
-    <Card style={{ padding: 16, marginTop: 20, borderColor: "var(--c-r)" }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("servers.deleteServer")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.deleteServerDesc")}</p>
+    <SectionCard title={t("servers.deleteServer")} desc={t("servers.deleteServerDesc")} style={{ marginTop: 20, borderColor: "var(--c-r)" }}>
       <Btn variant="dangerGhost" onClick={() => { setDestroyVm(true); setConfirmName(""); setOpen(true); }}>{t("servers.deleteServer")}</Btn>
       {open && (
         <Modal onClose={() => setOpen(false)} labelledBy="del-srv-title">
@@ -841,7 +842,7 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
           {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(del.error as Error).message}</div>}
         </Modal>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -869,9 +870,7 @@ function CapabilitiesCard({ id, server }: { id: string; server: ServerView }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
   });
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("servers.capabilities")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.capabilitiesDesc")}</p>
+    <SectionCard title={t("servers.capabilities")} desc={t("servers.capabilitiesDesc")} style={{ marginTop: 20 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
         {CAPABILITIES.map((c) => (
           <label key={c} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
@@ -882,7 +881,7 @@ function CapabilitiesCard({ id, server }: { id: string; server: ServerView }) {
       </div>
       <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
       {save.isSuccess && <span style={{ fontSize: 12, color: "var(--c-g)", marginLeft: 10 }}>{t("servers.capsSaved")}</span>}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1039,20 +1038,23 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
   const busy = start.isPending || stop.isPending || restart.isPending;
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ fontWeight: 600 }}>{t("servers.proxy")}</div>
-        {st && <StatusPill label={t(`servers.st_${st}`)} color={PROXY_COLOR[st]} />}
-        <div style={{ flex: 1 }} />
-        {canWrite && (
-          <>
-            <Btn variant="ghost" icon={Play} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
-            <Btn variant="ghost" icon={RotateCw} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
-            <Btn variant="dangerGhost" icon={Square} onClick={async () => { if (await confirm({ body: t("servers.proxyStopConfirm"), danger: true })) stop.mutate(); }} disabled={busy}>{t("servers.proxyStop")}</Btn>
-          </>
-        )}
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.proxyDesc")}</p>
+    <SectionCard
+      title={t("servers.proxy")}
+      desc={t("servers.proxyDesc")}
+      style={{ marginTop: 20 }}
+      right={
+        <>
+          {st && <StatusPill label={t(`servers.st_${st}`)} color={PROXY_COLOR[st]} />}
+          {canWrite && (
+            <>
+              <Btn variant="ghost" icon={Play} onClick={() => start.mutate()} disabled={busy}>{t("servers.proxyStart")}</Btn>
+              <Btn variant="ghost" icon={RotateCw} onClick={() => restart.mutate()} disabled={busy}>{t("servers.proxyRestart")}</Btn>
+              <Btn variant="dangerGhost" icon={Square} onClick={async () => { if (await confirm({ body: t("servers.proxyStopConfirm"), danger: true })) stop.mutate(); }} disabled={busy}>{t("servers.proxyStop")}</Btn>
+            </>
+          )}
+        </>
+      }
+    >
       <Btn variant="ghost" icon={ScrollText} onClick={() => viewLogs.mutate()} disabled={viewLogs.isPending}>
         {viewLogs.isPending ? "…" : t("servers.proxyViewLogs")}
       </Btn>
@@ -1060,7 +1062,7 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
       {logs && (
         <pre className="mono" style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs}</pre>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1080,9 +1082,7 @@ function ProxyDynamicCard({ id, canWrite }: { id: string; canWrite: boolean }) {
   });
   const configs = list.data?.configs ?? [];
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("servers.proxyDynamic")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.proxyDynamicDesc")}</p>
+    <SectionCard title={t("servers.proxyDynamic")} desc={t("servers.proxyDynamicDesc")} style={{ marginTop: 20 }}>
       {configs.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("servers.proxyDynamicEmpty")}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {configs.map((c) => (
@@ -1098,7 +1098,7 @@ function ProxyDynamicCard({ id, canWrite }: { id: string; canWrite: boolean }) {
           <div style={{ marginTop: 8 }}><Btn onClick={() => create.mutate()} disabled={create.isPending || !newName.trim() || !newContent.trim()}>{t("servers.proxyDynamicCreate")}</Btn></div>
         </div>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -1177,12 +1177,12 @@ function TunnelCard({ id, server }: { id: string; server: ServerView }) {
   const st = tun?.status ?? undefined;
 
   return (
-    <Card style={{ padding: 16, marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <div style={{ fontWeight: 600 }}>{t("servers.tunnelTitle")}</div>
-        {tun?.configured && st && <StatusPill label={t(`servers.tunnelSt_${st}`)} color={TUNNEL_COLOR[st] ?? "var(--c-tx3)"} />}
-      </div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("servers.tunnelDesc")}</p>
+    <SectionCard
+      title={t("servers.tunnelTitle")}
+      desc={t("servers.tunnelDesc")}
+      style={{ marginTop: 20 }}
+      right={tun?.configured && st && <StatusPill label={t(`servers.tunnelSt_${st}`)} color={TUNNEL_COLOR[st] ?? "var(--c-tx3)"} />}
+    >
 
       {server.certMode !== "http" && (
         <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("servers.tunnelCertWarn")}</p>
@@ -1243,7 +1243,7 @@ function TunnelCard({ id, server }: { id: string; server: ServerView }) {
       ) : (
         <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: 0 }}>{t("servers.tunnelNotConfigured")}</p>
       )}
-    </Card>
+    </SectionCard>
   );
 }
 

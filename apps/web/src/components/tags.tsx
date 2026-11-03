@@ -2,7 +2,7 @@
 
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { useT } from "../i18n/provider";
-import { Btn, Card } from "./ui";
+import { Btn, SectionCard } from "./ui";
 
 /** Client-side preview of the server-side normalizeTags (lowercase + hyphenate). */
 function clean(raw: string): string {
@@ -116,9 +116,7 @@ export function TagsCard({
   };
 
   return (
-    <Card style={{ padding: 16, marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("tags.title")}</div>
-      <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("tags.desc")}</p>
+    <SectionCard title={t("tags.title")} desc={t("tags.desc")}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         {value.length === 0 && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("tags.none")}</span>}
         {value.map((tag) => (
@@ -159,6 +157,6 @@ export function TagsCard({
           <Btn onClick={() => onSave(value)} disabled={!dirty}>{t("tags.save")}</Btn>
         </div>
       )}
-    </Card>
+    </SectionCard>
   );
 }
