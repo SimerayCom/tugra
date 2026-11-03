@@ -29,6 +29,7 @@ export interface ConfigSnapshot {
   domain?: string | null;
   domainRedirect?: "www" | "root" | null;
   securityHeaders?: boolean;
+  gzip?: boolean;
   /** Extra alias hostnames routed to the primary service (sorted; diffed as a set). */
   extraDomains?: string[];
   /** Per-service compose domains: hostname → the service + port it routes to (diffed by hostname). */
@@ -75,6 +76,7 @@ const SCALAR_FIELDS = [
   "domain",
   "domainRedirect",
   "securityHeaders",
+  "gzip",
 ] as const;
 
 function fingerprint(value: string): string {
@@ -107,6 +109,7 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     domain: spec.domain ?? null,
     domainRedirect: spec.domainRedirect ?? null,
     securityHeaders: spec.securityHeaders,
+    gzip: spec.gzip,
     ...(spec.extraDomains && spec.extraDomains.length ? { extraDomains: [...spec.extraDomains].sort() } : {}),
     ...(spec.serviceDomains && spec.serviceDomains.length
       ? { serviceDomains: spec.serviceDomains.map((d) => ({ service: d.service, hostname: d.hostname, port: d.port })) }

@@ -223,6 +223,7 @@ export const AppViewSchema = z.object({
   extraDomains: z.array(z.string()), // additional alias hostnames routed to the same container
   domainRedirect: z.string().nullable(),
   securityHeaders: z.boolean(),
+  gzip: z.boolean(),
   forwardAuth: z.string().nullable(),
   ipAllowlist: z.array(z.string()),
   basicAuthUsers: z.array(z.string()), // usernames only — password hashes are never returned
@@ -795,6 +796,7 @@ export class ApplicationsService {
           certType: expose.certType,
           domainRedirect: src.domainRedirect,
           securityHeaders: src.securityHeaders,
+          gzip: src.gzip,
           forwardAuth: src.forwardAuth,
           ipAllowlist: src.ipAllowlist,
           basicAuthUsers: src.basicAuthUsers ?? Prisma.JsonNull, // clone the auth users (hashes only)
@@ -3298,12 +3300,13 @@ export class ApplicationsService {
   async setDomainOptions(
     userId: string,
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
     if (opts.domainRedirect !== undefined) data.domainRedirect = opts.domainRedirect;
     if (opts.securityHeaders !== undefined) data.securityHeaders = opts.securityHeaders;
+    if (opts.gzip !== undefined) data.gzip = opts.gzip;
     if (opts.forwardAuth !== undefined) data.forwardAuth = opts.forwardAuth;
     if (opts.ipAllowlist !== undefined) data.ipAllowlist = opts.ipAllowlist;
     if (opts.pathPrefix !== undefined) data.pathPrefix = opts.pathPrefix;
@@ -3737,6 +3740,7 @@ export class ApplicationsService {
       extraDomains: app.extraDomains ?? [],
       domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
       securityHeaders: app.securityHeaders,
+      gzip: app.gzip,
       forwardAuth: app.forwardAuth,
       ipAllowlist: app.ipAllowlist ?? [],
       basicAuthUsers: parseBasicAuthUsers(app.basicAuthUsers),
@@ -3979,6 +3983,7 @@ export class ApplicationsService {
       extraDomains: app.extraDomains ?? [],
       domainRedirect: app.domainRedirect,
       securityHeaders: app.securityHeaders,
+      gzip: app.gzip,
       forwardAuth: app.forwardAuth,
       ipAllowlist: app.ipAllowlist ?? [],
       basicAuthUsers: (parseBasicAuthUsers(app.basicAuthUsers) ?? []).map((u) => u.user),

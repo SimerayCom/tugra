@@ -1025,6 +1025,7 @@ model Application {
   extraDomains   String[]     @default([]) // additional hostnames (aliases) routed to the same container as `domain`
   domainRedirect  String?
   securityHeaders Boolean     @default(false)
+  gzip           Boolean      @default(false) // enable a Traefik compress middleware on the routed app (gzip/brotli responses)
   forwardAuth    String?
   // IP allowlist (CIDRs/addresses) → a Traefik ipallowlist middleware admitting only these source ranges.
   // Empty = open to all (the default). Applies on the next deploy.

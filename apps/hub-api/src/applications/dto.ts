@@ -346,6 +346,7 @@ export const SetDomainOptionsSchema = z
   .object({
     domainRedirect: z.enum(["www", "root"]).nullable().optional(),
     securityHeaders: z.boolean().optional(),
+    gzip: z.boolean().optional(),
     forwardAuth: z.string().url().nullable().optional(),
     // IP allowlist (CIDRs/addresses); empty array clears it (open to all). Capped at 50 ranges.
     ipAllowlist: z.array(IP_OR_CIDR).max(50).optional(),
@@ -372,12 +373,13 @@ export const SetDomainOptionsSchema = z
     (d) =>
       d.domainRedirect !== undefined ||
       d.securityHeaders !== undefined ||
+      d.gzip !== undefined ||
       d.forwardAuth !== undefined ||
       d.ipAllowlist !== undefined ||
       d.pathPrefix !== undefined ||
       d.stripPrefix !== undefined ||
       d.rateLimit !== undefined,
-    { message: "provide domainRedirect, securityHeaders, forwardAuth, ipAllowlist, pathPrefix, stripPrefix and/or rateLimit" },
+    { message: "provide domainRedirect, securityHeaders, gzip, forwardAuth, ipAllowlist, pathPrefix, stripPrefix and/or rateLimit" },
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 

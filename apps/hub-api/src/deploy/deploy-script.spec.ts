@@ -1139,6 +1139,15 @@ describe("deploy-script", () => {
     expect(s).toContain(`middlewares=tugra_${base.id}-sec`);
   });
 
+  it("gzip adds a compress middleware to the router (and is absent when off)", () => {
+    const on = traefikLabels({ ...base, domain: "x.com", gzip: true }).join("\n");
+    expect(on).toContain(`middlewares.tugra_${base.id}-compress.compress=true`);
+    const chain = traefikLabels({ ...base, domain: "x.com", gzip: true }).find((l) => l.includes(`routers.tugra_${base.id}.middlewares=`))!;
+    expect(chain).toContain(`tugra_${base.id}-compress`);
+    const off = traefikLabels({ ...base, domain: "x.com" }).join("\n");
+    expect(off).not.toContain("-compress");
+  });
+
   it("forward-auth adds a forwardauth middleware first in the chain", () => {
     const labels = traefikLabels({ ...base, domain: "x.com", securityHeaders: true, forwardAuth: "https://auth.x/verify" });
     const s = labels.join("\n");

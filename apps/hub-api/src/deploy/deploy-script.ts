@@ -131,6 +131,7 @@ export interface AppSpec {
   domainRedirect?: "www" | "root" | null;
   extraDomains?: string[] | null; // additional hostnames (aliases) that serve the same container as `domain`
   securityHeaders?: boolean;
+  gzip?: boolean; // enable a Traefik `compress` middleware on the routed app
   /** External auth service URL — protects the app via a Traefik forwardauth middleware. */
   forwardAuth?: string | null;
   /** IP allowlist (CIDRs / addresses). When non-empty, a Traefik ipallowlist middleware admits only these
@@ -593,6 +594,13 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
     );
     mw.push(`${r}-sec`);
   }
+  if (app.gzip) {
+    // Traefik compress middleware: gzip/brotli the response. No options needed; it skips already-small
+    // or already-compressed responses by default. A response-phase middleware, so chain position is
+    // immaterial — pushed with the other response middlewares.
+    labels.push(`traefik.http.middlewares.${r}-compress.compress=true`);
+    mw.push(`${r}-compress`);
+  }
   if (app.forwardAuth) {
     labels.push(
       `traefik.http.middlewares.${r}-fa.forwardauth.address=${app.forwardAuth}`,
@@ -612,7 +620,7 @@ export function traefikLabels(app: AppSpec, opts: { router?: string; explicitSer
   }
   if (app.rateLimit) {
     // Rate limit sits AFTER the IP gate but BEFORE auth (unshifted here, then ip is unshifted below →
-    // final chain: ip -> rl -> ba -> fa -> canon -> sec). Traefik keys on the source IP by default.
+    // final chain: ip -> rl -> ba -> fa -> canon -> sec -> compress). Traefik keys on the source IP by default.
     labels.push(
       `traefik.http.middlewares.${r}-rl.ratelimit.average=${app.rateLimit.average}`,
       `traefik.http.middlewares.${r}-rl.ratelimit.burst=${app.rateLimit.burst}`,

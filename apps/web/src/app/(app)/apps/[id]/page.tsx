@@ -420,7 +420,7 @@ export default function AppDetailPage() {
     serviceDomains: () => <ServiceDomainsCard id={id} />,
     domainOptions: () =>
       appData.domain ? (
-        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} rateLimit={appData.rateLimit} />
+        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} gzip={appData.gzip} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} rateLimit={appData.rateLimit} />
       ) : null,
     customCert: () =>
       appData.domain ? (
@@ -2022,6 +2022,7 @@ function DomainOptionsCard({
   https,
   domainRedirect,
   securityHeaders,
+  gzip,
   forwardAuth,
   ipAllowlist,
   pathPrefix,
@@ -2033,6 +2034,7 @@ function DomainOptionsCard({
   https: boolean;
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
+  gzip: boolean;
   forwardAuth: string | null;
   ipAllowlist: string[];
   pathPrefix: string | null;
@@ -2043,6 +2045,7 @@ function DomainOptionsCard({
   const qc = useQueryClient();
   const [redirect, setRedirect] = useState<string>(domainRedirect ?? "");
   const [sec, setSec] = useState(securityHeaders);
+  const [gz, setGz] = useState(gzip);
   const [fa, setFa] = useState(forwardAuth ?? "");
   const [ips, setIps] = useState(ipAllowlist.join("\n"));
   const [pfx, setPfx] = useState(pathPrefix ?? "");
@@ -2056,6 +2059,7 @@ function DomainOptionsCard({
       api.setAppDomainOptions(id, {
         domainRedirect: redirect ? (redirect as "www" | "root") : null,
         securityHeaders: sec,
+        gzip: gz,
         forwardAuth: fa.trim() || null,
         ipAllowlist: ips.split("\n").map((l) => l.trim()).filter(Boolean),
         pathPrefix: pfx.trim() || null,
@@ -2080,6 +2084,10 @@ function DomainOptionsCard({
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
           <input type="checkbox" checked={sec} onChange={(e) => setSec(e.target.checked)} />
           {t("apps.securityHeaders")}
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }} title={t("apps.gzipDesc")}>
+          <input type="checkbox" checked={gz} onChange={(e) => setGz(e.target.checked)} />
+          {t("apps.gzip")}
         </label>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>

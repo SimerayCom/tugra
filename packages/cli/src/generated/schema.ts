@@ -9650,6 +9650,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -9928,6 +9929,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -10317,6 +10319,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -10661,6 +10664,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -15112,6 +15116,7 @@ export interface operations {
                     /** @enum {string|null} */
                     domainRedirect?: "www" | "root" | null;
                     securityHeaders?: boolean;
+                    gzip?: boolean;
                     /** Format: uri */
                     forwardAuth?: string | null;
                     ipAllowlist?: string[];
@@ -15877,6 +15882,7 @@ export interface operations {
                             extraDomains: string[];
                             domainRedirect: string | null;
                             securityHeaders: boolean;
+                            gzip: boolean;
                             forwardAuth: string | null;
                             ipAllowlist: string[];
                             basicAuthUsers: string[];
@@ -16150,6 +16156,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -16492,6 +16499,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -16892,6 +16900,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
@@ -18040,6 +18049,7 @@ export interface operations {
                         extraDomains: string[];
                         domainRedirect: string | null;
                         securityHeaders: boolean;
+                        gzip: boolean;
                         forwardAuth: string | null;
                         ipAllowlist: string[];
                         basicAuthUsers: string[];
