@@ -632,6 +632,8 @@
   "redirectRoot": "Redirect www → root",
   "redirectWww": "Redirect root → www",
   "securityHeaders": "Security headers (HSTS, nosniff, frame-deny)",
+  "gzip": "Gzip compression",
+  "gzipDesc": "Compress responses at the proxy (Traefik compress middleware). Already-compressed or tiny responses are skipped.",
   "forwardAuth": "Forward authentication",
   "forwardAuthDesc": "Protect this app behind an external auth service (Authelia, oauth2-proxy, Authentik). Every request is verified there first. Leave empty to disable.",
   "customCert": "Custom certificate",

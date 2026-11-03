@@ -8066,6 +8066,9 @@
                       "securityHeaders": {
                         "type": "boolean"
                       },
+                      "gzip": {
+                        "type": "boolean"
+                      },
                       "forwardAuth": {
                         "type": "string",
                         "nullable": true
@@ -8319,6 +8322,7 @@
                       "extraDomains",
                       "domainRedirect",
                       "securityHeaders",
+                      "gzip",
                       "forwardAuth",
                       "ipAllowlist",
                       "basicAuthUsers",
@@ -9120,6 +9124,9 @@
                     "securityHeaders": {
                       "type": "boolean"
                     },
+                    "gzip": {
+                      "type": "boolean"
+                    },
                     "forwardAuth": {
                       "type": "string",
                       "nullable": true
@@ -9373,6 +9380,7 @@
                     "extraDomains",
                     "domainRedirect",
                     "securityHeaders",
+                    "gzip",
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
@@ -10241,6 +10249,9 @@
                     "securityHeaders": {
                       "type": "boolean"
                     },
+                    "gzip": {
+                      "type": "boolean"
+                    },
                     "forwardAuth": {
                       "type": "string",
                       "nullable": true
@@ -10494,6 +10505,7 @@
                     "extraDomains",
                     "domainRedirect",
                     "securityHeaders",
+                    "gzip",
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
@@ -11366,6 +11378,9 @@
                     "securityHeaders": {
                       "type": "boolean"
                     },
+                    "gzip": {
+                      "type": "boolean"
+                    },
                     "forwardAuth": {
                       "type": "string",
                       "nullable": true
@@ -11619,6 +11634,7 @@
                     "extraDomains",
                     "domainRedirect",
                     "securityHeaders",
+                    "gzip",
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
@@ -17942,6 +17958,9 @@
                   "securityHeaders": {
                     "type": "boolean"
                   },
+                  "gzip": {
+                    "type": "boolean"
+                  },
                   "forwardAuth": {
                     "type": "string",
                     "format": "uri",
@@ -19414,6 +19433,9 @@
                         "securityHeaders": {
                           "type": "boolean"
                         },
+                        "gzip": {
+                          "type": "boolean"
+                        },
                         "forwardAuth": {
                           "type": "string",
                           "nullable": true
@@ -19667,6 +19689,7 @@
                         "extraDomains",
                         "domainRedirect",
                         "securityHeaders",
+                        "gzip",
                         "forwardAuth",
                         "ipAllowlist",
                         "basicAuthUsers",
@@ -20398,6 +20421,9 @@
                     "securityHeaders": {
                       "type": "boolean"
                     },
+                    "gzip": {
+                      "type": "boolean"
+                    },
                     "forwardAuth": {
                       "type": "string",
                       "nullable": true
@@ -20651,6 +20677,7 @@
                     "extraDomains",
                     "domainRedirect",
                     "securityHeaders",
+                    "gzip",
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
@@ -21452,6 +21479,9 @@
                       "securityHeaders": {
                         "type": "boolean"
                       },
+                      "gzip": {
+                        "type": "boolean"
+                      },
                       "forwardAuth": {
                         "type": "string",
                         "nullable": true
@@ -21705,6 +21735,7 @@
                       "extraDomains",
                       "domainRedirect",
                       "securityHeaders",
+                      "gzip",
                       "forwardAuth",
                       "ipAllowlist",
                       "basicAuthUsers",
@@ -22591,6 +22622,9 @@
                     "securityHeaders": {
                       "type": "boolean"
                     },
+                    "gzip": {
+                      "type": "boolean"
+                    },
                     "forwardAuth": {
                       "type": "string",
                       "nullable": true
@@ -22844,6 +22878,7 @@
                     "extraDomains",
                     "domainRedirect",
                     "securityHeaders",
+                    "gzip",
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",
@@ -24847,6 +24882,9 @@
                     "securityHeaders": {
                       "type": "boolean"
                     },
+                    "gzip": {
+                      "type": "boolean"
+                    },
                     "forwardAuth": {
                       "type": "string",
                       "nullable": true
@@ -25100,6 +25138,7 @@
                     "extraDomains",
                     "domainRedirect",
                     "securityHeaders",
+                    "gzip",
                     "forwardAuth",
                     "ipAllowlist",
                     "basicAuthUsers",

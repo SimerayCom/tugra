@@ -1150,6 +1150,7 @@ export interface Application {
   extraDomains: string[];
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
+  gzip: boolean;
   forwardAuth: string | null;
   ipAllowlist: string[];
   basicAuthUsers: string[]; // usernames only (password hashes never returned)

@@ -49,6 +49,13 @@ describe("buildConfigSnapshot", () => {
     expect(changes).toContainEqual(expect.objectContaining({ field: "gpus", kind: "changed", after: "all" }));
   });
 
+  it("records the gzip field so toggling compression shows in the deploy diff", () => {
+    expect(buildConfigSnapshot(spec({ gzip: true })).gzip).toBe(true);
+    // diffSnapshots stringifies scalar values (see the gpus case), so the rendered change is "true".
+    const changes = diffSnapshots(buildConfigSnapshot(spec({ gzip: false })), buildConfigSnapshot(spec({ gzip: true })));
+    expect(changes).toContainEqual(expect.objectContaining({ field: "gzip", kind: "changed", after: "true" }));
+  });
+
   it("fingerprints config-mount content (never stored verbatim)", () => {
     const snap = buildConfigSnapshot(
       spec({
