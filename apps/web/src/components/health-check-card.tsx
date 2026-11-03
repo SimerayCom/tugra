@@ -11,11 +11,15 @@ import { ConfigCard, Field, NumberInput, TextInput, fieldStyle, useSaveFeedback 
  * command were placeholder-only (no accessible name); every field is now a labelled Field, and
  * Save is gated until something changes.
  */
-export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCheckPort, healthCmd, timings }: {
+const HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
+
+export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCheckPort, healthCheckMethod, healthCheckScheme, healthCmd, timings }: {
   id: string;
   healthCheckType: string | null;
   healthCheckPath: string | null;
   healthCheckPort: number | null;
+  healthCheckMethod: string | null;
+  healthCheckScheme: string | null;
   healthCmd: string | null;
   timings: { interval: number | null; timeout: number | null; retries: number | null; startPeriod: number | null; expectedStatus: number | null };
 }) {
@@ -29,6 +33,9 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
   const [type, setType] = useState(initType);
   const [path, setPath] = useState(healthCheckPath ?? "");
   const [port, setPort] = useState(num(healthCheckPort));
+  // "" = default (GET / http). Stored values are a fixed allow-list, so the raw string round-trips.
+  const [method, setMethod] = useState(healthCheckMethod ?? "");
+  const [scheme, setScheme] = useState(healthCheckScheme ?? "");
   const [cmd, setCmd] = useState(healthCmd ?? "");
   const [interval, setInterval] = useState(num(timings.interval));
   const [timeout, setTimeout] = useState(num(timings.timeout));
@@ -41,6 +48,8 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
     type !== initType ||
     path.trim() !== (healthCheckPath ?? "") ||
     port !== num(healthCheckPort) ||
+    method !== (healthCheckMethod ?? "") ||
+    scheme !== (healthCheckScheme ?? "") ||
     cmd.trim() !== (healthCmd ?? "") ||
     interval !== num(timings.interval) ||
     timeout !== num(timings.timeout) ||
@@ -54,6 +63,8 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
         type: type || null,
         path: type === "HTTP" ? path.trim() || null : null,
         port: type === "HTTP" && port ? Number(port) : null,
+        method: type === "HTTP" ? method || null : null,
+        scheme: type === "HTTP" ? scheme || null : null,
         command: type === "CMD" ? cmd.trim() || null : null,
         interval: toNum(interval),
         timeout: toNum(timeout),
@@ -79,6 +90,21 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
         </Field>
         {type === "HTTP" && (
           <>
+            <Field label={t("apps.healthCheckScheme")} style={item}>
+              <select style={fieldStyle} value={scheme} onChange={(e) => setScheme(e.target.value)}>
+                {["", "http", "https"].map((v) => (
+                  <option key={v || "default"} value={v}>{t(`apps.healthCheckScheme_${v || "default"}`)}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t("apps.healthCheckMethod")} style={item}>
+              <select style={fieldStyle} value={method} onChange={(e) => setMethod(e.target.value)}>
+                <option value="">{t("apps.healthCheckMethod_default")}</option>
+                {HTTP_METHODS.map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+            </Field>
             <Field label={t("apps.healthCheckPath")} style={{ flex: "2 1 200px", minWidth: 0 }}>
               <TextInput value={path} onChange={(e) => setPath(e.target.value)} spellCheck={false} autoComplete="off" />
             </Field>

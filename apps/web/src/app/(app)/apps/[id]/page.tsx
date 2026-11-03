@@ -433,7 +433,7 @@ export default function AppDetailPage() {
     ),
     configMounts: () => <ConfigMountsCard id={id} onDeploy={() => onDeploy()} />,
     healthCheck: () => (
-      <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCmd={appData.healthCmd} timings={{ interval: appData.healthInterval, timeout: appData.healthTimeout, retries: appData.healthRetries, startPeriod: appData.healthStartPeriod, expectedStatus: appData.healthExpectedStatus }} />
+      <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCheckMethod={appData.healthCheckMethod} healthCheckScheme={appData.healthCheckScheme} healthCmd={appData.healthCmd} timings={{ interval: appData.healthInterval, timeout: appData.healthTimeout, retries: appData.healthRetries, startPeriod: appData.healthStartPeriod, expectedStatus: appData.healthExpectedStatus }} />
     ),
     limits: () => (
       <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />

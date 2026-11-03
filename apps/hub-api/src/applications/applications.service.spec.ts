@@ -4059,6 +4059,8 @@ describe("ApplicationsService.clone", () => {
     tags: ["x"],
     webhookToken: "srctok",
     hostPort: 8080,
+    healthCheckMethod: "POST",
+    healthCheckScheme: "https",
   };
   const clonePrisma = (over: Record<string, unknown> = {}) => {
     const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
@@ -4088,6 +4090,8 @@ describe("ApplicationsService.clone", () => {
     expect(data.isPreview).toBeUndefined(); // DB default false
     expect(data.hostPort).toBeNull(); // reset (would clash on the same server)
     expect(data.volumes).toEqual([{ name: "data", path: "/data" }]); // definition copied (fresh volume via new id)
+    expect(data.healthCheckMethod).toBe("POST"); // HTTP method/scheme carried (else a POST/HTTPS-only app's clone fails its first gate)
+    expect(data.healthCheckScheme).toBe("https");
     expect(res.warnings).toEqual(expect.arrayContaining(["domain_reset", "custom_cert_dropped", "host_port_reset"]));
   });
 

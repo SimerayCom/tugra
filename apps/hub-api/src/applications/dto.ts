@@ -285,6 +285,12 @@ export const SetHealthCheckSchema = z
       .nullable()
       .optional(),
     port: z.number().int().min(1).max(65535).nullable().optional(),
+    // HTTP method for the probe. null/"GET" = GET. A fixed allow-list (no free text → no curl-flag
+    // injection); the deploy script passes it as `-X <METHOD>` only when it is not GET.
+    method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).nullable().optional(),
+    // HTTP scheme for the probe. null/"http" = plain HTTP. "https" probes over TLS with cert
+    // verification skipped (curl -k) so a self-signed/internal HTTPS health endpoint still checks.
+    scheme: z.enum(["http", "https"]).nullable().optional(),
     command: z.string().min(1).max(1000).nullable().optional(),
     // Timing knobs (seconds), null = use the built-in default. Bounded so a typo can't wedge a deploy for
     // hours: a slow-booting app raises startPeriod/retries; interval/timeout tune the poll cadence.
