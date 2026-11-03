@@ -34,8 +34,14 @@ export class CleanupRunnerService {
    * `respectThreshold` (scheduled runs only): when the server has a cleanupThresholdPct, skip the prune
    * unless the latest reported disk usage is at/above it. A manual "Clean now" passes false → always runs.
    * Unknown disk usage (no metric yet) never skips — better to prune than let a filling disk slip through.
+   * `skipIfDeploying` (scheduled runs only): skip while a deploy is building/running on this server, so a
+   * prune never races a build. A manual "Clean now" always proceeds.
    */
-  async runCleanup(serverId: string, actor = "scheduler", opts: { respectThreshold?: boolean } = {}): Promise<string> {
+  async runCleanup(
+    serverId: string,
+    actor = "scheduler",
+    opts: { respectThreshold?: boolean; skipIfDeploying?: boolean } = {},
+  ): Promise<string> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!server) throw new Error("server not found");
     if (opts.respectThreshold && server.cleanupThresholdPct != null) {
@@ -44,7 +50,20 @@ export class CleanupRunnerService {
         return `skipped: disk ${pct.toFixed(0)}% below threshold ${server.cleanupThresholdPct}%`;
       }
     }
+    // Don't prune out from under a build: a running deploy on this server (as its run target OR its build
+    // server) leaves dangling layers and cache that the prune could delete mid-build. Best-effort — a DB
+    // hiccup fails open and lets the prune run (matching currentDiskPct). Only a scheduled run checks this.
+    if (opts.skipIfDeploying) {
+      const running = await this.prisma.deployment
+        .count({ where: { status: "RUNNING", application: { OR: [{ serverId }, { buildServerId: serverId }] } } })
+        .catch(() => 0);
+      if (running > 0) {
+        await this.audit.log({ actor, action: "server.cleanup", target: serverId, meta: { ok: true, skipped: true, reason: "deploy_running" } });
+        return `skipped: ${running} deploy(s) running on this server`;
+      }
+    }
     let output = "";
+    let reclaimed = "";
     let ok = false;
     try {
       const r = await this.agentWs.sendCommand(
@@ -53,22 +72,35 @@ export class CleanupRunnerService {
         "cleanup",
         CLEANUP_TIMEOUT_MS,
       );
-      output = r.output.slice(0, 65536);
       ok = r.exitCode === 0;
+      // Parse the FULL output first: each step prints its "Total reclaimed space:" / "Total:" at the END, so
+      // a long "Deleted:" list could push the totals past the tail window below and under-report the sum.
+      reclaimed = parseReclaimed(r.output);
+      // Keep the TAIL (the totals live at the end); a huge deleted-objects list is the least useful part.
+      output = r.output.length > 65536 ? `…(truncated)\n${r.output.slice(-65536)}` : r.output;
     } catch (e) {
       output = e instanceof Error ? e.message : "cleanup failed";
     }
-    // lastCleanupAt + audit stay UNCONDITIONAL (exit code never gated them before) — only ADD the fire.
-    await this.prisma.server
-      .update({ where: { id: serverId }, data: { lastCleanupAt: new Date() } })
-      .catch(() => undefined);
-    await this.audit.log({ actor, action: "server.cleanup", target: serverId });
+    // Only a SUCCESSFUL prune advances lastCleanupAt, so the UI's "Last cleanup" reflects the last run that
+    // actually ran — a failed or errored attempt leaves the previous timestamp intact.
+    if (ok) {
+      await this.prisma.server
+        .update({ where: { id: serverId }, data: { lastCleanupAt: new Date() } })
+        .catch(() => undefined);
+    }
+    // Record every real attempt with its outcome, so there is a per-run history (ok / reclaimed / error tail).
+    await this.audit.log({
+      actor,
+      action: "server.cleanup",
+      target: serverId,
+      meta: { ok, skipped: false, reclaimed, ...(ok ? {} : { error: scrubRestoreOutput(output).slice(-500) }) },
+    });
     // Maintenance event — never critical. Scrub the error tail (agent output can echo host detail).
     await this.notifications
       .fireForEvent(server.teamId, ok ? "docker_cleanup_success" : "docker_cleanup_failed", {
         serverId: server.id,
         serverName: server.name,
-        reclaimed: ok ? parseReclaimed(output) : "",
+        reclaimed: ok ? reclaimed : "",
         errorTail: ok ? "" : scrubRestoreOutput(output),
       })
       .catch(() => undefined);

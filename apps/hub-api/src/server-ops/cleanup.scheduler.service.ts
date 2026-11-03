@@ -39,8 +39,9 @@ export class CleanupSchedulerService
     this.worker = new Worker(
       QUEUE,
       async (job) => {
-        // Scheduled runs honour the optional disk-usage threshold; a manual "Clean now" does not.
-        await this.runner.runCleanup(job.data.serverId as string, "scheduler", { respectThreshold: true });
+        // Scheduled runs honour the disk-usage threshold and skip while a deploy is building on this server;
+        // a manual "Clean now" does neither.
+        await this.runner.runCleanup(job.data.serverId as string, "scheduler", { respectThreshold: true, skipIfDeploying: true });
       },
       { connection },
     );

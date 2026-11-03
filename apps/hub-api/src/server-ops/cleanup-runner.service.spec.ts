@@ -46,10 +46,11 @@ describe("CleanupRunnerService.runCleanup", () => {
     );
   });
 
-  it("fires docker_cleanup_failed with a scrubbed error tail on a non-zero exit (still records lastCleanupAt)", async () => {
+  it("fires docker_cleanup_failed with a scrubbed error tail on a non-zero exit and does NOT advance lastCleanupAt", async () => {
     const { svc, update, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 1, output: "prune failed: no space left" }));
     await svc.runCleanup("s1");
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { lastCleanupAt: expect.any(Date) } }));
+    // A failed prune leaves the previous "Last cleanup" timestamp intact.
+    expect(update).not.toHaveBeenCalled();
     expect(fireForEvent).toHaveBeenCalledWith(
       "t1",
       "docker_cleanup_failed",
@@ -57,14 +58,46 @@ describe("CleanupRunnerService.runCleanup", () => {
     );
   });
 
-  it("fires docker_cleanup_failed when the agent command throws (transport error)", async () => {
-    const { svc, fireForEvent } = make(jest.fn().mockRejectedValue(new Error("agent offline")));
+  it("fires docker_cleanup_failed when the agent command throws (transport error) and does NOT advance lastCleanupAt", async () => {
+    const { svc, update, fireForEvent } = make(jest.fn().mockRejectedValue(new Error("agent offline")));
     await svc.runCleanup("s1");
+    expect(update).not.toHaveBeenCalled();
     expect(fireForEvent).toHaveBeenCalledWith(
       "t1",
       "docker_cleanup_failed",
       expect.objectContaining({ errorTail: expect.stringContaining("agent offline") }),
     );
+  });
+
+  it("scheduled (skipIfDeploying): SKIPS while a deploy is running on this server (as run OR build target)", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "Total reclaimed space: 1GB" });
+    const update = jest.fn().mockResolvedValue({});
+    const count = jest.fn().mockResolvedValue(1);
+    const log = jest.fn();
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(server), update },
+      deployment: { count },
+    } as unknown as PrismaService;
+    const svc = new CleanupRunnerService(prisma, { log } as unknown as AuditService, { sendCommand: send } as unknown as AgentWsServer, { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as NotificationsService);
+    const out = await svc.runCleanup("s1", "scheduler", { respectThreshold: true, skipIfDeploying: true });
+    expect(send).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(out).toMatch(/skipped.*deploy/i);
+    expect(count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "RUNNING" }) }));
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ skipped: true, reason: "deploy_running" }) }));
+  });
+
+  it("scheduled (skipIfDeploying): RUNS when no deploy is active, and records the run in the audit meta", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "Total reclaimed space: 2GB" });
+    const log = jest.fn();
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(server), update: jest.fn().mockResolvedValue({}) },
+      deployment: { count: jest.fn().mockResolvedValue(0) },
+    } as unknown as PrismaService;
+    const svc = new CleanupRunnerService(prisma, { log } as unknown as AuditService, { sendCommand: send } as unknown as AgentWsServer, { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as NotificationsService);
+    await svc.runCleanup("s1", "scheduler", { skipIfDeploying: true });
+    expect(send).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ ok: true, skipped: false, reclaimed: "2.0GB" }) }));
   });
 
   // --- disk-usage threshold gate (scheduled runs only) ---
