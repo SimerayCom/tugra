@@ -1245,8 +1245,25 @@ export class ApplicationsService {
 
   /** Shared teardown: stop+remove the preview container, then delete the record. */
   private async removePreview(app: Application, actor: string): Promise<void> {
-    const cmd = buildRemoveScript(app, this.appVolumes(app));
-    await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    // Also reclaim the preview's OWN images: a closed PR's tugra_<previewId>:* tags would otherwise linger on
+    // the host forever (the scoped cleanup never touches tagged images). A COMPOSE preview has no single tag.
+    const steps = [buildRemoveScript(app, this.appVolumes(app))];
+    if (app.source !== "COMPOSE") steps.push(buildAppImagesRemoveScript(app));
+    // Fail closed: if the teardown can't reach the agent (offline / timed out / capability not granted) or
+    // reports a failure, keep the DB row so the leak stays visible and a later delete / PR event / reconcile
+    // retries it — never delete the record while the container, volumes and images may still be on the host
+    // (that was an unrecoverable orphan). The scripts end in `|| true`, so the real signal is a thrown error.
+    let res: { exitCode: number; output: string };
+    try {
+      res = await this.agentWs.sendCommand(app.serverId, steps.join("\n"), "deploy");
+    } catch (e) {
+      await this.audit.log({ actor, action: "preview.remove_failed", target: app.id, meta: { reason: e instanceof Error ? e.message : "teardown unreachable" } });
+      throw new ServiceUnavailableException("preview teardown did not converge — the preview is unchanged");
+    }
+    if (res.exitCode !== 0) {
+      await this.audit.log({ actor, action: "preview.remove_failed", target: app.id, meta: { exitCode: res.exitCode } });
+      throw new ServiceUnavailableException(`preview teardown failed (exit ${res.exitCode}) — the preview is unchanged`);
+    }
     await this.prisma.application.delete({ where: { id: app.id } });
     await this.audit.log({ actor, action: "preview.remove", target: app.id });
   }
