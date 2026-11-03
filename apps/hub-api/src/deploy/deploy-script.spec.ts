@@ -868,6 +868,19 @@ describe("deploy-script", () => {
     expect(s).toContain("docker volume rm tugra_appv_abc_data");
   });
 
+  it("removing an app also reclaims its leftover build working tree", () => {
+    expect(buildRemoveScript({ id: "abc" })).toContain("rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json");
+  });
+
+  it("a GIT build reclaims the clone dir after the image is built", () => {
+    const s = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "DOCKERFILE" }, "v1");
+    const buildIdx = s.indexOf("docker build");
+    // The clone-prep at the start also `rm -rf`s the dir, so the POST-build cleanup is the LAST occurrence.
+    const rmIdx = s.lastIndexOf("rm -rf /etc/tugra/builds/abc");
+    expect(buildIdx).toBeGreaterThanOrEqual(0);
+    expect(rmIdx).toBeGreaterThan(buildIdx); // cleanup runs after the build, not before
+  });
+
   it("gitAuthUrl injects x-access-token into https URLs only", () => {
     expect(gitAuthUrl("https://github.com/x/y.git")).toBe("https://x-access-token@github.com/x/y.git");
     expect(gitAuthUrl("git@github.com:x/y.git")).toBe("git@github.com:x/y.git");

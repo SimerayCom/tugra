@@ -891,6 +891,10 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     }
     // Push the freshly-built image to the team registry when requested.
     if (app.registryPush) steps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth));
+    // The image is built (and pushed); the clone is dead weight now. Reclaim the working tree + .git so a
+    // build dir doesn't linger per GIT app between deploys (the next deploy re-clones anyway) or after an app
+    // is deleted. Runs only on success — set -e aborts earlier on a build failure, leaving the tree to debug.
+    steps.push(`rm -rf ${bd}`);
     return steps;
   }
   // IMAGE: pull upstream (optionally authenticating), then snapshot to the tag.
@@ -1641,5 +1645,8 @@ export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = []
   return [
     `docker rm -f ${containerName(app)} 2>/dev/null || true`,
     ...volumes.map((v) => `docker volume rm ${appVolumeName(app, v.name)} 2>/dev/null || true`),
+    // Reclaim any leftover build working tree + Nixpacks plan (GIT apps clone into /etc/tugra/builds/<id>);
+    // nothing references these once the app is gone, so they'd otherwise be orphaned on disk forever.
+    `rm -rf /etc/tugra/builds/${app.id} /etc/tugra/builds/${app.id}.plan.json`,
   ].join("\n");
 }
