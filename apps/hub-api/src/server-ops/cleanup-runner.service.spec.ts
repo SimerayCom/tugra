@@ -35,6 +35,17 @@ describe("CleanupRunnerService.runCleanup", () => {
     );
   });
 
+  it("sums reclaimed space across the multi-step prune (image `Total reclaimed space` + builder `Total:`)", async () => {
+    const multi = "Deleted Images:\nsha256:x\nTotal reclaimed space: 0B\nDeleted build cache objects\nID\tRECLAIMABLE\nabc\ttrue\nTotal:\t3.2GB";
+    const { svc, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 0, output: multi }));
+    await svc.runCleanup("s1");
+    expect(fireForEvent).toHaveBeenCalledWith(
+      "t1",
+      "docker_cleanup_success",
+      expect.objectContaining({ reclaimed: "3.2GB" }),
+    );
+  });
+
   it("fires docker_cleanup_failed with a scrubbed error tail on a non-zero exit (still records lastCleanupAt)", async () => {
     const { svc, update, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 1, output: "prune failed: no space left" }));
     await svc.runCleanup("s1");

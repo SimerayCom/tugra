@@ -14,4 +14,8 @@ describe("BULK_PRESETS", () => {
       expect(p.labelKey.length).toBeGreaterThan(0);
     }
   });
+
+  it("never offers a blanket `docker system prune` (strands stopped containers + rollback images)", () => {
+    for (const p of BULK_PRESETS) expect(p.command).not.toContain("system prune");
+  });
 });

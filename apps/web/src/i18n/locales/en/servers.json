@@ -152,7 +152,7 @@
   "cap_logs": "Container logs (live)",
   "cap_swarm": "Docker Swarm (cluster)",
   "cleanup": "Docker cleanup",
-  "cleanupDesc": "Removes unused images, containers, networks and build cache.",
+  "cleanupDesc": "Reclaims disk: dangling image layers and build cache. Containers, app images (including rollback versions) and named volumes are left untouched.",
   "cleanNow": "Clean now",
   "cleaning": "Cleaning…",
   "cleanupSchedule": "Scheduled",
