@@ -2,6 +2,10 @@
 package metrics
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -27,11 +31,67 @@ func Collect() (protocol.MetricsSample, error) {
 		s.MemUsed = float64(vm.Used)
 		s.MemTotal = float64(vm.Total)
 	}
-	if du, err := disk.Usage("/"); err == nil {
+	if du, err := disk.Usage(diskProbePath()); err == nil {
 		s.DiskUsed = float64(du.Used)
 		s.DiskTotal = float64(du.Total)
 	}
 	return s, nil
+}
+
+// diskProbePath returns the filesystem path whose usage reflects where Docker (and thus app images,
+// volumes and build cache) actually consumes space. The agent is always a container with no
+// host-rootfs mount, so a plain "/" measures its own overlay upperdir: on the default overlay2
+// driver that already sits on the data-root filesystem, but on btrfs/zfs/devicemapper it does not,
+// so "/" can under-report the real disk pressure the cleanup targets.
+//
+// Resolution is cached (resolving per sample would exec `docker info` every tick) and strictly
+// fail-soft: any probe that can't be statfs'd is skipped, and the final fallback is the original
+// "/", so a sample is never blocked or lost. The protocol is unchanged — diskUsed/diskTotal still
+// mean the same thing, just measured on a better-chosen filesystem.
+var (
+	diskPathOnce sync.Once
+	diskPathVal  string
+)
+
+func diskProbePath() string {
+	diskPathOnce.Do(func() { diskPathVal = resolveDiskPath(dockerRootDir) })
+	return diskPathVal
+}
+
+// resolveDiskPath walks the probe chain. dockerRoot is injected so tests don't exec docker.
+func resolveDiskPath(dockerRoot func() string) string {
+	// 1. Explicit operator override — the escape hatch for exotic storage layouts.
+	if p := strings.TrimSpace(os.Getenv("TUGRA_DISK_PATH")); p != "" && diskUsable(p) {
+		return p
+	}
+	// 2. Docker's own data-root, when it happens to be visible inside the agent container.
+	if p := strings.TrimSpace(dockerRoot()); p != "" && diskUsable(p) {
+		return p
+	}
+	// 3. The agent's data dir — a named volume mounted at ~/.tugra that lives UNDER the data-root, so
+	//    its filesystem IS the data-root's regardless of the storage driver. Reliably present in prod.
+	if home, err := os.UserHomeDir(); err == nil {
+		if p := filepath.Join(home, ".tugra"); diskUsable(p) {
+			return p
+		}
+	}
+	// 4. Original behaviour.
+	return "/"
+}
+
+// diskUsable reports whether gopsutil can statfs the path (so it's a real mount we can measure).
+func diskUsable(p string) bool { _, err := disk.Usage(p); return err == nil }
+
+// dockerRootDir returns `docker info`'s DockerRootDir, or "" on any error/timeout. Off the hot path
+// (called once, cached by diskProbePath); a short timeout keeps a hung daemon from stalling startup.
+func dockerRootDir() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "info", "-f", "{{.DockerRootDir}}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // isVirtualNIC reports whether an interface is a virtual/loopback device that
