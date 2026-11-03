@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { useT } from "../i18n/provider";
 import { useToast } from "./toast";
 import { copyText } from "../lib/clipboard";
+import { useAutoMask } from "../lib/use-auto-mask";
 import { Btn } from "./ui";
 
 /** Copy-to-clipboard button with visible feedback (toast). Reports the TRUE result — on an insecure
@@ -32,14 +33,8 @@ export function CopyBtn({ text, label }: { text: string; label?: string }) {
 export function CopyRow({ label, value, copy, secret }: { label: string; value: string; copy?: string; secret?: boolean }) {
   const t = useT();
   const [shown, setShown] = useState(false);
-  // Auto-re-mask after 30s and whenever the tab is hidden.
-  useEffect(() => {
-    if (!shown) return;
-    const timer = setTimeout(() => setShown(false), 30_000);
-    const onVis = () => { if (document.visibilityState === "hidden") setShown(false); };
-    document.addEventListener("visibilitychange", onVis);
-    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
-  }, [shown]);
+  // Auto-re-mask after 30s and whenever the tab is hidden (shared with the env editor).
+  useAutoMask(shown, () => setShown(false));
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ fontSize: 11, color: "var(--c-tx3)", width: 110, flexShrink: 0 }}>{label}</span>
