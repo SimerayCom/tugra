@@ -1192,6 +1192,9 @@ export const api = {
   renameApp(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
   },
+  setAppDescription(id: string, description: string | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/description`, { method: "PUT", body: JSON.stringify({ description }) });
+  },
   // Custom app icon: `data` is a base64 PNG (no data: prefix). The server validates it is a real square
   // 32-512px PNG under 64KB. deleteAppIcon clears it (falls back to the template/source logo).
   setAppIcon(id: string, data: string) {

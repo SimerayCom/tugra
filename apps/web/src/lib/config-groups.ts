@@ -24,6 +24,7 @@ export const CONFIG_GROUP_KEYS: string[] = CONFIG_GROUPS.map((g) => g.key);
 export const DEFAULT_CONFIG_GROUP: ConfigGroupKey = "general";
 
 export type ConfigCardId =
+  | "description"
   | "deploySettings"
   | "clusterDeploy"
   | "environment"
@@ -86,6 +87,9 @@ const isGitCompose = (a: ConfigGatingFacts) => a.source === "COMPOSE" && !!a.com
  */
 export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (a: ConfigGatingFacts) => boolean }[] = [
   // General
+  // Free-text operator note (Coolify parity). Metadata, so it shows for every app type; hidden on a
+  // preview (ephemeral, inherits nothing). First card so a Coolify migrant finds the description up top.
+  { id: "description", group: "general", visible: (a) => !a.isPreview },
   { id: "deploySettings", group: "general", visible: notCompose },
   { id: "clusterDeploy", group: "general", visible: notCompose },
   { id: "environment", group: "general", visible: () => true },

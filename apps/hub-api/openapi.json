@@ -7516,6 +7516,10 @@
                       "name": {
                         "type": "string"
                       },
+                      "description": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "source": {
                         "type": "string",
                         "enum": [
@@ -8249,6 +8253,7 @@
                     "required": [
                       "id",
                       "name",
+                      "description",
                       "source",
                       "image",
                       "gitUrl",
@@ -8578,6 +8583,10 @@
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "description": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "source": {
                       "type": "string",
@@ -9312,6 +9321,7 @@
                   "required": [
                     "id",
                     "name",
+                    "description",
                     "source",
                     "image",
                     "gitUrl",
@@ -9709,6 +9719,10 @@
                     "name": {
                       "type": "string"
                     },
+                    "description": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "source": {
                       "type": "string",
                       "enum": [
@@ -10442,6 +10456,7 @@
                   "required": [
                     "id",
                     "name",
+                    "description",
                     "source",
                     "image",
                     "gitUrl",
@@ -10843,6 +10858,10 @@
                     "name": {
                       "type": "string"
                     },
+                    "description": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "source": {
                       "type": "string",
                       "enum": [
@@ -11576,6 +11595,7 @@
                   "required": [
                     "id",
                     "name",
+                    "description",
                     "source",
                     "image",
                     "gitUrl",
@@ -13882,6 +13902,115 @@
                 },
                 "required": [
                   "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/description": {
+      "put": {
+        "operationId": "ApplicationsController_setDescription",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "description"
                 ],
                 "additionalProperties": false
               }
@@ -18909,6 +19038,10 @@
                         "name": {
                           "type": "string"
                         },
+                        "description": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "source": {
                           "type": "string",
                           "enum": [
@@ -19642,6 +19775,7 @@
                       "required": [
                         "id",
                         "name",
+                        "description",
                         "source",
                         "image",
                         "gitUrl",
@@ -19901,6 +20035,10 @@
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "description": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "source": {
                       "type": "string",
@@ -20635,6 +20773,7 @@
                   "required": [
                     "id",
                     "name",
+                    "description",
                     "source",
                     "image",
                     "gitUrl",
@@ -20964,6 +21103,10 @@
                       },
                       "name": {
                         "type": "string"
+                      },
+                      "description": {
+                        "type": "string",
+                        "nullable": true
                       },
                       "source": {
                         "type": "string",
@@ -21698,6 +21841,7 @@
                     "required": [
                       "id",
                       "name",
+                      "description",
                       "source",
                       "image",
                       "gitUrl",
@@ -22112,6 +22256,10 @@
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "description": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "source": {
                       "type": "string",
@@ -22846,6 +22994,7 @@
                   "required": [
                     "id",
                     "name",
+                    "description",
                     "source",
                     "image",
                     "gitUrl",
@@ -24378,6 +24527,10 @@
                     "name": {
                       "type": "string"
                     },
+                    "description": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "source": {
                       "type": "string",
                       "enum": [
@@ -25111,6 +25264,7 @@
                   "required": [
                     "id",
                     "name",
+                    "description",
                     "source",
                     "image",
                     "gitUrl",

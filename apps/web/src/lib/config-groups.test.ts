@@ -68,8 +68,8 @@ describe("visibleConfigGroups", () => {
   it("COMPOSE (writable, not preview) shows general, build, environment, domains (via expose) and danger", () => {
     const f = facts({ source: "COMPOSE", webhookToken: null, domain: null, domainKind: null, volumes: [] });
     expect(keysOf(f)).toEqual(["general", "build", "environment", "domains", "danger"]);
-    // general holds only the always-on cards (environment + tags), build only credentials
-    expect(group(f, "general")!.cardIds).toEqual(["environment", "tags"]);
+    // general holds the description note (metadata, every app type) + the always-on cards (environment + tags)
+    expect(group(f, "general")!.cardIds).toEqual(["description", "environment", "tags"]);
     expect(group(f, "build")!.cardIds).toEqual(["credentials"]);
     expect(group(f, "environment")!.cardIds).toEqual(["env", "secretRefs"]); // secret refs resolve on compose deploys too
     expect(group(f, "domains")!.cardIds).toEqual(["expose", "serviceDomains"]); // compose gains per-service domains
@@ -86,6 +86,12 @@ describe("visibleConfigGroups", () => {
     const f = facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] });
     expect(keysOf(f)).toContain("automation");
     expect(group(f, "automation")!.cardIds).toEqual(["webhooks"]);
+  });
+
+  it("description note shows in general for every app type, hidden on a preview", () => {
+    expect(group(facts(), "general")!.cardIds[0]).toBe("description"); // first in general
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "general")!.cardIds).toContain("description");
+    expect(group(facts({ isPreview: true }), "general")!.cardIds).not.toContain("description");
   });
 
   it("isPreview hides tags, preview and expose", () => {
