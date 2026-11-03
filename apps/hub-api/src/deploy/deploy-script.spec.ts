@@ -751,6 +751,18 @@ describe("deploy-script", () => {
     expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:old1'");
   });
 
+  it("rollback (build=false): refuses (exit 7) if the local image is gone, BEFORE removing the live container", () => {
+    const s = buildRunScript(base, "old1", false);
+    expect(s).toContain("docker image inspect tugra_abc:old1");
+    expect(s).toContain("exit 7");
+    // the guard must come before the destructive `docker rm -f`, else the live container is already gone
+    expect(s.indexOf("docker image inspect tugra_abc:old1")).toBeLessThan(s.indexOf("docker rm -f tugra_abc"));
+  });
+
+  it("deploy (build=true): no image-existence guard — the image is built/pulled in-script", () => {
+    expect(buildRunScript(base, "v1", true)).not.toContain("docker image inspect");
+  });
+
   it("force deploy (noCache) adds --no-cache to Dockerfile builds only when requested", () => {
     const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "DOCKERFILE" };
     const forced = buildRunScript(git, "v1", true, true);

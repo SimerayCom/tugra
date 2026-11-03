@@ -401,6 +401,40 @@ describe("ApplicationsService", () => {
     expect(sentCmd).toContain("docker tag 'nginx@sha256:deadbeef' tugra_app1:target");
   });
 
+  it("rollback whose LOCAL image is gone (exit 7) fails the deployment but leaves the serving app untouched", async () => {
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, status: "RUNNING" }), update: appUpdate },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(
+            where.status === "RUNNING"
+              ? null // ensureNoActiveDeploy: nothing running
+              : { id: "target", status: "SUCCESS", imageTag: "tugra_app1:target", registryImage: null, imageDigest: null },
+          ),
+        ),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      sendCommand: jest.fn().mockResolvedValue({ exitCode: 7, output: "TUGRA_ROLLBACK: image tugra_app1:target not found locally; keeping the running container" }),
+    } as unknown as AgentWsServer;
+
+    await make(prisma, access, agentWs).rollback("u1", "app1", "target");
+
+    // the rollback attempt is recorded FAILED...
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    // ...but the live app is NOT flipped to FAILED (the guard left the running container serving).
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "RUNNING" } }));
+    expect(appUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+  });
+
   it("a routed app rolls (temp container) and exit 3 auto-rolls-back: FAILED/AUTO_ROLLBACK but app stays RUNNING", async () => {
     const rollingApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true };
     const depUpdate = jest.fn().mockResolvedValue({});

@@ -1197,6 +1197,7 @@ export function buildPostDeployScript(app: AppSpec): string {
  */
 export function buildRunScript(app: AppSpec, version: string, build = true, noCache = false): string {
   const name = containerName(app);
+  const ref = runTag(app, version);
   return [
     "set -e",
     ...(build ? prepSteps(app, version, noCache) : []),
@@ -1204,6 +1205,14 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     ...dbNetPreludeFor(app),
     ...certPreludeFor(app),
     ...(build ? preDeploySteps(app, version) : []),
+    // Rollback (build=false) re-runs a retained LOCAL image without rebuilding or pulling. If that tag was
+    // removed from the host (an old blanket `docker system prune`, a manual `docker rmi`, disk pressure), the
+    // `docker run` below would fail AFTER `docker rm -f` had already removed the live container — turning a
+    // rollback into an outage. Refuse up front (exit 7) when the image is gone, WITHOUT touching the running
+    // container, so the current version keeps serving and the caller reports a clean failure instead.
+    ...(build
+      ? []
+      : [`if ! docker image inspect ${ref} >/dev/null 2>&1; then echo "TUGRA_ROLLBACK: image ${ref} not found locally; keeping the running container"; exit 7; fi`]),
     `docker rm -f ${name} 2>/dev/null || true`,
     runContainerArgs(app, version, name),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
