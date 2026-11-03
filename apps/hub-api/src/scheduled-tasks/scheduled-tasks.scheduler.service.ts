@@ -43,8 +43,19 @@ export class ScheduledTasksSchedulerService
       { connection },
     );
     const tasks = await this.prisma.scheduledTask.findMany({ where: { enabled: true } });
-    for (const t of tasks) await this.schedule(t.id, t.schedule);
-    this.logger.log(`scheduled ${tasks.length} task(s)`);
+    let ok = 0;
+    for (const t of tasks) {
+      // One task with an unschedulable cron (e.g. a row that predates cron validation) must never crash the
+      // hub at boot — BullMQ throws inside queue.add for an invalid pattern, and this loop is unguarded in
+      // onApplicationBootstrap, so a single bad row would crash-loop the process. Skip it and keep going.
+      try {
+        await this.schedule(t.id, t.schedule);
+        ok++;
+      } catch (e) {
+        this.logger.warn(`skipped scheduled task ${t.id} (bad schedule "${t.schedule}"): ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    this.logger.log(`scheduled ${ok}/${tasks.length} task(s)`);
   }
 
   async schedule(taskId: string, cron: string): Promise<void> {

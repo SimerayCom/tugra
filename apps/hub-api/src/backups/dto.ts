@@ -1,8 +1,13 @@
 import { z } from "zod";
+import { isValidCron } from "../common/cron";
 
 // 5-field cron (minute hour day-of-month month day-of-week) — same shape the server-ops cleanup DTO uses.
 // When set it overrides intervalHours ("daily at 03:00" instead of "every 24h"); null clears it.
-const CRON = z.string().regex(/^\s*(\S+\s+){4}\S+\s*$/, "must be a 5-field cron expression");
+// The regex fixes the shape; `isValidCron` rejects out-of-range fields that would crash the scheduler.
+const CRON = z
+  .string()
+  .regex(/^\s*(\S+\s+){4}\S+\s*$/, "must be a 5-field cron expression")
+  .refine(isValidCron, "cron expression is not valid (check the field ranges)");
 
 export const BackupConfigSchema = z.object({
   enabled: z.boolean(),

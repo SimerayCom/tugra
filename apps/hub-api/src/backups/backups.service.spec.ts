@@ -22,6 +22,11 @@ describe("BackupConfigSchema — cron + age retention", () => {
     expect(ok({ retentionDays: 0 })).toBe(false);
     expect(ok({ retentionDays: 99999 })).toBe(false);
   });
+  it("rejects a 5-field cron whose fields are out of range (would crash BullMQ at schedule time)", () => {
+    expect(ok({ cron: "0 25 * * *" })).toBe(false); // hour 25
+    expect(ok({ cron: "60 * * * *" })).toBe(false); // minute 60
+    expect(ok({ cron: "foo bar baz qux quux" })).toBe(false); // 5 tokens, all garbage
+  });
 });
 
 const audit = { log: jest.fn() } as unknown as AuditService;
