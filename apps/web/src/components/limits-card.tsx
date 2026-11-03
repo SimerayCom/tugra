@@ -36,7 +36,7 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, g
   const dirty =
     mem !== numStr(memoryMb) ||
     cpu !== numStr(cpus) ||
-    gpu !== (gpus ?? "") ||
+    gpu.trim() !== (gpus ?? "") ||
     timeout !== numStr(deployTimeoutSec) ||
     (!!clusterId && (reserveMem !== numStr(reserveMemoryMb) || reserveCpu !== numStr(reserveCpus)));
 

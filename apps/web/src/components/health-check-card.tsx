@@ -39,9 +39,9 @@ export function HealthCheckCard({ id, healthCheckType, healthCheckPath, healthCh
 
   const dirty =
     type !== initType ||
-    path !== (healthCheckPath ?? "") ||
+    path.trim() !== (healthCheckPath ?? "") ||
     port !== num(healthCheckPort) ||
-    cmd !== (healthCmd ?? "") ||
+    cmd.trim() !== (healthCmd ?? "") ||
     interval !== num(timings.interval) ||
     timeout !== num(timings.timeout) ||
     retries !== num(timings.retries) ||

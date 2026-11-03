@@ -87,4 +87,23 @@ describe("DatabaseLinksCard", () => {
     fireEvent.click(screen.getByText(/try again/i));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2)); // retry refetches
   });
+
+  it("does not claim 'no eligible database' while the databases picker query is still loading", async () => {
+    vi.spyOn(api, "getAppDatabaseLinks").mockResolvedValue([]); // links loaded (empty)
+    vi.spyOn(api, "listDatabases").mockReturnValue(new Promise(() => {})); // picker query hangs
+    wrap(<DatabaseLinksCard id="a1" serverId="s1" canWrite />);
+    await screen.findByText(/no databases linked/i); // links empty state
+    expect(screen.queryByText(/no eligible database/i)).toBeNull(); // must not pre-judge the picker
+    expect(screen.getByRole("status")).toBeTruthy(); // picker spinner
+  });
+
+  it("offers a retry (not 'no eligible database') when the databases picker query fails", async () => {
+    vi.spyOn(api, "getAppDatabaseLinks").mockResolvedValue([]);
+    const listDbs = vi.spyOn(api, "listDatabases").mockRejectedValue(new Error("boom"));
+    wrap(<DatabaseLinksCard id="a1" serverId="s1" canWrite />);
+    expect(await screen.findByText(/something went wrong/i)).toBeTruthy();
+    expect(screen.queryByText(/no eligible database/i)).toBeNull();
+    fireEvent.click(screen.getByText(/try again/i));
+    await waitFor(() => expect(listDbs).toHaveBeenCalledTimes(2));
+  });
 });

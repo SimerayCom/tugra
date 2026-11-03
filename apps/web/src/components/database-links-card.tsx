@@ -87,13 +87,22 @@ export function DatabaseLinksCard({ id, serverId, canWrite }: { id: string; serv
       )}
 
       {canWrite && !links.isLoading && !links.isError && (
-        eligible.length > 0 ? (
+        databases.isLoading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: "12px 0" }}><Spinner /></div>
+        ) : databases.isError ? (
+          // Don't claim "no eligible database" when the databases query FAILED — offer a retry.
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+            <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("errors.errorTitle")}</span>
+            <Btn variant="ghost" onClick={() => databases.refetch()}>{t("errors.retry")}</Btn>
+          </div>
+        ) : eligible.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <Select
                 value={dbId}
                 onChange={setDbId}
                 placeholder={t("apps.dbLinksPickDb")}
+                ariaLabel={t("apps.dbLinksPickDb")}
                 options={eligible.map((d) => ({ value: d.id, label: `${d.name} · ${d.engine}` }))}
                 style={{ minWidth: 200, flex: 1 }}
               />

@@ -969,6 +969,7 @@ function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id: string
         value={text}
         spellCheck={false}
         onChange={(e) => setText(e.target.value)}
+        aria-label={t("apps.compose")}
         style={{ width: "100%", minHeight: 300, maxHeight: 520, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
       />
       <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("apps.composeHint")}</div>
@@ -1409,8 +1410,8 @@ function BuildArgsCard({ id }: { id: string }) {
           const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
           return (
             <div key={i} style={{ display: "flex", gap: 6 }}>
-              <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder="KEY" value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} aria-label={t("apps.envKey")} />
-              <input style={{ ...envField, flex: 1 }} placeholder="value" value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} aria-label={t("apps.envValue")} />
+              <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder={t("apps.envKey")} value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} aria-label={t("apps.envKey")} />
+              <input style={{ ...envField, flex: 1 }} placeholder={t("apps.envValue")} value={r.value} onChange={(e) => setRow(i, { value: e.target.value })} aria-label={t("apps.envValue")} />
               <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
             </div>
           );
@@ -2132,6 +2133,7 @@ function DomainOptionsCard({
           placeholder="https://auth.example.com/api/verify?rd=https://auth.example.com"
           value={fa}
           onChange={(e) => setFa(e.target.value)}
+          aria-label={t("apps.forwardAuth")}
         />
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.forwardAuthDesc")}</p>
       </div>
@@ -2332,9 +2334,10 @@ function CredentialsCard({
             <input
               style={{ ...envField, flex: 1, minWidth: 200 }}
               type="password"
-              placeholder={hasGitToken ? "•••••••• (set — replace)" : t("apps.gitToken")}
+              placeholder={hasGitToken ? t("apps.gitTokenSet") : t("apps.gitToken")}
               value={gitToken}
               onChange={(e) => setGitToken(e.target.value)}
+              aria-label={t("apps.gitToken")}
             />
             <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
           </div>
