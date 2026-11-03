@@ -43,8 +43,7 @@ import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
 import {
-  buildImageRemoveScript,
-  buildImageRemoveScriptForTag,
+  buildImageRemoveScriptForTags,
   buildAppImagesRemoveScript,
   buildRemoveScript,
   buildCustomCertRemoveScript,
@@ -1609,7 +1608,7 @@ export class ApplicationsService {
           },
         });
         this.deployLogs.finish(app.id, { status: "FAILED", exitCode: r.exitCode, deploymentId: dep.id });
-        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScript(app, dep.id), "cleanup").catch(() => undefined);
+        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef]), "cleanup").catch(() => undefined);
         await this.audit.log({ actor, action: "app.deploy.cancel", target: app.id });
         return this.prisma.deployment.findUnique({ where: { id: dep.id } });
       }
@@ -1690,12 +1689,15 @@ export class ApplicationsService {
         ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed",
       ).catch(() => {});
       if (ok && !isCompose) {
-        await this.pruneImages(app);
+        // Detached + self-contained (its own per-row try/catch): a slow agent or a prisma hiccup inside the
+        // prune must never delay the deploy result/drain or flip this already-SUCCESS deploy to FAILED.
+        void this.pruneImages(app).catch(() => undefined);
       } else if (!isCompose) {
-        // A failed/rolled-back deploy built tugra_<id>:<depId> but it never went live →
-        // reap the orphan image so repeated failures don't leak disk.
+        // A failed/rolled-back deploy built tugra_<id>:<depId> (and maybe pushed the registry ref) but it
+        // never went live → reap BOTH local tags so repeated failed push-enabled deploys don't leak a full
+        // image each (the row records neither tag, so no later prune can find them).
         await this.agentWs
-          .sendCommand(app.serverId, buildImageRemoveScript(app, dep.id), "cleanup")
+          .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef]), "cleanup")
           .catch(() => undefined);
       }
     } catch (e) {
@@ -1966,22 +1968,43 @@ export class ApplicationsService {
 
   /** Keep the newest DEPLOY_IMAGE_KEEP rollback images; remove older ones. */
   private async pruneImages(app: Application): Promise<void> {
+    // Don't prune while a deploy or rollback is in flight for this app: the prune works off a snapshot, and a
+    // concurrent rollback could start running a tag this prune is about to rmi. At most one RUNNING row per
+    // app (partial unique index); the next successful deploy re-prunes. Fail closed — a count error skips.
+    const inFlight = await this.prisma.deployment.count({ where: { appId: app.id, status: "RUNNING" } }).catch(() => 1);
+    if (inFlight > 0) return;
     const kept = await this.prisma.deployment.findMany({
       where: { appId: app.id, status: "SUCCESS", imageTag: { not: null } },
       orderBy: { createdAt: "desc" },
     });
-    for (const d of kept.slice(DEPLOY_IMAGE_KEEP)) {
-      // Remove the EXACT recorded tag: a rollback row stores the target's tag (tugra_<id>:<targetId>),
-      // not one derived from its own deployment id, so reconstructing from d.id would miss it.
-      if (d.imageTag) {
-        await this.agentWs
-          .sendCommand(app.serverId, buildImageRemoveScriptForTag(d.imageTag), "cleanup")
-          .catch(() => undefined);
+    const stale = kept.slice(DEPLOY_IMAGE_KEEP);
+    // A rollback row records its TARGET's tag, so several rows can share ONE tag. Never rmi a tag a RETAINED
+    // (newest-N) row still points to — that would strip a live or rollbackable image out from under it; for
+    // such a stale row just drop our record of it instead.
+    const protectedTags = new Set<string>();
+    for (const w of kept.slice(0, DEPLOY_IMAGE_KEEP)) {
+      if (w.imageTag) protectedTags.add(w.imageTag);
+      if (w.registryImage) protectedTags.add(w.registryImage);
+    }
+    for (const d of stale) {
+      try {
+        // A pushed build leaves TWO local tags on the host — the local tugra_<id>:<v> and the registry ref —
+        // so `rmi` both to actually free the layers (removing one only untags). registryImage stays as a DB
+        // field so a rollback can still PULL it from the registry even though its local copy is gone.
+        const targets = [d.imageTag, d.registryImage].filter((t): t is string => !!t && !protectedTags.has(t));
+        if (targets.length > 0) {
+          const r = await this.agentWs
+            .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, targets), "cleanup", 60_000)
+            .catch(() => null);
+          // Forget the local tag only on a confirmed success, so a transient offline/timeout/non-zero doesn't
+          // lose the rollback record while the image is still on disk — the next prune re-selects this stale
+          // row and retries (an already-absent tag counts as success, so it converges).
+          if (!r || r.exitCode !== 0) continue;
+        }
+        await this.prisma.deployment.update({ where: { id: d.id }, data: { imageTag: null } });
+      } catch {
+        // one stale row's failure must never abort the rest or throw out of the (detached) prune
       }
-      await this.prisma.deployment.update({
-        where: { id: d.id },
-        data: { imageTag: null },
-      });
     }
   }
 
