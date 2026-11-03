@@ -117,6 +117,8 @@
   "basicAuthPassword": "Password",
   "basicAuthAdd": "Add user",
   "basicAuthReplaceNote": "Saving replaces all users (re-enter every password). Save with no users to remove basic auth.",
+  "basicAuthIncomplete": "Enter both a username and a password on each row — incomplete rows are not saved.",
+  "basicAuthRemoveConfirm": "Remove basic auth for everyone? The app becomes publicly reachable until you add users again.",
   "redirects": "Redirects",
   "redirectsDesc": "Rewrite incoming requests with regular-expression redirects (e.g. move an old path, or force a canonical host). Each rule becomes a Traefik redirect; the first matching rule wins. Applies on the next deploy.",
   "redirectsRegex": "Match (regex), e.g. ^https://x\\.com/old/(.*)",

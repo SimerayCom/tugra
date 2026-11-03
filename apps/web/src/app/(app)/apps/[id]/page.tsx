@@ -29,6 +29,7 @@ import { useConfirm } from "../../../../components/confirm";
 import { useAuth } from "../../../../lib/auth";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { parseDotenv, toDotenv, duplicateKeys, invalidKeys, envDirty } from "../../../../lib/dotenv";
+import { completeBasicAuthRows, hasIncompleteBasicAuthRow, canSaveBasicAuth, basicAuthSaveRemovesAll } from "../../../../lib/basic-auth";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
 import { cleanDomain } from "../../../../lib/domain";
 import { EnvironmentCard } from "../../../../components/environment-card";
@@ -863,12 +864,19 @@ function BasicAuthCard({ id, usernames }: { id: string; usernames: string[] }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const [rows, setRows] = useState<{ user: string; password: string }[]>([]);
   const save = useMutation({
-    mutationFn: () => api.setAppBasicAuth(id, rows.map((r) => ({ user: r.user.trim(), password: r.password })).filter((r) => r.user && r.password)),
+    mutationFn: (users: { user: string; password: string }[]) => api.setAppBasicAuth(id, users),
     onSuccess: () => { setRows([]); qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.saved"), "success"); },
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
   });
+  const incomplete = hasIncompleteBasicAuthRow(rows);
+  const onSave = async () => {
+    // A save with no complete row while users exist removes ALL protection — confirm before going public.
+    if (basicAuthSaveRemovesAll(rows, usernames.length) && !(await confirm({ title: t("apps.basicAuth"), body: t("apps.basicAuthRemoveConfirm"), danger: true }))) return;
+    save.mutate(completeBasicAuthRows(rows));
+  };
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.basicAuth")}</div>
@@ -877,18 +885,23 @@ function BasicAuthCard({ id, usernames }: { id: string; usernames: string[] }) {
         <div style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 10 }}>{t("apps.basicAuthCurrent", { users: usernames.join(", ") })}</div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {rows.map((r, i) => (
-          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input style={{ ...envField, flex: 1 }} placeholder={t("apps.basicAuthUser")} value={r.user} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x)))} aria-label={t("apps.basicAuthUser")} />
-            <input style={{ ...envField, flex: 1 }} type="password" placeholder={t("apps.basicAuthPassword")} value={r.password} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, password: e.target.value } : x)))} aria-label={t("apps.basicAuthPassword")} />
-            <Btn variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>{t("apps.remove")}</Btn>
-          </div>
-        ))}
+        {rows.map((r, i) => {
+          const userMissing = !!r.password && !r.user.trim();
+          const pwMissing = !!r.user.trim() && !r.password;
+          return (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input style={{ ...envField, flex: 1, ...(userMissing ? { borderColor: "var(--c-r)" } : {}) }} placeholder={t("apps.basicAuthUser")} value={r.user} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x)))} aria-label={t("apps.basicAuthUser")} aria-invalid={userMissing} />
+              <input style={{ ...envField, flex: 1, ...(pwMissing ? { borderColor: "var(--c-r)" } : {}) }} type="password" placeholder={t("apps.basicAuthPassword")} value={r.password} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, password: e.target.value } : x)))} aria-label={t("apps.basicAuthPassword")} aria-invalid={pwMissing} />
+              <Btn variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>{t("apps.remove")}</Btn>
+            </div>
+          );
+        })}
       </div>
+      {incomplete && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.basicAuthIncomplete")}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { user: "", password: "" }])}>{t("apps.basicAuthAdd")}</Btn>
         <div style={{ flex: 1 }} />
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        <Btn onClick={onSave} disabled={save.isPending || !canSaveBasicAuth(rows, usernames.length)}>{t("apps.save")}</Btn>
       </div>
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.basicAuthReplaceNote")}</p>
     </Card>
