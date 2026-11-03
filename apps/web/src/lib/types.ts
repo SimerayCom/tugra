@@ -1391,3 +1391,17 @@ export interface Restore {
   createdAt: string;
   completedAt: string | null;
 }
+
+/** `docker system df` breakdown (GET /servers/:id/disk-usage) — docker's own human sizes, surfaced as-is. */
+export interface DiskUsageRow {
+  totalCount: number;
+  active: number;
+  size: string;
+  reclaimable: string;
+}
+export interface DiskUsage {
+  images: DiskUsageRow;
+  containers: DiskUsageRow;
+  volumes: DiskUsageRow;
+  buildCache: DiskUsageRow;
+}

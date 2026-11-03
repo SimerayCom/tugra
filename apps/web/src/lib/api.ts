@@ -85,6 +85,7 @@ import type {
   ImportRemapPlan,
   ImportRemapResult,
   Template,
+  DiskUsage,
   TemplateManifest,
   TokenPair,
   TunnelView,
@@ -622,6 +623,9 @@ export const api = {
 
   cleanupServer(id: string) {
     return apiFetch<{ output: string }>(`/servers/${id}/cleanup`, { method: "POST" });
+  },
+  diskUsage(id: string) {
+    return apiFetch<DiskUsage>(`/servers/${id}/disk-usage`);
   },
   getProxyStatus(id: string) {
     return apiFetch<{ status: ProxyStatus }>(`/servers/${id}/proxy`);

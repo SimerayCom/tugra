@@ -2,6 +2,7 @@ import { ForbiddenException } from "@nestjs/common";
 import { CleanupService } from "./cleanup.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
+import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
@@ -29,6 +30,7 @@ function make(
   access: Partial<TeamAccessService>,
   runner: Partial<CleanupRunnerService> = {},
   scheduler: Partial<CleanupSchedulerService> = {},
+  agentWs: Partial<AgentWsServer> = {},
 ) {
   return new CleanupService(
     prisma as PrismaService,
@@ -36,6 +38,7 @@ function make(
     audit,
     runner as CleanupRunnerService,
     scheduler as CleanupSchedulerService,
+    agentWs as AgentWsServer,
   );
 }
 
@@ -156,5 +159,31 @@ describe("CleanupService", () => {
     expect(res.applied).toEqual([]);
     expect(res.skipped).toEqual(["s2"]);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  describe("diskUsage", () => {
+    const dfOut = '{"Type":"Images","TotalCount":"3","Active":"1","Size":"1GB","Reclaimable":"500MB (50%)"}';
+
+    it("returns the parsed breakdown for a team member", async () => {
+      const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+      const access = { teamRole: jest.fn().mockResolvedValue("VIEWER") } as unknown as TeamAccessService;
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: dfOut }) };
+      const d = await make(prisma, access, {}, {}, agentWs).diskUsage("u1", "s1");
+      expect(d.images).toEqual({ totalCount: 3, active: 1, size: "1GB", reclaimable: "500MB" });
+      expect(agentWs.sendCommand).toHaveBeenCalledWith("s1", "docker system df --format '{{json .}}'", "cleanup", 60_000);
+    });
+
+    it("forbids a non-member", async () => {
+      const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+      const access = { teamRole: jest.fn().mockResolvedValue(null) } as unknown as TeamAccessService;
+      await expect(make(prisma, access, {}, {}, { sendCommand: jest.fn() }).diskUsage("u1", "s1")).rejects.toThrow(/not a member/);
+    });
+
+    it("maps an offline agent / non-zero exit to 503", async () => {
+      const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+      const access = { teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+      await expect(make(prisma, access, {}, {}, { sendCommand: jest.fn().mockRejectedValue(new Error("agent offline")) }).diskUsage("u1", "s1")).rejects.toThrow(/offline|unavailable|Service Unavailable/i);
+      await expect(make(prisma, access, {}, {}, { sendCommand: jest.fn().mockResolvedValue({ exitCode: 1, output: "boom" }) }).diskUsage("u1", "s1")).rejects.toThrow();
+    });
   });
 });

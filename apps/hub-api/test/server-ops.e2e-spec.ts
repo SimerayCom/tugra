@@ -56,7 +56,10 @@ describe("Server ops / docker cleanup (e2e)", () => {
           resolve();
         } else if (msg.type === "command") {
           commands.push(msg.command);
-          agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: 0, output: "Total reclaimed space: 1.2GB" }));
+          const output = msg.command.includes("docker system df")
+            ? '{"Type":"Images","TotalCount":"2","Active":"1","Size":"1GB","Reclaimable":"500MB (50%)"}'
+            : "Total reclaimed space: 1.2GB";
+          agent.send(JSON.stringify({ type: "command_result", reqId: msg.reqId, exitCode: 0, output }));
         }
       });
     });
@@ -107,6 +110,17 @@ describe("Server ops / docker cleanup (e2e)", () => {
       .expect(200);
     await sleep(60);
     expect(commands.join("\n")).toContain("docker volume prune -f"); // volumes opt-in adds the volume prune step
+  });
+
+  it("reports the docker disk-usage breakdown (docker system df)", async () => {
+    commands.length = 0;
+    const res = await request(app.getHttpServer())
+      .get(`/servers/${serverId}/disk-usage`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(res.body.images).toEqual({ totalCount: 2, active: 1, size: "1GB", reclaimable: "500MB" });
+    expect(res.body.containers).toBeDefined();
+    expect(commands.some((c) => c.includes("docker system df"))).toBe(true);
   });
 
   it("checks proxy status, restarts it, and tails logs via the agent", async () => {
