@@ -213,6 +213,9 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     "docker run -d",
     `--name ${name}`,
     "--restart unless-stopped",
+    // Cap json-file logs so a chatty DB can't fill the host disk (~30MB/container); matches LOG_ROTATION_ARGS
+    // in deploy-script.ts (kept inline here to keep this builder dependency-free).
+    "--log-driver json-file --log-opt max-size=10m --log-opt max-file=3",
     `--network ${DB_NET}`,
     `-v ${vol}:${def.dataDir}`,
     limitArgs.join(" "),

@@ -44,6 +44,8 @@ import {
   proxyUserDynamicFile,
   isSshGitUrl,
   gitUrlHost,
+  logRotationArgs,
+  LOG_ROTATION_ARGS,
   type AppSpec,
 } from "./deploy-script";
 
@@ -740,7 +742,7 @@ describe("deploy-script", () => {
     expect(s).toContain("docker pull -q 'nginx:1.27'");
     expect(s).toContain("docker tag 'nginx:1.27' tugra_abc:v1");
     expect(s).toContain("docker rm -f tugra_abc");
-    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:v1'");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:v1'");
   });
 
   it("rollback (build=false): no prep, just runs the existing versioned tag", () => {
@@ -748,7 +750,7 @@ describe("deploy-script", () => {
     expect(s).not.toContain("docker pull");
     expect(s).not.toContain("docker tag");
     expect(s).not.toContain("git clone");
-    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:old1'");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:old1'");
   });
 
   it("rollback (build=false): refuses (exit 7) if the local image is gone, BEFORE removing the live container", () => {
@@ -1479,7 +1481,7 @@ describe("deploy-script", () => {
     expect(s).not.toContain("/etc/tugra/builds/abc/.tugra-plan.json");
     expect(s).toContain("rm -f /etc/tugra/builds/abc.plan.json /etc/tugra/builds/abc.plan.json.tmp");
     expect(s).not.toContain("docker pull");
-    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:v2'");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:v2'");
   });
 
   it("GIT + Dockerfile: docker build to the versioned tag", () => {
@@ -1602,7 +1604,7 @@ describe("deploy-script", () => {
       expect(s).not.toContain("nixpacks build");
       expect(s).not.toContain("docker push"); // pull path never pushes
       // and it still runs the container
-      expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped 'tugra_abc:v1'");
+      expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:v1'");
     });
 
     it("buildBuildOnlyScript builds + pushes but does NOT run (for a build server)", () => {
@@ -1725,5 +1727,30 @@ describe("dbNetwork — managed-DB network attach (S4d-4)", () => {
     const s = buildRollingDeployScript({ ...domained, dbNetwork: true }, "v2", { probe: { kind: "stableWait" }, ...gate });
     expect(s).toContain("docker network create tugra-net");
     expect(s).toMatch(/&& docker network connect tugra-net \S+/);
+  });
+});
+
+describe("json-file log rotation", () => {
+  it("logRotationArgs defaults to the 10m x 3 cap and defers when the operator sets a log flag", () => {
+    expect(logRotationArgs(null)).toBe(LOG_ROTATION_ARGS);
+    expect(logRotationArgs("")).toBe(LOG_ROTATION_ARGS);
+    expect(logRotationArgs("--memory 256m")).toBe(LOG_ROTATION_ARGS);
+    // Operator owns logging — our json-file opts would clash with a different driver, so emit nothing.
+    expect(logRotationArgs("--log-driver journald")).toBe("");
+    expect(logRotationArgs("--log-opt max-size=50m")).toBe("");
+    expect(logRotationArgs('--log-driver=local --log-opt max-file=10')).toBe("");
+  });
+
+  it("the app run line carries the rotation cap by default", () => {
+    expect(buildRunScript(base, "v1", false)).toContain(LOG_ROTATION_ARGS);
+  });
+
+  it("the app run line omits our cap when the operator set their own logging", () => {
+    const s = buildRunScript({ ...base, dockerOptions: "--log-driver journald" }, "v1", false);
+    expect(s).not.toContain("json-file");
+  });
+
+  it("the Traefik proxy run line carries the rotation cap", () => {
+    expect(buildProxySetupScript({ acmeEmail: "me@x.com" })).toContain(LOG_ROTATION_ARGS);
   });
 });

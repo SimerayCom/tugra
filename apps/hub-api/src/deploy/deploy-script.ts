@@ -1041,6 +1041,22 @@ export function buildProxyDynamicRemoveScript(name: string): string {
   return `rm -f ${PROXY_DYNAMIC_DIR}/${proxyUserDynamicFile(name)}`;
 }
 
+/** json-file log rotation for every long-running managed container (app / database / proxy / tunnel). The
+ *  default json-file driver keeps every log byte forever, so one chatty container can fill the host disk —
+ *  10MB x 3 files caps each at ~30MB. Applied to the fully-managed containers unconditionally; for apps it
+ *  defers to an operator who sets their own logging (see logRotationArgs). */
+export const LOG_ROTATION_ARGS = "--log-driver json-file --log-opt max-size=10m --log-opt max-file=3";
+
+/** LOG_ROTATION_ARGS unless the app's raw docker options already set `--log-driver`/`--log-opt` — then we
+ *  emit nothing and let the operator own logging, since our json-file opts would clash with a different
+ *  driver (e.g. `max-size` is rejected for journald). */
+export function logRotationArgs(dockerOptions?: string | null): string {
+  const hasLogFlag = tokenizeDockerOptions(dockerOptions).some(
+    (tok) => tok === "--log-driver" || tok === "--log-opt" || tok.startsWith("--log-driver=") || tok.startsWith("--log-opt="),
+  );
+  return hasLogFlag ? "" : LOG_ROTATION_ARGS;
+}
+
 /** The `docker run -d --name <name> ...` line shared by every deploy strategy —
  *  identical flags (net/labels/env/limits/volumes/image) regardless of the container
  *  name, so a rolling container gets the exact same routing as the canonical one. */
@@ -1115,6 +1131,8 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     `--name ${name}`,
     // Null → "unless-stopped" (byte-identical). Enum value (DTO-validated) → shell-safe without quoting.
     `--restart ${app.restartPolicy ?? "unless-stopped"}`,
+    // Cap json-file logs; skipped when the operator sets their own --log-driver/--log-opt (dockerOptions).
+    logRotationArgs(app.dockerOptions),
     limitArgs.join(" "),
     extraPortArgs,
     epFlag,
@@ -1484,6 +1502,7 @@ export function buildProxySetupScript(
 
   const runArgs = [
     `docker run -d --name ${PROXY_NAME} --restart unless-stopped`,
+    LOG_ROTATION_ARGS,
     `--network ${PROXY_NETWORK}`,
     ...portPublish,
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
