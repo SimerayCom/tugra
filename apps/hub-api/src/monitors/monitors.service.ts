@@ -1,7 +1,9 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  type OnApplicationBootstrap,
 } from "@nestjs/common";
 import { z } from "zod";
 import { Monitor, MonitorStatus, MonitorType, Role } from "@prisma/client";
@@ -44,7 +46,9 @@ export const MonitorViewSchema = z.object({
 export type MonitorView = z.infer<typeof MonitorViewSchema>;
 
 @Injectable()
-export class MonitorsService {
+export class MonitorsService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(MonitorsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
@@ -52,6 +56,40 @@ export class MonitorsService {
     private readonly runner: MonitorRunnerService,
     private readonly scheduler: MonitorSchedulerService,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    // Scheduling is disabled in tests; the reconcile is exercised directly via reconcileServerDiskMonitors.
+    if (process.env.NODE_ENV === "test") return;
+    await this.reconcileServerDiskMonitors().catch((e) =>
+      this.logger.warn(`disk monitor backfill skipped: ${e instanceof Error ? e.message : e}`),
+    );
+  }
+
+  /**
+   * Ensure every server has its auto disk monitor. insertServer adds one on create, but the turnkey
+   * "This machine" local server is provisioned on a different path (AuthService.provisionLocalServer) that
+   * didn't, so a single-box install had no disk alarm. This backfills any server missing one at boot.
+   * Idempotent (createForServer skips a server that already has one) and best-effort per server. Whether the
+   * monitor scheduler's own bootstrap runs before or after this, the new monitor still gets scheduled —
+   * either by createForServer's schedule() (queue ready) or by the scheduler's enabled-monitor sweep.
+   */
+  async reconcileServerDiskMonitors(): Promise<number> {
+    const servers = await this.prisma.server.findMany({ select: { id: true, name: true, teamId: true } });
+    const existing = await this.prisma.monitor.findMany({ where: { auto: true, metric: "DISK" }, select: { serverId: true } });
+    const have = new Set(existing.map((m) => m.serverId));
+    let created = 0;
+    for (const s of servers) {
+      if (have.has(s.id)) continue;
+      try {
+        await this.createForServer(s);
+        created++;
+      } catch (e) {
+        this.logger.warn(`disk monitor backfill failed for server ${s.id}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    if (created) this.logger.log(`backfilled ${created} default disk monitor(s)`);
+    return created;
+  }
 
   /** A monitor may only reference a server and notification channels that belong to its OWN team.
    *  Without this guard, create/update would accept a foreign serverId (leaking another team's

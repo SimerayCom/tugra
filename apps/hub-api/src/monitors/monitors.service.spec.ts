@@ -275,6 +275,23 @@ describe("MonitorsService.createForServer / removeForServer", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("reconcileServerDiskMonitors backfills only servers that lack an auto disk monitor", async () => {
+    const serverFindMany = jest.fn().mockResolvedValue([
+      { id: "s1", name: "web-1", teamId: "t1" },
+      { id: "s2", name: "This machine", teamId: "t1" }, // the turnkey local server, missing a monitor
+    ]);
+    const monitorFindMany = jest.fn().mockResolvedValue([{ serverId: "s1" }]); // s1 already covered
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const create = jest.fn().mockResolvedValue({ ...monitor, id: "auto-s2", auto: true, serverId: "s2", metric: "DISK", intervalSec: 30 });
+    const schedule = jest.fn();
+    const prisma = { server: { findMany: serverFindMany }, monitor: { findMany: monitorFindMany, findFirst, create } } as unknown as PrismaService;
+    const created = await make(prisma, {} as TeamAccessService, { schedule }).reconcileServerDiskMonitors();
+    expect(created).toBe(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].data).toMatchObject({ serverId: "s2", metric: "DISK", auto: true });
+    expect(schedule).toHaveBeenCalledWith("auto-s2", 30);
+  });
+
   it("removeForServer unschedules and deletes EVERY monitor scoped to the server (auto + user)", async () => {
     const unschedule = jest.fn();
     const deleteMany = jest.fn().mockResolvedValue({});
