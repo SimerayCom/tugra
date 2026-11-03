@@ -27,4 +27,17 @@ describe("MeterBar", () => {
     rerender(<MeterBar value={-5} text="x" label="a" />);
     expect((screen.getByRole("progressbar").querySelector("div") as HTMLElement).style.width).toBe("0%");
   });
+
+  it("showToneIcon adds a warning glyph for warn/crit only — not ok, stale, or by default (WCAG 1.4.1)", () => {
+    const { container, rerender } = render(<MeterBar value={85} tone="warn" text="85%" label="Disk" showToneIcon />);
+    expect(container.querySelector("svg")).toBeTruthy();
+    rerender(<MeterBar value={95} tone="crit" text="95%" label="Disk" showToneIcon />);
+    expect(container.querySelector("svg")).toBeTruthy();
+    rerender(<MeterBar value={50} tone="ok" text="50%" label="Disk" showToneIcon />);
+    expect(container.querySelector("svg")).toBeNull(); // healthy → no glyph
+    rerender(<MeterBar value={85} tone="warn" text="85%" label="Disk" />);
+    expect(container.querySelector("svg")).toBeNull(); // opt-in: off by default, existing callers unchanged
+    rerender(<MeterBar value={85} tone="warn" text="85%" label="Disk" stale showToneIcon />);
+    expect(container.querySelector("svg")).toBeNull(); // a frozen sample shows no live warning
+  });
 });

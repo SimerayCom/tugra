@@ -1,9 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { TriangleAlert } from "lucide-react";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
-import { Card } from "./ui";
+import { Btn, Card } from "./ui";
 import { MeterBar } from "./meter-bar";
 import { pct, fmtBytes } from "../lib/fleet";
 import { metricTone, tempTone, batteryTone, FLEET_STALE_MS, type MetricTone } from "../lib/fleet-view";
@@ -92,7 +93,7 @@ export function buildGauges(s: MetricsSample, t: (k: string, v?: Record<string, 
  * fills, so the SSE stream keeps it ticking with no extra fetch. A sample older than the live window
  * greys out (stale) so a frozen reading never looks live; with no sample yet the card is hidden.
  */
-export function LiveGauges({ id, nowMs }: { id: string; nowMs: number }) {
+export function LiveGauges({ id, nowMs, canWrite = false, onOpenMaintenance }: { id: string; nowMs: number; canWrite?: boolean; onOpenMaintenance?: () => void }) {
   const t = useT();
   const { data: samples = [] } = useQuery({
     queryKey: ["metrics", id],
@@ -104,6 +105,10 @@ export function LiveGauges({ id, nowMs }: { id: string; nowMs: number }) {
   const ts = fin(s.ts);
   const stale = ts === null || nowMs - ts > FLEET_STALE_MS;
   const gauges = buildGauges(s, t);
+  // Surface disk pressure explicitly (not colour-only): warn/crit → a strip under the gauges with a CTA into
+  // the Maintenance tab where cleanup lives. Uses the disk gauge's own tone (metricTone: warn>=80, crit>=90).
+  const disk = gauges.find((g) => g.key === "disk");
+  const diskAlert = !stale && disk && (disk.tone === "warn" || disk.tone === "crit") ? disk.tone : null;
 
   return (
     <Card style={{ padding: 16, marginBottom: 20 }}>
@@ -115,10 +120,20 @@ export function LiveGauges({ id, nowMs }: { id: string; nowMs: number }) {
         {gauges.map((g) => (
           <div key={g.key} style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.label}</div>
-            <MeterBar grow value={g.value} tone={g.tone} text={g.text} stale={stale} label={g.label} />
+            <MeterBar grow value={g.value} tone={g.tone} text={g.text} stale={stale} label={g.label} showToneIcon />
           </div>
         ))}
       </div>
+      {diskAlert && (
+        <div
+          role={diskAlert === "crit" ? "alert" : "status"}
+          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14, padding: "8px 12px", borderRadius: "var(--r1)", background: "var(--c-el)", border: `1px solid ${diskAlert === "crit" ? "var(--c-r)" : "var(--c-am)"}` }}
+        >
+          <TriangleAlert size={15} color={diskAlert === "crit" ? "var(--c-r)" : "var(--c-am)"} aria-hidden style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 12.5, color: "var(--c-tx)", flex: 1, minWidth: 180 }}>{t(diskAlert === "crit" ? "servers.diskCrit" : "servers.diskWarn")}</span>
+          {canWrite && onOpenMaintenance && <Btn variant="ghost" onClick={onOpenMaintenance}>{t("servers.diskCleanCta")}</Btn>}
+        </div>
+      )}
     </Card>
   );
 }
