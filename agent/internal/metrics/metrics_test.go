@@ -1,6 +1,9 @@
 package metrics
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestCollect(t *testing.T) {
 	s, err := Collect()
@@ -93,6 +96,43 @@ func TestCollectorFirstSampleNetZero(t *testing.T) {
 	if s.MemTotal <= 0 {
 		t.Fatalf("expected positive memTotal, got %v", s.MemTotal)
 	}
+}
+
+func TestResolveDiskPath(t *testing.T) {
+	tmp := os.TempDir() // a real, statfs-able path on the test host
+
+	t.Run("usable env override wins", func(t *testing.T) {
+		t.Setenv("TUGRA_DISK_PATH", tmp)
+		if got := resolveDiskPath(func() string { return "/should-not-be-consulted" }); got != tmp {
+			t.Fatalf("want override %q, got %q", tmp, got)
+		}
+	})
+
+	t.Run("unusable env override is skipped and the result is still statfs-able", func(t *testing.T) {
+		t.Setenv("TUGRA_DISK_PATH", "/no/such/path/xyz123")
+		got := resolveDiskPath(func() string { return "" })
+		if got == "/no/such/path/xyz123" {
+			t.Fatal("an unusable override must not be returned")
+		}
+		if !diskUsable(got) {
+			t.Fatalf("resolved path %q is not statfs-able", got)
+		}
+	})
+
+	t.Run("docker data-root used when usable", func(t *testing.T) {
+		t.Setenv("TUGRA_DISK_PATH", "")
+		if got := resolveDiskPath(func() string { return tmp }); got != tmp {
+			t.Fatalf("want docker root %q, got %q", tmp, got)
+		}
+	})
+
+	t.Run("docker-absent still yields a usable path (never blocks a sample)", func(t *testing.T) {
+		t.Setenv("TUGRA_DISK_PATH", "")
+		got := resolveDiskPath(func() string { return "" })
+		if !diskUsable(got) {
+			t.Fatalf("fallback path %q is not statfs-able", got)
+		}
+	})
 }
 
 func TestCollectorSecondSampleNonNegative(t *testing.T) {
