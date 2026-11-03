@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { isPatchUpgrade } from "@tugra/shared";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { UpdateService } from "./update.service";
@@ -60,7 +61,7 @@ export class UpdateCheckSchedulerService implements OnApplicationBootstrap, OnMo
     await this.update.checkRemote().catch((e) => this.logger.warn(`initial update check failed: ${String(e)}`));
     const intervalMin = this.config.get<number>("UPDATE_CHECK_INTERVAL_MIN") ?? 1440;
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.runScheduledCheck(); }, { connection });
     await this.queue.add("update-check", {}, { repeat: { every: intervalMin * 60_000 } });
     this.logger.log(`scheduled update check every ${intervalMin}m`);

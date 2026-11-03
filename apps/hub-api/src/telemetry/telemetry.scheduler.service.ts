@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { TelemetryService } from "./telemetry.service";
 
@@ -51,7 +52,7 @@ export class TelemetrySchedulerService implements OnApplicationBootstrap, OnModu
     }
     const intervalMin = this.telemetry.intervalMin();
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.telemetry.sendNow(); }, { connection });
     // Remove any stale repeatable keyed by a previous interval, so changing TUGRA_TELEMETRY_INTERVAL_MIN
     // doesn't leave two jobs firing at once (BullMQ keys a repeat by its `every` value).

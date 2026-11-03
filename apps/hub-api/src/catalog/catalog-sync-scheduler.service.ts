@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { CatalogSyncRunnerService } from "./catalog-sync-runner.service";
 
 const QUEUE = "catalog-sync";
@@ -33,7 +34,7 @@ export class CatalogSyncSchedulerService implements OnApplicationBootstrap, OnMo
     await this.runner.sync().catch((e) => this.logger.warn(`initial catalog sync failed: ${String(e)}`));
     const intervalMin = this.config.get<number>("CATALOG_SYNC_INTERVAL_MIN") ?? 60;
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.runner.sync(); }, { connection });
     await this.queue.add("catalog-sync", {}, { repeat: { every: intervalMin * 60_000 } });
     this.logger.log(`scheduled catalog sync every ${intervalMin}m`);

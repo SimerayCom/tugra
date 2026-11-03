@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { ContainerHealthRunnerService } from "./container-health.runner.service";
 
 const QUEUE = "container-health";
@@ -26,7 +27,7 @@ export class ContainerHealthSchedulerService implements OnApplicationBootstrap, 
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return; // schedulers disabled in tests (house convention)
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.runner.runTick(); }, { connection });
     const intervalSec = this.config.get<number>("CONTAINER_HEALTH_INTERVAL_SEC") ?? 60;
     await this.queue.add("container-health", {}, { repeat: { every: intervalSec * 1000 } });

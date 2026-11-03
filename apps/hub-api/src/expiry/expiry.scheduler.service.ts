@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { ExpiryRunnerService } from "./expiry-runner.service";
 
 const QUEUE = "expiry";
@@ -38,7 +39,7 @@ export class ExpirySchedulerService
     if (process.env.NODE_ENV === "test") return;
 
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => this.runner.runChecks(), { connection });
     await this.queue.add("expiry-check", {}, { repeat: { every: DAILY_MS } });
     this.logger.log("scheduled daily SSL/token expiry check");

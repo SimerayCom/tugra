@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue, Worker } from "bullmq";
+import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 
@@ -34,7 +35,7 @@ export class CleanupSchedulerService
   async onApplicationBootstrap(): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
     const connection = this.connection();
-    this.queue = new Queue(QUEUE, { connection });
+    this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(
       QUEUE,
       async (job) => {
