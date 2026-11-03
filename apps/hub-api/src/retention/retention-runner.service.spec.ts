@@ -9,6 +9,9 @@ describe("RetentionRunnerService", () => {
       heartbeat: [[]],
       metricRollup: [[]],
       containerMetricRollup: [[]],
+      deployment: [[]],
+      notificationDelivery: [[]],
+      auditLog: [[]],
     };
     const model = (name: string) => ({
       findMany: jest.fn().mockImplementation(() => Promise.resolve(pages[name].shift() ?? [])),
@@ -20,6 +23,9 @@ describe("RetentionRunnerService", () => {
       heartbeat: model("heartbeat"),
       metricRollup: model("metricRollup"),
       containerMetricRollup: model("containerMetricRollup"),
+      deployment: model("deployment"),
+      notificationDelivery: model("notificationDelivery"),
+      auditLog: model("auditLog"),
     } as any;
     const config = { get: jest.fn((k: string) => cfg[k]) } as any;
     return { svc: new RetentionRunnerService(prisma, config), prisma, pages };
@@ -61,7 +67,37 @@ describe("RetentionRunnerService", () => {
     const { svc, prisma } = make();
     const res = await svc.prune();
     expect(prisma.metric.deleteMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0 });
+    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0 });
+  });
+
+  it("prunes only terminal, non-rollbackable deployments (QUEUED/RUNNING and rollbackable rows are kept)", async () => {
+    const { svc, prisma, pages } = make({ DEPLOYMENT_RETENTION_DAYS: 90 });
+    pages.deployment = [[{ id: "d-old" }]];
+    await svc.prune();
+    const where = prisma.deployment.findMany.mock.calls[0][0].where;
+    expect(where.status).toEqual({ in: ["SUCCESS", "FAILED", "CANCELLED"] }); // never QUEUED/RUNNING
+    expect(where.imageTag).toBeNull(); // only rows that are no longer a rollback target
+    expect(where.registryImage).toBeNull();
+    expect(where.imageDigest).toBeNull();
+    expect(where.createdAt.lt).toBeInstanceOf(Date);
+    expect(prisma.deployment.deleteMany.mock.calls[0][0].where.id.in).toEqual(["d-old"]);
+  });
+
+  it("prunes delivered/failed notifications but never a PENDING one", async () => {
+    const { svc, prisma } = make();
+    await svc.prune();
+    expect(prisma.notificationDelivery.findMany.mock.calls[0][0].where.status).toEqual({ not: "PENDING" });
+  });
+
+  it("leaves the audit log alone by default and prunes it only when AUDIT_RETENTION_DAYS is set", async () => {
+    const off = make();
+    await off.svc.prune();
+    expect(off.prisma.auditLog.findMany).not.toHaveBeenCalled();
+
+    const on = make({ AUDIT_RETENTION_DAYS: 365 });
+    await on.svc.prune();
+    expect(on.prisma.auditLog.findMany).toHaveBeenCalled();
+    expect(on.prisma.auditLog.findMany.mock.calls[0][0].where.createdAt.lt).toBeInstanceOf(Date);
   });
 
   it("prunes rollups by bucket < cutoff (own retention window, not ts)", async () => {
