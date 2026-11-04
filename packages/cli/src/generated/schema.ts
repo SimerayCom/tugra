@@ -3212,7 +3212,7 @@ export interface paths {
             cookie?: never;
         };
         get: operations["DestinationsController_get"];
-        put?: never;
+        put: operations["DestinationsController_update"];
         post?: never;
         delete: operations["DestinationsController_remove"];
         options?: never;
@@ -23690,6 +23690,107 @@ export interface operations {
                         /** Format: date-time */
                         createdAt: string;
                     };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    DestinationsController_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    s3Region?: string | null;
+                    s3AccessKey?: string;
+                    s3SecretKey?: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        name: string;
+                        /** @enum {string} */
+                        type: "LOCAL" | "S3";
+                        teamId: string;
+                        s3Bucket: string | null;
+                        s3Region: string | null;
+                        s3Endpoint: string | null;
+                        s3Prefix: string | null;
+                        encryptionEnabled: boolean;
+                        hasCredentials: boolean;
+                        /** @enum {string} */
+                        role: "OWNER" | "ADMIN" | "VIEWER";
+                        canWrite: boolean;
+                        /** Format: date-time */
+                        createdAt: string;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             /** @description Missing or invalid authentication. */

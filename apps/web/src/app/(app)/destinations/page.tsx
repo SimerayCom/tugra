@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HardDrive } from "lucide-react";
 import { api } from "../../../lib/api";
+import type { BackupDestination } from "../../../lib/types";
 import { destSummary, destTypeLabel } from "../../../lib/destinations";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
@@ -21,6 +22,43 @@ const field: React.CSSProperties = {
   fontSize: 13,
   fontFamily: "inherit",
 };
+
+function EditDestinationForm({ dest, onDone }: { dest: BackupDestination; onDone: () => void }) {
+  const t = useT();
+  const [name, setName] = useState(dest.name);
+  const [region, setRegion] = useState(dest.s3Region ?? "");
+  const [accessKey, setAccessKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateDestination(dest.id, {
+        name,
+        s3Region: region || null,
+        // Blank = keep the stored key (rotate only when a new value is typed).
+        ...(accessKey ? { s3AccessKey: accessKey } : {}),
+        ...(secretKey ? { s3SecretKey: secretKey } : {}),
+      }),
+    onSuccess: onDone,
+  });
+  // Bucket / endpoint / prefix / encryption are fixed once a destination exists (existing backups are stored
+  // at that location + key); changing them means a new destination. Only name/region/credentials are editable.
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); save.mutate(); }}
+      style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "0 16px 14px" }}
+    >
+      <input style={{ ...field, width: 130 }} placeholder={t("destinations.name")} aria-label={t("destinations.name")} value={name} onChange={(e) => setName(e.target.value)} required />
+      <input style={{ ...field, width: 110 }} placeholder={t("destinations.region")} aria-label={t("destinations.region")} value={region} onChange={(e) => setRegion(e.target.value)} />
+      <input style={{ ...field, width: 150 }} placeholder={t("destinations.accessKeyKeep")} aria-label={t("destinations.accessKey")} value={accessKey} onChange={(e) => setAccessKey(e.target.value)} />
+      <input style={{ ...field, width: 160 }} type="password" placeholder={t("destinations.secretKeyKeep")} aria-label={t("destinations.secretKey")} value={secretKey} onChange={(e) => setSecretKey(e.target.value)} />
+      <button type="submit" disabled={save.isPending} style={{ ...field, background: "var(--c-a)", color: "var(--c-on-a)", fontWeight: 600, cursor: "pointer" }}>
+        {save.isPending ? "…" : t("common.save")}
+      </button>
+      <span style={{ fontSize: 11, color: "var(--c-tx3)", width: "100%" }}>{t("destinations.editHint")}</span>
+      {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, width: "100%" }}>{(save.error as Error).message}</div>}
+    </form>
+  );
+}
 
 export default function DestinationsPage() {
   const t = useT();
@@ -63,6 +101,7 @@ export default function DestinationsPage() {
       qc.invalidateQueries({ queryKey: ["destinations"] });
     },
   });
+  const [editId, setEditId] = useState<string | null>(null);
   const del = useMutation({
     mutationFn: (id: string) => api.deleteDestination(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["destinations"] }),
@@ -110,13 +149,17 @@ export default function DestinationsPage() {
       ) : (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
           {destinations.map((d) => (
-            <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name} <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>· {destTypeLabel(d.type)}</span></div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{destSummary(d)}</div>
+            <div key={d.id} style={{ borderTop: "1px solid var(--c-bd)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name} <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>· {destTypeLabel(d.type)}</span></div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{destSummary(d)}</div>
+                </div>
+                {d.canWrite && d.type === "S3" && <Btn variant="ghost" onClick={() => setEditId(editId === d.id ? null : d.id)}>{editId === d.id ? t("common.cancel") : t("destinations.edit")}</Btn>}
+                {d.canWrite && <Btn variant="ghost" onClick={() => test.mutate(d.id)} disabled={test.isPending}>{test.isPending ? "…" : t("destinations.test")}</Btn>}
+                {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
               </div>
-              {d.canWrite && <Btn variant="ghost" onClick={() => test.mutate(d.id)} disabled={test.isPending}>{test.isPending ? "…" : t("destinations.test")}</Btn>}
-              {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
+              {editId === d.id && <EditDestinationForm dest={d} onDone={() => { setEditId(null); qc.invalidateQueries({ queryKey: ["destinations"] }); }} />}
             </div>
           ))}
           {destinations.length === 0 && (
