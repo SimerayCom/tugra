@@ -1365,6 +1365,12 @@ export const api = {
   cloneDatabase(id: string, body: { name?: string; environmentId?: string }) {
     return apiFetch<{ id: string; warnings: string[] }>(`/databases/${id}/clone`, { method: "POST", body: JSON.stringify(body) });
   },
+  getDatabaseEnv(id: string) {
+    return apiFetch<Record<string, string>>(`/databases/${id}/env`);
+  },
+  setDatabaseEnv(id: string, env: Record<string, string>) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/env`, { method: "PUT", body: JSON.stringify({ env }) });
+  },
   renameServer(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
   },

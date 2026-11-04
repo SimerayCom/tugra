@@ -65,6 +65,8 @@ export interface DbSpec {
   healthCmd?: string | null;
   memoryMb?: number | null;
   cpus?: number | null;
+  // User-set container env, injected BEFORE credentialEnv so it can never shadow the managed credentials.
+  env?: Record<string, string> | null;
 }
 
 export function dbContainerName(db: { id: string }): string {
@@ -120,6 +122,41 @@ export function credentialEnv(engine: DbEngine, creds: DbCredentials): Record<st
       // sqld runs with its defaults (HTTP listener on 8080, data at dataDir); no credential env.
       return {};
   }
+}
+
+// Beyond the exact credential vars that credentialEnv() emits, each official image reads further env vars
+// that DISABLE, RANDOMIZE, or re-source the managed credentials (so a stored password would no longer
+// protect the DB, or the entrypoint would crash-loop). Users may not set these — rejected up front so the
+// Tugra-managed credential always protects the database. Redis-family/libSQL carry auth via server args,
+// not env, so they have nothing extra to block.
+const AUTH_OVERRIDE_ENV: Record<DbEngine, readonly string[]> = {
+  POSTGRES: ["POSTGRES_HOST_AUTH_METHOD", "POSTGRES_PASSWORD_FILE", "POSTGRES_USER_FILE", "POSTGRES_DB_FILE"],
+  MYSQL: [
+    "MYSQL_ALLOW_EMPTY_PASSWORD", "MYSQL_RANDOM_ROOT_PASSWORD", "MYSQL_ONETIME_PASSWORD", "MYSQL_ROOT_HOST",
+    "MYSQL_ROOT_PASSWORD_FILE", "MYSQL_PASSWORD_FILE", "MYSQL_USER_FILE", "MYSQL_DATABASE_FILE",
+  ],
+  MARIADB: [
+    // MariaDB's entrypoint honours both the MARIADB_* and the legacy MYSQL_* names.
+    "MARIADB_ALLOW_EMPTY_ROOT_PASSWORD", "MARIADB_RANDOM_ROOT_PASSWORD", "MARIADB_ROOT_HOST",
+    "MARIADB_ROOT_PASSWORD_FILE", "MARIADB_PASSWORD_FILE", "MARIADB_USER_FILE", "MARIADB_DATABASE_FILE",
+    "MYSQL_ALLOW_EMPTY_PASSWORD", "MYSQL_RANDOM_ROOT_PASSWORD", "MYSQL_ROOT_HOST",
+    "MYSQL_ROOT_PASSWORD_FILE", "MYSQL_PASSWORD_FILE", "MYSQL_USER_FILE", "MYSQL_DATABASE_FILE",
+  ],
+  MONGO: ["MONGO_INITDB_ROOT_USERNAME_FILE", "MONGO_INITDB_ROOT_PASSWORD_FILE"],
+  CLICKHOUSE: ["CLICKHOUSE_SKIP_USER_SETUP", "CLICKHOUSE_USER_FILE", "CLICKHOUSE_PASSWORD_FILE", "CLICKHOUSE_PASSWORD_SHA256_HEX"],
+  REDIS: [],
+  KEYDB: [],
+  DRAGONFLY: [],
+  LIBSQL: [],
+};
+
+/**
+ * Env var names a user may NOT set on a database: the engine's own credential vars (credentialEnv) plus the
+ * image's auth-override vars. Enforced in DatabasesService.setEnv so a stored credential always protects the DB.
+ */
+export function reservedDbEnvKeys(engine: DbEngine): Set<string> {
+  const creds = Object.keys(credentialEnv(engine, { username: "", password: "", database: "" }));
+  return new Set([...creds, ...AUTH_OVERRIDE_ENV[engine]]);
 }
 
 /** Redis-family engines carry their password as a server arg; others return "". */
@@ -189,9 +226,12 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   const name = dbContainerName(db);
   const vol = dbVolumeName(db);
   const def = ENGINES[db.engine];
-  const envFlags = Object.entries(credentialEnv(db.engine, db.credentials))
-    .map(([k, v]) => `-e ${shq(`${k}=${v}`)}`)
-    .join(" ");
+  // User env FIRST, then credential env: later `-e` flags win in docker, so the managed credentials always
+  // override a user var of the same name (defence-in-depth alongside the reserved-key reject in the service).
+  const toEnvFlags = (env: Record<string, string>) =>
+    Object.entries(env).map(([k, v]) => `-e ${shq(`${k}=${v}`)}`).join(" ");
+  const userEnvFlags = db.env ? toEnvFlags(db.env) : "";
+  const credEnvFlags = toEnvFlags(credentialEnv(db.engine, db.credentials));
   const portFlag = db.hostPort ? `-p ${db.hostPort}:${db.port}` : "";
   const command = engineCommand(db.engine, db.credentials);
 
@@ -219,7 +259,8 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     `--network ${DB_NET}`,
     `-v ${vol}:${def.dataDir}`,
     limitArgs.join(" "),
-    envFlags,
+    userEnvFlags,
+    credEnvFlags,
     portFlag,
     shq(db.image),
     command,

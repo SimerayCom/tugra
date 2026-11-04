@@ -1299,6 +1299,9 @@ model Database {
   port        Int
   hostPort    Int?
   credentials String
+  // Encrypted JSON of user-set container env vars ({ KEY: "value" }), injected at provision BEFORE the
+  // engine's credential env so a user var can never shadow the managed credentials. Null = none.
+  envEnc      String?
   status      DbStatus @default(NEW)
   iconUpdatedAt DateTime?    // list-view marker so the database list never reads the icon bytes
   icon         DatabaseIcon?

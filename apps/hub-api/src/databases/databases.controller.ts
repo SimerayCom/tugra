@@ -36,6 +36,8 @@ import {
   CloneDatabaseSchema,
   CreateDatabaseInput,
   CreateDatabaseSchema,
+  SetDatabaseEnvInput,
+  SetDatabaseEnvSchema,
   RenameInput,
   RenameSchema,
   SetIconInput,
@@ -204,6 +206,26 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(RenameSchema)) body: RenameInput,
   ) {
     await this.databases.rename(user.userId, id, body.name);
+    return { ok: true };
+  }
+
+  // A database's user-set container env vars. Sensitive (values may be secrets): the service is writer-only
+  // and the GET needs the read:secrets scope, exactly like the app env endpoints.
+  @Get(":id/env")
+  @RequireScopes("read:secrets")
+  getEnv(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.databases.getEnv(user.userId, id);
+  }
+
+  @Put(":id/env")
+  @HttpCode(200)
+  @ApiZodBody(SetDatabaseEnvSchema)
+  async setEnv(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDatabaseEnvSchema)) body: SetDatabaseEnvInput,
+  ) {
+    await this.databases.setEnv(user.userId, id, body.env);
     return { ok: true };
   }
 

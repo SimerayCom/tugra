@@ -34,11 +34,36 @@ type Row = { key: string; value: string };
  * loaded and actually changed, and a duplicate key blocks the save (a map would silently drop one).
  * Read-only viewers can reveal and copy but see no editing controls or Save.
  */
-export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: string | null; canWrite: boolean }) {
+export function EnvCard({
+  id,
+  clusterId,
+  canWrite,
+  title,
+  desc,
+  redeployHint,
+  fetchEnv,
+  saveEnv,
+  queryKey,
+  relatedKey,
+}: {
+  id: string;
+  clusterId?: string | null;
+  canWrite: boolean;
+  // Data-source overrides (default to the app endpoints) so the same editor serves databases too.
+  title?: string;
+  desc?: string;
+  redeployHint?: string;
+  fetchEnv?: () => Promise<Record<string, string>>;
+  saveEnv?: (env: Record<string, string>) => Promise<unknown>;
+  queryKey?: unknown[];
+  relatedKey?: unknown[];
+}) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
-  const { data: env, isLoading, isError, refetch } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
+  const envKey = queryKey ?? ["appEnv", id];
+  const relKey = relatedKey ?? ["app", id];
+  const { data: env, isLoading, isError, refetch } = useQuery({ queryKey: envKey, queryFn: () => (fetchEnv ? fetchEnv() : api.getAppEnv(id)) });
   const [rows, setRows] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
   const [sorted, setSorted] = useState(false); // alphabetical VIEW toggle (never reorders the stored map)
@@ -64,11 +89,11 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
     mutationFn: () => {
       const map: Record<string, string> = {};
       for (const r of rows) if (r.key.trim()) map[r.key.trim()] = r.value;
-      return api.setAppEnv(id, map);
+      return saveEnv ? saveEnv(map) : api.setAppEnv(id, map);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["appEnv", id] });
-      qc.invalidateQueries({ queryKey: ["app", id] });
+      qc.invalidateQueries({ queryKey: envKey });
+      qc.invalidateQueries({ queryKey: relKey });
     },
     meta: { successMessage: t("apps.saved") },
   });
@@ -141,7 +166,7 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
   ) : undefined;
 
   return (
-    <SectionCard title={t("apps.env")} desc={t(clusterId ? "apps.envDescSwarm" : "apps.envDesc")} right={toolbar}>
+    <SectionCard title={title ?? t("apps.env")} desc={desc ?? t(clusterId ? "apps.envDescSwarm" : "apps.envDesc")} right={toolbar}>
       {isError && !env ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading || !env ? (
@@ -239,7 +264,7 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
               </Btn>
             </div>
           )}
-          {save.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+          {save.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{redeployHint ?? t("apps.envRedeploy")}</div>}
         </>
       )}
     </SectionCard>

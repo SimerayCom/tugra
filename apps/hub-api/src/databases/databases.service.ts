@@ -26,6 +26,7 @@ import {
   buildDbRemoveScript,
   buildDbStopScript,
   connectionInfo,
+  reservedDbEnvKeys,
   publicConnectionUri,
   dbContainerName,
   enginePort,
@@ -308,7 +309,7 @@ export class DatabasesService {
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
-        buildDatabaseRunScript(this.toSpec(db)),
+        buildDatabaseRunScript({ ...this.toSpec(db), env: this.dbEnv(db) }),
         "database",
         PROVISION_TIMEOUT_MS,
       );
@@ -448,6 +449,7 @@ export class DatabasesService {
         memoryMb: src.memoryMb,
         cpus: src.cpus,
         tags: src.tags,
+        envEnc: src.envEnc, // user env is config → carried to the clone
         // backups intentionally NOT copied: an enabled schedule here would have no registered job.
       },
     });
@@ -529,7 +531,33 @@ export class DatabasesService {
       healthCmd: db.healthCmd,
       memoryMb: db.memoryMb,
       cpus: db.cpus,
+      // env is decrypted lazily at the provision call site only — view()/internalConnectionUri() never need
+      // it, and keeping it out of the default spec narrows a corrupt-blob failure to the deploy path.
     };
+  }
+
+  /** Decrypt a database's user-set env vars ({} when none). */
+  private dbEnv(db: Database): Record<string, string> {
+    if (!db.envEnc) return {};
+    return JSON.parse(this.crypto.decrypt(db.envEnc)) as Record<string, string>;
+  }
+
+  /** A database's user-set env vars. Sensitive (values may be secrets), so writer-only. */
+  async getEnv(userId: string, id: string): Promise<Record<string, string>> {
+    const db = await this.requireWrite(userId, id);
+    return this.dbEnv(db);
+  }
+
+  async setEnv(userId: string, id: string, env: Record<string, string>): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    const reserved = reservedDbEnvKeys(db.engine as DbEngine);
+    const clash = Object.keys(env).filter((k) => reserved.has(k));
+    if (clash.length) throw new BadRequestException(`reserved environment variable(s): ${clash.join(", ")}`);
+    await this.prisma.database.update({
+      where: { id },
+      data: { envEnc: this.crypto.encrypt(JSON.stringify(env)) },
+    });
+    await this.audit.log({ actor: userId, action: "database.env.update", target: id });
   }
 
   private async require(userId: string, id: string): Promise<Database> {
