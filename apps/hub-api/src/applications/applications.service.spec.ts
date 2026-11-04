@@ -4237,6 +4237,21 @@ describe("ApplicationsService.clone", () => {
     const { prisma } = clonePrisma({ server: { findUnique: jest.fn().mockResolvedValue({ ...server, id: "s2", teamId: "t2" }) } });
     await expect(make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { serverId: "s2" })).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it("clones into a target environment in the same team (used by environment clone)", async () => {
+    const { prisma, create } = clonePrisma({
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e2", project: { teamId: "t1" } }) },
+    });
+    await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { name: "web", environmentId: "e2" });
+    expect(create.mock.calls[0][0].data.environmentId).toBe("e2");
+  });
+
+  it("rejects cloning into an environment in another team", async () => {
+    const { prisma } = clonePrisma({
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e2", project: { teamId: "t2" } }) },
+    });
+    await expect(make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { environmentId: "e2" })).rejects.toBeInstanceOf(BadRequestException);
+  });
 });
 
 describe("ApplicationsService — COMPOSE-from-git", () => {

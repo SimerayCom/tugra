@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Box, Database, Layers, Plus, Pencil, FolderTree, CloudUpload, Trash2, type LucideIcon } from "lucide-react";
+import { Box, Database, Layers, Plus, Pencil, Copy, FolderTree, CloudUpload, Trash2, type LucideIcon } from "lucide-react";
 import { api, appIconUrl, projectIconUrl } from "../../../../lib/api";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { useToast } from "../../../../components/toast";
@@ -227,6 +227,7 @@ function SkeletonResourceGroup() {
 
 function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environment; projectId: string; canWrite: boolean; onChange: () => void }) {
   const t = useT();
+  const toast = useToast();
   const [query, setQuery] = useState("");
   const all = env.resources ?? [];
   const empty = all.length === 0;
@@ -238,14 +239,29 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   const remove = useMutation({ mutationFn: () => api.deleteEnvironment(env.id), onSuccess: onChange });
   const [renaming, setRenaming] = useState(false);
   const rename = useMutation({ mutationFn: (name: string) => api.renameEnvironment(env.id, name), onSuccess: () => { onChange(); setRenaming(false); } });
+  const [cloning, setCloning] = useState(false);
+  const cloneEnv = useMutation({
+    mutationFn: (name: string) => api.cloneEnvironment(env.id, { name }),
+    onSuccess: (res) => {
+      setCloning(false);
+      onChange();
+      const n = res.apps.cloned + res.databases.cloned;
+      const failed = res.apps.failed.length + res.databases.failed.length;
+      toast(t("projects.envCloned", { count: String(n) }), failed ? "info" : "success");
+      if (failed) toast(t("projects.envCloneFailed", { names: [...res.apps.failed, ...res.databases.failed].join(", ") }), "error");
+    },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("projects.envCloneError"), "error"),
+  });
   const newHref = (kind: "app" | "service" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
   const chip: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "3px 10px", textDecoration: "none" };
   return (
     <Card style={{ padding: 16 }}>
       {renaming && <RenameModal current={env.name} title={t("projects.renameEnvironment")} onClose={() => setRenaming(false)} onSave={(n) => rename.mutate(n)} pending={rename.isPending} />}
+      {cloning && <RenameModal current={`${env.name.slice(0, 73)} (copy)`} title={t("projects.cloneEnvironment")} hint={t("projects.cloneEnvironmentHint")} saveLabel={t("projects.cloneEnvironment")} maxLength={80} onClose={() => setCloning(false)} onSave={(n) => cloneEnv.mutate(n)} pending={cloneEnv.isPending} />}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>{env.name}</span>
         {canWrite && <button onClick={() => setRenaming(true)} title={t("projects.renameEnvironment")} aria-label={t("projects.renameEnvironment")} style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", display: "inline-flex", padding: 2 }}><Pencil size={13} /></button>}
+        {canWrite && !empty && <button onClick={() => setCloning(true)} title={t("projects.cloneEnvironment")} aria-label={t("projects.cloneEnvironment")} style={{ background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", display: "inline-flex", padding: 2 }}><Copy size={13} /></button>}
         <Badge>{env.appCount} apps</Badge>
         <Badge>{env.dbCount} dbs</Badge>
         <div style={{ flex: 1 }} />

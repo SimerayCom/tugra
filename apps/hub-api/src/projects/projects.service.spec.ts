@@ -5,8 +5,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { TemplateCatalogService } from "../catalog/template-catalog.service";
+import { ApplicationsService } from "../applications/applications.service";
+import { DatabasesService } from "../databases/databases.service";
 
-const audit = { log: jest.fn() } as unknown as AuditService;
+const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
 // Catalog is only consulted to resolve an app's template logo; default to "no template known".
 const catalog = { get: jest.fn().mockReturnValue(undefined) } as unknown as TemplateCatalogService;
 
@@ -27,8 +29,20 @@ function accessWith(access: Partial<TeamAccessService>): TeamAccessService {
   } as unknown as TeamAccessService;
 }
 
-function make(prisma: Partial<PrismaService>, access: Partial<TeamAccessService>) {
-  return new ProjectsService(prisma as PrismaService, accessWith(access), audit, catalog);
+function make(
+  prisma: Partial<PrismaService>,
+  access: Partial<TeamAccessService>,
+  apps: Partial<ApplicationsService> = {},
+  databases: Partial<DatabasesService> = {},
+) {
+  return new ProjectsService(
+    prisma as PrismaService,
+    accessWith(access),
+    audit,
+    catalog,
+    apps as ApplicationsService,
+    databases as DatabasesService,
+  );
 }
 
 describe("ProjectsService", () => {
@@ -241,5 +255,102 @@ describe("ProjectsService - custom icon", () => {
     await make(prisma, okAccess).deleteIcon("u1", "p1");
     expect(deleteMany).toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
+  });
+
+  describe("cloneEnvironment", () => {
+    const envRow = { id: "e1", projectId: "p1", name: "production", project: { teamId: "t1" } };
+    function setup(opts: {
+      apps?: { id: string; name: string }[];
+      dbs?: { id: string; name: string }[];
+      requirePermission?: jest.Mock;
+      appClone?: jest.Mock;
+      dbClone?: jest.Mock;
+      links?: { appId: string; databaseId: string; envVar: string }[];
+      linkCreate?: jest.Mock;
+    }) {
+      const create = jest.fn().mockResolvedValue({ id: "e2", projectId: "p1", name: "production (copy)" });
+      const linkCreate = opts.linkCreate ?? jest.fn().mockResolvedValue({});
+      const prisma = {
+        environment: { findUnique: jest.fn().mockResolvedValue(envRow), create },
+        application: { findMany: jest.fn().mockResolvedValue(opts.apps ?? []) },
+        database: { findMany: jest.fn().mockResolvedValue(opts.dbs ?? []) },
+        appDatabaseLink: { findMany: jest.fn().mockResolvedValue(opts.links ?? []), create: linkCreate },
+      } as unknown as PrismaService;
+      const access = { requirePermission: opts.requirePermission ?? jest.fn().mockResolvedValue(undefined) };
+      const apps = { clone: opts.appClone ?? jest.fn().mockResolvedValue({ app: {}, warnings: [] }) };
+      const databases = { clone: opts.dbClone ?? jest.fn().mockResolvedValue({ id: "x", warnings: [] }) };
+      const svc = make(prisma, access, apps as unknown as ApplicationsService, databases as unknown as DatabasesService);
+      return { svc, create, access, apps, databases, linkCreate };
+    }
+
+    it("clones every app and database into a new same-project environment, keeping names", async () => {
+      const appClone = jest.fn().mockResolvedValue({ app: {}, warnings: [] });
+      const dbClone = jest.fn().mockResolvedValue({ id: "x", warnings: [] });
+      const { svc, create } = setup({
+        apps: [{ id: "a1", name: "web" }, { id: "a2", name: "api" }],
+        dbs: [{ id: "d1", name: "pg" }],
+        appClone,
+        dbClone,
+      });
+      (audit.log as jest.Mock).mockClear();
+      const res = await svc.cloneEnvironment("u1", "e1", {});
+      expect(create).toHaveBeenCalledWith({ data: { projectId: "p1", name: "production (copy)" } });
+      expect(appClone).toHaveBeenCalledWith("u1", "a1", { name: "web", environmentId: "e2" });
+      expect(appClone).toHaveBeenCalledWith("u1", "a2", { name: "api", environmentId: "e2" });
+      expect(dbClone).toHaveBeenCalledWith("u1", "d1", { name: "pg", environmentId: "e2" });
+      expect(res).toEqual({ environmentId: "e2", projectId: "p1", apps: { cloned: 2, failed: [] }, databases: { cloned: 1, failed: [] }, relinked: 0 });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "environment.clone", target: "p1" }));
+    });
+
+    it("re-links a cloned app to its cloned database within the new environment (same env var)", async () => {
+      // app a1 -> clone capp1, db d1 -> clone cdb1; source link a1->d1 under DATABASE_URL.
+      const appClone = jest.fn().mockResolvedValue({ app: { id: "capp1" }, warnings: [] });
+      const dbClone = jest.fn().mockResolvedValue({ id: "cdb1", warnings: [] });
+      const { svc, linkCreate } = setup({
+        apps: [{ id: "a1", name: "web" }],
+        dbs: [{ id: "d1", name: "pg" }],
+        appClone,
+        dbClone,
+        links: [{ appId: "a1", databaseId: "d1", envVar: "DATABASE_URL" }],
+      });
+      const res = await svc.cloneEnvironment("u1", "e1", {});
+      expect(linkCreate).toHaveBeenCalledWith({ data: { appId: "capp1", databaseId: "cdb1", envVar: "DATABASE_URL", createdBy: "u1" } });
+      expect(res.relinked).toBe(1);
+    });
+
+    it("does NOT re-link when the linked database is outside this environment (not cloned)", async () => {
+      const appClone = jest.fn().mockResolvedValue({ app: { id: "capp1" }, warnings: [] });
+      const { svc, linkCreate } = setup({
+        apps: [{ id: "a1", name: "web" }],
+        dbs: [], // the linked DB d9 lives in another environment
+        appClone,
+        links: [{ appId: "a1", databaseId: "d9", envVar: "DATABASE_URL" }],
+      });
+      const res = await svc.cloneEnvironment("u1", "e1", {});
+      expect(linkCreate).not.toHaveBeenCalled();
+      expect(res.relinked).toBe(0);
+    });
+
+    it("is best-effort: a resource that fails to clone is reported, the rest still clone", async () => {
+      const appClone = jest.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue({ app: { id: "capp2" }, warnings: [] });
+      const { svc } = setup({ apps: [{ id: "a1", name: "web" }, { id: "a2", name: "api" }], appClone });
+      const res = await svc.cloneEnvironment("u1", "e1", {});
+      expect(res.apps).toEqual({ cloned: 1, failed: ["web"] });
+    });
+
+    it("gates apps:config up front when the environment has apps (clean 403, no environment created)", async () => {
+      const requirePermission = jest.fn().mockImplementation((_u: string, _t: string, perm: string) =>
+        perm === "apps:config" ? Promise.reject(new ForbiddenException()) : Promise.resolve(),
+      );
+      const { svc, create } = setup({ apps: [{ id: "a1", name: "web" }], requirePermission });
+      await expect(svc.cloneEnvironment("u1", "e1", {})).rejects.toBeInstanceOf(ForbiddenException);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("honors a custom target name", async () => {
+      const { svc, create } = setup({});
+      await svc.cloneEnvironment("u1", "e1", { name: "staging" });
+      expect(create).toHaveBeenCalledWith({ data: { projectId: "p1", name: "staging" } });
+    });
   });
 });

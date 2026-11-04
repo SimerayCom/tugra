@@ -694,10 +694,16 @@ export class ApplicationsService {
    * warning keys the UI localizes. Cross-server / env moves, volume-data copy and port re-allocation are
    * deliberate follow-ups.
    */
-  async clone(userId: string, id: string, input: { name?: string; serverId?: string }): Promise<{ app: AppView; warnings: string[] }> {
+  async clone(userId: string, id: string, input: { name?: string; serverId?: string; environmentId?: string }): Promise<{ app: AppView; warnings: string[] }> {
     const src = await this.require(userId, id);
     if (src.isPreview) throw new BadRequestException("a preview app can't be cloned");
     await this.access.requirePermission(userId, src.teamId, "apps:config");
+    // Target environment: the source's own by default, or a chosen one that must be in the same team
+    // (environment clone places the copy in a new environment).
+    const environmentId = input.environmentId ?? src.environmentId;
+    if (input.environmentId && input.environmentId !== src.environmentId) {
+      await this.assertEnvInTeam(input.environmentId, src.teamId);
+    }
     // Target server: the source's own by default, or a chosen one that MUST be in the same team (no
     // cross-team clone). A different target resets the server-bound topology (cluster/placement/host ports).
     const targetServerId = input.serverId ?? src.serverId;
@@ -736,7 +742,7 @@ export class ApplicationsService {
           description: src.description,
           teamId: src.teamId,
           serverId: server.id,
-          environmentId: src.environmentId,
+          environmentId,
           buildServerId: src.buildServerId,
           // Same server keeps the stateful swarm pin; a cross-server clone resets it — the cluster/placement/
           // constraint topology and replica count belong to the source server's set, not the new standalone one.
