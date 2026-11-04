@@ -163,6 +163,13 @@ describe("database-script", () => {
       // only the single credential block's flags; nothing extra
       expect(s).toContain("-e 'POSTGRES_PASSWORD=p@ss'");
     });
+
+    it("mounts extra volumes under per-database derived names (alongside the managed data volume)", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { volumes: [{ name: "cache", path: "/cache" }, { name: "cfg", path: "/etc/x" }] }));
+      expect(s).toContain("-v tugra_dbv_db1:/var/lib/postgresql/data"); // managed data volume
+      expect(s).toContain("-v tugra_dbv_db1_cache:/cache");
+      expect(s).toContain("-v tugra_dbv_db1_cfg:/etc/x");
+    });
   });
 
   describe("buildDbRemoveScript", () => {
@@ -175,6 +182,17 @@ describe("database-script", () => {
     it("keeps the data volume when keepVolume is set (only the container is removed)", () => {
       const s = buildDbRemoveScript({ id: "db1" }, { keepVolume: true });
       expect(s).toContain("docker rm -f tugra_db_db1");
+      expect(s).not.toContain("docker volume rm");
+    });
+
+    it("also removes extra named volumes so a deleted database orphans none", () => {
+      const s = buildDbRemoveScript({ id: "db1", volumes: [{ name: "cache", path: "/cache" }] });
+      expect(s).toContain("docker volume rm tugra_dbv_db1 ");
+      expect(s).toContain("docker volume rm tugra_dbv_db1_cache ");
+    });
+
+    it("keepVolume leaves the extra volumes too", () => {
+      const s = buildDbRemoveScript({ id: "db1", volumes: [{ name: "cache", path: "/cache" }] }, { keepVolume: true });
       expect(s).not.toContain("docker volume rm");
     });
   });

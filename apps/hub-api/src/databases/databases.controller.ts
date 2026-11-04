@@ -38,6 +38,8 @@ import {
   CreateDatabaseSchema,
   SetDatabaseEnvInput,
   SetDatabaseEnvSchema,
+  SetDatabaseVolumesInput,
+  SetDatabaseVolumesSchema,
   RenameInput,
   RenameSchema,
   SetIconInput,
@@ -226,6 +228,20 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetDatabaseEnvSchema)) body: SetDatabaseEnvInput,
   ) {
     await this.databases.setEnv(user.userId, id, body.env);
+    return { ok: true };
+  }
+
+  // Extra persistent volumes for this database (names + absolute container paths). Writer-gated; not secret,
+  // so they ride on the read-level database view rather than a dedicated secret-scoped GET.
+  @Put(":id/volumes")
+  @HttpCode(200)
+  @ApiZodBody(SetDatabaseVolumesSchema)
+  async setVolumes(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetDatabaseVolumesSchema)) body: SetDatabaseVolumesInput,
+  ) {
+    await this.databases.setVolumes(user.userId, id, body.volumes);
     return { ok: true };
   }
 
