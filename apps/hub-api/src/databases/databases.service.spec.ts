@@ -520,6 +520,7 @@ describe("DatabasesService - custom icon", () => {
       memoryMb: 512,
       cpus: 1.5,
       tags: ["prod", "eu"],
+      envEnc: `enc:${JSON.stringify({ TZ: "Europe/Istanbul" })}`,
     };
 
     function cloneSetup(srcRow: Record<string, unknown>, access: Partial<TeamAccessService> = {}) {
@@ -554,6 +555,7 @@ describe("DatabasesService - custom icon", () => {
         teamId: "t1",
         serverId: "s1",
         environmentId: "e1",
+        envEnc: `enc:${JSON.stringify({ TZ: "Europe/Istanbul" })}`, // user env is config → carried
       });
       // Collision-prone + runtime state are reset, not copied.
       expect(data.hostPort).toBeNull();
@@ -609,6 +611,63 @@ describe("DatabasesService - custom icon", () => {
     it("rejects a non-writer (databases permission gate on the source)", async () => {
       const { svc } = cloneSetup(src, { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) });
       await expect(svc.clone("u1", "db1", {})).rejects.toThrow();
+    });
+  });
+
+  describe("env vars", () => {
+    const envRow = { id: "db1", teamId: "t1", engine: "POSTGRES", envEnc: `enc:${JSON.stringify({ TZ: "UTC", PGDATA: "/data" })}` };
+    const okWrite = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+
+    it("getEnv decrypts the stored vars (writer-only)", async () => {
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow) } } as unknown as PrismaService;
+      const out = await make(prisma, okWrite).getEnv("u1", "db1");
+      expect(out).toEqual({ TZ: "UTC", PGDATA: "/data" });
+    });
+
+    it("getEnv returns {} when none are set", async () => {
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...envRow, envEnc: null }) } } as unknown as PrismaService;
+      expect(await make(prisma, okWrite).getEnv("u1", "db1")).toEqual({});
+    });
+
+    it("getEnv rejects a non-writer (databases permission required)", async () => {
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow) } } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) } as unknown as TeamAccessService;
+      await expect(make(prisma, access).getEnv("u1", "db1")).rejects.toThrow();
+    });
+
+    it("setEnv encrypts the whole blob and audits", async () => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow), update } } as unknown as PrismaService;
+      (audit.log as jest.Mock).mockClear();
+      await make(prisma, okWrite).setEnv("u1", "db1", { TZ: "Europe/Istanbul" });
+      expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { envEnc: `enc:${JSON.stringify({ TZ: "Europe/Istanbul" })}` } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.env.update", target: "db1" }));
+    });
+
+    it("setEnv rejects a reserved engine credential key (no shadowing managed credentials)", async () => {
+      const update = jest.fn();
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow), update } } as unknown as PrismaService;
+      await expect(make(prisma, okWrite).setEnv("u1", "db1", { POSTGRES_PASSWORD: "hijack" })).rejects.toThrow(/reserved/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("setEnv rejects an auth-subverting var that is not a literal credential key", async () => {
+      const update = jest.fn();
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow), update } } as unknown as PrismaService;
+      // POSTGRES_HOST_AUTH_METHOD=trust would disable password auth on a published port — must be refused.
+      await expect(make(prisma, okWrite).setEnv("u1", "db1", { POSTGRES_HOST_AUTH_METHOD: "trust" })).rejects.toThrow(/reserved/);
+      // *_FILE / random-password overrides are refused for the engine that honours them.
+      const mysqlRow = { ...envRow, engine: "MYSQL" };
+      const mysqlPrisma = { database: { findUnique: jest.fn().mockResolvedValue(mysqlRow), update } } as unknown as PrismaService;
+      await expect(make(mysqlPrisma, okWrite).setEnv("u1", "db1", { MYSQL_RANDOM_ROOT_PASSWORD: "1" })).rejects.toThrow(/reserved/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("setEnv accepts a legitimate non-credential var (TZ)", async () => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow), update } } as unknown as PrismaService;
+      await make(prisma, okWrite).setEnv("u1", "db1", { TZ: "UTC", PGDATA: "/data" });
+      expect(update).toHaveBeenCalled();
     });
   });
 });

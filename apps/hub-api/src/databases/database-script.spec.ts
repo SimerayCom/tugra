@@ -1,5 +1,6 @@
 import {
   buildDatabaseRunScript,
+  reservedDbEnvKeys,
   buildDbRemoveScript,
   connectionInfo,
   publicConnectionUri,
@@ -94,6 +95,22 @@ describe("database-script", () => {
     });
   });
 
+  describe("reservedDbEnvKeys", () => {
+    it("reserves the credential keys PLUS the image's auth-override vars", () => {
+      const pg = reservedDbEnvKeys("POSTGRES");
+      expect(pg.has("POSTGRES_PASSWORD")).toBe(true); // credential key
+      expect(pg.has("POSTGRES_HOST_AUTH_METHOD")).toBe(true); // disables password auth
+      expect(pg.has("POSTGRES_PASSWORD_FILE")).toBe(true); // re-sources the password
+      expect(pg.has("TZ")).toBe(false); // a legitimate var stays allowed
+      expect(reservedDbEnvKeys("MYSQL").has("MYSQL_RANDOM_ROOT_PASSWORD")).toBe(true);
+      expect(reservedDbEnvKeys("MARIADB").has("MYSQL_ALLOW_EMPTY_PASSWORD")).toBe(true); // mariadb honours MYSQL_*
+      expect(reservedDbEnvKeys("MONGO").has("MONGO_INITDB_ROOT_PASSWORD_FILE")).toBe(true);
+      expect(reservedDbEnvKeys("CLICKHOUSE").has("CLICKHOUSE_SKIP_USER_SETUP")).toBe(true);
+      // Redis-family carry auth via server args, not env — nothing to reserve.
+      expect(reservedDbEnvKeys("REDIS").size).toBe(0);
+    });
+  });
+
   describe("engineCommand", () => {
     it("passes the password to redis via --requirepass; empty for others", () => {
       expect(engineCommand("REDIS", creds)).toContain("--requirepass");
@@ -126,6 +143,25 @@ describe("database-script", () => {
       const s = buildDatabaseRunScript(spec("REDIS"));
       expect(s).toContain("redis:7-alpine");
       expect(s).toContain("redis-server --requirepass");
+    });
+
+    it("injects user env vars (shell-quoted) BEFORE the engine credential env so creds always win", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { env: { TZ: "Europe/Istanbul", PGDATA: "/data" } }));
+      expect(s).toContain("-e 'TZ=Europe/Istanbul'");
+      expect(s).toContain("-e 'PGDATA=/data'");
+      // user var appears before the managed credential var (later -e flags win in docker)
+      expect(s.indexOf("-e 'TZ=Europe/Istanbul'")).toBeLessThan(s.indexOf("-e 'POSTGRES_PASSWORD=p@ss'"));
+    });
+
+    it("shell-quotes a malicious user env value (no injection)", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { env: { EVIL: "x'; rm -rf /; '" } }));
+      expect(s).toContain("-e 'EVIL=x'\\''; rm -rf /; '\\'''");
+    });
+
+    it("emits no user env flags when none are set", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES"));
+      // only the single credential block's flags; nothing extra
+      expect(s).toContain("-e 'POSTGRES_PASSWORD=p@ss'");
     });
   });
 

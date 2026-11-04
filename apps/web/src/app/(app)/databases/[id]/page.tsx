@@ -20,6 +20,7 @@ import { LiveLogsCard } from "../../../../components/live-logs-card";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { Tabs } from "../../../../components/tabs-nav";
 import { EnvironmentCard } from "../../../../components/environment-card";
+import { EnvCard } from "../../../../components/env-card";
 import { TagsCard } from "../../../../components/tags";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TerminalPanel } from "../../../../components/terminal-panel";
@@ -314,6 +315,19 @@ export default function DatabaseDetailPage() {
           <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />
           <div style={{ marginTop: 16 }}>
             <DbLimitsCard id={id} healthCmd={db.healthCmd} memoryMb={db.memoryMb} cpus={db.cpus} />
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <EnvCard
+              id={id}
+              canWrite={db.canWrite}
+              title={t("databases.env")}
+              desc={t("databases.envDesc")}
+              redeployHint={t("databases.envRedeploy")}
+              fetchEnv={() => api.getDatabaseEnv(id)}
+              saveEnv={(env) => api.setDatabaseEnv(id, env)}
+              queryKey={["dbEnv", id]}
+              relatedKey={["database", id]}
+            />
           </div>
           <div style={{ marginTop: 16 }}>
             <DbPublicPortCard id={id} hostPort={db.hostPort} />

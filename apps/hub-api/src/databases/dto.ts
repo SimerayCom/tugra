@@ -1,4 +1,16 @@
 import { z } from "zod";
+import { isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
+
+// User-set container env for a database. Same ingress guard as app env (closes the `--env-file`
+// line-injection boundary) built on the shared env-key primitives, so DB and app env validate identically.
+// Reserved engine keys (POSTGRES_PASSWORD, …) are rejected in the service, where the engine is known.
+export const SetDatabaseEnvSchema = z.object({
+  env: z
+    .record(z.string())
+    .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" })
+    .refine((env) => Object.values(env).every(isSafeEnvValue), { message: "environment value must not contain a newline" }),
+});
+export type SetDatabaseEnvInput = z.infer<typeof SetDatabaseEnvSchema>;
 
 export const CreateDatabaseSchema = z.object({
   name: z.string().min(1),
