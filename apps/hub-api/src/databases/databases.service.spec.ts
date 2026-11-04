@@ -501,4 +501,114 @@ describe("DatabasesService - custom icon", () => {
     expect(deleteMany).toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { iconUpdatedAt: null } }));
   });
+
+  describe("clone", () => {
+    const src = {
+      id: "db1",
+      teamId: "t1",
+      serverId: "s1",
+      environmentId: "e1",
+      name: "main",
+      engine: "POSTGRES",
+      version: "16",
+      image: "postgres:16",
+      port: 5432,
+      hostPort: 5433,
+      credentials: `enc:${JSON.stringify({ username: "tugra", password: "secret-source-pw", database: "main" })}`,
+      status: "RUNNING",
+      healthCmd: "pg_isready",
+      memoryMb: 512,
+      cpus: 1.5,
+      tags: ["prod", "eu"],
+    };
+
+    function cloneSetup(srcRow: Record<string, unknown>, access: Partial<TeamAccessService> = {}) {
+      const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => ({ ...data, id: "db-clone" }));
+      const grantResourceAccess = jest.fn().mockResolvedValue(undefined);
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(srcRow), create } } as unknown as PrismaService;
+      const svc = make(prisma, {
+        requirePermission: jest.fn().mockResolvedValue(undefined),
+        teamRole: jest.fn().mockResolvedValue("OWNER"),
+        grantResourceAccess,
+        ...access,
+      });
+      return { svc, create, grantResourceAccess };
+    }
+
+    it("copies config (never data): engine/version/image/port/limits/health/tags carried, host port and status reset", async () => {
+      const { svc, create, grantResourceAccess } = cloneSetup(src);
+      (audit.log as jest.Mock).mockClear();
+
+      const out = await svc.clone("u1", "db1", {});
+
+      const data = create.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        engine: "POSTGRES",
+        version: "16",
+        image: "postgres:16",
+        port: 5432,
+        healthCmd: "pg_isready",
+        memoryMb: 512,
+        cpus: 1.5,
+        tags: ["prod", "eu"],
+        teamId: "t1",
+        serverId: "s1",
+        environmentId: "e1",
+      });
+      // Collision-prone + runtime state are reset, not copied.
+      expect(data.hostPort).toBeNull();
+      expect(data.status).toBe("NEW");
+      expect(data.name).toBe("main (copy)");
+      // Grant-on-create keeps the cloner's access to the new resource.
+      expect(grantResourceAccess).toHaveBeenCalledWith("u1", "t1", "db-clone");
+      // Flat response (view fields at top level, not nested under a `database` key) so the secret-redaction
+      // interceptor, which only nulls top-level fields, masks the clone's credentials for scope-limited PATs.
+      expect(out.id).toBe("db-clone");
+      expect(typeof out.database).toBe("string"); // the view's db-name field, not a nested view object
+      expect(out.warnings).toEqual(["data_not_copied", "host_port_reset"]);
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "database.clone", target: "db-clone", meta: { from: "db1" } }),
+      );
+    });
+
+    it("mints fresh credentials — never reuses the source password", async () => {
+      const { svc, create } = cloneSetup(src);
+      await svc.clone("u1", "db1", {});
+      const creds = JSON.parse((create.mock.calls[0][0].data.credentials as string).replace(/^enc:/, ""));
+      expect(creds.username).toBe("tugra");
+      expect(creds.password).not.toBe("secret-source-pw");
+      expect(creds.password.length).toBeGreaterThan(20);
+    });
+
+    it("omits host_port_reset when the source has no external port", async () => {
+      const { svc } = cloneSetup({ ...src, hostPort: null });
+      const out = await svc.clone("u1", "db1", {});
+      expect(out.warnings).toEqual(["data_not_copied"]);
+    });
+
+    it("keeps the (copy) suffix for a long source name, within the 60-char cap", async () => {
+      const longName = "x".repeat(70);
+      const { svc, create } = cloneSetup({ ...src, name: longName });
+      await svc.clone("u1", "db1", {});
+      const cloneName = create.mock.calls[0][0].data.name as string;
+      expect(cloneName.endsWith(" (copy)")).toBe(true);
+      expect(cloneName.length).toBeLessThanOrEqual(60);
+    });
+
+    it("honors a custom name (clamped) and validates a target environment in the same team", async () => {
+      const assertEnv = jest.spyOn(DatabasesService.prototype as unknown as { assertEnvInTeam: () => Promise<void> }, "assertEnvInTeam").mockResolvedValue(undefined);
+      const { svc, create } = cloneSetup(src);
+      await svc.clone("u1", "db1", { name: "  staging copy  ", environmentId: "e2" });
+      expect(assertEnv).toHaveBeenCalledWith("e2", "t1");
+      const data = create.mock.calls[0][0].data;
+      expect(data.name).toBe("staging copy");
+      expect(data.environmentId).toBe("e2");
+      assertEnv.mockRestore();
+    });
+
+    it("rejects a non-writer (databases permission gate on the source)", async () => {
+      const { svc } = cloneSetup(src, { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) });
+      await expect(svc.clone("u1", "db1", {})).rejects.toThrow();
+    });
+  });
 });
