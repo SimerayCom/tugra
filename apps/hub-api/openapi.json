@@ -19241,6 +19241,10 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 100
+                  },
+                  "serverId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "additionalProperties": false

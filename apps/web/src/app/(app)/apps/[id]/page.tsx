@@ -562,7 +562,7 @@ export default function AppDetailPage() {
       </PageHeader>
 
       {cloneOpen && (
-        <CloneAppModal appId={id} defaultName={`${appData.name} (copy)`} onClose={() => setCloneOpen(false)} />
+        <CloneAppModal appId={id} defaultName={`${appData.name} (copy)`} teamId={appData.teamId} currentServerId={appData.serverId} onClose={() => setCloneOpen(false)} />
       )}
       {renameOpen && (
         <RenameModal
