@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Put,
   Query,
   UseGuards,
 } from "@nestjs/common";
@@ -18,7 +19,7 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { Paginated } from "../common/pagination.decorator";
 import { DestinationsService, DestinationViewSchema } from "./destinations.service";
-import { CreateDestinationInput, CreateDestinationSchema } from "./dto";
+import { CreateDestinationInput, CreateDestinationSchema, UpdateDestinationInput, UpdateDestinationSchema } from "./dto";
 
 @ApiTags("backup-destinations")
 @ApiSecurity("pat")
@@ -48,6 +49,17 @@ export class DestinationsController {
   @ApiZodResponse(DestinationViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.destinations.get(user.userId, id);
+  }
+
+  @Put(":id")
+  @ApiZodBody(UpdateDestinationSchema)
+  @ApiZodResponse(DestinationViewSchema)
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(UpdateDestinationSchema)) body: UpdateDestinationInput,
+  ) {
+    return this.destinations.update(user.userId, id, body);
   }
 
   @Post(":id/test")

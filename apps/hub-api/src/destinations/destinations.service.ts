@@ -5,7 +5,7 @@ import {
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import { BackupDestination, Role } from "@prisma/client";
+import { BackupDestination, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -14,7 +14,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { buildDestinationTestScript } from "../backups/backup-script";
 import type { S3Config } from "../backups/destination";
-import type { CreateDestinationInput } from "./dto";
+import type { CreateDestinationInput, UpdateDestinationInput } from "./dto";
 
 export const DestinationViewSchema = z.object({
   id: z.string(),
@@ -94,6 +94,26 @@ export class DestinationsService {
     const role = (await this.access.teamRole(userId, dto.teamId))!;
     // requirePermission("integrations") succeeded above, so the actor can write.
     return this.view(dest, role, true);
+  }
+
+  /** Edit a destination in place — notably to ROTATE S3 keys without recreating it (which would detach every
+   *  database schedule pointing at it). Limited to name / region / credentials: the bucket, endpoint, prefix
+   *  and encryption flag are intentionally NOT editable, because restore + retention-prune read the CURRENT
+   *  bucket/prefix/encryptionKey, so changing them would orphan or un-decrypt every existing backup. A blank/
+   *  omitted accessKey/secretKey KEEPS the stored one (rotate only what you re-type). type/teamId are fixed. */
+  async update(userId: string, id: string, dto: UpdateDestinationInput): Promise<DestinationView> {
+    await this.requireWrite(userId, id);
+    const data: Prisma.BackupDestinationUncheckedUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.s3Region !== undefined) data.s3Region = dto.s3Region;
+    // Secrets: only re-encrypt when a new value is sent; omitting them keeps the stored credential. Rotating
+    // keys for the SAME bucket is safe — the objects and their location/encryption are unchanged.
+    if (dto.s3AccessKey) data.s3AccessKey = this.crypto.encrypt(dto.s3AccessKey);
+    if (dto.s3SecretKey) data.s3SecretKey = this.crypto.encrypt(dto.s3SecretKey);
+    const updated = await this.prisma.backupDestination.update({ where: { id }, data });
+    await this.audit.log({ actor: userId, action: "destination.update", target: id });
+    const role = (await this.access.teamRole(userId, updated.teamId))!;
+    return this.view(updated, role, true);
   }
 
   async list(userId: string, q?: string): Promise<DestinationView[]> {

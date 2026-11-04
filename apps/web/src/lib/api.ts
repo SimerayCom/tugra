@@ -1568,6 +1568,18 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  updateDestination(id: string, input: {
+    name?: string;
+    s3Bucket?: string;
+    s3Region?: string | null;
+    s3Endpoint?: string;
+    s3AccessKey?: string;
+    s3SecretKey?: string;
+    s3Prefix?: string | null;
+    encryptionEnabled?: boolean;
+  }) {
+    return apiFetch<BackupDestination>(`/backup-destinations/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  },
   deleteDestination(id: string) {
     return apiFetch<{ ok: true }>(`/backup-destinations/${id}`, { method: "DELETE" });
   },

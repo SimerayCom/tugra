@@ -24,3 +24,22 @@ export const CreateDestinationSchema = z
     path: ["type"],
   });
 export type CreateDestinationInput = z.infer<typeof CreateDestinationSchema>;
+
+// Edit an existing destination in place. DELIBERATELY limited to the fields that are SAFE to change after
+// backups exist: the name, the region, and credential ROTATION (the stated parity need — rotating S3 keys
+// without delete+recreate+re-point). The bucket, endpoint, prefix and encryption flag are NOT editable here:
+// restore + retention-prune read the destination's CURRENT bucket/prefix/encryptionKey (backup-runner
+// destinationSpecById), so changing them would orphan every existing backup (unrestorable + silently
+// un-pruned) and disabling encryption would destroy the key those backups need. Those changes still mean a
+// new destination. type/teamId are likewise fixed (a team change would move it out from under its databases).
+// An omitted/blank s3AccessKey/s3SecretKey KEEPS the stored credential. At least one field must be present.
+export const UpdateDestinationSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    s3Region: z.string().max(64).nullable().optional(),
+    s3AccessKey: z.string().min(1).optional(),
+    s3SecretKey: z.string().min(1).optional(),
+  })
+  .strict() // reject bucket/endpoint/prefix/encryption/type/teamId loudly — they are not editable (see above)
+  .refine((d) => Object.values(d).some((v) => v !== undefined), { message: "provide at least one field to update" });
+export type UpdateDestinationInput = z.infer<typeof UpdateDestinationSchema>;

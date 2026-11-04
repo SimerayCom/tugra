@@ -77,6 +77,45 @@ describe("DestinationsService", () => {
   });
 });
 
+describe("DestinationsService.update", () => {
+  const mk = (over: Record<string, unknown> = {}) => {
+    const update = jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...s3Dest, encryptionEnabled: true, encryptionKey: "enc:k", ...data }));
+    const prisma = { backupDestination: { findUnique: jest.fn().mockResolvedValue({ ...s3Dest, encryptionEnabled: true, encryptionKey: "enc:k", ...over }), update } } as unknown as PrismaService;
+    return { prisma, update };
+  };
+
+  it("rotates the secret key (re-encrypts) and keeps credentials that were omitted", async () => {
+    const { prisma, update } = mk();
+    await make(prisma, writeAccess).update("u1", "d1", { s3SecretKey: "newsecret" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.s3SecretKey).toBe("enc:newsecret"); // re-encrypted
+    expect(data.s3AccessKey).toBeUndefined(); // omitted → stored key kept
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "destination.update" }));
+  });
+
+  it("edits name/region without touching credentials or the backup-location fields", async () => {
+    const { prisma, update } = mk();
+    await make(prisma, writeAccess).update("u1", "d1", { name: "renamed", s3Region: "eu-west-1" });
+    const data = update.mock.calls[0][0].data;
+    expect(data.name).toBe("renamed");
+    expect(data.s3Region).toBe("eu-west-1");
+    expect(data.s3AccessKey).toBeUndefined();
+    expect(data.s3SecretKey).toBeUndefined();
+    // bucket/endpoint/prefix/encryption are NOT writable from update() — never in the data object.
+    expect(data.s3Bucket).toBeUndefined();
+    expect(data.s3Endpoint).toBeUndefined();
+    expect(data.s3Prefix).toBeUndefined();
+    expect(data.encryptionKey).toBeUndefined();
+    expect(data.encryptionEnabled).toBeUndefined();
+  });
+
+  it("requires integrations permission (a non-writer is forbidden)", async () => {
+    const { prisma } = mk();
+    const denied = { requirePermission: jest.fn().mockRejectedValue(new Error("nope")) } as unknown as TeamAccessService;
+    await expect(make(prisma, denied).update("u1", "d1", { name: "x" })).rejects.toBeTruthy();
+  });
+});
+
 describe("DestinationsService.testConnection", () => {
   it("returns ok without running a command for a LOCAL destination", async () => {
     const sendCommand = jest.fn();
