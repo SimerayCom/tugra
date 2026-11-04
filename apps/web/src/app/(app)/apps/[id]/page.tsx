@@ -50,6 +50,7 @@ import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
 import { resolveTab } from "../../../../lib/tab-param";
 import { gitWebUrls } from "../../../../lib/git-web-url";
+import { useDismiss } from "../../../../lib/use-dismiss";
 import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
@@ -272,6 +273,8 @@ export default function AppDetailPage() {
     if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: boxes })) del.mutate();
   };
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  useDismiss(moreOpen, moreRef, () => setMoreOpen(false)); // close the "…" menu on outside-click / Esc
   const regen = useMutation({
     mutationFn: () => api.regenerateWebhook(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
@@ -506,19 +509,19 @@ export default function AppDetailPage() {
               >
                 {t("apps.openShell")}
               </Btn>
-              <div style={{ position: "relative" }}>
+              <div ref={moreRef} style={{ position: "relative" }}>
                 <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("apps.more")}><Ellipsis size={16} /></Btn>
                 {moreOpen && (
                   <div
                     role="menu"
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
-                    <Btn icon={appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer} iconTone="warn" variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
+                    <Btn role="menuitem" icon={appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer} iconTone="warn" variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
                       {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
                     </Btn>
-                    <Btn icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("apps.clone")}</Btn>
-                    <Btn icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("apps.delete")}</Btn>
+                    <Btn role="menuitem" icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
+                    <Btn role="menuitem" icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("apps.clone")}</Btn>
+                    <Btn role="menuitem" icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
               </div>
