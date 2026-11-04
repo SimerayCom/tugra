@@ -294,6 +294,8 @@
   "save": "Save",
   "showValues": "Show values",
   "hideValues": "Hide values",
+  "envSort": "Sort A-Z",
+  "envUnsort": "Clear sort",
   "envRedeploy": "Saved — redeploy to apply the new values.",
   "envEmpty": "No environment variables yet.",
   "envDupWarning": "Duplicate keys: {keys}. Rename or remove — only one value per key can be saved.",

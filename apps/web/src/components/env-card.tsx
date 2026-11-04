@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Check, Copy, Eye, EyeOff, FileText, Plus, X } from "lucide-react";
+import { ArrowDownAZ, Check, Copy, Eye, EyeOff, FileText, Plus, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -41,6 +41,7 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
   const { data: env, isLoading, isError, refetch } = useQuery({ queryKey: ["appEnv", id], queryFn: () => api.getAppEnv(id) });
   const [rows, setRows] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
+  const [sorted, setSorted] = useState(false); // alphabetical VIEW toggle (never reorders the stored map)
   const [bulk, setBulk] = useState(false);
   const [bulkText, setBulkText] = useState("");
 
@@ -94,6 +95,17 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
   const q = query.trim().toLowerCase();
   // Always show a blank-key row (e.g. one just added) so "Add variable" isn't swallowed by an active filter.
   const visible = rows.map((r, i) => ({ r, i })).filter(({ r }) => !q || !r.key.trim() || r.key.toLowerCase().includes(q));
+  // Optional alphabetical VIEW: sort a COPY by key (each item keeps its original index `i`, so edit/remove/
+  // reveal still target the right stored row). Blank-key rows (being added) sort last so "Add variable" stays
+  // reachable at the bottom. The stored map is untouched.
+  const shownRows = sorted
+    ? [...visible].sort((a, b) => {
+        const ak = a.r.key.trim();
+        const bk = b.r.key.trim();
+        if (!ak || !bk) return ak ? -1 : bk ? 1 : 0;
+        return ak.localeCompare(bk);
+      })
+    : visible;
   // Saving a map keeps only the last value for a duplicate key, so a collision silently drops data —
   // warn and block instead. Invalid names (the server rejects them) are a soft, non-blocking hint.
   const dups = duplicateKeys(rows);
@@ -113,6 +125,11 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
       {canWrite && (
         <IconBtn label={bulk ? t("apps.rowEdit") : t("apps.bulkEdit")} pressed={bulk} onClick={() => (bulk ? setBulk(false) : openBulk())}>
           <FileText size={15} />
+        </IconBtn>
+      )}
+      {!bulk && keyCount > 1 && (
+        <IconBtn label={sorted ? t("apps.envUnsort") : t("apps.envSort")} pressed={sorted} onClick={() => setSorted((s) => !s)}>
+          <ArrowDownAZ size={15} />
         </IconBtn>
       )}
       {!bulk && keyCount > 0 && (
@@ -166,7 +183,7 @@ export function EnvCard({ id, clusterId, canWrite }: { id: string; clusterId?: s
             <div style={{ fontSize: 12, color: "var(--c-tx3)", padding: "6px 0 2px" }}>{t("apps.envNoMatch", { query: query.trim() })}</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {visible.map(({ r, i }) => {
+              {shownRows.map(({ r, i }) => {
                 const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
                 const shown = isRevealed(i);
                 return (
