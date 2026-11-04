@@ -49,6 +49,7 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
 import { resolveTab } from "../../../../lib/tab-param";
+import { gitWebUrls } from "../../../../lib/git-web-url";
 import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
@@ -1281,7 +1282,25 @@ function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePa
       ) : (
         <input style={{ ...envField, width: "100%" }} placeholder={t("apps.sourceImage")} value={img} onChange={(e) => setImg(e.target.value)} aria-label={t("apps.sourceImage")} />
       )}
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 14, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+        {gitLike && (() => {
+          // Links reflect the SAVED source (props), not unsaved edits in the inputs.
+          const web = gitWebUrls(gitUrl, gitCommit);
+          return (
+            <>
+              {web.repo && (
+                <a href={web.repo} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--c-lapis)" }}>
+                  <ExternalLink size={13} aria-hidden /> {t("apps.sourceOpenRepo")}
+                </a>
+              )}
+              {web.commit && (
+                <a href={web.commit} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--c-lapis)" }}>
+                  <ExternalLink size={13} aria-hidden /> {t("apps.sourceOpenCommit")}
+                </a>
+              )}
+            </>
+          );
+        })()}
         <div style={{ flex: 1 }} />
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || (gitLike ? !url.trim() : !img.trim())}>{t("apps.save")}</Btn>
       </div>

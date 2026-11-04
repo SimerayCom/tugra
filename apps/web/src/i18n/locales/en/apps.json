@@ -222,6 +222,8 @@
   "stop": "Stop",
   "stopConfirm": "Stop this app? It goes offline until you start it again.",
   "rename": "Rename",
+  "sourceOpenRepo": "Open repository",
+  "sourceOpenCommit": "Open commit",
   "description": "Description",
   "descriptionHint": "A free-text note for your team. Shown only here; it does not affect the deployment.",
   "descriptionPlaceholder": "What this app is for, who owns it, links...",
