@@ -307,6 +307,10 @@ export class DatabasesService {
 
   async provision(userId: string, id: string): Promise<DatabaseView> {
     const db = await this.requireWrite(userId, id);
+    // Claim the row as PROVISIONING before the slow (≤5 min) agent call: while it runs we are creating the
+    // container + data volume on db.serverId, so a concurrent moveToServer (NEW-only) must be excluded —
+    // otherwise the row's serverId could change under us and strand the volume on the old server.
+    await this.prisma.database.update({ where: { id }, data: { status: DbStatus.PROVISIONING } });
     let status: DbStatus = DbStatus.FAILED;
     try {
       const r = await this.agentWs.sendCommand(
@@ -416,6 +420,37 @@ export class DatabasesService {
     await this.assertEnvInTeam(environmentId, db.teamId);
     await this.prisma.database.update({ where: { id }, data: { environmentId } });
     await this.audit.log({ actor: userId, action: "database.environment.update", target: id });
+  }
+
+  /**
+   * Move a database to another server in the same team. SAFE ONLY BEFORE FIRST DEPLOY: a NEW database has no
+   * data volume yet, so the move is pure config. A provisioned (or failed) database's data lives in a docker
+   * volume on its current server, and Tugra does not transfer volume data across servers — so moving it would
+   * silently leave the data behind. For that case the caller must back it up and restore to a NEW database on
+   * the target server. The host port is reset (a port taken on the old server may be taken on the new one).
+   */
+  async moveToServer(userId: string, id: string, serverId: string): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    if (serverId === db.serverId) return;
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    if (server.teamId !== db.teamId) throw new ForbiddenException("target server is in another team");
+    if (db.status !== DbStatus.NEW) {
+      throw new BadRequestException(
+        "only a database that hasn't been deployed yet can be moved between servers — back this one up and restore it to a new database on the target server",
+      );
+    }
+    // Atomic re-check: the move only lands while the row is STILL NEW on its original server. A provision
+    // that started after our read has flipped it to PROVISIONING, so count === 0 and we refuse — closing the
+    // race where a move mid-deploy would point the row at a new server while its volume is built on the old.
+    const { count } = await this.prisma.database.updateMany({
+      where: { id, status: DbStatus.NEW, serverId: db.serverId },
+      data: { serverId, hostPort: null },
+    });
+    if (count === 0) {
+      throw new BadRequestException("the database started deploying while being moved — refresh and try again");
+    }
+    await this.audit.log({ actor: userId, action: "database.server.update", target: id, meta: { to: serverId } });
   }
 
   /**

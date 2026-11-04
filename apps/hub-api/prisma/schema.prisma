@@ -875,6 +875,7 @@ enum DbEngine {
 
 enum DbStatus {
   NEW
+  PROVISIONING
   RUNNING
   STOPPED
   FAILED

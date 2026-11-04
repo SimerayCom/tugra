@@ -55,6 +55,12 @@ export const SetEnvironmentSchema = z.object({
 });
 export type SetEnvironmentInput = z.infer<typeof SetEnvironmentSchema>;
 
+// Move a database to another server (same team). Safe only before first deploy — see the service.
+export const MoveDatabaseServerSchema = z.object({
+  serverId: z.string().min(1),
+});
+export type MoveDatabaseServerInput = z.infer<typeof MoveDatabaseServerSchema>;
+
 export const SetDatabaseLimitsSchema = z.object({
   healthCmd: z.string().min(1).nullable().optional(),
   memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),

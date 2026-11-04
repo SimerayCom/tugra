@@ -50,6 +50,8 @@ import {
   SetDatabasePortSchema,
   SetEnvironmentInput,
   SetEnvironmentSchema,
+  MoveDatabaseServerInput,
+  MoveDatabaseServerSchema,
 } from "./dto";
 
 @ApiTags("databases")
@@ -172,6 +174,20 @@ export class DatabasesController {
     @Body(new ZodValidationPipe(SetEnvironmentSchema)) body: SetEnvironmentInput,
   ) {
     await this.databases.setEnvironment(user.userId, id, body.environmentId);
+    return { ok: true };
+  }
+
+  // Move the database to another server in the same team. Safe only before first deploy (NEW) — the service
+  // refuses a provisioned database (its data can't cross servers; back up + restore to a new DB instead).
+  @Put(":id/server")
+  @HttpCode(200)
+  @ApiZodBody(MoveDatabaseServerSchema)
+  async moveToServer(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(MoveDatabaseServerSchema)) body: MoveDatabaseServerInput,
+  ) {
+    await this.databases.moveToServer(user.userId, id, body.serverId);
     return { ok: true };
   }
 

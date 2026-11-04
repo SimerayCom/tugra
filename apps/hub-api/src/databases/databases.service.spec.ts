@@ -673,6 +673,70 @@ describe("DatabasesService - custom icon", () => {
     });
   });
 
+  describe("moveToServer", () => {
+    const okWrite = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const srcRow = { id: "db1", teamId: "t1", serverId: "s1", status: "NEW", hostPort: 5433 };
+
+    it("moves a NEW database to another same-team server (atomic NEW+server guard) and resets the host port", async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      const prisma = {
+        database: { findUnique: jest.fn().mockResolvedValue(srcRow), updateMany },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s2", teamId: "t1" }) },
+      } as unknown as PrismaService;
+      (audit.log as jest.Mock).mockClear();
+      await make(prisma, okWrite).moveToServer("u1", "db1", "s2");
+      expect(updateMany).toHaveBeenCalledWith({ where: { id: "db1", status: "NEW", serverId: "s1" }, data: { serverId: "s2", hostPort: null } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.server.update", target: "db1", meta: { to: "s2" } }));
+    });
+
+    it("refuses a move that raced a deploy (atomic update matched nothing → count 0)", async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 0 }); // provision flipped it to PROVISIONING
+      const prisma = {
+        database: { findUnique: jest.fn().mockResolvedValue(srcRow), updateMany },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s2", teamId: "t1" }) },
+      } as unknown as PrismaService;
+      await expect(make(prisma, okWrite).moveToServer("u1", "db1", "s2")).rejects.toThrow(/started deploying while being moved/);
+    });
+
+    it("refuses to move a provisioned (non-NEW) database — data can't cross servers", async () => {
+      const updateMany = jest.fn();
+      const prisma = {
+        database: { findUnique: jest.fn().mockResolvedValue({ ...srcRow, status: "RUNNING" }), updateMany },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s2", teamId: "t1" }) },
+      } as unknown as PrismaService;
+      await expect(make(prisma, okWrite).moveToServer("u1", "db1", "s2")).rejects.toThrow(/hasn't been deployed|back this one up/);
+      expect(updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses a target server in another team", async () => {
+      const updateMany = jest.fn();
+      const prisma = {
+        database: { findUnique: jest.fn().mockResolvedValue(srcRow), updateMany },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s2", teamId: "t2" }) },
+      } as unknown as PrismaService;
+      await expect(make(prisma, okWrite).moveToServer("u1", "db1", "s2")).rejects.toBeInstanceOf(ForbiddenException);
+      expect(updateMany).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when the target is the current server (no server lookup, no write)", async () => {
+      const updateMany = jest.fn();
+      const findServer = jest.fn();
+      const prisma = {
+        database: { findUnique: jest.fn().mockResolvedValue({ ...srcRow, status: "RUNNING" }), updateMany },
+        server: { findUnique: findServer },
+      } as unknown as PrismaService;
+      await make(prisma, okWrite).moveToServer("u1", "db1", "s1");
+      expect(findServer).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-writer (databases permission required)", async () => {
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(srcRow) } } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) } as unknown as TeamAccessService;
+      await expect(make(prisma, access).moveToServer("u1", "db1", "s2")).rejects.toThrow();
+    });
+  });
+
   describe("volumes", () => {
     const volRow = { id: "db1", teamId: "t1", engine: "POSTGRES" };
     const okWrite = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
