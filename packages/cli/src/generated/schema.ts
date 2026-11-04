@@ -2788,6 +2788,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/databases/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["DatabasesController_clone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/databases/{id}/port": {
         parameters: {
             query?: never;
@@ -21154,6 +21170,130 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    DatabasesController_clone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    environmentId?: string;
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        name: string;
+                        /** @enum {string} */
+                        engine: "POSTGRES" | "MYSQL" | "REDIS" | "MONGO" | "MARIADB" | "KEYDB" | "DRAGONFLY" | "CLICKHOUSE" | "LIBSQL";
+                        version: string;
+                        environmentId: string | null;
+                        projectId: string | null;
+                        projectName: string | null;
+                        environmentName: string | null;
+                        serverId: string;
+                        teamId: string;
+                        /** @enum {string} */
+                        status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        port: number;
+                        hostPort: number | null;
+                        connectionUri: string | null;
+                        internalHost: string | null;
+                        publicHost: string | null;
+                        publicUri: string | null;
+                        username: string | null;
+                        password: string | null;
+                        database: string | null;
+                        healthCmd: string | null;
+                        memoryMb: number | null;
+                        cpus: number | null;
+                        backupEnabled: boolean;
+                        backupIntervalHours: number | null;
+                        backupCron: string | null;
+                        backupRetention: number;
+                        backupRetentionDays: number | null;
+                        backupDestinationId: string | null;
+                        backupSupported: boolean;
+                        tags: string[];
+                        /** @enum {string} */
+                        role: "OWNER" | "ADMIN" | "VIEWER";
+                        canWrite: boolean;
+                        /** Format: date-time */
+                        iconUpdatedAt: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        warnings: string[];
+                    };
+                };
             };
             /** @description Invalid or malformed request. */
             400: {

@@ -32,6 +32,14 @@ export const RenameSchema = z.object({
 });
 export type RenameInput = z.infer<typeof RenameSchema>;
 
+// Clone a database's config (never its data) to a new, un-provisioned DB on the same server. Optional new
+// name (else "<src> (copy)") and target environment (else the source's).
+export const CloneDatabaseSchema = z.object({
+  name: z.string().min(1).max(60).optional(),
+  environmentId: z.string().min(1).optional(),
+});
+export type CloneDatabaseInput = z.infer<typeof CloneDatabaseSchema>;
+
 // A base64-encoded PNG icon (≈ 4/3 of the 64KB byte cap). Structure/size are validated server-side.
 export const SetIconSchema = z.object({
   data: z.string().min(1).max(96_000),

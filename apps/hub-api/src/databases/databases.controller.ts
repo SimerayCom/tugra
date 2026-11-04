@@ -29,9 +29,11 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { DatabasesService, DatabaseViewSchema } from "./databases.service";
+import { DatabasesService, DatabaseViewSchema, CloneDatabaseResponseSchema } from "./databases.service";
 import { DatabaseLogStreamGuard } from "./log-stream.guard";
 import {
+  CloneDatabaseInput,
+  CloneDatabaseSchema,
   CreateDatabaseInput,
   CreateDatabaseSchema,
   RenameInput,
@@ -203,6 +205,17 @@ export class DatabasesController {
   ) {
     await this.databases.rename(user.userId, id, body.name);
     return { ok: true };
+  }
+
+  @Post(":id/clone")
+  @ApiZodBody(CloneDatabaseSchema)
+  @ApiZodResponse(CloneDatabaseResponseSchema, { status: 201 })
+  async clone(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(CloneDatabaseSchema)) body: CloneDatabaseInput,
+  ) {
+    return this.databases.clone(user.userId, id, body);
   }
 
   @Put(":id/port")

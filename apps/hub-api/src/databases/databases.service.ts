@@ -84,6 +84,19 @@ export const DatabaseViewSchema = z.object({
 });
 export type DatabaseView = z.infer<typeof DatabaseViewSchema>;
 
+// A clone returns the new database as a flat view (so RedactSecretsInterceptor, which only nulls top-level
+// fields, masks its credentials for scope-limited PATs) plus the non-fatal warnings the UI surfaces.
+export const CloneDatabaseResponseSchema = DatabaseViewSchema.extend({
+  warnings: z.array(z.string()),
+});
+
+// "<name> (copy)", keeping the suffix even for a long source name (clamped to the 60-char name cap).
+function copyName(name: string): string {
+  const suffix = " (copy)";
+  const room = 60 - suffix.length;
+  return (name.length > room ? name.slice(0, room) : name) + suffix;
+}
+
 function slug(name: string): string {
   const s = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return s || "tugra";
@@ -400,6 +413,51 @@ export class DatabasesService {
     await this.assertEnvInTeam(environmentId, db.teamId);
     await this.prisma.database.update({ where: { id }, data: { environmentId } });
     await this.audit.log({ actor: userId, action: "database.environment.update", target: id });
+  }
+
+  /**
+   * Clone a database's CONFIG into a new, un-provisioned database on the SAME server — never its DATA
+   * (mirrors Coolify's "clone config, not data" and Tugra's app clone). The clone mints FRESH credentials
+   * and an empty data volume (its own id), resets the host port (a copy would clash on the same server), and
+   * starts with backups OFF (a copied schedule would have no registered job). engine/version/image/limits/
+   * healthcheck/tags are carried. A cross-server clone and a data copy are separate, later slices.
+   */
+  async clone(userId: string, id: string, opts: { name?: string; environmentId?: string }): Promise<DatabaseView & { warnings: string[] }> {
+    const src = await this.requireWrite(userId, id);
+    let environmentId = src.environmentId;
+    if (opts.environmentId && opts.environmentId !== src.environmentId) {
+      await this.assertEnvInTeam(opts.environmentId, src.teamId);
+      environmentId = opts.environmentId;
+    }
+    const name = (opts.name?.trim() || copyName(src.name)).slice(0, 60);
+    const creds: DbCredentials = { username: "tugra", password: randomBytes(24).toString("base64url"), database: slug(name) };
+    const clone = await this.prisma.database.create({
+      data: {
+        name,
+        engine: src.engine,
+        version: src.version,
+        image: src.image,
+        port: src.port,
+        hostPort: null, // a copied host port would clash on the same server
+        environmentId,
+        serverId: src.serverId,
+        teamId: src.teamId,
+        credentials: this.crypto.encrypt(JSON.stringify(creds)),
+        status: DbStatus.NEW,
+        healthCmd: src.healthCmd,
+        memoryMb: src.memoryMb,
+        cpus: src.cpus,
+        tags: src.tags,
+        // backups intentionally NOT copied: an enabled schedule here would have no registered job.
+      },
+    });
+    await this.access.grantResourceAccess(userId, src.teamId, clone.id);
+    await this.audit.log({ actor: userId, action: "database.clone", target: clone.id, meta: { from: id } });
+    const warnings = ["data_not_copied", ...(src.hostPort ? ["host_port_reset"] : [])];
+    const role = (await this.access.teamRole(userId, src.teamId))!;
+    // Flat (view + warnings), not { database, warnings }: the secret-redaction interceptor only nulls
+    // top-level fields, so nesting the view would leak the clone's credentials to a scope-limited PAT.
+    return { ...this.view(clone, role, true), warnings };
   }
 
   async setTags(userId: string, id: string, tags: string[]): Promise<void> {

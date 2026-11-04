@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil, Database as DatabaseIcon, CloudUpload } from "lucide-react";
+import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil, Copy, Database as DatabaseIcon, CloudUpload } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, databaseIconUrl } from "../../../../lib/api";
@@ -86,6 +86,16 @@ export default function DatabaseDetailPage() {
     if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name, checkbox: { label: t("databases.keepVolume"), ref: keepVolume } })) del.mutate();
   };
   const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups, onError: (e) => toast(errMsg(e), "error") });
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const clone = useMutation({
+    mutationFn: (name: string) => api.cloneDatabase(id, { name }),
+    onSuccess: (res) => {
+      setCloneOpen(false);
+      for (const w of res.warnings) toast(t(`databases.cloneWarn_${w}`), "info");
+      router.push(`/databases/${res.id}`);
+    },
+    onError: (e) => toast(errMsg(e), "error"),
+  });
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
   useDismiss(moreOpen, moreRef, () => setMoreOpen(false)); // close the "…" menu on outside-click / Esc
@@ -192,6 +202,7 @@ export default function DatabaseDetailPage() {
                     style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
                   >
                     <Btn role="menuitem" icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
+                    <Btn role="menuitem" icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("databases.clone")}</Btn>
                     <Btn role="menuitem" icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("databases.delete")}</Btn>
                   </div>
                 )}
@@ -214,6 +225,18 @@ export default function DatabaseDetailPage() {
           pending={rename.isPending}
           onClose={() => setRenameOpen(false)}
           onSave={(name) => rename.mutate(name)}
+        />
+      )}
+      {cloneOpen && (
+        <RenameModal
+          current={`${db.name.slice(0, 53)} (copy)`}
+          title={t("databases.cloneTitle")}
+          hint={t("databases.cloneHint")}
+          saveLabel={t("databases.clone")}
+          maxLength={60}
+          pending={clone.isPending}
+          onClose={() => setCloneOpen(false)}
+          onSave={(name) => clone.mutate(name)}
         />
       )}
       {restoreToBackup && (
