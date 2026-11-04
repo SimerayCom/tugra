@@ -1302,6 +1302,9 @@ model Database {
   // Encrypted JSON of user-set container env vars ({ KEY: "value" }), injected at provision BEFORE the
   // engine's credential env so a user var can never shadow the managed credentials. Null = none.
   envEnc      String?
+  // Extra persistent volumes beyond the managed data volume: JSON [{ name, path }]. The real docker volume
+  // name is derived per-database (tugra_dbv_<id>_<name>). Not secret, so stored plain. Null = none.
+  volumes     Json?
   status      DbStatus @default(NEW)
   iconUpdatedAt DateTime?    // list-view marker so the database list never reads the icon bytes
   icon         DatabaseIcon?

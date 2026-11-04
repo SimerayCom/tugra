@@ -521,6 +521,7 @@ describe("DatabasesService - custom icon", () => {
       cpus: 1.5,
       tags: ["prod", "eu"],
       envEnc: `enc:${JSON.stringify({ TZ: "Europe/Istanbul" })}`,
+      volumes: [{ name: "cache", path: "/cache" }],
     };
 
     function cloneSetup(srcRow: Record<string, unknown>, access: Partial<TeamAccessService> = {}) {
@@ -556,6 +557,7 @@ describe("DatabasesService - custom icon", () => {
         serverId: "s1",
         environmentId: "e1",
         envEnc: `enc:${JSON.stringify({ TZ: "Europe/Istanbul" })}`, // user env is config → carried
+        volumes: [{ name: "cache", path: "/cache" }], // volume definitions are config → carried (fresh empty volume via new id)
       });
       // Collision-prone + runtime state are reset, not copied.
       expect(data.hostPort).toBeNull();
@@ -668,6 +670,39 @@ describe("DatabasesService - custom icon", () => {
       const prisma = { database: { findUnique: jest.fn().mockResolvedValue(envRow), update } } as unknown as PrismaService;
       await make(prisma, okWrite).setEnv("u1", "db1", { TZ: "UTC", PGDATA: "/data" });
       expect(update).toHaveBeenCalled();
+    });
+  });
+
+  describe("volumes", () => {
+    const volRow = { id: "db1", teamId: "t1", engine: "POSTGRES" };
+    const okWrite = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+
+    it("setVolumes persists the list and audits (writer-only)", async () => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(volRow), update } } as unknown as PrismaService;
+      (audit.log as jest.Mock).mockClear();
+      await make(prisma, okWrite).setVolumes("u1", "db1", [{ name: "cache", path: "/cache" }]);
+      expect(update).toHaveBeenCalledWith({ where: { id: "db1" }, data: { volumes: [{ name: "cache", path: "/cache" }] } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.volumes.update", target: "db1" }));
+    });
+
+    it("setVolumes rejects a mount that overlaps the managed data dir (exact / under / over)", async () => {
+      const update = jest.fn();
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(volRow), update } } as unknown as PrismaService;
+      const svc = () => make(prisma, okWrite);
+      // exact — shadows the managed data volume
+      await expect(svc().setVolumes("u1", "db1", [{ name: "x", path: "/var/lib/postgresql/data" }])).rejects.toThrow(/overlaps the managed data volume/);
+      // nested UNDER — leaves the data dir non-empty before init (corrupts initdb)
+      await expect(svc().setVolumes("u1", "db1", [{ name: "x", path: "/var/lib/postgresql/data/pgdata" }])).rejects.toThrow(/overlaps the managed data volume/);
+      // ancestor OVER — would hide the managed mount's siblings
+      await expect(svc().setVolumes("u1", "db1", [{ name: "x", path: "/var/lib" }])).rejects.toThrow(/overlaps the managed data volume/);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("setVolumes rejects a non-writer (databases permission required)", async () => {
+      const prisma = { database: { findUnique: jest.fn().mockResolvedValue(volRow) } } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) } as unknown as TeamAccessService;
+      await expect(make(prisma, access).setVolumes("u1", "db1", [])).rejects.toThrow();
     });
   });
 });

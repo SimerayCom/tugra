@@ -12,6 +12,34 @@ export const SetDatabaseEnvSchema = z.object({
 });
 export type SetDatabaseEnvInput = z.infer<typeof SetDatabaseEnvSchema>;
 
+// Extra persistent volumes for a database. Same guard as app volumes: a short label (the real docker volume
+// name is derived per-database) and an absolute container path whose charset bars ':' / ',' / '=' so it can
+// never break docker's `-v name:path` grammar. The engine's own data dir is rejected in the service.
+// Absolute container path, CANONICALIZED so the uniqueness and data-dir checks can't be bypassed by a
+// non-canonical spelling ('/data/', '/data//', '/data/.'): collapse '//' and '.' segments, drop any trailing
+// slash. '..' is rejected outright (a mount path should never traverse) and the container root is refused.
+const VolumePath = z
+  .string()
+  .regex(/^\/[A-Za-z0-9._/-]+$/, "absolute container path ([A-Za-z0-9._/-])")
+  .refine((p) => !p.split("/").includes(".."), { message: "path must not contain '..'" })
+  .transform((p) => "/" + p.split("/").filter((s) => s && s !== ".").join("/"))
+  .refine((p) => p.length > 1, { message: "path must not be the container root" });
+
+export const SetDatabaseVolumesSchema = z.object({
+  volumes: z
+    .array(
+      z.object({
+        name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}$/, "lowercase name, [a-z0-9_-]"),
+        path: VolumePath,
+      }),
+    )
+    .max(20)
+    .refine((vs) => new Set(vs.map((v) => v.name)).size === vs.length, { message: "volume names must be unique" })
+    // Uniqueness runs AFTER each path is canonicalized, so '/data' and '/data/' collide here.
+    .refine((vs) => new Set(vs.map((v) => v.path)).size === vs.length, { message: "mount paths must be unique" }),
+});
+export type SetDatabaseVolumesInput = z.infer<typeof SetDatabaseVolumesSchema>;
+
 export const CreateDatabaseSchema = z.object({
   name: z.string().min(1),
   serverId: z.string().min(1),

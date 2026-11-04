@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil, Copy, Database as DatabaseIcon, CloudUpload } from "lucide-react";
+import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil, Copy, X, Database as DatabaseIcon, CloudUpload } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, databaseIconUrl } from "../../../../lib/api";
@@ -330,6 +330,9 @@ export default function DatabaseDetailPage() {
             />
           </div>
           <div style={{ marginTop: 16 }}>
+            <DbVolumesCard id={id} volumes={db.volumes} />
+          </div>
+          <div style={{ marginTop: 16 }}>
             <DbPublicPortCard id={id} hostPort={db.hostPort} />
           </div>
           <div style={{ marginTop: 16 }}>
@@ -544,6 +547,47 @@ function DbPublicPortCard({ id, hostPort }: { id: string; hostPort: number | nul
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.publicPortRedeploy")}</div>}
+    </SectionCard>
+  );
+}
+
+type DbVolume = { name: string; path: string };
+
+/** Extra persistent volumes for a database (name + absolute container path). The real docker volume name is
+ *  derived server-side per-database; the managed data volume cannot be reused. Mirrors the app VolumesCard. */
+function DbVolumesCard({ id, volumes }: { id: string; volumes: DbVolume[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [rows, setRows] = useState<DbVolume[]>(volumes);
+  const save = useMutation({
+    mutationFn: () => api.setDatabaseVolumes(id, rows.filter((r) => r.name.trim() && r.path.trim())),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
+  });
+  const setRow = (i: number, patch: Partial<DbVolume>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <SectionCard title={t("databases.volumes")} desc={t("databases.volumesDesc")} style={{ marginBottom: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input style={{ ...limField, width: 160 }} placeholder={t("databases.volumeName")} aria-label={t("databases.volumeName")} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} spellCheck={false} autoComplete="off" />
+            <input style={{ ...limField, flex: 1 }} placeholder={t("databases.volumePath")} aria-label={t("databases.volumePath")} value={r.path} onChange={(e) => setRow(i, { path: e.target.value })} spellCheck={false} autoComplete="off" />
+            <button
+              onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+              aria-label={t("common.remove")}
+              style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", padding: "4px 9px", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { name: "", path: "" }])}>{t("databases.addVolume")}</Btn>
+          <div style={{ flex: 1 }} />
+          <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
+        </div>
+      </div>
+      {save.isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("databases.volumesSaveFailed")}</div>}
+      {save.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.volumesRedeploy")}</div>}
     </SectionCard>
   );
 }

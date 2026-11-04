@@ -9,7 +9,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { Observable } from "rxjs";
 import { z } from "zod";
-import { Database, DbStatus, Role } from "@prisma/client";
+import { Database, DbStatus, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource, resolvePermissions } from "../common/team-access.service";
@@ -36,6 +36,7 @@ import {
   type DbCredentials,
   type DbEngine,
   type DbSpec,
+  type DbVolume,
 } from "./database-script";
 import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filters";
 import { normalizeTags } from "../common/tags";
@@ -78,6 +79,7 @@ export const DatabaseViewSchema = z.object({
   backupDestinationId: z.string().nullable(),
   backupSupported: z.boolean(),
   tags: z.array(z.string()),
+  volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   role: z.nativeEnum(Role),
   canWrite: z.boolean(),
   iconUpdatedAt: z.date().nullable(), // set when a custom icon was uploaded (list-view cache-bust marker)
@@ -309,7 +311,7 @@ export class DatabasesService {
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
-        buildDatabaseRunScript({ ...this.toSpec(db), env: this.dbEnv(db) }),
+        buildDatabaseRunScript({ ...this.toSpec(db), env: this.dbEnv(db), volumes: this.dbVolumes(db) }),
         "database",
         PROVISION_TIMEOUT_MS,
       );
@@ -341,7 +343,7 @@ export class DatabasesService {
       const names = links.map((l) => l.app?.name ?? l.appId);
       throw new ConflictException(`unlink this database from ${names.join(", ")} before deleting it`);
     }
-    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript(db, opts), "database").catch(() => undefined);
+    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, opts), "database").catch(() => undefined);
     await this.prisma.database.delete({ where: { id } });
     await this.audit.log({ actor: userId, action: "database.remove", target: id, meta: { keepVolume: !!opts.keepVolume } });
   }
@@ -450,6 +452,9 @@ export class DatabasesService {
         cpus: src.cpus,
         tags: src.tags,
         envEnc: src.envEnc, // user env is config → carried to the clone
+        // volume DEFINITIONS carry, but the docker volume name derives from the new id → fresh empty
+        // volumes, no data shared (structural copy, same as app clone).
+        ...(src.volumes ? { volumes: src.volumes as Prisma.InputJsonValue } : {}),
         // backups intentionally NOT copied: an enabled schedule here would have no registered job.
       },
     });
@@ -540,6 +545,28 @@ export class DatabasesService {
   private dbEnv(db: Database): Record<string, string> {
     if (!db.envEnc) return {};
     return JSON.parse(this.crypto.decrypt(db.envEnc)) as Record<string, string>;
+  }
+
+  /** A database's extra persistent volumes ([] when none). */
+  private dbVolumes(db: Database): DbVolume[] {
+    return (db.volumes as DbVolume[] | null) ?? [];
+  }
+
+  /** Set a database's extra persistent volumes (writer-only). Rejects the engine's own data dir so the
+   *  managed data volume is never shadowed; name/path charset is validated by the DTO. */
+  async setVolumes(userId: string, id: string, volumes: DbVolume[]): Promise<void> {
+    const db = await this.requireWrite(userId, id);
+    const dataDir = ENGINES[db.engine as DbEngine].dataDir;
+    // Reject any path that EQUALS, nests UNDER, or CONTAINS the managed data dir — all three either shadow it,
+    // leave the engine's data directory non-empty before first init, or collide as a duplicate docker mount.
+    // Paths arrive canonical (DTO), so prefix comparison is exact.
+    const overlaps = (p: string) => p === dataDir || p.startsWith(`${dataDir}/`) || dataDir.startsWith(`${p}/`);
+    const bad = volumes.filter((v) => overlaps(v.path)).map((v) => v.path);
+    if (bad.length) {
+      throw new BadRequestException(`volume path overlaps the managed data volume (${dataDir}): ${bad.join(", ")}`);
+    }
+    await this.prisma.database.update({ where: { id }, data: { volumes: volumes as unknown as Prisma.InputJsonValue } });
+    await this.audit.log({ actor: userId, action: "database.volumes.update", target: id });
   }
 
   /** A database's user-set env vars. Sensitive (values may be secrets), so writer-only. */
@@ -664,6 +691,7 @@ export class DatabasesService {
       backupDestinationId: db.backupDestinationId,
       backupSupported: supportsBackup(db.engine as DbEngine),
       tags: db.tags,
+      volumes: this.dbVolumes(db),
       role,
       canWrite,
       iconUpdatedAt: db.iconUpdatedAt,

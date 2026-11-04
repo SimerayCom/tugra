@@ -28294,6 +28294,25 @@
                           "type": "string"
                         }
                       },
+                      "volumes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "path": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "path"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "role": {
                         "type": "string",
                         "enum": [
@@ -28347,6 +28366,7 @@
                       "backupDestinationId",
                       "backupSupported",
                       "tags",
+                      "volumes",
                       "role",
                       "canWrite",
                       "iconUpdatedAt",
@@ -28604,6 +28624,25 @@
                         "type": "string"
                       }
                     },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "role": {
                       "type": "string",
                       "enum": [
@@ -28657,6 +28696,7 @@
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
+                    "volumes",
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
@@ -28881,6 +28921,25 @@
                         "type": "string"
                       }
                     },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "role": {
                       "type": "string",
                       "enum": [
@@ -28934,6 +28993,7 @@
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
+                    "volumes",
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
@@ -29352,6 +29412,25 @@
                         "type": "string"
                       }
                     },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "role": {
                       "type": "string",
                       "enum": [
@@ -29405,6 +29484,7 @@
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
+                    "volumes",
                     "role",
                     "canWrite",
                     "iconUpdatedAt",
@@ -30477,6 +30557,132 @@
         ]
       }
     },
+    "/api/v1/databases/{id}/volumes": {
+      "put": {
+        "operationId": "DatabasesController_setVolumes",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volumes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9_-]{0,40}$"
+                        },
+                        "path": {
+                          "type": "string",
+                          "pattern": "^\\/[A-Za-z0-9._/-]+$"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "volumes"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "databases"
+        ]
+      }
+    },
     "/api/v1/databases/{id}/clone": {
       "post": {
         "operationId": "DatabasesController_clone",
@@ -30652,6 +30858,25 @@
                         "type": "string"
                       }
                     },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "role": {
                       "type": "string",
                       "enum": [
@@ -30711,6 +30936,7 @@
                     "backupDestinationId",
                     "backupSupported",
                     "tags",
+                    "volumes",
                     "role",
                     "canWrite",
                     "iconUpdatedAt",

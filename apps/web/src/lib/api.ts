@@ -1371,6 +1371,9 @@ export const api = {
   setDatabaseEnv(id: string, env: Record<string, string>) {
     return apiFetch<{ ok: true }>(`/databases/${id}/env`, { method: "PUT", body: JSON.stringify({ env }) });
   },
+  setDatabaseVolumes(id: string, volumes: { name: string; path: string }[]) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/volumes`, { method: "PUT", body: JSON.stringify({ volumes }) });
+  },
   renameServer(id: string, name: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/name`, { method: "PUT", body: JSON.stringify({ name }) });
   },

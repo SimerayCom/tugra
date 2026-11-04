@@ -67,6 +67,14 @@ export interface DbSpec {
   cpus?: number | null;
   // User-set container env, injected BEFORE credentialEnv so it can never shadow the managed credentials.
   env?: Record<string, string> | null;
+  // Extra persistent named volumes (beyond the managed data volume). Name is a short label; the real docker
+  // volume name is derived per-database so it can never collide with another DB's (or infra) volumes.
+  volumes?: DbVolume[] | null;
+}
+
+export interface DbVolume {
+  name: string;
+  path: string;
 }
 
 export function dbContainerName(db: { id: string }): string {
@@ -75,6 +83,12 @@ export function dbContainerName(db: { id: string }): string {
 
 export function dbVolumeName(db: { id: string }): string {
   return `tugra_dbv_${db.id}`;
+}
+
+/** Docker volume name for a database's EXTRA named volume — derived per-database so a tenant label can
+ *  never name another database's (or an infra) volume. */
+export function dbExtraVolumeName(db: { id: string }, name: string): string {
+  return `tugra_dbv_${db.id}_${name}`;
 }
 
 function shq(v: string): string {
@@ -233,6 +247,11 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   const userEnvFlags = db.env ? toEnvFlags(db.env) : "";
   const credEnvFlags = toEnvFlags(credentialEnv(db.engine, db.credentials));
   const portFlag = db.hostPort ? `-p ${db.hostPort}:${db.port}` : "";
+  // Extra persistent volumes (name + path both charset-validated upstream: no ':' in path, derived volume
+  // name, so the `-v name:path` grammar can't be broken).
+  const extraVolFlags = (db.volumes ?? [])
+    .map((v) => `-v ${dbExtraVolumeName(db, v.name)}:${v.path}`)
+    .join(" ");
   const command = engineCommand(db.engine, db.credentials);
 
   // Optional resource limits + container health check (mirrors app deploys).
@@ -258,6 +277,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     "--log-driver json-file --log-opt max-size=10m --log-opt max-file=3",
     `--network ${DB_NET}`,
     `-v ${vol}:${def.dataDir}`,
+    extraVolFlags,
     limitArgs.join(" "),
     userEnvFlags,
     credEnvFlags,
@@ -282,11 +302,18 @@ export function buildDbStopScript(db: { id: string }): string {
   return `docker stop ${dbContainerName(db)} 2>/dev/null || true`;
 }
 
-/** Destroy: remove the container AND its volume (the data is intentionally dropped). */
-export function buildDbRemoveScript(db: { id: string }, opts: { keepVolume?: boolean } = {}): string {
+/** Destroy: remove the container AND its volumes (the data is intentionally dropped). */
+export function buildDbRemoveScript(
+  db: { id: string; volumes?: DbVolume[] | null },
+  opts: { keepVolume?: boolean } = {},
+): string {
   const lines = [`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`];
   // keepVolume: leave the data volume on the host (recreate the DB over it later, or copy it off). Default
-  // removes it — a deleted database frees its disk, as before.
-  if (!opts.keepVolume) lines.push(`docker volume rm ${dbVolumeName(db)} 2>/dev/null || true`);
+  // removes it — a deleted database frees its disk, as before. Extra named volumes are dropped the same way
+  // so a deleted database never orphans them.
+  if (!opts.keepVolume) {
+    lines.push(`docker volume rm ${dbVolumeName(db)} 2>/dev/null || true`);
+    for (const v of db.volumes ?? []) lines.push(`docker volume rm ${dbExtraVolumeName(db, v.name)} 2>/dev/null || true`);
+  }
   return lines.join("\n");
 }

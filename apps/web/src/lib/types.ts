@@ -1320,6 +1320,7 @@ export interface Database {
   backupDestinationId: string | null;
   backupSupported: boolean;
   tags: string[];
+  volumes: { name: string; path: string }[];
   role: Role;
   canWrite: boolean;
   iconUpdatedAt: string | null;
