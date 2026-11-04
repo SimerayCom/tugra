@@ -15995,6 +15995,7 @@ export interface operations {
             content: {
                 "application/json": {
                     name?: string;
+                    serverId?: string;
                 };
             };
         };

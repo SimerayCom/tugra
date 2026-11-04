@@ -937,7 +937,8 @@ export class ApplicationsController {
     return { ok: true };
   }
 
-  // Clone an app into a new one (same server + environment; domain/cert/webhook/host-ports reset). Writer-only.
+  // Clone an app into a new one (same environment; domain/cert/webhook/host-ports reset). Optional target
+  // server (same team) clones to another server and resets the cluster/placement topology. Writer-only.
   @Post(":id/clone")
   @HttpCode(201)
   @RequireScopes("write")

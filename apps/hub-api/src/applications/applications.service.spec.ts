@@ -4199,6 +4199,44 @@ describe("ApplicationsService.clone", () => {
     await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { name: "staging" });
     expect(create.mock.calls[0][0].data.name).toBe("staging");
   });
+
+  it("clones to another server in the same team and resets the cluster/placement topology", async () => {
+    const clustered = { ...src, clusterId: "c1", replicas: 3, placement: { type: "spread" }, constraintServerId: "s1", dbNetwork: true, hostMounts: [{ hostPath: "/mnt/media", containerPath: "/media", readOnly: false }] };
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(clustered), create },
+      server: { findUnique: jest.fn().mockResolvedValue({ ...server, id: "s2", teamId: "t1" }) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+    } as unknown as PrismaService;
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { serverId: "s2" });
+    const data = create.mock.calls[0][0].data;
+    expect(data.serverId).toBe("s2");
+    expect(data.clusterId).toBeNull(); // cluster topology belongs to the source server set
+    expect(data.replicas).toBe(1);
+    expect(data.constraintServerId).toBeNull();
+    expect(data.dbNetwork).toBe(false); // DB-network opt-in resets — its managed-DB links aren't cloned
+    expect(res.warnings).toEqual(expect.arrayContaining(["cloned_to_server", "cluster_config_reset", "host_mounts_copied"]));
+  });
+
+  it("keeps the cluster pin on a same-server clone (no target given)", async () => {
+    const clustered = { ...src, clusterId: "c1", replicas: 3, constraintServerId: "s1" };
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(clustered), create },
+      server: { findUnique: jest.fn().mockResolvedValue(server) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+    } as unknown as PrismaService;
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(create.mock.calls[0][0].data.clusterId).toBe("c1");
+    expect(res.warnings).not.toContain("cloned_to_server");
+  });
+
+  it("rejects a target server in another team (no cross-team clone)", async () => {
+    const { prisma } = clonePrisma({ server: { findUnique: jest.fn().mockResolvedValue({ ...server, id: "s2", teamId: "t2" }) } });
+    await expect(make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { serverId: "s2" })).rejects.toBeInstanceOf(ForbiddenException);
+  });
 });
 
 describe("ApplicationsService — COMPOSE-from-git", () => {

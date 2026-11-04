@@ -694,14 +694,24 @@ export class ApplicationsService {
    * warning keys the UI localizes. Cross-server / env moves, volume-data copy and port re-allocation are
    * deliberate follow-ups.
    */
-  async clone(userId: string, id: string, input: { name?: string }): Promise<{ app: AppView; warnings: string[] }> {
+  async clone(userId: string, id: string, input: { name?: string; serverId?: string }): Promise<{ app: AppView; warnings: string[] }> {
     const src = await this.require(userId, id);
     if (src.isPreview) throw new BadRequestException("a preview app can't be cloned");
     await this.access.requirePermission(userId, src.teamId, "apps:config");
-    const server = await this.prisma.server.findUnique({ where: { id: src.serverId } });
+    // Target server: the source's own by default, or a chosen one that MUST be in the same team (no
+    // cross-team clone). A different target resets the server-bound topology (cluster/placement/host ports).
+    const targetServerId = input.serverId ?? src.serverId;
+    const server = await this.prisma.server.findUnique({ where: { id: targetServerId } });
     if (!server) throw new NotFoundException("server not found");
+    if (server.teamId !== src.teamId) throw new ForbiddenException("target server is in another team");
+    const crossServer = server.id !== src.serverId;
 
     const warnings: string[] = [];
+    if (crossServer) warnings.push("cloned_to_server");
+    if (crossServer && src.clusterId) warnings.push("cluster_config_reset");
+    // Host bind mounts point at paths on the SOURCE machine; carried over, but they may not exist (or hold
+    // different data) on the target — docker would create an empty dir. Flag it so the operator checks.
+    if (crossServer && Array.isArray(src.hostMounts) && src.hostMounts.length > 0) warnings.push("host_mounts_copied");
     if (src.allowPrivilegedDockerOptions && src.dockerOptions) {
       warnings.push("Privileged Docker options were not copied — the clone starts non-privileged; an owner can re-enable it.");
     }
@@ -725,14 +735,15 @@ export class ApplicationsService {
           name,
           description: src.description,
           teamId: src.teamId,
-          serverId: src.serverId,
+          serverId: server.id,
           environmentId: src.environmentId,
           buildServerId: src.buildServerId,
-          // Same server → keep the stateful swarm pin; a cross-server clone (follow-up) would reset these.
-          clusterId: src.clusterId,
-          replicas: src.replicas,
-          placement: jsonOrNull(src.placement),
-          constraintServerId: src.constraintServerId,
+          // Same server keeps the stateful swarm pin; a cross-server clone resets it — the cluster/placement/
+          // constraint topology and replica count belong to the source server's set, not the new standalone one.
+          clusterId: crossServer ? null : src.clusterId,
+          replicas: crossServer ? 1 : src.replicas,
+          placement: crossServer ? Prisma.JsonNull : jsonOrNull(src.placement),
+          constraintServerId: crossServer ? null : src.constraintServerId,
           templateSlug: src.templateSlug,
           source: src.source,
           image: src.image,
@@ -796,7 +807,10 @@ export class ApplicationsService {
           // The clone resets to non-privileged (allowPrivilegedDockerOptions defaults false), so NEVER copy
           // host-privileged options into it — they'd be unrunnable (deploy re-validates) and a silent escalation.
           dockerOptions: src.allowPrivilegedDockerOptions ? null : src.dockerOptions,
-          dbNetwork: src.dbNetwork,
+          // Node-local DB-network opt-in is an invariant with same-server managed-DB links (not cloned), so a
+          // cross-server clone would hold dbNetwork=true with zero links on a server that may have no managed
+          // DB — reset it (the operator re-enables it after linking a DB on the new server).
+          dbNetwork: crossServer ? false : src.dbNetwork,
           // A copied host port would clash on the same server; cleared (re-allocation is a follow-up).
           hostPort: null,
           // Network aliases are reset, NOT copied: a duplicate alias on the shared user-defined network
