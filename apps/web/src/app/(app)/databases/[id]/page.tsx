@@ -314,6 +314,9 @@ export default function DatabaseDetailPage() {
         <>
           <EnvironmentCard kind="database" id={id} environmentId={db.environmentId} />
           <div style={{ marginTop: 16 }}>
+            <DbServerCard id={id} teamId={db.teamId} serverId={db.serverId} status={db.status} provisioning={provision.isPending} />
+          </div>
+          <div style={{ marginTop: 16 }}>
             <DbLimitsCard id={id} healthCmd={db.healthCmd} memoryMb={db.memoryMb} cpus={db.cpus} />
           </div>
           <div style={{ marginTop: 16 }}>
@@ -588,6 +591,35 @@ function DbVolumesCard({ id, volumes }: { id: string; volumes: DbVolume[] }) {
       </div>
       {save.isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("databases.volumesSaveFailed")}</div>}
       {save.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.volumesRedeploy")}</div>}
+    </SectionCard>
+  );
+}
+
+/** Move a database to another server in the same team. Safe only before first deploy (status NEW): a
+ *  provisioned database's data lives in a volume on its current server and can't cross servers, so the move
+ *  is locked with a hint to back up + restore to a new database on the target instead. */
+function DbServerCard({ id, teamId, serverId, status, provisioning }: { id: string; teamId: string; serverId: string; status: string; provisioning: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: servers = [] } = useQuery({ queryKey: ["servers", teamId], queryFn: () => api.listServers({ teamId }) });
+  const [target, setTarget] = useState(serverId);
+  // Only a NEW database can move, and never while a deploy is in flight (it stays NEW client-side until the
+  // provision call returns, but the server has already claimed it PROVISIONING — the API would refuse).
+  const movable = status === "NEW" && !provisioning;
+  const move = useMutation({
+    mutationFn: () => api.moveDatabaseToServer(id, target),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["database", id] }),
+  });
+  const options = servers.map((s) => ({ value: s.id, label: s.id === serverId ? `${s.name} ${t("databases.moveServerCurrent")}` : s.name }));
+  return (
+    <SectionCard title={t("databases.moveServerTitle")} desc={t("databases.moveServerDesc")} style={{ marginBottom: 0 }}>
+      {!movable && <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 12px" }}>{t("databases.moveServerLocked")}</p>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <Select value={target} onChange={setTarget} options={options} ariaLabel={t("databases.moveServerTitle")} disabled={!movable || move.isPending} />
+        <Btn onClick={() => move.mutate()} disabled={!movable || move.isPending || target === serverId}>{t("databases.moveServerAction")}</Btn>
+      </div>
+      {move.isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{move.error instanceof Error && move.error.message ? move.error.message : t("databases.actionFailed")}</div>}
+      {move.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("databases.moveServerDone")}</div>}
     </SectionCard>
   );
 }

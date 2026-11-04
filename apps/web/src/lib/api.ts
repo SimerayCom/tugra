@@ -1464,6 +1464,12 @@ export const api = {
       body: JSON.stringify({ environmentId }),
     });
   },
+  moveDatabaseToServer(id: string, serverId: string) {
+    return apiFetch<{ ok: true }>(`/databases/${id}/server`, {
+      method: "PUT",
+      body: JSON.stringify({ serverId }),
+    });
+  },
 
   // ── projects / environments ──
   listProjects() {
