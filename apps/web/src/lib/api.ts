@@ -1496,6 +1496,12 @@ export const api = {
   renameEnvironment(envId: string, name: string) {
     return apiFetch<{ ok: true }>(`/projects/environments/${envId}`, { method: "PUT", body: JSON.stringify({ name }) });
   },
+  cloneEnvironment(envId: string, body: { name?: string }) {
+    return apiFetch<{ environmentId: string; projectId: string; apps: { cloned: number; failed: string[] }; databases: { cloned: number; failed: string[] }; relinked: number }>(
+      `/projects/environments/${envId}/clone`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
 
   // ── databases ──
   listDatabases() {

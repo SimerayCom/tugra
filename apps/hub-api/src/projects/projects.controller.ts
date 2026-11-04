@@ -21,8 +21,10 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
-import { ProjectsService, ProjectViewSchema } from "./projects.service";
+import { ProjectsService, ProjectViewSchema, CloneEnvironmentResultSchema } from "./projects.service";
 import {
+  CloneEnvironmentInput,
+  CloneEnvironmentSchema,
   CreateEnvironmentInput,
   CreateEnvironmentSchema,
   CreateProjectInput,
@@ -144,5 +146,20 @@ export class ProjectsController {
     @Body(new ZodValidationPipe(CreateEnvironmentSchema)) body: CreateEnvironmentInput,
   ) {
     return this.projects.addEnvironment(user.userId, id, body.name);
+  }
+
+  // Clone an environment with every app + database into a new environment in the same project. Config only
+  // (never data); best-effort per resource, returning the counts cloned and the names that failed.
+  @Post("environments/:envId/clone")
+  @HttpCode(201)
+  @RequireScopes("write")
+  @ApiZodBody(CloneEnvironmentSchema)
+  @ApiZodResponse(CloneEnvironmentResultSchema, { status: 201 })
+  cloneEnvironment(
+    @CurrentUser() user: AuthUser,
+    @Param("envId") envId: string,
+    @Body(new ZodValidationPipe(CloneEnvironmentSchema)) body: CloneEnvironmentInput,
+  ) {
+    return this.projects.cloneEnvironment(user.userId, envId, body);
   }
 }

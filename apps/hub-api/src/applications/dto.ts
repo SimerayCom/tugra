@@ -459,6 +459,9 @@ export const CloneAppSchema = z
     name: z.string().trim().min(1).max(100).optional(),
     // Target server for the clone (must be in the same team). Omitted / same as source = same-server clone.
     serverId: z.string().min(1).optional(),
+    // Target environment (must be in the same team). Omitted = the source's environment. Used by
+    // environment clone to place the copy in a new environment.
+    environmentId: z.string().min(1).optional(),
   })
   .strict();
 export type CloneAppInput = z.infer<typeof CloneAppSchema>;

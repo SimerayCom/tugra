@@ -14,6 +14,18 @@ import { appUrl } from "../common/app-url";
 import { filterByQuery } from "../common/query-filter";
 import { validatePngIcon } from "../common/png-icon";
 import { TemplateCatalogService } from "../catalog/template-catalog.service";
+import { ApplicationsService } from "../applications/applications.service";
+import { DatabasesService } from "../databases/databases.service";
+
+export const CloneEnvironmentResultSchema = z.object({
+  environmentId: z.string(),
+  projectId: z.string(),
+  apps: z.object({ cloned: z.number(), failed: z.array(z.string()) }),
+  databases: z.object({ cloned: z.number(), failed: z.array(z.string()) }),
+  // App→managed-DB links re-created between the cloned pairs (so the new environment keeps its wiring).
+  relinked: z.number(),
+});
+export type CloneEnvironmentResult = z.infer<typeof CloneEnvironmentResultSchema>;
 
 export const ProjectResourceSchema = z.object({
   id: z.string(),
@@ -64,6 +76,8 @@ export class ProjectsService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly catalog: TemplateCatalogService,
+    private readonly apps: ApplicationsService,
+    private readonly databases: DatabasesService,
   ) {}
 
   async list(userId: string, q?: string): Promise<ProjectView[]> {
@@ -226,6 +240,96 @@ export class ProjectsService {
     await this.prisma.environment.create({ data: { projectId, name } });
     await this.audit.log({ actor: userId, action: "environment.create", target: projectId });
     return this.get(userId, projectId);
+  }
+
+  /**
+   * Clone an environment into a NEW environment in the SAME project, copying every app and database in it
+   * (config only, never data — each reuses the app/db clone, which resets domains/host-ports/webhooks and
+   * mints fresh credentials). Resources keep their names (they live in a separate environment). Best-effort:
+   * a resource that fails to clone is reported in `failed`, and the new environment keeps what succeeded, so
+   * the operator can retry or delete it. The caller needs the resource-type permissions up front, so a
+   * missing one is a clean 403 instead of a half-cloned environment.
+   */
+  async cloneEnvironment(userId: string, envId: string, opts: { name?: string }): Promise<CloneEnvironmentResult> {
+    const env = await this.requireEnvWrite(userId, envId); // 'projects' permission (creates the environment)
+    const teamId = env.project.teamId;
+    const [apps, dbs] = await Promise.all([
+      this.prisma.application.findMany({ where: { environmentId: envId, isPreview: false }, select: { id: true, name: true } }),
+      this.prisma.database.findMany({ where: { environmentId: envId }, select: { id: true, name: true } }),
+    ]);
+    // Gate the resource-type permissions up front (clone would enforce them per call, but that leaves a
+    // half-cloned environment on the first denial).
+    if (apps.length) await this.access.requirePermission(userId, teamId, "apps:config");
+    if (dbs.length) await this.access.requirePermission(userId, teamId, "databases");
+
+    // Keep the " (copy)" suffix within the 80-char environment-name cap (truncate the base, not the suffix).
+    const suffix = " (copy)";
+    const base = env.name.length > 80 - suffix.length ? env.name.slice(0, 80 - suffix.length) : env.name;
+    const name = (opts.name?.trim() || `${base}${suffix}`).slice(0, 80);
+    const newEnv = await this.prisma.environment.create({ data: { projectId: env.projectId, name } });
+
+    // Keep a source-id → clone-id map per kind so we can re-wire the app→managed-DB links afterwards.
+    const appIdMap = new Map<string, string>();
+    const appRes = { cloned: 0, failed: [] as string[] };
+    for (const a of apps) {
+      try {
+        const r = await this.apps.clone(userId, a.id, { name: a.name, environmentId: newEnv.id });
+        appIdMap.set(a.id, r.app.id);
+        appRes.cloned++;
+      } catch {
+        appRes.failed.push(a.name);
+      }
+    }
+    const dbIdMap = new Map<string, string>();
+    const dbRes = { cloned: 0, failed: [] as string[] };
+    for (const d of dbs) {
+      try {
+        const r = await this.databases.clone(userId, d.id, { name: d.name, environmentId: newEnv.id });
+        dbIdMap.set(d.id, r.id);
+        dbRes.cloned++;
+      } catch {
+        dbRes.failed.push(d.name);
+      }
+    }
+
+    // Re-link the clones: for every source app→managed-DB link where BOTH ends were cloned, recreate the
+    // link between the clone pair (same env var). The cloned app keeps the source's dbNetwork opt-in (a
+    // same-server clone), so the injected connection URI reaches the cloned DB — otherwise a prod→staging
+    // clone would start the staging app with no DATABASE_URL. Links to a DB outside this env are left out.
+    let relinked = 0;
+    const srcAppIds = [...appIdMap.keys()];
+    if (srcAppIds.length) {
+      const links = await this.prisma.appDatabaseLink.findMany({ where: { appId: { in: srcAppIds } } });
+      for (const link of links) {
+        const cloneAppId = appIdMap.get(link.appId);
+        const cloneDbId = dbIdMap.get(link.databaseId);
+        if (!cloneAppId || !cloneDbId) continue; // the linked DB wasn't in this environment / didn't clone
+        try {
+          await this.prisma.appDatabaseLink.create({ data: { appId: cloneAppId, databaseId: cloneDbId, envVar: link.envVar, createdBy: userId } });
+          relinked++;
+        } catch {
+          // a unique-constraint race or a missing clone — skip; the app still deploys, just unlinked
+        }
+      }
+    }
+
+    // Audit must not fail the clone after resources were created — the env + its clones already exist.
+    await this.audit
+      .log({
+        actor: userId,
+        action: "environment.clone",
+        target: env.projectId,
+        meta: {
+          from: envId,
+          to: newEnv.id,
+          apps: appRes.cloned,
+          databases: dbRes.cloned,
+          relinked,
+          failed: [...appRes.failed, ...dbRes.failed],
+        },
+      })
+      .catch(() => undefined);
+    return { environmentId: newEnv.id, projectId: env.projectId, apps: appRes, databases: dbRes, relinked };
   }
 
   async renameEnvironment(userId: string, envId: string, name: string): Promise<void> {
