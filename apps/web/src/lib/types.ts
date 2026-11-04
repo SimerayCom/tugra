@@ -780,6 +780,13 @@ export interface ImportPlanItem {
   risks: ImportRisk[];
   dependsOn: string[];
 }
+export type DbDataPlane = "one-click" | "manual" | "blocked";
+export interface ImportPreflight {
+  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
+  services: Array<{ name: string; members: number; note: string }>;
+  appsWithVolumeData: number;
+  volumeDataNote?: string;
+}
 export interface ImportPlan {
   sourceKind: string;
   mode: "copy" | "takeover";
@@ -787,6 +794,7 @@ export interface ImportPlan {
   totals: { apps: number; databases: number; volumes: number; blockers: number };
   warnings: string[];
   planHash: string;
+  preflight?: ImportPreflight;
 }
 /** The short-lived encrypted connection returned by import_connect. */
 export interface ImportSession {

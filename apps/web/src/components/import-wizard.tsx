@@ -158,6 +158,46 @@ function PlanView({
           </div>
         )}
 
+        {plan.preflight && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("import.preflightTitle")}</div>
+            {plan.preflight.databases.length > 0 && (
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+                {plan.preflight.databases.map((d, i) => (
+                  <li key={i} style={{ fontSize: 12, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span
+                      style={{
+                        fontWeight: 700,
+                        minWidth: 76,
+                        color: d.dataPlane === "one-click" ? "var(--c-g)" : d.dataPlane === "manual" ? "var(--c-am)" : "var(--c-r)",
+                      }}
+                    >
+                      {d.dataPlane === "one-click" ? t("import.dataAuto") : d.dataPlane === "manual" ? t("import.dataManual") : t("import.dataBlocked")}
+                    </span>
+                    <span className="mono">{d.name} ({d.engine})</span>
+                    <span style={{ color: "var(--c-tx3)" }}>— {d.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {plan.preflight.services.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 4 }}>
+                  {t("import.servicesNotImported", { count: String(plan.preflight.services.length) })}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
+                  {plan.preflight.services.map((sv, i) => (
+                    <li key={i} className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {plan.preflight.volumeDataNote && (
+              <p style={{ fontSize: 12, color: "var(--c-am)", margin: "10px 0 0" }}>{plan.preflight.volumeDataNote}</p>
+            )}
+          </div>
+        )}
+
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
         <label style={label} htmlFor="imp-target">{t("import.target")}</label>
         {servers.length === 0 ? (

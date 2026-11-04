@@ -177,4 +177,24 @@ export interface ImportPlan {
   /** Deterministic hash of (items + options) — the executor requires it (confirmToken forge/stale guard).
    *  Advisory `warnings` are deliberately NOT hashed: they must not change the executor's idempotency key. */
   planHash: string;
+  /** Advisory review aid: how each resource will (or will not) migrate. NOT part of planHash and NOT consumed
+   *  by the executor — it exists so the preflight UI can be honest about data movement and dropped services. */
+  preflight?: ImportPreflight;
+}
+
+/** How a database's DATA will move (distinct from whether its CONFIG imports). */
+export type DbDataPlane = "one-click" | "manual" | "blocked";
+
+/**
+ * Secret-free, advisory summary attached to a plan so the review screen can show, up front, what actually
+ * moves: per-database data-movement class, the services the plan does NOT import, and the volume-data caveat.
+ */
+export interface ImportPreflight {
+  databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
+  /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
+   *  never a silent drop on the review screen. */
+  services: Array<{ name: string; members: number; note: string }>;
+  /** Number of apps that declare a volume whose DATA this import does not copy (config only). */
+  appsWithVolumeData: number;
+  volumeDataNote?: string;
 }

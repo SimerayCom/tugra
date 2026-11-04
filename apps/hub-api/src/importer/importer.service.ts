@@ -9,6 +9,7 @@ import { CoolifySource } from "./sources/coolify.source";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 import { assertAllowedUrl } from "./sources/ssrf-guard";
 import { planImport } from "./import-planner";
+import { buildPreflight } from "./preflight";
 import type { ImportPlan } from "./foreign-fleet";
 import type { ImportConnectInput, ImportPlanRequestInput } from "./dto";
 
@@ -73,7 +74,8 @@ export class ImporterService {
       const source = new LocalDockerSource(this.migrator, userId, input.serverId);
       try {
         const fleet = await source.discover();
-        return planImport(fleet, { sourceKind: "local-docker", targetServerId: input.serverId });
+        const opts = { sourceKind: "local-docker", targetServerId: input.serverId };
+        return { ...planImport(fleet, opts), preflight: buildPreflight(fleet, opts) };
       } finally {
         await source.close();
       }
@@ -88,7 +90,8 @@ export class ImporterService {
         `coolify discover: ${fleet.servers.length} servers, ${fleet.apps.length} apps, ${fleet.databases.length} dbs, ${fleet.services.length} services in ${Date.now() - t0}ms`,
       );
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
-      return planImport(fleet, { sourceKind: "coolify" });
+      const opts = { sourceKind: "coolify" };
+      return { ...planImport(fleet, opts), preflight: buildPreflight(fleet, opts) };
     } finally {
       await source.close();
     }
