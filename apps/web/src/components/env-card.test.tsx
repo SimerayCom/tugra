@@ -43,6 +43,18 @@ describe("EnvCard", () => {
     expect(screen.getByRole("button", { name: "Hide value" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("sort A-Z reorders the displayed rows by key (view only) and toggles back", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ ZEBRA: "1", alpha: "2", MIKE: "3" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    const keys = () => (screen.getAllByLabelText("Key") as HTMLInputElement[]).map((e) => e.value);
+    expect(keys()).toEqual(["ZEBRA", "alpha", "MIKE"]); // insertion order
+    fireEvent.click(screen.getByRole("button", { name: "Sort A-Z" }));
+    expect(keys()).toEqual(["alpha", "MIKE", "ZEBRA"]); // case-insensitive alpha sort (view only)
+    fireEvent.click(screen.getByRole("button", { name: "Clear sort" }));
+    expect(keys()).toEqual(["ZEBRA", "alpha", "MIKE"]); // back to stored order
+  });
+
   it("reveal-all toggles every row and masks again when pressed off", async () => {
     vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1", B: "2" });
     wrap(<EnvCard id="a1" canWrite />);
