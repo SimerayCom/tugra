@@ -120,7 +120,7 @@ import { normalizeTags } from "../common/tags";
 import { appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
-import type { CreateAppInput, SetSourceInput, SetBuildInput, SetContainerCommandInput } from "./dto";
+import type { CreateAppInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 // stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
@@ -2420,6 +2420,68 @@ export class ApplicationsService {
       return this.containerMetricsSvc.forApp(members.map((m) => m.id), composeProject(app), range, true);
     }
     return this.containerMetricsSvc.forApp(app.serverId, composeProject(app), range);
+  }
+
+  /**
+   * Last-known container state + recent crash/OOM episodes for the app (the "why does it keep restarting"
+   * timeline), read from the container-health poll's ContainerState / ContainerEvent tables. Read-level
+   * (`require` — any team member, incl. READER) and DB-only (no agent round-trip). The raw pre-crash log
+   * tail is gated: returned only to a caller that both holds `apps:config` AND may read secrets
+   * (`includeLog`); everyone else gets `logTail: null` + `logRedacted: true`, since the tail is unredacted
+   * container output that can carry secrets.
+   */
+  async runtimeState(userId: string, id: string, includeLog: boolean): Promise<AppRuntimeState> {
+    const app = await this.require(userId, id);
+    const serverIds = app.clusterId
+      ? (await this.prisma.server.findMany({ where: { clusterId: app.clusterId }, select: { id: true } })).map((s) => s.id)
+      : [app.serverId];
+    // The same airtight prefix match the metrics path uses: the delimiter (`-`/`.`) keeps a sibling app
+    // whose id merely starts with this one's from leaking in; swarm task containers carry a `.` suffix.
+    const prefix = composeProject(app);
+    const nameMatch = [
+      { containerName: prefix },
+      { containerName: { startsWith: `${prefix}-` } },
+      ...(app.clusterId ? [{ containerName: { startsWith: `${prefix}.` } }] : []),
+    ];
+    const canLog = includeLog && ((await this.access.membershipPermissions(userId, app.teamId))?.has("apps:config") ?? false);
+
+    const [states, events] = await Promise.all([
+      this.prisma.containerState.findMany({
+        where: { serverId: { in: serverIds }, OR: nameMatch },
+        select: { containerName: true, status: true, exitCode: true, oomKilled: true, restartCount: true, health: true, startedAt: true, finishedAt: true },
+      }),
+      this.prisma.containerEvent.findMany({
+        where: { serverId: { in: serverIds }, OR: nameMatch },
+        orderBy: { ts: "desc" },
+        take: 20,
+      }),
+    ]);
+
+    return {
+      containers: states.map((s) => ({
+        containerName: s.containerName,
+        status: s.status,
+        exitCode: s.exitCode,
+        oomKilled: s.oomKilled,
+        restartCount: s.restartCount,
+        health: s.health,
+        startedAt: s.startedAt ? s.startedAt.toISOString() : null,
+        finishedAt: s.finishedAt ? s.finishedAt.toISOString() : null,
+      })),
+      events: events.map((e) => ({
+        id: e.id,
+        containerName: e.containerName,
+        ts: e.ts.toISOString(),
+        kind: e.kind,
+        exitCode: e.exitCode,
+        oomKilled: e.oomKilled,
+        restartCount: e.restartCount,
+        restartDelta: e.restartDelta,
+        reason: e.reason,
+        logTail: canLog ? e.logTail : null,
+        logRedacted: !canLog && e.logTail != null,
+      })),
+    };
   }
 
   /**

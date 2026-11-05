@@ -4512,3 +4512,67 @@ describe("ApplicationsService.pruneImages (keep-N, aliasing-safe)", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe("ApplicationsService.runtimeState", () => {
+  const app = { id: "a1", teamId: "t1", serverId: "s1", clusterId: null, environmentId: "env1" };
+  const stateRow = {
+    containerName: "tugra_a1",
+    status: "running",
+    exitCode: 0,
+    oomKilled: false,
+    restartCount: 5,
+    health: null,
+    startedAt: new Date("2026-11-01T00:00:00.000Z"),
+    finishedAt: null,
+  };
+  const eventRow = {
+    id: "e1",
+    containerName: "tugra_a1",
+    ts: new Date("2026-11-05T00:00:00.000Z"),
+    kind: "crash",
+    exitCode: 137,
+    oomKilled: false,
+    restartCount: 5,
+    restartDelta: 2,
+    reason: "Killed — SIGKILL / OOM (137)",
+    logTail: "panic: boom",
+  };
+  function prismaWith() {
+    return {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      containerState: { findMany: jest.fn().mockResolvedValue([stateRow]) },
+      containerEvent: { findMany: jest.fn().mockResolvedValue([eventRow]) },
+    } as unknown as PrismaService;
+  }
+
+  it("maps states + events to ISO dates and returns the log tail for a privileged caller", async () => {
+    const prisma = prismaWith();
+    const svc = make(prisma, accessWith({}), {} as AgentWsServer); // OWNER perms incl. apps:config
+    const res = await svc.runtimeState("u1", "a1", true);
+    expect(res.containers[0]).toMatchObject({ containerName: "tugra_a1", restartCount: 5, startedAt: "2026-11-01T00:00:00.000Z", finishedAt: null });
+    expect(res.events[0]).toMatchObject({ kind: "crash", exitCode: 137, ts: "2026-11-05T00:00:00.000Z", logTail: "panic: boom", logRedacted: false });
+    // Airtight prefix match (delimiter required so a sibling app id can't leak in).
+    const where = (prisma.containerState.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where.serverId).toEqual({ in: ["s1"] });
+    expect(where.OR).toEqual(expect.arrayContaining([{ containerName: "tugra_a1" }, { containerName: { startsWith: "tugra_a1-" } }]));
+  });
+
+  it("throws for a non-member (require → ForbiddenException)", async () => {
+    const svc = make(prismaWith(), accessWith({ teamRole: jest.fn().mockResolvedValue(null) }), {} as AgentWsServer);
+    await expect(svc.runtimeState("u1", "a1", true)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("redacts the log tail when the caller may not read secrets (includeLog=false)", async () => {
+    const svc = make(prismaWith(), accessWith({}), {} as AgentWsServer);
+    const res = await svc.runtimeState("u1", "a1", false);
+    expect(res.events[0].logTail).toBeNull();
+    expect(res.events[0].logRedacted).toBe(true);
+  });
+
+  it("redacts the log tail for a secrets-reader who lacks apps:config", async () => {
+    const svc = make(prismaWith(), accessWith({ membershipPermissions: jest.fn().mockResolvedValue(new Set(["apps:deploy"])) }), {} as AgentWsServer);
+    const res = await svc.runtimeState("u1", "a1", true);
+    expect(res.events[0].logTail).toBeNull();
+    expect(res.events[0].logRedacted).toBe(true);
+  });
+});

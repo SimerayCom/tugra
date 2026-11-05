@@ -24,6 +24,7 @@ import { parseDate, str } from "../audit/audit.controller";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
+import { canReadSecrets } from "../api-tokens/scopes";
 import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.interceptor";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
@@ -121,6 +122,7 @@ import {
   SetVolumesSchema,
   SetHostMountsInput,
   SetHostMountsSchema,
+  AppRuntimeStateSchema,
 } from "./dto";
 
 @ApiTags("apps")
@@ -215,6 +217,14 @@ export class ApplicationsController {
   @Get(":id/containers")
   listContainers(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.listContainers(user.userId, id);
+  }
+
+  @Get(":id/runtime-state")
+  @ApiZodResponse(AppRuntimeStateSchema)
+  runtimeState(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    // Read-level (any team member). The raw pre-crash log tail is gated inside the service to callers who
+    // may read secrets AND hold apps:config; everyone else gets logTail:null + logRedacted:true.
+    return this.apps.runtimeState(user.userId, id, canReadSecrets(user.scopes));
   }
 
   @Get(":id/cluster-status")
