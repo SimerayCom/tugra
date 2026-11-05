@@ -1,4 +1,4 @@
-import { CONTAINER_HEALTH_SCRIPT, parseHealthOutput, diffContainerStates, COOLDOWN_MS, type ContainerSnap, type PrevState } from "./container-health";
+import { CONTAINER_HEALTH_SCRIPT, parseHealthOutput, diffContainerStates, explainExit, COOLDOWN_MS, type ContainerSnap, type PrevState } from "./container-health";
 
 const snap = (over: Partial<ContainerSnap> = {}): ContainerSnap => ({
   name: "tugra_app1",
@@ -120,5 +120,44 @@ describe("diffContainerStates", () => {
   it("after cooldown → fires once with the accumulated restart delta", () => {
     const r = diffContainerStates(prev({ restartCount: 4, lastNotifiedKey: "c1:4:", lastNotifiedAt: NOW - COOLDOWN_MS - 1, restartCountAtNotify: 4 }), snap({ restartCount: 9 }), [], { now: NOW });
     expect(r.fire).toMatchObject({ type: "container_crashed", restartDelta: 5 });
+  });
+});
+
+describe("explainExit", () => {
+  it("prefers OOM when the flag is set, regardless of code", () => {
+    expect(explainExit(137, true)).toMatch(/out of memory/i);
+    expect(explainExit(0, true)).toMatch(/out of memory/i);
+  });
+  it("maps the common exit codes to a human reason", () => {
+    expect(explainExit(0, false)).toContain("0");
+    expect(explainExit(1, false)).toMatch(/application error/i);
+    expect(explainExit(137, false)).toMatch(/SIGKILL/);
+    expect(explainExit(139, false)).toMatch(/segmentation/i);
+    expect(explainExit(143, false)).toMatch(/SIGTERM/);
+    expect(explainExit(127, false)).toMatch(/not found/i);
+  });
+  it("derives the signal for other 128+N codes and falls back to the raw code", () => {
+    expect(explainExit(130, false)).toBe("Killed by signal 2 (130)");
+    expect(explainExit(100, false)).toBe("Exit code 100");
+  });
+});
+
+describe("diffContainerStates — timeline event", () => {
+  it("emits a crash event on a restart increase (reason + delta), independent of the alert", () => {
+    const r = diffContainerStates(prev({ restartCount: 3, restartCountAtNotify: 3 }), snap({ restartCount: 4 }), [], { now: NOW });
+    expect(r.event).toMatchObject({ kind: "crash", restartDelta: 1, reason: expect.stringMatching(/clean exit|exit code 0/i) });
+  });
+  it("emits an oom event when OOM wins", () => {
+    const r = diffContainerStates(prev({ restartCount: 3, restartCountAtNotify: 3 }), snap({ restartCount: 4, exitCode: 137 }), [{ ts: 100, name: "tugra_app1", action: "oom", exitCode: 137 }], { now: NOW });
+    expect(r.event).toMatchObject({ kind: "oom", oomKilled: true });
+    expect(r.event?.reason).toMatch(/out of memory/i);
+  });
+  it("records the episode even while the alert is in cooldown (complete history)", () => {
+    const r = diffContainerStates(prev({ restartCount: 4, lastNotifiedKey: "c1:4:", lastNotifiedAt: NOW - 1000, restartCountAtNotify: 4 }), snap({ restartCount: 5 }), [], { now: NOW });
+    expect(r.fire).toBeNull(); // suppressed
+    expect(r.event).toMatchObject({ kind: "crash" }); // but still recorded
+  });
+  it("no event on a steady running container", () => {
+    expect(diffContainerStates(prev({ restartCount: 3 }), snap({ restartCount: 3 }), [], { now: NOW }).event).toBeNull();
   });
 });

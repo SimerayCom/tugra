@@ -14,16 +14,25 @@ function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitC
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
   const upsert = jest.fn().mockResolvedValue({});
   const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+  const create = jest.fn().mockResolvedValue({});
   const prisma = {
     server: { findMany: jest.fn().mockResolvedValue([SERVER]) },
     containerState: { findMany: jest.fn().mockResolvedValue(opts.rows ?? []), upsert, deleteMany },
+    containerEvent: { create },
     application: { findMany: jest.fn().mockResolvedValue(opts.apps ?? [{ id: "app1", name: "Shop", status: "RUNNING" }]) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
   } as unknown as PrismaService;
-  const sendCommand = jest.fn().mockResolvedValue({ exitCode: opts.exitCode ?? 0, output: opts.output ?? inspectOut(0) });
+  // The poll command returns the inspect/events output; a later `docker logs` fetch returns a canned tail.
+  const sendCommand = jest.fn().mockImplementation((_id: string, cmd: string) =>
+    Promise.resolve(
+      cmd.includes("docker logs")
+        ? { exitCode: 0, output: "2026-10-30T00:00:01Z panic: boom\n" }
+        : { exitCode: opts.exitCode ?? 0, output: opts.output ?? inspectOut(0) },
+    ),
+  );
   const agentWs = { isOnline: jest.fn().mockReturnValue(opts.online ?? true), sendCommand } as unknown as AgentWsServer;
   const notifications = { fireForEvent } as unknown as NotificationsService;
-  return { svc: new ContainerHealthRunnerService(prisma, agentWs, notifications), fireForEvent, upsert, deleteMany, sendCommand };
+  return { svc: new ContainerHealthRunnerService(prisma, agentWs, notifications), fireForEvent, upsert, deleteMany, create, sendCommand };
 }
 
 const prevRow = (over: Record<string, unknown> = {}) => ({
@@ -60,10 +69,46 @@ describe("ContainerHealthRunnerService.runTick", () => {
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("fires container_crashed once on a restartCount increase, with resolved label/kind", async () => {
-    const { svc, fireForEvent } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
+  it("fires container_crashed once on a restartCount increase, with resolved label/kind + reason + frozen logs", async () => {
+    const { svc, fireForEvent, create, sendCommand } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
     await svc.runTick();
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "container_crashed", expect.objectContaining({ containerName: "tugra_app1", label: "Shop", kind: "app", resourceId: "app1" }));
+    expect(fireForEvent).toHaveBeenCalledWith(
+      "t1",
+      "container_crashed",
+      expect.objectContaining({ containerName: "tugra_app1", label: "Shop", kind: "app", resourceId: "app1", reason: expect.any(String) }),
+    );
+    // The raw log tail is NOT sent to external channels (secret-leak risk) — only `reason` is.
+    expect(fireForEvent.mock.calls[0][2]).not.toHaveProperty("logTail");
+    // The log tail is fetched over the "logs" capability (same gate as the interactive reader), not "bulk".
+    const logCall = sendCommand.mock.calls.find((c: unknown[]) => String(c[1]).includes("docker logs"));
+    expect(logCall?.[2]).toBe("logs");
+    // A ContainerEvent row is appended with the frozen pre-crash log tail (in-app only).
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ containerName: "tugra_app1", kind: "crash", logTail: expect.stringContaining("panic: boom") }) }));
+  });
+
+  it("records a ContainerEvent even when the alert is suppressed (stopped app)", async () => {
+    const { svc, fireForEvent, create } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3), apps: [{ id: "app1", name: "Shop", status: "STOPPED" }] });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ kind: "crash" }) }));
+  });
+
+  it("swallows a ContainerEvent write failure without aborting the tick (per-container isolation)", async () => {
+    const { svc, create, deleteMany } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
+    create.mockRejectedValueOnce(new Error("23502 bad byte"));
+    await expect(svc.runTick()).resolves.toBeUndefined();
+    expect(deleteMany).toHaveBeenCalled(); // the tick ran to completion past the failed row
+  });
+
+  it("strips NUL bytes from the captured log tail (Postgres TEXT rejects 0x00)", async () => {
+    const { svc, create } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
+    (svc as unknown as { agentWs: AgentWsServer }).agentWs.sendCommand = jest
+      .fn()
+      .mockImplementation((_id: string, cmd: string) =>
+        Promise.resolve(cmd.includes("docker logs") ? { exitCode: 0, output: "a\u0000b\u0000c" } : { exitCode: 0, output: inspectOut(3) }),
+      ) as never;
+    await svc.runTick();
+    expect(create.mock.calls[0][0].data.logTail).toBe("abc");
   });
 
   it("suppresses the alert for an app the operator STOPPED (still persists state)", async () => {

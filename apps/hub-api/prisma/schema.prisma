@@ -351,6 +351,7 @@ model Server {
   metrics              Metric[]
   containerMetrics     ContainerMetric[]
   containerStates      ContainerState[]
+  containerEvents      ContainerEvent[]
   metricRollups        MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
   logDrains            LogDrain[]
@@ -521,6 +522,30 @@ model ContainerState {
 
   @@id([serverId, containerName])
   @@index([updatedAt])
+}
+
+// Append-only crash/OOM episode history for a container, written by the container-health poll on each
+// detected death (one row per poll-tick-with-change, so a fast restart-loop yields ≤1 row per 60s). Powers
+// the "why does this keep restarting" timeline: exit code + human reason + the frozen pre-crash log tail that
+// `docker logs` would otherwise lose on recreate. Pruned by RetentionRunnerService (CONTAINER_EVENT_RETENTION_DAYS).
+model ContainerEvent {
+  id            String   @id @default(cuid())
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId      String
+  containerName String
+  containerId   String
+  ts            DateTime // when the episode was observed (docker-event time if known, else poll time)
+  kind          String // crash | oom
+  exitCode      Int      @default(0)
+  oomKilled     Boolean  @default(false)
+  restartCount  Int      @default(0)
+  restartDelta  Int      @default(0)
+  reason        String? // human-readable exit-code explanation (137 → "OOM / SIGKILL", etc.)
+  logTail       String?  @db.Text // frozen last log lines captured at crash time (clamped), null if unavailable
+  createdAt     DateTime @default(now())
+
+  @@index([serverId, containerName, ts])
+  @@index([createdAt])
 }
 
 // 1-minute rollup of host Metric rows (avg/max per bucket) — lets long-range charts survive past the

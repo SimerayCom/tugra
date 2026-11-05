@@ -14,6 +14,30 @@
 export const COOLDOWN_MS = 15 * 60 * 1000; // ≤1 crash-loop alert per container per 15 min (carries total restarts)
 const IGNORED_EXIT = new Set([0, 137, 143]); // clean exit, SIGKILL/`docker stop`, SIGTERM — never a "crash" by code
 
+/**
+ * Human-readable meaning of a container exit code — the headline answer to "why did it die". OOM takes
+ * precedence because both OOM and `docker stop` surface as 137, so the flag disambiguates. Pure + unit-tested;
+ * used by both the crash notification and the persisted ContainerEvent timeline.
+ */
+export function explainExit(code: number, oomKilled: boolean): string {
+  if (oomKilled) return "Out of memory (OOM-killed)";
+  switch (code) {
+    case 0: return "Clean exit (0)";
+    case 1: return "Application error (1)";
+    case 2: return "Shell/usage error (2)";
+    case 125: return "Container failed to start (125)";
+    case 126: return "Command not executable (126)";
+    case 127: return "Command not found (127)";
+    case 134: return "Aborted — SIGABRT (134)";
+    case 137: return "Killed — SIGKILL / OOM (137)";
+    case 139: return "Segmentation fault — SIGSEGV (139)";
+    case 143: return "Terminated — SIGTERM (143)";
+    default:
+      if (code > 128 && code < 165) return `Killed by signal ${code - 128} (${code})`;
+      return `Exit code ${code}`;
+  }
+}
+
 export interface ContainerSnap {
   name: string;
   id: string;
@@ -56,8 +80,20 @@ export interface NextState {
   restartCountAtNotify: number;
 }
 export type FireKind = "container_crashed" | "container_oom";
+/** A distinct crash/OOM episode to append to the ContainerEvent timeline (recorded regardless of the
+ *  notification cooldown, so the history is complete even when alerts are throttled). */
+export interface RecordableEvent {
+  ts: number; // epoch seconds — docker-event time when known, else poll time
+  kind: "crash" | "oom";
+  exitCode: number;
+  oomKilled: boolean;
+  restartCount: number;
+  restartDelta: number;
+  reason: string;
+}
 export interface DiffResult {
   fire: { type: FireKind; exitCode: number; oomKilled: boolean; restartDelta: number } | null;
+  event: RecordableEvent | null;
   next: NextState;
 }
 
@@ -160,10 +196,21 @@ export function diffContainerStates(prev: PrevState | undefined, cur: ContainerS
   const prevRestartAtNotify = recreated ? 0 : prev!.restartCountAtNotify;
 
   let fire: DiffResult["fire"] = null;
+  let event: DiffResult["event"] = null;
   let lastNotifiedKey = prevNotifiedKey;
   let lastNotifiedAt = prevNotifiedAt;
   let restartCountAtNotify = prevRestartAtNotify;
   if (fireKind) {
+    // Timeline event — one per tick-with-change, independent of the notification cooldown.
+    event = {
+      ts: mine.length ? maxEventTs : Math.floor(opts.now / 1000),
+      kind: isOom ? "oom" : "crash",
+      exitCode: cur.exitCode,
+      oomKilled: isOom,
+      restartCount: cur.restartCount,
+      restartDelta: Math.max(0, restartDelta),
+      reason: explainExit(cur.exitCode, isOom),
+    };
     const sameDeath = deathKey === prevNotifiedKey;
     const inCooldown = prevNotifiedAt != null && opts.now - prevNotifiedAt < COOLDOWN_MS;
     if (!sameDeath && !inCooldown) {
@@ -177,6 +224,7 @@ export function diffContainerStates(prev: PrevState | undefined, cur: ContainerS
 
   return {
     fire,
+    event,
     next: {
       containerId: cur.id,
       status: cur.status,

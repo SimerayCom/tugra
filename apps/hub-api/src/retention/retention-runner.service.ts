@@ -29,6 +29,7 @@ export class RetentionRunnerService {
     deployment: number;
     notificationDelivery: number;
     auditLog: number;
+    containerEvent: number;
   }> {
     const rawHours = Number(this.config.get("METRICS_RAW_RETENTION_HOURS") ?? 48);
     const hbDays = Number(this.config.get("HEARTBEAT_RETENTION_DAYS") ?? 30);
@@ -36,11 +37,13 @@ export class RetentionRunnerService {
     const deployDays = Number(this.config.get("DEPLOYMENT_RETENTION_DAYS") ?? 90);
     const notifDays = Number(this.config.get("NOTIFICATION_RETENTION_DAYS") ?? 30);
     const auditDays = Number(this.config.get("AUDIT_RETENTION_DAYS") ?? 0);
+    const containerEventDays = Number(this.config.get("CONTAINER_EVENT_RETENTION_DAYS") ?? 14);
     const metricsCutoff = new Date(Date.now() - rawHours * 3600_000);
     const hbCutoff = new Date(Date.now() - hbDays * 86_400_000);
     const rollupCutoff = new Date(Date.now() - rollupDays * 86_400_000);
     const deployCutoff = new Date(Date.now() - deployDays * 86_400_000);
     const notifCutoff = new Date(Date.now() - notifDays * 86_400_000);
+    const containerEventCutoff = new Date(Date.now() - containerEventDays * 86_400_000);
 
     const metric = await this.pruneOlderThan(
       (take) => this.prisma.metric.findMany({ where: { ts: { lt: metricsCutoff } }, select: { id: true }, take }),
@@ -80,6 +83,11 @@ export class RetentionRunnerService {
       (take) => this.prisma.notificationDelivery.findMany({ where: { createdAt: { lt: notifCutoff }, status: { not: "PENDING" } }, select: { id: true }, take }),
       (ids) => this.prisma.notificationDelivery.deleteMany({ where: { id: { in: ids } } }),
     );
+    // Crash/OOM episode history — bounded to CONTAINER_EVENT_RETENTION_DAYS (default 14).
+    const containerEvent = await this.pruneOlderThan(
+      (take) => this.prisma.containerEvent.findMany({ where: { createdAt: { lt: containerEventCutoff } }, select: { id: true }, take }),
+      (ids) => this.prisma.containerEvent.deleteMany({ where: { id: { in: ids } } }),
+    );
     // Audit log is compliance-sensitive → pruned ONLY when AUDIT_RETENTION_DAYS is explicitly set (> 0).
     const auditLog = auditDays > 0
       ? await this.pruneOlderThan(
@@ -88,12 +96,12 @@ export class RetentionRunnerService {
         )
       : 0;
 
-    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog) {
+    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog || containerEvent) {
       this.logger.log(
-        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog}`,
+        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent}`,
       );
     }
-    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog };
+    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog, containerEvent };
   }
 
   /** Page through matching ids and delete them in batches until a short/empty page ends the run. */
