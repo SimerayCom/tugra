@@ -703,3 +703,38 @@ export const SetHostMountsSchema = z.object({
     .max(20),
 });
 export type SetHostMountsInput = z.infer<typeof SetHostMountsSchema>;
+
+// --- Runtime state (crash timeline) response views -------------------------------------------------
+// Last-known container state + recent crash/OOM episodes for an app, surfaced read-only from the
+// container-health poll's ContainerState / ContainerEvent tables. Dates are ISO strings; the raw log
+// tail is gated server-side (null + logRedacted:true for callers without read:secrets + apps:config).
+export const ContainerStateViewSchema = z.object({
+  containerName: z.string(),
+  status: z.string(),
+  exitCode: z.number().int(),
+  oomKilled: z.boolean(),
+  restartCount: z.number().int(),
+  health: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+});
+export const ContainerEventViewSchema = z.object({
+  id: z.string(),
+  containerName: z.string(),
+  ts: z.string(),
+  kind: z.string(),
+  exitCode: z.number().int(),
+  oomKilled: z.boolean(),
+  restartCount: z.number().int(),
+  restartDelta: z.number().int(),
+  reason: z.string().nullable(),
+  logTail: z.string().nullable(),
+  logRedacted: z.boolean(),
+});
+export const AppRuntimeStateSchema = z.object({
+  containers: z.array(ContainerStateViewSchema),
+  events: z.array(ContainerEventViewSchema),
+});
+export type ContainerStateView = z.infer<typeof ContainerStateViewSchema>;
+export type ContainerEventView = z.infer<typeof ContainerEventViewSchema>;
+export type AppRuntimeState = z.infer<typeof AppRuntimeStateSchema>;
