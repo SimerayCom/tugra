@@ -46,7 +46,7 @@
       "title": "Container out of memory — {container}",
       "summary": "{container} was killed by the kernel for exceeding its memory limit (OOM)."
     },
-    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind" },
+    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind", "reason": "Reason" },
     "link": { "openApp": "Open app", "openDatabase": "Open database", "openServer": "Open server" }
   },
   "volumeBackup": {

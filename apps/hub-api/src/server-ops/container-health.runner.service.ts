@@ -14,6 +14,12 @@ import {
 
 const POLL_TIMEOUT_MS = 15_000;
 const SEED_WINDOW_SEC = 120; // first tick: look back this far for the events cursor
+const MAX_LOG_FETCH_PER_TICK = 8; // cap the extra `docker logs` pulls per server per tick (a mass-crash storm)
+const LOG_TAIL_LINES = 80;
+const LOG_TAIL_MAX_BYTES = 8192; // frozen pre-crash log snapshot kept on the ContainerEvent row
+// A plain docker container name — defence in depth before a name reaches the logs command (names come from
+// `docker inspect` output, so this only ever rejects something already impossible).
+const CONTAINER_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
 /**
  * One container-health tick: for every ONLINE server with a reachable agent, run the read-only inspect+events
@@ -65,6 +71,7 @@ export class ContainerHealthRunnerService {
     const stoppedAppIds = new Set(apps.filter((a) => a.status === "STOPPED").map((a) => a.id));
     const prevByName = new Map(prevRows.map((row) => [row.containerName, row]));
     const now = Date.now();
+    let logFetches = 0;
 
     for (const snap of parsed.containers) {
       const prevRow = prevByName.get(snap.name);
@@ -83,7 +90,16 @@ export class ContainerHealthRunnerService {
             restartCountAtNotify: prevRow.restartCountAtNotify,
           }
         : undefined;
-      const { fire, next } = diffContainerStates(prev, snap, parsed.events, { now });
+      const { fire, event, next } = diffContainerStates(prev, snap, parsed.events, { now });
+
+      // Freeze the pre-crash log tail at the moment of a detected death — `docker logs` would otherwise lose
+      // it on the next recreate. Bounded per tick so a mass crash can't turn one poll into a log storm.
+      let logTail: string | null = null;
+      if (event && logFetches < MAX_LOG_FETCH_PER_TICK) {
+        logFetches++;
+        logTail = await this.fetchLogTail(server.id, snap.name);
+      }
+
       if (fire) {
         const label = resolveContainerLabel(snap.name, appsById, dbsById);
         // Don't alert on Tugra's own control-plane stack (noisy during self-update) or on an app the operator
@@ -102,16 +118,60 @@ export class ContainerHealthRunnerService {
               exitCode: fire.exitCode,
               restartDelta: fire.restartDelta,
               oomKilled: fire.oomKilled,
+              // `reason` (exit-code meaning) is safe to send to external channels; the raw pre-crash log tail
+              // is NOT — it can carry secrets — so it stays on the ContainerEvent row (in-app, access-controlled).
+              reason: event ? event.reason : "",
             })
             .catch(() => undefined);
         }
       }
       await this.persist(server.id, snap, next);
+
+      // Append the timeline row AFTER state is persisted, isolated per container: a bad row (or a byte Postgres
+      // rejects) must never drop another container's episode or abort the tick.
+      if (event) {
+        try {
+          await this.prisma.containerEvent.create({
+            data: {
+              serverId: server.id,
+              containerName: snap.name,
+              containerId: snap.id,
+              ts: event.ts > 0 ? new Date(event.ts * 1000) : new Date(now),
+              kind: event.kind,
+              exitCode: event.exitCode,
+              oomKilled: event.oomKilled,
+              restartCount: event.restartCount,
+              restartDelta: event.restartDelta,
+              reason: event.reason,
+              logTail,
+            },
+          });
+        } catch (e) {
+          this.logger.warn(`container-event write failed for ${snap.name} on server ${server.id}: ${String(e)}`);
+        }
+      }
     }
 
     // Drop rows for containers that no longer exist (removed/renamed) so the table stays bounded.
     const liveNames = parsed.containers.map((c) => c.name);
     await this.prisma.containerState.deleteMany({ where: { serverId: server.id, containerName: { notIn: liveNames.length ? liveNames : ["\u0000"] } } });
+  }
+
+  /** Grab the last log lines of a just-crashed container over the "logs" capability (same gate as the
+   *  interactive log reader — an operator who revoked "logs" gets no captured tail). Best-effort: any failure
+   *  (capability denied, container already gone, timeout) returns null so the tick never breaks. `pipefail`
+   *  propagates a `docker logs` failure past the `tail` pipe; NULs are stripped (Postgres TEXT rejects 0x00). */
+  private async fetchLogTail(serverId: string, container: string): Promise<string | null> {
+    if (!CONTAINER_RE.test(container)) return null;
+    try {
+      const cmd = `set -o pipefail; docker logs --tail ${LOG_TAIL_LINES} --timestamps ${container} 2>&1 | tail -c ${LOG_TAIL_MAX_BYTES}`;
+      const r = await this.agentWs.sendCommand(serverId, cmd, "logs", POLL_TIMEOUT_MS);
+      if (r.exitCode !== 0) return null;
+      const out = (r.output ?? "").replace(/\u0000/g, "").trim();
+      return out ? out.slice(0, LOG_TAIL_MAX_BYTES) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Baseline row for a container seen for the first time (seed tick) — records state, never alerts. */

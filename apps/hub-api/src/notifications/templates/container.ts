@@ -11,6 +11,7 @@ export const containerTemplate: EventTemplate = {
     const kind = s(c, "kind");
     const resourceId = s(c, "resourceId");
     const restarts = num(c, "restartDelta");
+    const reason = s(c, "reason");
     const link =
       kind === "app" && resourceId
         ? { label: env.t("container.link.openApp"), url: `${env.webBaseUrl}/apps/${resourceId}` }
@@ -27,6 +28,7 @@ export const containerTemplate: EventTemplate = {
         { label: env.t("container.field.container"), value: clamp(label, 200), inline: true },
         { label: env.t("container.field.exitCode"), value: oom ? "OOM" : String(num(c, "exitCode")), inline: true },
         { label: env.t("container.field.restarts"), value: restarts > 0 ? String(restarts) : "", inline: true },
+        { label: env.t("container.field.reason"), value: reason ? clamp(reason, 200) : "", inline: true },
       ]),
       links: [link],
     });
