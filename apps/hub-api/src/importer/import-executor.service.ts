@@ -26,10 +26,13 @@ import type { DatabaseView } from "../databases/databases.service";
  *  is skipped by a plan blocker, but we re-check here so a bad engine never reaches DatabasesService. */
 const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
 import type { ImportSource } from "./import-source";
-import type { ImportApplyInput } from "./dto";
+import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind } from "./dto";
 
 const CONCURRENCY = 5;
 const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treated as a dead worker's leftover
+/** Source kinds that create FRESH Tugra resources (copy-mode): rollback REMOVES them, and only these may
+ *  migrate data. local-docker is NOT here — it adopts live containers in place (rollback un-adopts). */
+const COPY_MODE_KINDS = new Set<string>(REMOTE_SOURCE_KINDS);
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
 
 /**
@@ -58,7 +61,7 @@ export class ImportExecutorService {
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
-    return input.sourceKind === "local-docker" ? this.applyLocalDocker(userId, input) : this.applyCoolify(userId, input);
+    return input.sourceKind === "local-docker" ? this.applyLocalDocker(userId, input) : this.applyRemote(userId, input);
   }
 
   /** Re-discover + re-plan, enforce the reviewed plan via planHash, then persist + fan out the adoptions. */
@@ -95,12 +98,12 @@ export class ImportExecutorService {
     return { opId: op.id };
   }
 
-  /** Copy a Coolify fleet's apps onto a target Tugra server: per app, resolve its secrets and create it. */
-  private async applyCoolify(userId: string, input: Extract<ImportApplyInput, { sourceKind: "coolify" }>): Promise<{ opId: string }> {
-    const { source } = await this.importer.openSession(userId, input.sessionId); // session ownership + team authz
+  /** Copy a remote fleet's apps onto a target Tugra server: per app, resolve its secrets and create it. */
+  private async applyRemote(userId: string, input: Extract<ImportApplyInput, { sourceKind: RemoteSourceKind }>): Promise<{ opId: string }> {
+    const { source } = await this.importer.openSession(userId, input.sessionId, input.sourceKind); // session ownership + team authz + kind pin
     try {
       const fleet = await source.discover();
-      const plan = planImport(fleet, { sourceKind: "coolify" });
+      const plan = planImport(fleet, { sourceKind: input.sourceKind });
       if (plan.planHash !== input.planHash) {
         throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
       }
@@ -111,7 +114,7 @@ export class ImportExecutorService {
       await this.access.requirePermission(userId, server.teamId, "apps:config");
       await this.assertNoInflight(input.targetServerId);
 
-      const op = await this.createOp(userId, "coolify", input.targetServerId, plan.planHash, { sessionId: input.sessionId, plan });
+      const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, { sessionId: input.sessionId, plan });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
       const already = await this.alreadyImported(input.targetServerId, plan.items.map((i) => i.itemRef), op.id);
@@ -151,10 +154,10 @@ export class ImportExecutorService {
             result: { name: item.name },
           },
         });
-        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.environmentId));
+        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, input.environmentId));
         else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, db, userId, input.targetServerId, input.environmentId));
       }
-      await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: "coolify", serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
+      await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
       void this.fanout(op.id, [...runners.keys()], (taskId) => runners.get(taskId)!())
         .catch(() => undefined)
         .finally(() => source.close()); // close only once the async fan-out is done with the client
@@ -244,12 +247,12 @@ export class ImportExecutorService {
     }
   }
 
-  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, environmentId?: string): Promise<void> {
+  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
       const { values, unresolved } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
       const gitSourceId = await this.resolveGitSourceId(targetServerId, app);
-      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: "coolify", gitSourceId });
+      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId });
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
       // mirroring resolveGitSourceId: a failure here must NEVER reach the outer catch, or it would leave an
@@ -417,8 +420,8 @@ export class ImportExecutorService {
         continue;
       }
       try {
-        if (sourceKind === "coolify") {
-          await this.apps.remove(userId, appId); // the imported app is a fresh Tugra app → full teardown
+        if (COPY_MODE_KINDS.has(sourceKind ?? "")) {
+          await this.apps.remove(userId, appId); // a copy-mode import creates a fresh Tugra app → full teardown
         } else {
           const originalName = typeof t.compensation === "object" && t.compensation ? (t.compensation as { originalName?: string }).originalName : undefined;
           if (!originalName) {
@@ -942,7 +945,7 @@ export class ImportExecutorService {
     op: { meta: unknown; cancelRequestedAt: Date | null; tasks: Array<{ status: string; resourceType: string | null; resourceId: string | null }> },
   ): Promise<void> {
     const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; rolledBackAt?: string }) : {};
-    if (meta.sourceKind !== "coolify") throw new ConflictException("only a copy-mode (coolify) import can migrate data");
+    if (!COPY_MODE_KINDS.has(meta.sourceKind ?? "")) throw new ConflictException("only a copy-mode (remote-source) import can migrate data");
     if (op.cancelRequestedAt) throw new ConflictException("operation was cancelled");
     if (meta.rolledBackAt) throw new ConflictException("operation was rolled back");
     if (!meta.serverId) throw new ConflictException("operation has no target server");
@@ -974,7 +977,7 @@ export class ImportExecutorService {
     if (!op || op.kind !== "import") throw new NotFoundException("import operation not found");
     if (op.actorId !== actorId) throw new ForbiddenException("not your operation");
     const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; rolledBackAt?: string }) : {};
-    if (meta.sourceKind !== "coolify") throw new ConflictException("only a copy-mode (coolify) import can migrate data");
+    if (!COPY_MODE_KINDS.has(meta.sourceKind ?? "")) throw new ConflictException("only a copy-mode (remote-source) import can migrate data");
     if (op.cancelRequestedAt) throw new ConflictException("operation was cancelled");
     if (meta.rolledBackAt) throw new ConflictException("operation was rolled back");
     if (!meta.serverId) throw new ConflictException("operation has no target server");

@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+/**
+ * The REMOTE (copy-mode) source PaaS kinds the importer can connect to over an API with a stored session.
+ * `local-docker` is deliberately NOT here — it adopts live containers in place and has no session/token.
+ * The importer service and the apply executor derive their source-dispatch from this one list (the MCP tools
+ * and web wizard are widened alongside the schemas below when a second kind lands).
+ * Coolify is the only member today; a second kind (dokploy) is added here and in the schemas below together.
+ */
+export const REMOTE_SOURCE_KINDS = ["coolify"] as const;
+export type RemoteSourceKind = (typeof REMOTE_SOURCE_KINDS)[number];
+export const isRemoteSourceKind = (k: string | undefined | null): k is RemoteSourceKind =>
+  !!k && (REMOTE_SOURCE_KINDS as readonly string[]).includes(k);
+
 /** Connect an external source PaaS (store an encrypted, short-lived session). Coolify so far. */
 export const ImportConnectSchema = z.object({
   sourceKind: z.literal("coolify"),
