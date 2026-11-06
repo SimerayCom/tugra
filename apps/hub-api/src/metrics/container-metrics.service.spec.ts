@@ -70,20 +70,22 @@ describe("sampleEvenly", () => {
 });
 
 describe("ContainerMetricsService", () => {
-  function make(findMany?: jest.Mock, rollupFindMany?: jest.Mock) {
+  function make(findMany?: jest.Mock, rollupFindMany?: jest.Mock, stateFindMany?: jest.Mock) {
     const createMany = jest.fn().mockResolvedValue({ count: 0 });
     const prisma = {
       containerMetric: { createMany, findMany: findMany ?? jest.fn().mockResolvedValue([]) },
       containerMetricRollup: { findMany: rollupFindMany ?? jest.fn().mockResolvedValue([]) },
-      // forServer joins apps + databases to build friendly container labels.
+      // forServer joins apps + databases to build friendly container labels, and ContainerState for crash badges.
       application: { findMany: jest.fn().mockResolvedValue([]) },
       database: { findMany: jest.fn().mockResolvedValue([]) },
+      containerState: { findMany: stateFindMany ?? jest.fn().mockResolvedValue([]) },
     } as any;
     return {
       svc: new ContainerMetricsService(prisma),
       createMany,
       findMany: prisma.containerMetric.findMany,
       rollupFindMany: prisma.containerMetricRollup.findMany,
+      stateFindMany: prisma.containerState.findMany,
     };
   }
 
@@ -223,6 +225,26 @@ describe("ContainerMetricsService", () => {
   it("forServer: empty server → no containers", async () => {
     const { svc } = make(jest.fn().mockResolvedValue([]));
     expect(await svc.forServer("s1")).toEqual({ containers: [] });
+  });
+
+  it("forServer: enriches rows with ContainerState crash/health (restart count, health, ISO finishedAt); unseen container stays bare", async () => {
+    const now = 1_700_000_000_000;
+    const findMany = jest.fn().mockResolvedValue([
+      row({ containerName: "web", containerId: "w1", ts: new Date(now) }),
+      row({ containerName: "lonely", containerId: "l1", ts: new Date(now) }), // no ContainerState row
+    ]);
+    const stateFindMany = jest.fn().mockResolvedValue([
+      { containerName: "web", exitCode: 137, oomKilled: true, restartCount: 12, health: "unhealthy", finishedAt: new Date(now) },
+    ]);
+    const { svc } = make(findMany, undefined, stateFindMany);
+    const out = await svc.forServer("s1");
+    expect(stateFindMany.mock.calls[0][0].where).toEqual({ serverId: "s1" });
+    const web = out.containers.find((c) => c.name === "web")!;
+    expect(web).toMatchObject({ restartCount: 12, exitCode: 137, oomKilled: true, health: "unhealthy" });
+    expect(web.finishedAt).toBe(new Date(now).toISOString());
+    const lonely = out.containers.find((c) => c.name === "lonely")!;
+    expect(lonely.restartCount).toBeUndefined();
+    expect(lonely.exitCode).toBeUndefined();
   });
 
   it("maps samples to rows (name→containerName, id→containerId, BigInt-rounded byte fields)", async () => {

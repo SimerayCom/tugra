@@ -5,7 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ServerContainersCard } from "./server-containers-card";
 import { api } from "../lib/api";
-import type { ContainerInventoryRow, ServerContainers } from "../lib/types";
+import type { ContainerInventoryRow, HostContainer, ServerContainers } from "../lib/types";
 
 afterEach(cleanup);
 
@@ -49,5 +49,28 @@ describe("ServerContainersCard", () => {
     vi.spyOn(api, "getServerContainers").mockRejectedValue(new Error("boom"));
     wrap(<ServerContainersCard id="s1" />);
     await waitFor(() => expect(screen.getByText(/No containers running/)).toBeTruthy());
+  });
+
+  it("badges a running-but-crash-looping container with restart count + unhealthy, and never 'Exit' while running", async () => {
+    vi.spyOn(api, "getServerContainers").mockResolvedValue({
+      containers: [row({ name: "tugra_app1", restartCount: 42, exitCode: 137, oomKilled: false, health: "unhealthy" })],
+    });
+    wrap(<ServerContainersCard id="s1" />);
+    await waitFor(() => expect(screen.getByText("Restarts 42")).toBeTruthy());
+    expect(screen.getByText("Unhealthy")).toBeTruthy();
+    expect(screen.queryByText("Exit 137")).toBeNull(); // running guard: no stale Exit on a live row
+  });
+
+  it("badges a stopped container with Exit code + OOM (writer sees the host-wide list)", async () => {
+    vi.spyOn(api, "getServerContainers").mockResolvedValue({ containers: [] });
+    const stopped: HostContainer = {
+      name: "worker", label: "worker", kind: "other", state: "exited",
+      exitCode: 137, oomKilled: true, restartCount: 3, health: null, finishedAt: null,
+    };
+    vi.spyOn(api, "getServerContainersAll").mockResolvedValue({ containers: [stopped] });
+    wrap(<ServerContainersCard id="s1" canWrite />);
+    await waitFor(() => expect(screen.getByText("Exit 137")).toBeTruthy());
+    expect(screen.getByText("OOM")).toBeTruthy();
+    expect(screen.getByText("Restarts 3")).toBeTruthy();
   });
 });

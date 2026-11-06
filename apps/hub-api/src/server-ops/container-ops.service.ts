@@ -27,6 +27,13 @@ export interface HostContainer {
   kind: ContainerInventoryRow["kind"];
   label: string;
   resourceId?: string;
+  // Last-known crash/health state from the container-health poll (ContainerState), joined in so a
+  // stopped container can be badged "Exit 137" / "OOM" / restart count. Absent when not yet recorded.
+  restartCount?: number;
+  exitCode?: number;
+  oomKilled?: boolean;
+  health?: string | null;
+  finishedAt?: string | null;
 }
 
 /**
@@ -109,6 +116,23 @@ export class ContainerOpsService {
     await this.access.requirePermission(userId, server.teamId, "servers:ops");
     if (!this.agentWs.isOnline(serverId)) throw new ServiceUnavailableException("agent offline");
     const containers = await this.liveInventory(serverId);
+    // Enrich with last-known crash/health state (exit code, OOM, restart count, health) from the
+    // container-health poll so a stopped/crashed container can be badged. DB-only, best-effort: join in
+    // list() (NOT liveInventory — action() shares that path and doesn't need the extra query).
+    const states = await this.prisma.containerState.findMany({
+      where: { serverId },
+      select: { containerName: true, exitCode: true, oomKilled: true, restartCount: true, health: true, finishedAt: true },
+    });
+    const stateByName = new Map(states.map((s) => [s.containerName, s]));
+    for (const c of containers) {
+      const st = stateByName.get(c.name);
+      if (!st) continue;
+      c.exitCode = st.exitCode;
+      c.oomKilled = st.oomKilled;
+      c.restartCount = st.restartCount;
+      c.health = st.health;
+      c.finishedAt = st.finishedAt ? st.finishedAt.toISOString() : null;
+    }
     containers.sort((a, b) => a.label.localeCompare(b.label));
     return { containers };
   }

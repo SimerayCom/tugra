@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { fmtBytes } from "../lib/fleet";
 import { metricTone } from "../lib/fleet-view";
+import { containerBadges } from "../lib/container-badges";
 import type { ContainerInventoryRow, HostContainer } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, Spinner, Badge, Btn } from "./ui";
@@ -173,13 +174,18 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
   return (
     <tr style={{ borderBottom: "1px solid var(--c-bd)" }}>
       <Td>
-        <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           {href ? (
             <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link>
           ) : (
             row.label
           )}
           {row.kind === "system" && <Badge tone="muted">system</Badge>}
+          {/* These rows are running (they reported docker stats), so pass status=running: the exit badge
+              is suppressed here and belongs to the stopped list; restarts/unhealthy/OOM still surface. */}
+          {containerBadges({ ...row, status: "running" }).map((b) => (
+            <Badge key={b.key} tone={b.tone}>{t(`servers.badge_${b.key}`, b.vars)}</Badge>
+          ))}
         </div>
         <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>
@@ -232,9 +238,14 @@ function StoppedRow({ row, canWrite, busy, onStart, onRemove }: {
         <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>
       <Td colSpan={4}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <Badge tone="muted">{t("servers.stopped")}</Badge>
           <span className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)" }}>{row.state}</span>
+          {/* A dead container is where "Exit 137" / "OOM" matter most — pass the real docker state so the
+              exit badge fires for an exited container. */}
+          {containerBadges({ ...row, status: row.state }).map((b) => (
+            <Badge key={b.key} tone={b.tone}>{t(`servers.badge_${b.key}`, b.vars)}</Badge>
+          ))}
         </span>
       </Td>
       {canWrite && (
