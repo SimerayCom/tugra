@@ -632,6 +632,37 @@ export interface HostContainers {
   containers: HostContainer[];
 }
 
+// Read-only runtime view of an app's containers + recent crash/OOM episodes, surfaced from the
+// container-health poll (ContainerState / ContainerEvent). Dates are ISO strings. The raw log tail is
+// gated server-side: `logTail` is null + `logRedacted` true for callers without read:secrets + apps:config.
+export interface ContainerRuntimeState {
+  containerName: string;
+  status: string;
+  exitCode: number;
+  oomKilled: boolean;
+  restartCount: number;
+  health: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+export interface ContainerCrashEvent {
+  id: string;
+  containerName: string;
+  ts: string;
+  kind: string; // "crash" | "oom"
+  exitCode: number;
+  oomKilled: boolean;
+  restartCount: number;
+  restartDelta: number;
+  reason: string | null;
+  logTail: string | null;
+  logRedacted: boolean;
+}
+export interface AppRuntimeState {
+  containers: ContainerRuntimeState[];
+  events: ContainerCrashEvent[];
+}
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;

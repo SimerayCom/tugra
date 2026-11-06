@@ -1,9 +1,35 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { FolderTree } from "lucide-react";
-import { Btn, EmptyState } from "./ui";
+import { Btn, EmptyState, Badge } from "./ui";
 
 afterEach(cleanup);
+
+describe("Badge", () => {
+  it("defaults to the muted tone", () => {
+    render(<Badge>system</Badge>);
+    const el = screen.getByText("system");
+    expect(el.style.color).toContain("--c-tx3");
+  });
+
+  it("paints the danger tone from the red token (for Exit/OOM)", () => {
+    render(<Badge tone="danger">Exit 137</Badge>);
+    const el = screen.getByText("Exit 137");
+    expect(el.style.color).toContain("--c-r");
+    expect(el.style.background).toContain("--c-r");
+  });
+
+  it("paints warn (amber) and ok (green) tones", () => {
+    render(
+      <>
+        <Badge tone="warn">Restarts 3</Badge>
+        <Badge tone="ok">running</Badge>
+      </>,
+    );
+    expect(screen.getByText("Restarts 3").style.color).toContain("--c-am");
+    expect(screen.getByText("running").style.color).toContain("--c-g");
+  });
+});
 
 describe("EmptyState", () => {
   it("renders plain children as the description (backward compatible)", () => {
