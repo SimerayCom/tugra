@@ -64,6 +64,7 @@ const EVENT_LABEL: Record<string, string> = {
   docker_cleanup_failed: "eventDockerCleanupFailed",
   container_crashed: "eventContainerCrashed",
   container_oom: "eventContainerOom",
+  container_unhealthy: "eventContainerUnhealthy",
 };
 
 export default function NotificationsPage() {

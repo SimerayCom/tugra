@@ -117,6 +117,7 @@ const REGISTRY: Record<string, EventTemplate> = {
   docker_cleanup_failed: dockerCleanupTemplate,
   container_crashed: containerTemplate,
   container_oom: containerTemplate,
+  container_unhealthy: containerTemplate,
   monitor_up: monitorTemplate,
   monitor_down: monitorTemplate,
   test: testTemplate,

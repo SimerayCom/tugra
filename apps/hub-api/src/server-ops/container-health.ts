@@ -64,6 +64,9 @@ export interface PrevState {
   lastNotifiedKey: string | null;
   lastNotifiedAt: number | null; // epoch ms
   restartCountAtNotify: number;
+  health: string | null; // prior HEALTHCHECK status — needed to detect a healthy→unhealthy transition
+  unhealthySince: number | null; // epoch ms the container has been continuously unhealthy (else null)
+  healthNotifiedAt: number | null; // epoch ms of the last unhealthy alert — own cooldown, separate from crash
 }
 export interface NextState {
   containerId: string;
@@ -78,8 +81,10 @@ export interface NextState {
   lastNotifiedKey: string | null;
   lastNotifiedAt: number | null;
   restartCountAtNotify: number;
+  unhealthySince: number | null;
+  healthNotifiedAt: number | null;
 }
-export type FireKind = "container_crashed" | "container_oom";
+export type FireKind = "container_crashed" | "container_oom" | "container_unhealthy";
 /** A distinct crash/OOM episode to append to the ContainerEvent timeline (recorded regardless of the
  *  notification cooldown, so the history is complete even when alerts are throttled). */
 export interface RecordableEvent {
@@ -93,6 +98,9 @@ export interface RecordableEvent {
 }
 export interface DiffResult {
   fire: { type: FireKind; exitCode: number; oomKilled: boolean; restartDelta: number } | null;
+  /** An unhealthy-healthcheck alert, fired once on the transition INTO `unhealthy` (independent of a
+   *  crash/OOM in the same tick, with its own cooldown). */
+  healthFire: { type: "container_unhealthy"; unhealthySince: number | null } | null;
   event: RecordableEvent | null;
   next: NextState;
 }
@@ -222,8 +230,35 @@ export function diffContainerStates(prev: PrevState | undefined, cur: ContainerS
     // else: suppressed (same death or within cooldown) — state still advances below so the loop is tracked.
   }
 
+  // Unhealthy-healthcheck alert — ORTHOGONAL to crash/OOM. Fire once on the transition INTO `unhealthy`
+  // (prev was healthy/starting/null/unknown), deduped by its OWN cooldown so a flapping healthcheck can't
+  // spam. Docker's HEALTHCHECK retries already debounce `unhealthy` (N consecutive probe failures), so the
+  // transition is a real signal. `unhealthySince` tracks the continuous-unhealthy start (cleared on recovery).
+  const prevUnhealthySince = recreated ? null : prev!.unhealthySince;
+  const prevHealthNotifiedAt = recreated ? null : prev!.healthNotifiedAt;
+  const isUnhealthy = cur.health === "unhealthy";
+  // `unhealthySince` marks the start of the CURRENT continuous-unhealthy episode (carried across ticks,
+  // cleared on recovery). A recreated container (new id) resets it, so a fresh container's clock starts now.
+  const unhealthySince = isUnhealthy ? (prevUnhealthySince ?? opts.now) : null;
+  let healthNotifiedAt = prevHealthNotifiedAt;
+  let healthFire: DiffResult["healthFire"] = null;
+  if (isUnhealthy && unhealthySince != null) {
+    // Fire once per EPISODE, not merely on the healthy→unhealthy edge: the episode is "already alerted" only
+    // if the last alert happened at/after it began. So a transition that was suppressed by the cooldown (a
+    // quick flap) still fires on the first tick after the cooldown expires while the container stays unhealthy
+    // — otherwise a flap-then-stuck container would stay broken for hours with no alert. A genuine continuous
+    // episode alerts exactly once (no 15-min nagging), unlike a crash LOOP whose every restart is a new death.
+    const episodeAlreadyAlerted = prevHealthNotifiedAt != null && prevHealthNotifiedAt >= unhealthySince;
+    const inHealthCooldown = prevHealthNotifiedAt != null && opts.now - prevHealthNotifiedAt < COOLDOWN_MS;
+    if (!episodeAlreadyAlerted && !inHealthCooldown) {
+      healthFire = { type: "container_unhealthy", unhealthySince };
+      healthNotifiedAt = opts.now;
+    }
+  }
+
   return {
     fire,
+    healthFire,
     event,
     next: {
       containerId: cur.id,
@@ -238,6 +273,8 @@ export function diffContainerStates(prev: PrevState | undefined, cur: ContainerS
       lastNotifiedKey,
       lastNotifiedAt,
       restartCountAtNotify,
+      unhealthySince,
+      healthNotifiedAt,
     },
   };
 }

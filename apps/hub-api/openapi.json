@@ -5090,7 +5090,8 @@
                         "docker_cleanup_success",
                         "docker_cleanup_failed",
                         "container_crashed",
-                        "container_oom"
+                        "container_oom",
+                        "container_unhealthy"
                       ]
                     }
                   },
@@ -5285,7 +5286,8 @@
                         "docker_cleanup_success",
                         "docker_cleanup_failed",
                         "container_crashed",
-                        "container_oom"
+                        "container_oom",
+                        "container_unhealthy"
                       ]
                     }
                   },
