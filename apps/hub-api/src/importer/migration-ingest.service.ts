@@ -16,7 +16,9 @@ import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { BackupsService } from "../backups/backups.service";
 import { DatabasesService } from "../databases/databases.service";
+import { VolumeBackupsService } from "../volume-backups/volume-backups.service";
 import { assertSafeBase } from "./migration-command";
+import { isValidVolumeName, maxDecodedVolumeBytes, maxVolumeBytes, scrubVolumeTail, volStageRef, volumeTimeoutMs } from "./migration-volume";
 import { buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, type MigratorRecipe } from "./migrator-recipe";
 import { ImportExecutorService } from "./import-executor.service";
 import type { MigrationTokenContext } from "./migration-token.service";
@@ -51,6 +53,16 @@ interface Target {
   engine: string;
 }
 
+interface VolumeTarget {
+  opId: string;
+  actorId: string;
+  hubBase?: string; // trusted hub origin captured at mint — NOT from the ingest request
+  appTaskItemRef: string; // the app's DONE provisioning-task itemRef (the rollback-guard join key)
+  app: { id: string; serverId: string; teamId: string };
+  volumeName: string;
+  path: string; // the declared container mount path (for the status view / staged meta)
+}
+
 /**
  * The migration DATA plane, driven by the UNTRUSTED source host (authenticated only by the migration token;
  * {@link MigrationTokenContext} gives opId + actorId, never a destination). The host streams an artifact to
@@ -72,6 +84,7 @@ export class MigrationIngestService {
     private readonly executor: ImportExecutorService,
     private readonly backups: BackupsService,
     private readonly databases: DatabasesService,
+    private readonly volumeBackups: VolumeBackupsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -124,10 +137,23 @@ export class MigrationIngestService {
         }
         targets.push(entry);
       } else if (t.resourceType === "application") {
-        targets.push({ itemRef: t.itemRef, kind: "application", volumeIngest: "requires-S7" });
+        // Declared volume mounts recorded by runCopyApp (destination slug + container path; no host paths).
+        // Advertise hub-staged ONLY when the declare actually SUCCEEDED (declared > 0 and no error): on a
+        // setVolumes failure runCopyApp keeps `mounts` populated but sets declared=0/error, and the volume is
+        // NOT in the live app.volumes column — so resolveVolumeTarget would 404 on a PUT. Don't advertise those.
+        const res = t.result && typeof t.result === "object" ? (t.result as { volumes?: { mounts?: Array<{ path: string; name: string }>; declared?: number; error?: string } }).volumes : undefined;
+        const declaredOk = !!res && !res.error && (res.declared ?? 0) > 0 && Array.isArray(res.mounts);
+        const volumes = declaredOk ? res!.mounts!.map((m) => ({ name: m.name, path: m.path })) : [];
+        targets.push({
+          itemRef: t.itemRef,
+          kind: "application",
+          volumes,
+          volumeIngest: volumes.length ? "hub-staged" : "none",
+          ...(volumes.length ? {} : { reason: res?.error ? "volume declaration failed — re-run the import" : "no volume declared on this app" }),
+        });
       }
     }
-    return { opId: op.opId, targets, maxArtifactBytes: this.maxBytes() };
+    return { opId: op.opId, targets, maxArtifactBytes: this.maxBytes(), maxVolumeBytes: maxVolumeBytes() };
   }
 
   /**
@@ -387,5 +413,268 @@ export class MigrationIngestService {
     } catch {
       throw new NotFoundException(); // uniform 404 for every failure (no existence/type oracle)
     }
+  }
+
+  // ── Volume data plane (P3) ───────────────────────────────────────────────────────────────────────────
+  // A hub-side clone of the DB data plane with an app-volume destination. The source host PUTs a gzip tarball
+  // of ONE declared app volume to hub staging; the hub restores it through the existing
+  // VolumeBackupsService.importFromUrl over an HMAC-signed URL the target agent curls. The destination (app +
+  // volume) is resolved ONLY server-side from the op's DONE provisioning task — never from the host — and the
+  // actor is re-authorized per request. The Go migrator automation is deferred (P3b); v1 is driven by the
+  // operator's manual tar + curl (see docs/coolify-migration.md).
+
+  /**
+   * Resolve (appItemRef, volumeName) to a declared volume on the op's provisioned app and RE-authorize the
+   * actor. The app id comes ONLY from the op's DONE `kind:"app"` provisioning task (the host never names it);
+   * a malformed name, an unknown target/volume, a clustered app, or a lost role is refused BEFORE any byte is
+   * read or any agent command is sent.
+   */
+  private async resolveVolumeTarget(op: MigrationTokenContext, appItemRef: string, volumeName: string): Promise<VolumeTarget> {
+    if (typeof appItemRef !== "string" || appItemRef.length === 0 || appItemRef.length > 256) throw new NotFoundException("no such migration target");
+    if (!isValidVolumeName(volumeName)) throw new BadRequestException("invalid volume name"); // reject traversal/charset BEFORE any work
+    const opRow = await this.executor.loadIngestOp(op.opId, op.actorId);
+    const meta = opRow.meta as { serverId: string; hubBase?: string };
+    const task = await this.prisma.bulkTask.findFirst({
+      where: { opId: op.opId, itemRef: appItemRef, status: "DONE", kind: "app", resourceType: "application" },
+      select: { id: true, itemRef: true, resourceId: true },
+    });
+    if (!task || !task.resourceId || !task.itemRef) throw new NotFoundException("no such migration target"); // 404, not 403: no itemRef oracle
+    const app = await this.prisma.application.findUnique({
+      where: { id: task.resourceId },
+      select: { id: true, serverId: true, teamId: true, clusterId: true, volumes: true },
+    });
+    if (!app) throw new ConflictException("destination no longer exists");
+    const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
+    if (!server) throw new ConflictException("target server not found");
+    if (app.serverId !== meta.serverId || app.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
+    // A clustered app's stateful volume lives on its pinned node (constraintServerId), not app.serverId — v1
+    // refuses it rather than mis-targeting the write. Coolify imports normally create non-cluster apps.
+    if (app.clusterId) throw new ConflictException("volume ingest is not supported for clustered apps");
+    const declared = Array.isArray(app.volumes)
+      ? (app.volumes as Array<{ name?: string; path?: string }>).find((v) => v?.name === volumeName)
+      : undefined;
+    if (!declared || typeof declared.path !== "string") throw new NotFoundException("no such volume for this target"); // 404: no volume-name oracle
+    await this.access.requirePermission(op.actorId, server.teamId, "apps:config"); // re-authz EVERY request
+    return {
+      opId: op.opId,
+      actorId: op.actorId,
+      hubBase: meta.hubBase,
+      appTaskItemRef: task.itemRef,
+      app: { id: app.id, serverId: app.serverId, teamId: app.teamId },
+      volumeName,
+      path: declared.path,
+    };
+  }
+
+  /** Find-or-create the per-volume STAGING row (kind:"data", status DONE) whose cuid keys the staged file. */
+  private async ensureVolumeStageRow(opId: string, serverId: string, stageRef: string): Promise<string> {
+    const existing = await this.prisma.bulkTask.findFirst({ where: { opId, itemRef: stageRef }, select: { id: true } });
+    if (existing) return existing.id;
+    try {
+      const created = await this.prisma.bulkTask.create({
+        data: { opId, serverId, kind: "data", itemRef: stageRef, status: "DONE", result: { staged: true }, finishedAt: new Date() },
+      });
+      return created.id;
+    } catch {
+      const row = await this.prisma.bulkTask.findFirst({ where: { opId, itemRef: stageRef }, select: { id: true } }); // @@unique race (P2002)
+      if (!row) throw new ConflictException("could not stage the volume — retry");
+      return row.id;
+    }
+  }
+
+  /** Stream an app-volume tarball to hub staging (gzip-capped), hashing it; the hub records its OWN sha256/bytes. */
+  async stageVolume(op: MigrationTokenContext, appItemRef: string, volumeName: string, req: RawReq, opts: { gzip: boolean }): Promise<unknown> {
+    const ctx = await this.resolveVolumeTarget(op, appItemRef, volumeName); // authz + resolution BEFORE reading the body
+    const stageRef = volStageRef(ctx.appTaskItemRef, volumeName);
+    const stageTaskId = await this.ensureVolumeStageRow(op.opId, ctx.app.serverId, stageRef);
+    const lockKey = `${op.opId}:${stageTaskId}`;
+    if (this.uploadLocks.has(lockKey)) throw new ConflictException("an upload is already in progress for this item");
+    this.uploadLocks.add(lockKey);
+    try {
+      if (await this.dataRunning(op.opId, stageRef)) throw new ConflictException("a restore is in progress for this item");
+      const ctype = String(req.headers["content-type"] ?? "");
+      if (!ctype.includes("application/octet-stream")) throw new UnsupportedMediaTypeException("expected application/octet-stream");
+      const len = Number(req.headers["content-length"]);
+      if (!Number.isFinite(len) || len <= 0) throw new HttpException("Content-Length is required", HttpStatus.LENGTH_REQUIRED);
+      const cap = maxVolumeBytes();
+      if (len > cap) throw new PayloadTooLargeException(`the volume exceeds the ${cap}-byte cap — copy a larger volume manually (tar + rsync/scp) before the first deploy`);
+      await assertDiskHeadroom(len).catch((e) => {
+        if ((e as { code?: string }).code === "ENOSPC") throw new HttpException("insufficient staging storage", 507);
+        throw e;
+      });
+
+      let part: { bytes: number; sha256: string; head: number[]; partPath: string };
+      try {
+        part = await stageToPart(op.opId, stageTaskId, req, cap);
+      } catch (e) {
+        if (e instanceof ArtifactTooLargeError) throw new PayloadTooLargeException("the volume exceeds the size cap");
+        if ((e as { code?: string }).code === "ENOSPC") throw new HttpException("insufficient staging storage", 507);
+        throw new BadRequestException("the upload did not complete");
+      }
+      try {
+        if (part.bytes !== len) throw new BadRequestException("uploaded size did not match Content-Length");
+        if (opts.gzip && !looksGzip(part.head)) throw new UnsupportedMediaTypeException("body is not gzip but gzip=1 was declared");
+      } catch (e) {
+        await discardPart(part.partPath);
+        throw e;
+      }
+      await finalizePart(part.partPath, op.opId, stageTaskId);
+      const meta: StagedMeta = {
+        sha256: part.sha256,
+        bytes: part.bytes,
+        gzip: opts.gzip,
+        engine: "VOLUME",
+        kind: "volume",
+        volume: { name: volumeName, path: ctx.path },
+        appId: ctx.app.id,
+        stagedAt: new Date().toISOString(),
+      };
+      try {
+        await writeStagedMeta(op.opId, stageTaskId, meta);
+      } catch (e) {
+        await cleanupArtifact(op.opId, stageTaskId);
+        throw e;
+      }
+      await this.audit.log({ actor: op.actorId, action: "import.migration.ingest", target: op.opId, meta: { itemRef: stageRef, bytes: part.bytes, sha256: part.sha256, step: "staged-volume" } });
+      return { itemRef: stageRef, volume: volumeName, bytes: part.bytes, sha256: part.sha256, gzip: opts.gzip };
+    } finally {
+      this.uploadLocks.delete(lockKey);
+    }
+  }
+
+  /** Restore a staged volume tarball into the app's docker volume (destructive wipe+extract, gated + idempotent). */
+  async restoreVolume(op: MigrationTokenContext, appItemRef: string, volumeName: string, opts: { resync: boolean }): Promise<unknown> {
+    const ctx = await this.resolveVolumeTarget(op, appItemRef, volumeName);
+    const base = this.agentBase(ctx.hubBase); // resolve + validate BEFORE the claim
+    const stageRef = volStageRef(ctx.appTaskItemRef, volumeName);
+    const stageRow = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: stageRef }, select: { id: true } });
+    if (!stageRow) throw new ConflictException("nothing staged for this item — upload the artifact first");
+    const stageTaskId = stageRow.id;
+    const meta = await readStagedMeta(op.opId, stageTaskId);
+    if (!meta) throw new ConflictException("nothing staged for this item — upload the artifact first");
+    const size = await stagedSize(op.opId, stageTaskId);
+    if (size === null || size !== meta.bytes) throw new ConflictException("the staged artifact is missing — re-upload it");
+
+    // A volume restore WIPES the destination volume. Refuse once the app has EVER been deployed — even with
+    // resync — because a started app may hold data not from this migration. A volume restore itself creates
+    // no Deployment row, so re-syncing an as-imported (never-deployed) app stays allowed.
+    if ((await this.prisma.deployment.count({ where: { appId: ctx.app.id } })) > 0) {
+      throw new ConflictException("the destination was started or holds data not restored by this migration");
+    }
+
+    const dataRef = this.dataRef(stageRef);
+    const existing = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: dataRef } });
+    if (existing) {
+      const running = existing.status === "RUNNING" && existing.startedAt && existing.startedAt.getTime() > Date.now() - STALE_RUNNING_MS;
+      if (running) throw new ConflictException("a restore is already in progress for this item");
+      const prevSha = typeof existing.result === "object" && existing.result ? (existing.result as { sha256?: string }).sha256 : undefined;
+      if (existing.status === "DONE" && prevSha === meta.sha256 && !opts.resync) return { state: "restored", alreadyRestored: true };
+      if (existing.status === "DONE" && prevSha !== meta.sha256 && !opts.resync) {
+        throw new ConflictException("a different artifact is already restored — pass resync=1 to overwrite");
+      }
+    }
+
+    const now = new Date();
+    const steps: Step[] = [{ name: "stage", status: "DONE" }];
+    // Stamp the owning app's itemRef into result AT CLAIM TIME (not only on settle), so the rollback guard can
+    // protect this app's migrated volume data even if the restore ends FAILED or the worker is stale-reaped —
+    // a wipe may have already run on the agent (see runVolumeRestore), and apps.remove does `docker volume rm`.
+    const claimResult = { appItemRef: ctx.appTaskItemRef, volumeName: ctx.volumeName };
+    let dataTaskId: string;
+    if (!existing) {
+      try {
+        const created = await this.prisma.bulkTask.create({
+          data: { opId: op.opId, serverId: ctx.app.serverId, kind: "data", itemRef: dataRef, status: "RUNNING", startedAt: now, steps, result: claimResult },
+        });
+        dataTaskId = created.id;
+      } catch {
+        throw new ConflictException("a restore is already in progress for this item"); // @@unique race (P2002)
+      }
+    } else {
+      const claimed = await this.prisma.bulkTask.updateMany({
+        where: { id: existing.id, OR: [{ status: { in: ["FAILED", "DONE"] } }, { status: "RUNNING", startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } }] },
+        data: { status: "RUNNING", startedAt: now, finishedAt: null, exitCode: null, output: null, steps, result: claimResult },
+      });
+      if (claimed.count !== 1) throw new ConflictException("a restore is already in progress for this item");
+      dataTaskId = existing.id;
+    }
+
+    void this.runVolumeRestore(ctx, meta, dataTaskId, stageTaskId, base, now).catch(() => undefined);
+    return { state: "restoring" };
+  }
+
+  private async runVolumeRestore(ctx: VolumeTarget, meta: StagedMeta, dataTaskId: string, stageTaskId: string, base: string, claimedStart: Date): Promise<void> {
+    const steps: Step[] = [{ name: "stage", status: "DONE" }, { name: "restore", status: "RUNNING" }];
+    const stageRef = volStageRef(ctx.appTaskItemRef, ctx.volumeName);
+    // Terminal writes are FENCED by the claim's startedAt: a stale-takeover re-claim makes our write match 0 rows.
+    const settle = async (data: Record<string, unknown>): Promise<boolean> => {
+      const r = await this.prisma.bulkTask.updateMany({ where: { id: dataTaskId, status: "RUNNING", startedAt: claimedStart }, data });
+      return r.count === 1;
+    };
+    const fail = async (output: string, exitCode: number | null) => {
+      steps[steps.length - 1].status = "FAILED";
+      const won = await settle({
+        status: "FAILED",
+        exitCode,
+        output: scrubVolumeTail(output), // never persist the signed URL curl may have echoed
+        finishedAt: new Date(),
+        steps,
+        result: { sha256: meta.sha256, bytes: meta.bytes, status: "FAILED", appItemRef: ctx.appTaskItemRef, volumeName: ctx.volumeName },
+      });
+      if (won) await this.audit.log({ actor: ctx.actorId, action: "import.migration.ingest", target: ctx.opId, meta: { itemRef: stageRef, resourceId: ctx.app.id, status: "FAILED" } });
+      // A failed restore KEEPS the staged artifact so the host can re-POST to retry without re-uploading.
+    };
+    try {
+      // Re-check the deploy gate as LATE as possible (it was also checked at POST): the wipe+extract is
+      // destructive, so a deploy that started a container on the volume AFTER the 202 must still abort the
+      // wipe. This shrinks the TOCTOU window to the sendCommand round-trip (fully closing it would require the
+      // deploy path to refuse while a data task is RUNNING — deferred to a later phase).
+      if ((await this.prisma.deployment.count({ where: { appId: ctx.app.id } })) > 0) {
+        await fail("the app was deployed during the restore window — refusing to wipe a live volume", null);
+        return;
+      }
+      const { url } = mintArtifactUrl(base, this.secret(), { opId: ctx.opId, taskId: stageTaskId, sha256: meta.sha256 }, Date.now());
+      const res = await this.volumeBackups.importFromUrlDetailed(
+        ctx.actorId,
+        ctx.app.id,
+        { volumeName: ctx.volumeName, url, gzip: meta.gzip, encrypted: false },
+        { timeoutMs: volumeTimeoutMs(meta.bytes), maxDecodedBytes: maxDecodedVolumeBytes(meta.bytes) },
+      );
+      if (!res.ok) {
+        // The wipe+extract may have run partially before the agent reported failure → tell the operator not to deploy yet.
+        await fail(res.tail || "volume restore failed — the volume may be partial, re-run restore before the first deploy", res.exitCode);
+        return;
+      }
+      steps[steps.length - 1].status = "DONE";
+      const won = await settle({
+        status: "DONE",
+        exitCode: 0,
+        finishedAt: new Date(),
+        steps,
+        result: { sha256: meta.sha256, bytes: meta.bytes, status: "SUCCESS", appItemRef: ctx.appTaskItemRef, volumeName: ctx.volumeName },
+      });
+      if (won) {
+        await this.audit.log({ actor: ctx.actorId, action: "import.migration.ingest", target: ctx.opId, meta: { itemRef: stageRef, resourceId: ctx.app.id, status: "SUCCESS", bytes: meta.bytes } });
+        await cleanupArtifact(ctx.opId, stageTaskId); // only a WON success removes staging (closes the dl window)
+      }
+    } catch (e) {
+      await fail(e instanceof Error ? e.message : "restore failed", null);
+    }
+  }
+
+  /** Coarse per-volume state for the source host to poll (never a leaked tail). */
+  async volumeStatus(op: MigrationTokenContext, appItemRef: string, volumeName: string): Promise<unknown> {
+    const ctx = await this.resolveVolumeTarget(op, appItemRef, volumeName);
+    const stageRef = volStageRef(ctx.appTaskItemRef, volumeName);
+    const stageRow = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: stageRef }, select: { id: true } });
+    const sib = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: this.dataRef(stageRef) } });
+    const meta = stageRow ? await readStagedMeta(op.opId, stageRow.id) : null;
+    let state: string;
+    if (sib?.status === "RUNNING") state = "restoring";
+    else if (sib?.status === "DONE") state = "restored";
+    else if (sib?.status === "FAILED") state = "failed";
+    else state = meta ? "staged" : "none";
+    const curStep = Array.isArray(sib?.steps) ? (sib!.steps as Step[]).find((s) => s.status === "RUNNING")?.name : undefined;
+    return { itemRef: stageRef, volume: volumeName, state, step: curStep, bytes: meta?.bytes, sha256: meta?.sha256, exitCode: sib?.exitCode ?? undefined, ownership: "not-preserved" };
   }
 }

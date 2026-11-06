@@ -161,13 +161,13 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
 function bindVolumeMessage(carried: boolean): string {
   return carried
     ? "host bind-mounts are not carried over (only named volumes are re-attached); their data stays on the host"
-    : "host bind-mounts are declared as EMPTY named volumes at the same container path; the source host folder is not mounted on the target and its data is not copied";
+    : "host bind-mounts are declared as EMPTY named volumes at the same container path; upload their DATA to the hub before the first deploy (tar the source folder + curl, up to the size cap; host file ownership is not preserved, larger folders are copied manually) — the source host folder itself is not mounted on the target";
 }
 
 function namedVolumeMessage(carried: boolean): string {
   return carried
     ? "named volume is re-attached to the adopted container by its original name on redeploy (data is not copied, and it is not removed with the app)"
-    : "an EMPTY named volume is declared on the target app at the container path; its data is NOT copied by this import — copy it before the first deploy or the app starts empty";
+    : "an EMPTY named volume is declared on the target app at the container path; upload its DATA to the hub before the first deploy (tar the source volume + curl, up to the size cap; larger volumes are copied manually) or the app starts empty";
 }
 
 function planVolume(vol: ForeignVolume, serverRef: string | undefined, carried: boolean): ImportPlanItem {
@@ -178,12 +178,12 @@ function planVolume(vol: ForeignVolume, serverRef: string | undefined, carried: 
   if (vol.type === "bind") {
     risks.push({ level: "warn", code: "volume.bind", message: carried
       ? "host bind-mount is not carried over (only named volumes are re-attached); its data stays on the host"
-      : "host bind-mount — the source host folder is not mounted on the target and its data is not copied by this import" });
+      : "host bind-mount — the source host folder is not mounted on the target; copy its data to the target before the first deploy (ownership not preserved)" });
   }
   if (vol.type === "named") {
     risks.push({ level: "warn", code: "volume.named", message: carried
       ? namedVolumeMessage(true)
-      : "named volume — its data is NOT copied by this import; copy it to the target before the first deploy or the app starts empty" });
+      : "named volume — its data is not moved automatically; copy it to the target before the first deploy (upload a declared app volume to the hub, else copy it manually) or the app starts empty" });
   }
   return {
     itemRef: ns("volume", serverRef, volKey(vol)),

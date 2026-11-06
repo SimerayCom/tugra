@@ -35,6 +35,7 @@ describe("Importer migration DATA ingest (e2e)", () => {
   const commands: string[] = [];
   const reply = { exitCode: 0, output: "" };
   let holdRestore = false;
+  let holdVolume = false;
   let held: { reqId: string } | null = null;
 
   const api = () => app.getHttpServer();
@@ -77,7 +78,7 @@ describe("Importer migration DATA ingest (e2e)", () => {
           resolve();
         } else if (msg.type === "command") {
           commands.push(msg.command);
-          if (holdRestore && /pg_restore/.test(msg.command)) {
+          if ((holdRestore && /pg_restore/.test(msg.command)) || (holdVolume && /--no-same-owner/.test(msg.command))) {
             held = { reqId: msg.reqId }; // keep the restore in-flight so the dl window stays open (not the provision)
             return;
           }
@@ -272,11 +273,169 @@ describe("Importer migration DATA ingest (e2e)", () => {
     await prisma.database.deleteMany({ where: { id: otherDb } }).catch(() => undefined);
   });
 
-  it("gates volume ingest behind S7 (501) and leaks no token/url/sig anywhere", async () => {
-    const vol = await request(api()).post(`/api/v1/import/migration/artifacts/${encodeURIComponent(ITEM)}/volumes/data`).set(H()).expect(501);
-    expect(vol.body).toMatchObject({ requires: "S7" });
-    const audits = await prisma.auditLog.findMany({ where: { target: opId } });
-    expect(JSON.stringify(audits)).not.toContain(migToken);
-    expect(JSON.stringify(audits)).not.toMatch(/sig=|\/dl\//);
+  // ── Volume data plane (P3) ─────────────────────────────────────────────────────────────────────────
+  describe("volume ingest (P3)", () => {
+    const APPITEM = "app:_:volapp";
+    const gz = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 1, 2, 3, 4, 5, 6, 7, 8]); // gzip magic + filler
+    let appId = "";
+    const putVol = (name: string, body: Buffer, q = "gzip=1") =>
+      request(api()).put(`/api/v1/import/migration/artifacts/${encodeURIComponent(APPITEM)}/volumes/${name}?${q}`).set(H()).set("Content-Type", "application/octet-stream").send(body);
+    const restoreVol = (name: string, q = "") =>
+      request(api()).post(`/api/v1/import/migration/artifacts/${encodeURIComponent(APPITEM)}/volumes/${name}/restore${q}`).set(H());
+    const volStatus = (name: string) =>
+      request(api()).get(`/api/v1/import/migration/artifacts/${encodeURIComponent(APPITEM)}/volumes/${name}/status`).set(H());
+    async function waitVol(name: string, want: string, tries = 80): Promise<void> {
+      for (let i = 0; i < tries; i++) {
+        if ((await volStatus(name)).body.state === want) return;
+        await sleep(50);
+      }
+      throw new Error(`volume state never became ${want}`);
+    }
+
+    beforeAll(async () => {
+      const envId = (await prisma.database.findUnique({ where: { id: dbId } }))!.environmentId;
+      const appRow = await prisma.application.create({
+        data: { name: "volapp", teamId, serverId, environmentId: envId, env: [], volumes: [{ name: "data", path: "/data" }] },
+      });
+      appId = appRow.id;
+      await prisma.bulkTask.create({
+        data: { opId, serverId, kind: "app", itemRef: APPITEM, status: "DONE", resourceType: "application", resourceId: appId, result: { name: "volapp", appId, volumes: { declared: 1, skipped: 0, mounts: [{ name: "data", path: "/data" }] } } },
+      });
+      // A second app with NO declared volume, to prove /targets reports volumeIngest:'none'.
+      const bareRow = await prisma.application.create({ data: { name: "bareapp", teamId, serverId, environmentId: envId, env: [], volumes: [] } });
+      await prisma.bulkTask.create({ data: { opId, serverId, kind: "app", itemRef: "app:_:bareapp", status: "DONE", resourceType: "application", resourceId: bareRow.id, result: { name: "bareapp", appId: bareRow.id } } });
+    });
+
+    afterAll(async () => {
+      await prisma.application.deleteMany({ where: { teamId, name: { in: ["volapp", "bareapp"] } } }).catch(() => undefined);
+    });
+
+    it("lists the app target with its declared volume + the live cap, and 'none' for a volume-less app", async () => {
+      const res = await request(api()).get("/api/v1/import/migration/targets").set(H()).expect(200);
+      expect(res.body.maxVolumeBytes).toBe(256 * 1024 * 1024);
+      const volapp = res.body.targets.find((t: { itemRef: string }) => t.itemRef === APPITEM);
+      expect(volapp).toMatchObject({ kind: "application", volumeIngest: "hub-staged", volumes: [{ name: "data", path: "/data" }] });
+      const bare = res.body.targets.find((t: { itemRef: string }) => t.itemRef === "app:_:bareapp");
+      expect(bare).toMatchObject({ kind: "application", volumeIngest: "none" });
+      expect(JSON.stringify(res.body)).not.toContain(appId); // no resource id leaked
+    });
+
+    it("rejects a malformed volume name (400) and an undeclared one (404) before reading any body", async () => {
+      await putVol("..", gz).expect(400); // traversal
+      await putVol("Data", gz).expect(400); // uppercase
+      await putVol("nope", gz).expect(404); // valid syntax, not declared on the app
+      await request(api()).get(`/api/v1/import/migration/artifacts/${encodeURIComponent(ITEM)}/volumes/data/status`).set(H()).expect(404); // a DB itemRef is not an app target
+    });
+
+    it("stages a volume tarball with the HUB-computed bytes + sha256", async () => {
+      const res = await putVol("data", gz).expect(201);
+      expect(res.body).toMatchObject({ volume: "data", bytes: gz.length, sha256: sha(gz), itemRef: `vol:${APPITEM}:data` });
+    });
+
+    it("rejects a non-gzip body declared gzip=1, a missing Content-Length is 411, and over-cap is 413", async () => {
+      await putVol("data", Buffer.from("not gzip at all")).expect(415);
+      process.env.MIGRATION_MAX_VOLUME_BYTES = "4";
+      try {
+        await putVol("data", gz).expect(413);
+      } finally {
+        delete process.env.MIGRATION_MAX_VOLUME_BYTES;
+      }
+    });
+
+    it("restores into the app volume, serves the signed URL only during the window, wipes+extracts with --no-same-owner", async () => {
+      await putVol("data", gz).expect(201);
+      commands.length = 0;
+      holdVolume = true;
+      await restoreVol("data").expect(202);
+      for (let i = 0; i < 120 && !held; i++) await sleep(20);
+      expect(held).not.toBeNull();
+      expect((await volStatus("data")).body.state).toBe("restoring");
+
+      const cmd = commands.find((c) => c.includes("--no-same-owner"))!;
+      expect(cmd).toMatch(new RegExp(`tugra_appv_${appId}_data`)); // the exact docker volume name
+      expect(cmd).toMatch(/gunzip/);
+      expect(cmd).toMatch(/find \. -mindepth 1 -delete/);
+      const url = /curl -fsSL '([^']+)'/.exec(cmd)![1];
+      const u = new URL(url);
+      expect(u.host).toBe(`127.0.0.1:${port}`); // trusted mint-captured base
+      const dl = await request(api()).get(u.pathname + u.search).expect(200);
+      expect(Buffer.from(dl.body).length || dl.text.length).toBeGreaterThan(0);
+
+      agent.send(JSON.stringify({ type: "command_result", reqId: held!.reqId, exitCode: 0, output: "" }));
+      held = null;
+      holdVolume = false;
+      await waitVol("data", "restored");
+
+      const dataTask = await prisma.bulkTask.findFirst({ where: { opId, itemRef: `data:vol:${APPITEM}:data` } });
+      expect(dataTask).toMatchObject({ status: "DONE", kind: "data" });
+      expect(dataTask!.result).toMatchObject({ status: "SUCCESS", appItemRef: APPITEM, volumeName: "data", sha256: sha(gz) });
+      const st = await volStatus("data").expect(200);
+      expect(st.body).toMatchObject({ state: "restored", ownership: "not-preserved" });
+      await request(api()).get(u.pathname + u.search).expect(404); // dl dead after the window + cleanup
+    });
+
+    it("is idempotent: same sha → alreadyRestored, different sha needs resync=1", async () => {
+      commands.length = 0;
+      await putVol("data", gz).expect(201);
+      const r = await restoreVol("data").expect(202);
+      expect(r.body).toMatchObject({ state: "restored", alreadyRestored: true });
+      expect(commands.some((c) => c.includes("--no-same-owner"))).toBe(false); // no new restore ran
+
+      const gz2 = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 9, 9, 9, 9]);
+      await putVol("data", gz2).expect(201);
+      await restoreVol("data").expect(409); // different sha, no resync
+      await restoreVol("data", "?resync=1").expect(202);
+      await waitVol("data", "restored");
+    });
+
+    it("surfaces a failed restore (no leaked url/sig), keeps the staged file, then allows a retry", async () => {
+      await putVol("data", gz, "gzip=1").expect(201);
+      reply.exitCode = 1;
+      reply.output = "tar: error at https://127.0.0.1/api/v1/import/migration/dl/x.bin?sig=LEAK";
+      await restoreVol("data", "?resync=1").expect(202);
+      await waitVol("data", "failed");
+      const failed = await prisma.bulkTask.findFirst({ where: { opId, itemRef: `data:vol:${APPITEM}:data` } });
+      expect(String(failed!.output)).not.toMatch(/https?:\/\/|sig=LEAK/); // scrubbed on the task
+      const st = await volStatus("data").expect(200);
+      expect(JSON.stringify(st.body)).not.toContain("LEAK"); // coarse status never carries the tail
+      reply.exitCode = 0;
+      reply.output = "";
+      await restoreVol("data", "?resync=1").expect(202); // staged file kept → re-restorable without re-upload
+      await waitVol("data", "restored");
+    });
+
+    it("refuses a volume restore once the app has been deployed (even with resync)", async () => {
+      await putVol("data", gz).expect(201);
+      await prisma.deployment.create({ data: { appId } }); // any deployment row marks the app as "started"
+      try {
+        await restoreVol("data", "?resync=1").expect(409);
+      } finally {
+        await prisma.deployment.deleteMany({ where: { appId } }).catch(() => undefined);
+      }
+    });
+
+    it("rollback does NOT tear down an app whose volume data this migration touched — even a FAILED data task", async () => {
+      const envId = (await prisma.database.findUnique({ where: { id: dbId } }))!.environmentId;
+      const rbApp = await prisma.application.create({ data: { name: "rbapp", teamId, serverId, environmentId: envId, env: [], volumes: [{ name: "data", path: "/data" }] } });
+      const rbOp = await prisma.bulkOperation.create({ data: { actorId: userAId, command: "", kind: "import", planId: "h", meta: { sourceKind: "coolify", serverId } } });
+      const RB = "app:_:rbapp";
+      const appTask = await prisma.bulkTask.create({ data: { opId: rbOp.id, serverId, kind: "app", itemRef: RB, status: "DONE", resourceType: "application", resourceId: rbApp.id, result: { appId: rbApp.id } } });
+      // A FAILED restore still stamps appItemRef (at claim time) — a failed resync can leave the earlier good
+      // data, or a mid-extract failure partial data, so rollback must NOT `docker volume rm` it.
+      await prisma.bulkTask.create({ data: { opId: rbOp.id, serverId, kind: "data", itemRef: `data:vol:${RB}:data`, status: "FAILED", result: { status: "FAILED", appItemRef: RB, volumeName: "data" } } });
+      await request(api()).post(`/api/v1/import/operations/${rbOp.id}/rollback`).set("Authorization", `Bearer ${tokenA}`).expect(201);
+      expect(await prisma.application.findUnique({ where: { id: rbApp.id } })).not.toBeNull(); // not torn down
+      const after = await prisma.bulkTask.findUnique({ where: { id: appTask.id } });
+      expect(after!.status).toBe("DONE"); // kept DONE, not ROLLED_BACK
+      expect(String(after!.output)).toMatch(/volume data was restored/i);
+      await prisma.bulkOperation.deleteMany({ where: { id: rbOp.id } }).catch(() => undefined);
+      await prisma.application.deleteMany({ where: { id: rbApp.id } }).catch(() => undefined);
+    });
+
+    it("leaks no token/url/sig in the audit log", async () => {
+      const audits = await prisma.auditLog.findMany({ where: { target: opId } });
+      expect(JSON.stringify(audits)).not.toContain(migToken);
+      expect(JSON.stringify(audits)).not.toMatch(/sig=|\/dl\//);
+    });
   });
 });

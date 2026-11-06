@@ -34,8 +34,13 @@ export interface StagedMeta {
   sha256: string;
   bytes: number;
   gzip: boolean;
-  engine: string;
+  engine: string; // "VOLUME" for an app-volume tarball (P3), otherwise the DB engine
   pgFormat?: "custom" | "sql";
+  // Additive (P3 volume ingest): set only when this artifact is an app-volume tarball, so serve/restore can
+  // tell a volume staging apart from a DB dump. Absent on DB artifacts → byte-identical to before.
+  kind?: "volume";
+  volume?: { name: string; path: string };
+  appId?: string;
   stagedAt: string;
 }
 

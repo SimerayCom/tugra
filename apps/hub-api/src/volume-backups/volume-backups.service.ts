@@ -110,8 +110,25 @@ export class VolumeBackupsService {
    * Import an app volume's data from an external tar(.gz) URL (migrator data-pull).
    * OVERWRITES the target volume. The volume must be one the app declares (no writing to an
    * arbitrary docker volume). The agent fetches the URL on the target server (no hub proxying).
+   * `opts.timeoutMs` lets the migration ingest scale the restore window to the artifact size (default 5 min).
    */
-  async importFromUrl(userId: string, appId: string, input: VolumeImportFromUrlInput): Promise<void> {
+  async importFromUrl(userId: string, appId: string, input: VolumeImportFromUrlInput, opts: { timeoutMs?: number; maxDecodedBytes?: number } = {}): Promise<void> {
+    const res = await this.importFromUrlDetailed(userId, appId, input, opts);
+    if (!res.ok) throw new BadGatewayException("volume import failed");
+  }
+
+  /**
+   * Same as {@link importFromUrl} but RETURNS the outcome instead of throwing on a non-zero exit, so the
+   * migration ingest can record a useful (capped) failure reason on its data task rather than a bare
+   * "volume import failed". The caller MUST scrub the returned `tail` before persisting it anywhere the
+   * untrusted source host can read (it may echo the signed URL curl printed on error).
+   */
+  async importFromUrlDetailed(
+    userId: string,
+    appId: string,
+    input: VolumeImportFromUrlInput,
+    opts: { timeoutMs?: number; maxDecodedBytes?: number } = {},
+  ): Promise<{ ok: boolean; exitCode: number; tail: string }> {
     const app = await this.requireWrite(userId, appId);
     const declared =
       Array.isArray(app.volumes) &&
@@ -123,18 +140,20 @@ export class VolumeBackupsService {
         encrypted: input.encrypted,
         key: input.encryptionKey ?? "",
         gzip: input.gzip,
+        maxDecodedBytes: opts.maxDecodedBytes, // untrusted-tarball decoded cap (migration ingest only)
       }),
       "backup",
-      300_000,
+      opts.timeoutMs ?? 300_000,
     );
     // sendCommand resolves even on a non-zero exit (it only rejects on agent offline/timeout). A failed
     // import must NOT be reported as success — the script stages to a temp file so the volume is untouched
     // on a fetch/decode failure (see buildVolumeImportScript); surface the failure so the caller/UI learns.
     if (r.exitCode !== 0) {
       await this.audit.log({ actor: userId, action: "app.volume_import_failed", target: appId, meta: { volumeName: input.volumeName } });
-      throw new BadGatewayException("volume import failed");
+      return { ok: false, exitCode: r.exitCode, tail: (r.output ?? "").slice(0, 2000) };
     }
     await this.audit.log({ actor: userId, action: "app.volume_import", target: appId, meta: { volumeName: input.volumeName } });
+    return { ok: true, exitCode: 0, tail: "" };
   }
 
   async remove(userId: string, appId: string, backupId: string): Promise<void> {

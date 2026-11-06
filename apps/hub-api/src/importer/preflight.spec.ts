@@ -58,16 +58,32 @@ describe("buildPreflight", () => {
     ]);
     expect(pf.services).toEqual([{ name: "signoz", members: 2, note: expect.stringMatching(/not imported/i) }]);
     expect(pf.appsWithVolumeData).toBe(1);
-    expect(pf.volumeDataNote).toMatch(/not copied/i);
-    expect(pf.volumeDataNote).toMatch(/empty/i); // the mounts ARE declared (empty) now — the data is what is not copied
+    expect(pf.volumeDataNote).toMatch(/upload their DATA to the hub/i); // v1: manual upload before first deploy
+    expect(pf.volumeDataNote).not.toMatch(/the migrator copies/i); // never claim an automated migrator volume step (not shipped)
+    expect(pf.volumeDataNote).toMatch(/empty/i); // the mounts are still declared empty; the data is uploaded
+    expect(pf.volumes).toEqual([expect.objectContaining({ app: "web", mountPath: "/data", type: "named", dataPlane: "hub-staged" })]);
   });
 
-  it("does not claim volumes are declared for a compose-only fleet (nothing is declared)", () => {
+  it("does not claim volumes are declared for a compose-only fleet; its volume is a manual row", () => {
     const f = fleet({ apps: [{ sourceRef: "a1", name: "web", kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", volumes: [{ mountPath: "/data", type: "named", name: "v" }] }] });
     const pf = buildPreflight(f, opts);
     expect(pf.appsWithVolumeData).toBe(1); // the app does carry volume data…
-    expect(pf.volumeDataNote).toMatch(/not copied/i); // …which still is not copied
-    expect(pf.volumeDataNote).not.toMatch(/declared/i); // but nothing is declared (compose volumes live in the compose file)
+    expect(pf.volumeDataNote).toMatch(/manually/i); // …which must be copied manually (compose-managed, not declared)
+    expect(pf.volumeDataNote).not.toMatch(/the migrator copies/i);
+    expect(pf.volumeDataNote).not.toMatch(/declared on the new apps/i); // nothing is declared (compose volumes live in the compose file)
+    expect(pf.volumes).toEqual([expect.objectContaining({ app: "web", dataPlane: "manual", reason: expect.stringMatching(/compose-managed/) })]);
+  });
+
+  it("classifies a measured over-cap volume as manual-large and flags a bind's ownership caveat", () => {
+    const f = fleet({ apps: [{ sourceRef: "a1", name: "web", kind: "git", buildPack: "dockerfile", volumes: [{ mountPath: "/data", type: "named", name: "v" }, { mountPath: "/media", hostPath: "/srv/m", type: "bind" }] }] });
+    const inv = new Map<string, number>([["web:/data", 10 * 1024 * 1024], ["web:/media", 900 * 1024 * 1024]]);
+    const pf = buildPreflight(f, opts, inv);
+    const data = pf.volumes!.find((v) => v.mountPath === "/data")!;
+    const media = pf.volumes!.find((v) => v.mountPath === "/media")!;
+    expect(data).toMatchObject({ type: "named", dataPlane: "hub-staged" });
+    expect(media).toMatchObject({ type: "bind", dataPlane: "manual-large" });
+    expect(media.reason).toMatch(/exceeds/i);
+    expect(data.reason).not.toMatch(/ownership/i); // ownership caveat is bind-only
   });
 
   it("local-docker adopts volumes in place → no volume-data caveat", () => {

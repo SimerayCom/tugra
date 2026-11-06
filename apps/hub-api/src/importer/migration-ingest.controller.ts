@@ -15,9 +15,9 @@ type IngestReq = Readable & { headers: Record<string, string | string[] | undefi
  * The endpoints the untrusted SOURCE host calls during a one-click migration, authenticated ONLY by the
  * migration token (not a user/PAT). The opId comes ONLY from the token (@MigrationOp); every destination is
  * resolved server-side from the op's DONE provisioning tasks, so a spoofed ?opId / body / param is ignored.
- * S3 ships the DB data plane: enumerate targets, PUT an artifact to hub staging, POST to restore it, and poll
- * status. Volume ingest is gated to S7 (501). The signed download the agent fetches lives on a separate
- * unguarded controller (MigrationArtifactController).
+ * S3 ships the DB data plane and P3 the app-volume data plane: enumerate targets, PUT an artifact (DB dump or
+ * one volume's tarball) to hub staging, POST to restore it, and poll status. The signed download the agent
+ * fetches lives on a separate unguarded controller (MigrationArtifactController).
  */
 @ApiExcludeController()
 @Controller("import/migration")
@@ -73,10 +73,34 @@ export class MigrationIngestController {
     return this.ingest.status(op, itemRef);
   }
 
-  /** Volume ingest is not implemented until S7 (the app must first declare the volume). */
-  @Post("artifacts/:itemRef/volumes/:volumeName")
-  @HttpCode(501)
-  volume() {
-    return { code: "volume-ingest-disabled", requires: "S7" };
+  /** Stream a gzip tarball of ONE declared app volume to hub staging; the hub records its OWN bytes + sha256. */
+  @Put("artifacts/:itemRef/volumes/:volumeName")
+  @HttpCode(201)
+  putVolume(
+    @MigrationOp() op: MigrationTokenContext,
+    @Param("itemRef") itemRef: string,
+    @Param("volumeName") volumeName: string,
+    @Query("gzip") gzip: string,
+    @Req() req: IngestReq,
+  ) {
+    return this.ingest.stageVolume(op, itemRef, volumeName, req, { gzip: gzip !== "0" });
+  }
+
+  /** Restore a staged volume tarball into the app's docker volume (destructive wipe+extract, gated). 202 + poll. */
+  @Post("artifacts/:itemRef/volumes/:volumeName/restore")
+  @HttpCode(202)
+  restoreVolume(
+    @MigrationOp() op: MigrationTokenContext,
+    @Param("itemRef") itemRef: string,
+    @Param("volumeName") volumeName: string,
+    @Query("resync") resync: string,
+  ) {
+    return this.ingest.restoreVolume(op, itemRef, volumeName, { resync: resync === "1" });
+  }
+
+  /** Coarse per-volume restore state for the source host to poll. */
+  @Get("artifacts/:itemRef/volumes/:volumeName/status")
+  volumeStatus(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Param("volumeName") volumeName: string) {
+    return this.ingest.volumeStatus(op, itemRef, volumeName);
   }
 }
