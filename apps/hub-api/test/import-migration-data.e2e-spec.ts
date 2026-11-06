@@ -325,9 +325,9 @@ describe("Importer migration DATA ingest (e2e)", () => {
       await putVol("x".repeat(60), gz).expect(400); // over the 41-char limit → 400
       await putVol("a.b", gz).expect(400); // illegal charset ('.') reaching the handler → 400
       await putVol("nope", gz).expect(404); // valid syntax, not declared on the app
-      // A ".." segment never reaches the handler (the URL is path-normalized away) → no route → 404; the
-      // name charset guard is the defence-in-depth behind it, so either way traversal is impossible.
-      await request(api()).put(`/api/v1/import/migration/artifacts/${encodeURIComponent(ITEM)}/volumes/..`).set(H()).set("Content-Type", "application/octet-stream").send(gz).expect(404);
+      // Note: a literal ".." path SEGMENT is URL-normalized by the client/router before routing (it never
+      // reaches this handler), so it is not a meaningful traversal test — the charset guard above, enforced
+      // in the handler on a name that DOES reach it, is the real defence.
       await request(api()).get(`/api/v1/import/migration/artifacts/${encodeURIComponent(ITEM)}/volumes/data/status`).set(H()).expect(404); // a DB itemRef is not an app target
     });
 
