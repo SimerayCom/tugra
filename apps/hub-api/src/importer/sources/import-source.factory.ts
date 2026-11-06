@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { CoolifySource } from "./coolify.source";
 import { CoolifyClientFactory } from "./coolify-client.factory";
+import { DokploySource } from "./dokploy.source";
+import { DokployClientFactory } from "./dokploy-client.factory";
 import type { ImportSource } from "../import-source";
 import type { RemoteSourceKind } from "../dto";
 
@@ -14,13 +16,18 @@ import type { RemoteSourceKind } from "../dto";
  */
 @Injectable()
 export class ImportSourceFactory {
-  constructor(private readonly coolifyClients: CoolifyClientFactory) {}
+  constructor(
+    private readonly coolifyClients: CoolifyClientFactory,
+    private readonly dokployClients: DokployClientFactory,
+  ) {}
 
   /** Construct the adapter for `kind`, with its transport client already wired to `baseUrl` + `token`. */
   create(kind: RemoteSourceKind, baseUrl: string, token: string): ImportSource {
     switch (kind) {
       case "coolify":
         return new CoolifySource(this.coolifyClients.create(baseUrl, token));
+      case "dokploy":
+        return new DokploySource(this.dokployClients.create(baseUrl, token));
       default: {
         // Exhaustiveness: when a new RemoteSourceKind is added without a case here, this line fails to
         // compile — the compiler is the reminder to register the adapter.
@@ -35,6 +42,8 @@ export class ImportSourceFactory {
     switch (kind) {
       case "coolify":
         return "Coolify";
+      case "dokploy":
+        return "Dokploy";
       default:
         return String(kind);
     }

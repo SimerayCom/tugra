@@ -12,6 +12,7 @@ import type { BackupsService } from "../backups/backups.service";
 import type { MonitorsService } from "../monitors/monitors.service";
 import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
+import { REMOTE_SOURCE_KINDS, isRemoteSourceKind } from "../importer/dto";
 import type { LicenseService } from "../license/license.service";
 
 /** The domain services an MCP tool may call. Every read tool passes the caller's `userId` straight
@@ -581,49 +582,50 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ── mutate: fleet import (Coolify + local-docker) ──────────────────────────────────────────
+  // ── mutate: fleet import (Coolify / Dokploy + local-docker) ──────────────────────────────────
   {
     name: "import_connect",
     description:
-      "Connect an external source PaaS (Coolify) to import from: verifies the instance is reachable with the given API token and stores a short-lived ENCRYPTED session. Returns a sessionId for import_plan/import_apply. The token is never returned or logged.",
+      "Connect an external source PaaS (Coolify or Dokploy) to import from: verifies the instance is reachable with the given API token/key and stores a short-lived ENCRYPTED session. Returns a sessionId for import_plan/import_apply. The token is never returned or logged.",
     scope: "write",
     inputSchema: {
       type: "object",
-      properties: { sourceKind: { type: "string", enum: ["coolify"] }, teamId: { type: "string" }, baseUrl: { type: "string" }, token: { type: "string" } },
+      properties: { sourceKind: { type: "string", enum: [...REMOTE_SOURCE_KINDS] }, teamId: { type: "string" }, baseUrl: { type: "string" }, token: { type: "string" } },
       required: ["sourceKind", "teamId", "baseUrl", "token"],
     },
     sensitiveArgs: ["token"], // redacted from the audit log's meta.args
     execute: async (d, userId, a) => {
-      if (optStr(a, "sourceKind") !== "coolify") throw new Error('sourceKind must be "coolify"');
-      return d.importer.connect(userId, { sourceKind: "coolify", teamId: reqStr(a, "teamId"), baseUrl: reqStr(a, "baseUrl"), token: reqStr(a, "token") });
+      const k = optStr(a, "sourceKind");
+      if (!isRemoteSourceKind(k)) throw new Error(`sourceKind must be one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
+      return d.importer.connect(userId, { sourceKind: k, teamId: reqStr(a, "teamId"), baseUrl: reqStr(a, "baseUrl"), token: reqStr(a, "token") });
     },
   },
   {
     name: "import_plan",
     description:
-      "Dry-run preview of what an import would create in Tugra, with per-item risks. Pass a local-docker serverId (adopt the host's standalone containers) or a Coolify sessionId. Returns a secret-free plan incl. a planHash to pass to import_apply. Reveals env KEYS → read:secrets.",
+      "Dry-run preview of what an import would create in Tugra, with per-item risks. Pass a local-docker serverId (adopt the host's standalone containers) or a Coolify/Dokploy sessionId. Returns a secret-free plan incl. a planHash to pass to import_apply. Reveals env KEYS → read:secrets.",
     scope: "read:secrets",
     inputSchema: {
       type: "object",
-      properties: { sourceKind: { type: "string", enum: ["local-docker", "coolify"] }, serverId: { type: "string" }, sessionId: { type: "string" } },
+      properties: { sourceKind: { type: "string", enum: ["local-docker", ...REMOTE_SOURCE_KINDS] }, serverId: { type: "string" }, sessionId: { type: "string" } },
       required: ["sourceKind"],
     },
     execute: async (d, userId, a) => {
       const k = optStr(a, "sourceKind");
       if (k === "local-docker") return d.importer.plan(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId") });
-      if (k === "coolify") return d.importer.plan(userId, { sourceKind: "coolify", sessionId: reqStr(a, "sessionId") });
-      throw new Error('sourceKind must be "local-docker" or "coolify"');
+      if (isRemoteSourceKind(k)) return d.importer.plan(userId, { sourceKind: k, sessionId: reqStr(a, "sessionId") });
+      throw new Error(`sourceKind must be "local-docker" or one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
     },
   },
   {
     name: "import_apply",
     description:
-      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; coolify COPIES each app onto targetServerId. Returns an opId to poll with import_status.",
+      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Returns an opId to poll with import_status.",
     scope: "deploy",
     inputSchema: {
       type: "object",
       properties: {
-        sourceKind: { type: "string", enum: ["local-docker", "coolify"] },
+        sourceKind: { type: "string", enum: ["local-docker", ...REMOTE_SOURCE_KINDS] },
         serverId: { type: "string" },
         sessionId: { type: "string" },
         targetServerId: { type: "string" },
@@ -636,16 +638,16 @@ export const MCP_TOOLS: McpTool[] = [
       const k = optStr(a, "sourceKind");
       const planHash = reqStr(a, "planHash");
       if (k === "local-docker") return d.executor.apply(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId"), planHash });
-      if (k === "coolify") {
+      if (isRemoteSourceKind(k)) {
         return d.executor.apply(userId, {
-          sourceKind: "coolify",
+          sourceKind: k,
           sessionId: reqStr(a, "sessionId"),
           targetServerId: reqStr(a, "targetServerId"),
           environmentId: optStr(a, "environmentId"),
           planHash,
         });
       }
-      throw new Error('sourceKind must be "local-docker" or "coolify"');
+      throw new Error(`sourceKind must be "local-docker" or one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
     },
   },
   {
@@ -658,7 +660,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "import_rollback",
     description:
-      "DESTRUCTIVE: undo an import operation's completed work (coolify removes the created apps; local-docker un-adopts the containers). Skips any app you have (re)deployed since import. Requires confirmName to equal the opId.",
+      "DESTRUCTIVE: undo an import operation's completed work (a remote-source copy removes the created apps; local-docker un-adopts the containers). Skips any app you have (re)deployed since import. Requires confirmName to equal the opId.",
     scope: "admin",
     inputSchema: { type: "object", properties: { opId: { type: "string" }, confirmName: { type: "string" } }, required: ["opId", "confirmName"] },
     execute: async (d, userId, a) => {

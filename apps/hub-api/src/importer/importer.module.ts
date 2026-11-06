@@ -14,6 +14,7 @@ import { MigrationTokenService } from "./migration-token.service";
 import { MigrationTokenGuard } from "./migration-token.guard";
 import { MigrationIngestService } from "./migration-ingest.service";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
+import { DokployClientFactory } from "./sources/dokploy-client.factory";
 import { ImportSourceFactory } from "./sources/import-source.factory";
 
 // Reuses MigratorService (MigratorModule) for local-docker adopt/unadopt, ApplicationsService
@@ -24,7 +25,7 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
-  providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, ImportSourceFactory],
+  providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory],
   exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}
