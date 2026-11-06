@@ -78,6 +78,21 @@ describe("MCP_TOOLS catalog", () => {
       expect(executor.apply).toHaveBeenCalledWith("u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", environmentId: undefined, planHash: "h" });
     });
 
+    it("routes the dokploy source through connect/plan/apply (second remote source)", async () => {
+      const { deps, importer, executor } = mk();
+      await tool("import_connect").execute(deps, "u1", { sourceKind: "dokploy", teamId: "t1", baseUrl: "https://d.example.com:3000", token: "KEY" });
+      expect(importer.connect).toHaveBeenCalledWith("u1", { sourceKind: "dokploy", teamId: "t1", baseUrl: "https://d.example.com:3000", token: "KEY" });
+      await tool("import_plan").execute(deps, "u1", { sourceKind: "dokploy", sessionId: "s1" });
+      expect(importer.plan).toHaveBeenCalledWith("u1", { sourceKind: "dokploy", sessionId: "s1" });
+      await tool("import_apply").execute(deps, "u1", { sourceKind: "dokploy", sessionId: "s1", targetServerId: "t-srv", planHash: "h" });
+      expect(executor.apply).toHaveBeenCalledWith("u1", { sourceKind: "dokploy", sessionId: "s1", targetServerId: "t-srv", environmentId: undefined, planHash: "h" });
+    });
+
+    it("import_connect rejects an unknown (non-remote) source", async () => {
+      const { deps } = mk();
+      await expect(Promise.resolve().then(() => tool("import_connect").execute(deps, "u1", { sourceKind: "local-docker", teamId: "t1", baseUrl: "x", token: "y" }))).rejects.toThrow(/coolify.*dokploy/);
+    });
+
     it("import_status (read) delegates to executor.status", async () => {
       const { deps, executor } = mk();
       expect(tool("import_status").scope).toBe("read");

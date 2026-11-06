@@ -1,5 +1,6 @@
 import type { ForeignEnv, ForeignFleet } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets } from "../import-source";
+import { mapLimit } from "./map-limit";
 import {
   buildCoolifyFleet,
   type CoolifyApp,
@@ -131,20 +132,9 @@ export class CoolifySource implements ImportSource {
 /** Max concurrent enrichment GETs during discover — fast enough for a large fleet without hammering Coolify. */
 const DISCOVER_CONCURRENCY = 8;
 
-/** Run `fn` over `items` with at most `limit` promises in flight, preserving result order. */
-export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  return out;
-}
+// mapLimit moved to ./map-limit (shared by every source adapter). Re-exported here so existing importers
+// (coolify.source.spec) keep resolving it from this module.
+export { mapLimit };
 
 /** Pure: Coolify's /envs list merges production + preview-deployment twins; keep only real (key'd, non-preview) rows. */
 function extractEnvs(raw: unknown): CoolifyEnv[] {

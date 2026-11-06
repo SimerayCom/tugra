@@ -38278,7 +38278,8 @@
                   "sourceKind": {
                     "type": "string",
                     "enum": [
-                      "coolify"
+                      "coolify",
+                      "dokploy"
                     ]
                   },
                   "teamId": {
@@ -38421,6 +38422,26 @@
                       "sessionId"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "dokploy"
+                        ]
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "sourceKind",
+                      "sessionId"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -38534,6 +38555,40 @@
                         "type": "string",
                         "enum": [
                           "coolify"
+                        ]
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "targetServerId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "environmentId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "planHash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{32}$"
+                      }
+                    },
+                    "required": [
+                      "sourceKind",
+                      "sessionId",
+                      "targetServerId",
+                      "planHash"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "dokploy"
                         ]
                       },
                       "sessionId": {

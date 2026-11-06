@@ -26646,7 +26646,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    sourceKind: "coolify";
+                    sourceKind: "coolify" | "dokploy";
                     teamId: string;
                     /** Format: uri */
                     baseUrl: string;
@@ -26725,6 +26725,10 @@ export interface operations {
                     /** @enum {string} */
                     sourceKind: "coolify";
                     sessionId: string;
+                } | {
+                    /** @enum {string} */
+                    sourceKind: "dokploy";
+                    sessionId: string;
                 };
             };
         };
@@ -26799,6 +26803,13 @@ export interface operations {
                 } | {
                     /** @enum {string} */
                     sourceKind: "coolify";
+                    sessionId: string;
+                    targetServerId: string;
+                    environmentId?: string;
+                    planHash: string;
+                } | {
+                    /** @enum {string} */
+                    sourceKind: "dokploy";
                     sessionId: string;
                     targetServerId: string;
                     environmentId?: string;
