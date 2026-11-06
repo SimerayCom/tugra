@@ -40,6 +40,7 @@ export const EVENT_TYPES = [
   "docker_cleanup_failed",
   "container_crashed",
   "container_oom",
+  "container_unhealthy",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

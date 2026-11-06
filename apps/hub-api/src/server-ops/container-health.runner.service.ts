@@ -76,7 +76,7 @@ export class ContainerHealthRunnerService {
     for (const snap of parsed.containers) {
       const prevRow = prevByName.get(snap.name);
       if (seed) {
-        await this.persist(server.id, snap, this.seedState(snap, parsed.events));
+        await this.persist(server.id, snap, this.seedState(snap, parsed.events, now));
         continue;
       }
       const prev: PrevState | undefined = prevRow
@@ -88,9 +88,12 @@ export class ContainerHealthRunnerService {
             lastNotifiedKey: prevRow.lastNotifiedKey,
             lastNotifiedAt: prevRow.lastNotifiedAt ? prevRow.lastNotifiedAt.getTime() : null,
             restartCountAtNotify: prevRow.restartCountAtNotify,
+            health: prevRow.health,
+            unhealthySince: prevRow.unhealthySince ? prevRow.unhealthySince.getTime() : null,
+            healthNotifiedAt: prevRow.healthNotifiedAt ? prevRow.healthNotifiedAt.getTime() : null,
           }
         : undefined;
-      const { fire, event, next } = diffContainerStates(prev, snap, parsed.events, { now });
+      const { fire, healthFire, event, next } = diffContainerStates(prev, snap, parsed.events, { now });
 
       // Freeze the pre-crash log tail at the moment of a detected death — `docker logs` would otherwise lose
       // it on the next recreate. Bounded per tick so a mass crash can't turn one poll into a log storm.
@@ -100,30 +103,44 @@ export class ContainerHealthRunnerService {
         logTail = await this.fetchLogTail(server.id, snap.name);
       }
 
-      if (fire) {
-        const label = resolveContainerLabel(snap.name, appsById, dbsById);
-        // Don't alert on Tugra's own control-plane stack (noisy during self-update) or on an app the operator
-        // deliberately stopped. A fired-but-suppressed death still persists `next` (so it isn't re-fired later).
-        const suppressed = label.kind === "system" || (label.kind === "app" && !!label.resourceId && stoppedAppIds.has(label.resourceId));
-        if (!suppressed) {
-          await this.notifications
-            .fireForEvent(server.teamId, fire.type, {
-              serverId: server.id,
-              serverName: server.name,
-              hostname: server.hostname ?? "",
-              containerName: snap.name,
-              label: label.label,
-              kind: label.kind,
-              resourceId: label.resourceId ?? "",
-              exitCode: fire.exitCode,
-              restartDelta: fire.restartDelta,
-              oomKilled: fire.oomKilled,
-              // `reason` (exit-code meaning) is safe to send to external channels; the raw pre-crash log tail
-              // is NOT — it can carry secrets — so it stays on the ContainerEvent row (in-app, access-controlled).
-              reason: event ? event.reason : "",
-            })
-            .catch(() => undefined);
-        }
+      // Don't alert on Tugra's own control-plane stack (noisy during self-update) or on an app the operator
+      // deliberately stopped. A fired-but-suppressed death still persists `next` (so it isn't re-fired later).
+      const label = resolveContainerLabel(snap.name, appsById, dbsById);
+      const suppressed = label.kind === "system" || (label.kind === "app" && !!label.resourceId && stoppedAppIds.has(label.resourceId));
+      if (fire && !suppressed) {
+        await this.notifications
+          .fireForEvent(server.teamId, fire.type, {
+            serverId: server.id,
+            serverName: server.name,
+            hostname: server.hostname ?? "",
+            containerName: snap.name,
+            label: label.label,
+            kind: label.kind,
+            resourceId: label.resourceId ?? "",
+            exitCode: fire.exitCode,
+            restartDelta: fire.restartDelta,
+            oomKilled: fire.oomKilled,
+            // `reason` (exit-code meaning) is safe to send to external channels; the raw pre-crash log tail
+            // is NOT — it can carry secrets — so it stays on the ContainerEvent row (in-app, access-controlled).
+            reason: event ? event.reason : "",
+          })
+          .catch(() => undefined);
+      }
+      // Unhealthy-healthcheck alert (same suppression). Carries no logs/secrets — just the health state.
+      if (healthFire && !suppressed) {
+        await this.notifications
+          .fireForEvent(server.teamId, healthFire.type, {
+            serverId: server.id,
+            serverName: server.name,
+            hostname: server.hostname ?? "",
+            containerName: snap.name,
+            label: label.label,
+            kind: label.kind,
+            resourceId: label.resourceId ?? "",
+            health: snap.health ?? "",
+            unhealthySince: healthFire.unhealthySince ? new Date(healthFire.unhealthySince).toISOString() : "",
+          })
+          .catch(() => undefined);
       }
       await this.persist(server.id, snap, next);
 
@@ -175,8 +192,12 @@ export class ContainerHealthRunnerService {
   }
 
   /** Baseline row for a container seen for the first time (seed tick) — records state, never alerts. */
-  private seedState(snap: ContainerSnap, events: { name: string; ts: number }[]): NextState {
+  private seedState(snap: ContainerSnap, events: { name: string; ts: number }[], now: number): NextState {
     const maxEventTs = events.filter((e) => e.name === snap.name).reduce((m, e) => Math.max(m, e.ts), 0);
+    // A container already unhealthy at first contact is treated as "acknowledged by the seed" (unhealthySince
+    // == healthNotifiedAt == now), so the diff sees this episode as already-alerted and stays silent on the
+    // next tick — seed never alerts, matching the crash baseline. A later recover→re-fail is a new episode.
+    const unhealthyAtSeed = snap.health === "unhealthy" ? now : null;
     return {
       containerId: snap.id,
       status: snap.status,
@@ -190,6 +211,8 @@ export class ContainerHealthRunnerService {
       lastNotifiedKey: null,
       lastNotifiedAt: null,
       restartCountAtNotify: snap.restartCount,
+      unhealthySince: unhealthyAtSeed,
+      healthNotifiedAt: unhealthyAtSeed,
     };
   }
 
@@ -207,6 +230,8 @@ export class ContainerHealthRunnerService {
       lastNotifiedKey: next.lastNotifiedKey,
       lastNotifiedAt: next.lastNotifiedAt ? new Date(next.lastNotifiedAt) : null,
       restartCountAtNotify: next.restartCountAtNotify,
+      unhealthySince: next.unhealthySince ? new Date(next.unhealthySince) : null,
+      healthNotifiedAt: next.healthNotifiedAt ? new Date(next.healthNotifiedAt) : null,
     };
     await this.prisma.containerState.upsert({
       where: { serverId_containerName: { serverId, containerName: snap.name } },

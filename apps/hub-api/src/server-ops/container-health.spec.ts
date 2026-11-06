@@ -20,6 +20,9 @@ const prev = (over: Partial<PrevState> = {}): PrevState => ({
   lastNotifiedKey: null,
   lastNotifiedAt: null,
   restartCountAtNotify: 0,
+  health: null,
+  unhealthySince: null,
+  healthNotifiedAt: null,
   ...over,
 });
 const NOW = 1_800_000_000_000;
@@ -120,6 +123,70 @@ describe("diffContainerStates", () => {
   it("after cooldown → fires once with the accumulated restart delta", () => {
     const r = diffContainerStates(prev({ restartCount: 4, lastNotifiedKey: "c1:4:", lastNotifiedAt: NOW - COOLDOWN_MS - 1, restartCountAtNotify: 4 }), snap({ restartCount: 9 }), [], { now: NOW });
     expect(r.fire).toMatchObject({ type: "container_crashed", restartDelta: 5 });
+  });
+});
+
+describe("diffContainerStates — unhealthy healthcheck alert", () => {
+  it("transition healthy → unhealthy fires container_unhealthy and sets unhealthySince", () => {
+    const r = diffContainerStates(prev({ health: "healthy" }), snap({ health: "unhealthy" }), [], { now: NOW });
+    expect(r.healthFire).toEqual({ type: "container_unhealthy", unhealthySince: NOW });
+    expect(r.next.unhealthySince).toBe(NOW);
+    expect(r.next.healthNotifiedAt).toBe(NOW);
+    expect(r.fire).toBeNull(); // orthogonal to crash — a healthy→unhealthy with no restart is NOT a crash
+  });
+
+  it("transition from starting/null also fires (prev was never unhealthy)", () => {
+    expect(diffContainerStates(prev({ health: "starting" }), snap({ health: "unhealthy" }), [], { now: NOW }).healthFire).not.toBeNull();
+    expect(diffContainerStates(prev({ health: null }), snap({ health: "unhealthy" }), [], { now: NOW }).healthFire).not.toBeNull();
+  });
+
+  it("steady unhealthy already alerted this episode → no re-fire even after the cooldown expires (one alert per episode)", () => {
+    const since = NOW - COOLDOWN_MS - 5_000; // episode started long ago, cooldown since expired
+    const r = diffContainerStates(prev({ health: "unhealthy", unhealthySince: since, healthNotifiedAt: since + 10 }), snap({ health: "unhealthy" }), [], { now: NOW });
+    expect(r.healthFire).toBeNull(); // healthNotifiedAt >= unhealthySince ⇒ this episode is already alerted
+    expect(r.next.unhealthySince).toBe(since); // continuous — not reset
+  });
+
+  it("recovery (unhealthy → healthy) clears unhealthySince and does not fire", () => {
+    const r = diffContainerStates(prev({ health: "unhealthy", unhealthySince: NOW - 60_000, healthNotifiedAt: NOW - 60_000 }), snap({ health: "healthy" }), [], { now: NOW });
+    expect(r.healthFire).toBeNull();
+    expect(r.next.unhealthySince).toBeNull();
+  });
+
+  it("flap within cooldown is suppressed (state still advances)", () => {
+    const r = diffContainerStates(prev({ health: "healthy", healthNotifiedAt: NOW - 1000 }), snap({ health: "unhealthy" }), [], { now: NOW });
+    expect(r.healthFire).toBeNull();
+    expect(r.next.unhealthySince).toBe(NOW); // tracked even while the alert is suppressed
+  });
+
+  it("a fresh unhealthy after the cooldown expires fires again", () => {
+    const r = diffContainerStates(prev({ health: "healthy", healthNotifiedAt: NOW - COOLDOWN_MS - 1 }), snap({ health: "unhealthy" }), [], { now: NOW });
+    expect(r.healthFire).not.toBeNull();
+  });
+
+  it("re-alerts a STILL-unhealthy container once the cooldown expires when the last alert predates this episode (flap-then-stuck)", () => {
+    // Prior episode alerted at NOW-15m+; it recovered + re-failed 2m ago (new episode), whose transition was
+    // cooldown-suppressed. Now the cooldown has expired and it is still unhealthy → it MUST fire (the gap the
+    // old edge-only logic left: a flap-then-stuck container stayed silent for hours).
+    const r = diffContainerStates(
+      prev({ health: "unhealthy", unhealthySince: NOW - 2 * 60_000, healthNotifiedAt: NOW - COOLDOWN_MS - 1 }),
+      snap({ health: "unhealthy" }),
+      [],
+      { now: NOW },
+    );
+    expect(r.healthFire).not.toBeNull();
+    expect(r.next.healthNotifiedAt).toBe(NOW);
+  });
+
+  it("recreated (new containerId) that comes up unhealthy fires (baseline reset)", () => {
+    const r = diffContainerStates(prev({ containerId: "old", health: "unhealthy", healthNotifiedAt: NOW - 1000 }), snap({ id: "new", health: "unhealthy" }), [], { now: NOW });
+    expect(r.healthFire).not.toBeNull(); // prev health/cooldown belonged to the old container
+  });
+
+  it("no healthcheck (null health) never fires and leaves unhealthySince null", () => {
+    const r = diffContainerStates(prev({ health: null }), snap({ health: null }), [], { now: NOW });
+    expect(r.healthFire).toBeNull();
+    expect(r.next.unhealthySince).toBeNull();
   });
 });
 

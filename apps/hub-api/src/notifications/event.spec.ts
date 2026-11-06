@@ -344,4 +344,14 @@ describe("renderEvent — typed per-event templates", () => {
     expect(fieldVal(m, "Exit code")).toBe("OOM");
     expect(linkUrl(m, "Open server")).toBe("https://web.test/servers/s1");
   });
+
+  it("container_unhealthy: warning (not critical), Status=Unhealthy, app deep-link", () => {
+    const m = render("container_unhealthy", { label: "Shop", serverName: "box", kind: "app", resourceId: "app1", serverId: "s1", health: "unhealthy" });
+    expect(m.event).toBe("container_unhealthy");
+    expect(m.level).toBe("warning");
+    expect(m.critical).toBe(false);
+    expect(m.title).toBe("Container unhealthy — Shop");
+    expect(fieldVal(m, "Status")).toBe("Unhealthy");
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+  });
 });

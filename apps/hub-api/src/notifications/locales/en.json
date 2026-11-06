@@ -46,7 +46,12 @@
       "title": "Container out of memory — {container}",
       "summary": "{container} was killed by the kernel for exceeding its memory limit (OOM)."
     },
-    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind", "reason": "Reason" },
+    "unhealthy": {
+      "title": "Container unhealthy — {container}",
+      "summary": "{container}'s healthcheck is failing — it is reporting unhealthy (the process is up but not serving correctly).",
+      "state": "Unhealthy"
+    },
+    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind", "reason": "Reason", "status": "Status" },
     "link": { "openApp": "Open app", "openDatabase": "Open database", "openServer": "Open server" }
   },
   "volumeBackup": {

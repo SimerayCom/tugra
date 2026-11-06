@@ -38,8 +38,15 @@ function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitC
 const prevRow = (over: Record<string, unknown> = {}) => ({
   serverId: "s1", containerName: "tugra_app1", containerId: "c1", status: "running", exitCode: 0, oomKilled: false,
   restartCount: 0, startedAt: null, finishedAt: null, health: null, lastEventTs: 0n,
-  lastNotifiedKey: null, lastNotifiedAt: null, restartCountAtNotify: 0, ...over,
+  lastNotifiedKey: null, lastNotifiedAt: null, restartCountAtNotify: 0, unhealthySince: null, healthNotifiedAt: null, ...over,
 });
+
+// An inspect row with an explicit HEALTHCHECK status (parts[8]); status/restartCount overridable.
+function inspectHealth(health: string, over: { status?: string; restartCount?: number } = {}) {
+  const status = over.status ?? "running";
+  const restartCount = over.restartCount ?? 0;
+  return ["##INSPECT", `/tugra_app1\tc1\t${status}\t0\tfalse\t${restartCount}\t2026-10-30T00:00:00Z\t0001-01-01T00:00:00Z\t${health}`, "##EVENTS", ""].join("\n");
+}
 
 describe("ContainerHealthRunnerService.runTick", () => {
   it("skips a server whose agent is offline (no command sent)", async () => {
@@ -122,5 +129,40 @@ describe("ContainerHealthRunnerService.runTick", () => {
     const { svc, deleteMany } = make({ rows: [prevRow(), prevRow({ containerName: "tugra_gone" })], output: inspectOut(0) });
     await svc.runTick();
     expect(deleteMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ serverId: "s1", containerName: { notIn: ["tugra_app1"] } }) }));
+  });
+
+  it("fires container_unhealthy on the transition into unhealthy and persists unhealthySince", async () => {
+    const { svc, fireForEvent, upsert } = make({ rows: [prevRow({ health: "healthy" })], output: inspectHealth("unhealthy") });
+    await svc.runTick();
+    expect(fireForEvent).toHaveBeenCalledTimes(1);
+    const [teamId, type, ctx] = fireForEvent.mock.calls[0];
+    expect(teamId).toBe("t1");
+    expect(type).toBe("container_unhealthy");
+    expect(ctx).toMatchObject({ containerName: "tugra_app1", health: "unhealthy" });
+    expect(ctx.unhealthySince).toBeTruthy(); // ISO string, not empty
+    expect((upsert.mock.calls[0][0].update as { unhealthySince: Date | null }).unhealthySince).toBeInstanceOf(Date);
+  });
+
+  it("does NOT re-fire on a steady unhealthy container already alerted this episode", async () => {
+    const since = new Date(Date.now() - 60_000);
+    const { svc, fireForEvent } = make({ rows: [prevRow({ health: "unhealthy", unhealthySince: since, healthNotifiedAt: since })], output: inspectHealth("unhealthy") });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("seeds an already-unhealthy container silently (records unhealthySince + healthNotifiedAt, never fires)", async () => {
+    const { svc, fireForEvent, upsert } = make({ rows: [], output: inspectHealth("unhealthy") });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+    const data = upsert.mock.calls[0][0].create as { unhealthySince: Date | null; healthNotifiedAt: Date | null };
+    expect(data.unhealthySince).toBeInstanceOf(Date);
+    expect(data.healthNotifiedAt).toBeInstanceOf(Date); // seed-ack ⇒ the diff treats this episode as already alerted
+  });
+
+  it("suppresses the unhealthy alert for a STOPPED app (still persists state)", async () => {
+    const { svc, fireForEvent, upsert } = make({ rows: [prevRow({ health: "healthy" })], output: inspectHealth("unhealthy"), apps: [{ id: "app1", name: "Shop", status: "STOPPED" }] });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalled();
   });
 });

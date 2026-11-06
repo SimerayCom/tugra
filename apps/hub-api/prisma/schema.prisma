@@ -513,11 +513,13 @@ model ContainerState {
   restartCount         Int       @default(0)
   startedAt            DateTime?
   finishedAt           DateTime?
-  health               String? // healthy | unhealthy | starting | null (recorded, not alerted in v1)
+  health               String? // healthy | unhealthy | starting | null (from docker HEALTHCHECK)
   lastEventTs          BigInt    @default(0) // newest docker-event epoch consumed → next tick's --since cursor
   lastNotifiedKey      String? // `${containerId}:${restartCount}:${finishedAt}` of the last alerted death
   lastNotifiedAt       DateTime?
   restartCountAtNotify Int       @default(0)
+  unhealthySince       DateTime? // when the container first reported `unhealthy` (continuous; cleared on recovery)
+  healthNotifiedAt     DateTime? // last unhealthy alert — own cooldown, separate from the crash lastNotifiedAt
   updatedAt            DateTime  @updatedAt
 
   @@id([serverId, containerName])
