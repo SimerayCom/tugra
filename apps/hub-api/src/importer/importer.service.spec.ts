@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ImporterService } from "./importer.service";
+import { CoolifySource } from "./sources/coolify.source";
 import type { AdoptableContainer } from "../migrator/migrator.service";
 
 const localContainer: AdoptableContainer = {
@@ -43,9 +44,14 @@ function make(over: { session?: unknown; clientGet?: jest.Mock } = {}) {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn() };
   const client = over.clientGet ? { get: over.clientGet } : makeFakeClient();
-  const coolify = { create: jest.fn(() => client) };
-  const svc = new ImporterService(migrator as never, prisma, crypto as never, access as never, audit as never, coolify as never);
-  return { svc, migrator, importSession, crypto, access, audit, coolify, client };
+  // The source factory builds the adapter (a CoolifySource over the fake client), mirroring ImportSourceFactory
+  // so the service's real discover/verify logic still runs against the route map.
+  const sources = {
+    create: jest.fn((_kind: string) => new CoolifySource(client as never)),
+    label: jest.fn((k: string) => (k === "coolify" ? "Coolify" : String(k))),
+  };
+  const svc = new ImporterService(migrator as never, prisma, crypto as never, access as never, audit as never, sources as never);
+  return { svc, migrator, importSession, crypto, access, audit, sources, client };
 }
 
 describe("ImporterService.plan — local-docker", () => {
@@ -87,10 +93,10 @@ describe("ImporterService.connect — coolify", () => {
   });
 
   it("forbids a caller without apps:config before any network call", async () => {
-    const { svc, coolify } = make();
+    const { svc, sources } = make();
     (svc as unknown as { access: { requirePermission: jest.Mock } }).access.requirePermission.mockRejectedValue(new ForbiddenException("no"));
     await expect(svc.connect("u1", { sourceKind: "coolify", teamId: "t1", baseUrl: "https://c.example.com", token: "x" })).rejects.toBeInstanceOf(ForbiddenException);
-    expect(coolify.create).not.toHaveBeenCalled();
+    expect(sources.create).not.toHaveBeenCalled();
   });
 });
 
@@ -98,10 +104,10 @@ describe("ImporterService.plan — coolify session", () => {
   const liveSession = { id: "sess-1", sourceKind: "coolify", actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) };
 
   it("resolves the owned session, decrypts the token, discovers, and plans", async () => {
-    const { svc, crypto, coolify, importSession } = make({ session: liveSession });
+    const { svc, crypto, sources, importSession } = make({ session: liveSession });
     const plan = await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
     expect(crypto.decrypt).toHaveBeenCalledWith("enc(TOK)");
-    expect(coolify.create).toHaveBeenCalledWith("https://c.example.com", "TOK");
+    expect(sources.create).toHaveBeenCalledWith("coolify", "https://c.example.com", "TOK");
     expect(plan.sourceKind).toBe("coolify");
     expect(plan.items.some((i) => i.itemRef === "app:srv-a:app-1")).toBe(true);
     expect(importSession.update).toHaveBeenCalled(); // lastUsedAt bumped
@@ -113,5 +119,11 @@ describe("ImporterService.plan — coolify session", () => {
     await expect(
       make({ session: { ...liveSession, expiresAt: new Date(Date.now() - 1000) } }).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("404s a session whose stored kind is not a remote source (a local-docker session can't be opened as a remote plan)", async () => {
+    const { svc, sources } = make({ session: { ...liveSession, sourceKind: "local-docker" } });
+    await expect(svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" })).rejects.toBeInstanceOf(NotFoundException);
+    expect(sources.create).not.toHaveBeenCalled();
   });
 });

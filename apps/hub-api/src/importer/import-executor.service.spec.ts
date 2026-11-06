@@ -76,7 +76,7 @@ function input() {
   return { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash };
 }
 
-describe("ImportExecutorService.applyCoolify — database provisioning (S1)", () => {
+describe("ImportExecutorService.applyRemote — database provisioning (S1)", () => {
   it("provisions an empty Tugra database for a coolify DB item and records the sourceRef→resourceId mapping", async () => {
     const { svc, dbs, apps, prisma, source } = harness();
     const res = await svc.apply("user-1", input());
@@ -138,7 +138,7 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   return { svc, prisma, dbs, migrationTokens };
 }
 
-describe("ImportExecutorService.applyCoolify — app volume declare (Portability-V1)", () => {
+describe("ImportExecutorService.applyRemote — app volume declare (Portability-V1)", () => {
   // Single-app, no-DB coolify fleet whose app carries `volumes`; run apply and return the app's DONE payload.
   async function applyWithVolumes(
     volumes: unknown[],
@@ -254,6 +254,46 @@ describe("ImportExecutorService.rollback — database teardown guard (S1)", () =
     const { svc, dbs } = rollbackHarness({ dbStatus: "NEW", restores: 1 });
     await svc.rollback("user-1", "op-1");
     expect(dbs.remove).not.toHaveBeenCalled();
+  });
+});
+
+// S0 generalized the source-kind gate from `=== "coolify"` to a COPY_MODE_KINDS set. This pins the destructive
+// branch: a copy-mode (remote) import created a FRESH app → remove it; a local-docker import adopted a live
+// container in place → un-adopt it (rename back). A second remote source (dokploy) must take the remove branch,
+// not the unadopt branch — the bug this refactor prevents.
+function appRollbackHarness(sourceKind: string, compensation: unknown) {
+  const appTask = { id: "t-app", itemRef: "app:srv-a:app-1", kind: "app", status: "DONE", resourceType: "application", resourceId: "app-1", result: { name: "web" }, output: null, startedAt: new Date(), finishedAt: new Date(), compensation };
+  const op = { id: "op-1", kind: "import", actorId: "user-1", planId: "h", meta: { sourceKind, serverId: "srv-tugra" }, cancelRequestedAt: null, createdAt: new Date(), tasks: [appTask] };
+  const prisma = {
+    bulkTask: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), update: jest.fn().mockResolvedValue({}) },
+    bulkOperation: { findUnique: jest.fn().mockResolvedValue(op), update: jest.fn().mockResolvedValue({}) },
+    server: { findUnique: jest.fn().mockResolvedValue({ id: "srv-tugra", teamId: "team-1" }) },
+    application: { findUnique: jest.fn().mockResolvedValue({ id: "app-1" }) },
+    deployment: { count: jest.fn().mockResolvedValue(0) }, // not (re)deployed since import
+  };
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const migrator = { unadopt: jest.fn().mockResolvedValue(undefined) };
+  const apps = { remove: jest.fn().mockResolvedValue(undefined) };
+  const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
+  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never);
+  return { svc, apps, migrator, prisma };
+}
+
+describe("ImportExecutorService.rollback — copy-mode vs adopt-in-place teardown (S0 source generalization)", () => {
+  it("a copy-mode (coolify) app is fully removed via apps.remove, never un-adopted", async () => {
+    const { svc, apps, migrator, prisma } = appRollbackHarness("coolify", null);
+    await svc.rollback("user-1", "op-1");
+    expect(apps.remove).toHaveBeenCalledWith("user-1", "app-1");
+    expect(migrator.unadopt).not.toHaveBeenCalled();
+    expect(prisma.bulkTask.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "ROLLED_BACK" }) }));
+  });
+
+  it("a local-docker (adopt-in-place) app is un-adopted via the migrator, never removed", async () => {
+    const { svc, apps, migrator } = appRollbackHarness("local-docker", { originalName: "web-orig" });
+    await svc.rollback("user-1", "op-1");
+    expect(migrator.unadopt).toHaveBeenCalledWith("user-1", "srv-tugra", "app-1", "web-orig");
+    expect(apps.remove).not.toHaveBeenCalled();
   });
 });
 

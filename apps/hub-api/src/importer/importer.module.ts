@@ -14,15 +14,17 @@ import { MigrationTokenService } from "./migration-token.service";
 import { MigrationTokenGuard } from "./migration-token.guard";
 import { MigrationIngestService } from "./migration-ingest.service";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
+import { ImportSourceFactory } from "./sources/import-source.factory";
 
 // Reuses MigratorService (MigratorModule) for local-docker adopt/unadopt, ApplicationsService
 // (ApplicationsModule) to create/remove apps and DatabasesService (DatabasesModule) to provision
-// databases for the coolify copy executor, and CryptoService (CryptoModule) for the session token at
+// databases for the remote-source copy executor, and CryptoService (CryptoModule) for the session token at
 // rest. PrismaService, TeamAccessService and AuditService are provided by @Global modules.
+// ImportSourceFactory maps a source kind → its adapter (it depends on CoolifyClientFactory).
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
-  providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory],
+  providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, ImportSourceFactory],
   exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}
