@@ -12,6 +12,7 @@ import { relativeTime } from "../../../../lib/fleet";
 import { backupColor, formatSize } from "../../../../lib/backups";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
+import { AppCrashTimelineCard } from "../../../../components/app-crash-timeline-card";
 import { AppFilesCard } from "../../../../components/app-files-card";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
 import { DatabaseLinksCard } from "../../../../components/database-links-card";
@@ -721,7 +722,14 @@ export default function AppDetailPage() {
         );
       })()}
 
-      {tab === "metrics" && <AppMetricsCard id={id} />}
+      {tab === "metrics" && (
+        <>
+          <SectionCard title={t("apps.crash.title")} desc={t("apps.crash.desc")}>
+            <AppCrashTimelineCard id={id} />
+          </SectionCard>
+          <AppMetricsCard id={id} />
+        </>
+      )}
 
       {tab === "logs" && (
         <>

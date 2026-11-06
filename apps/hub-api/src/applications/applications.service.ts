@@ -2437,9 +2437,12 @@ export class ApplicationsService {
       : [app.serverId];
     // The same airtight prefix match the metrics path uses: the delimiter (`-`/`.`) keeps a sibling app
     // whose id merely starts with this one's from leaking in; swarm task containers carry a `.` suffix.
+    // The `__rollout` candidate is the rolling-deploy's not-yet-live container — its crash/OOM is exactly
+    // the "why did my new version fail to come up" case, so match it too (exact, so still sibling-safe).
     const prefix = composeProject(app);
     const nameMatch = [
       { containerName: prefix },
+      { containerName: `${prefix}__rollout` },
       { containerName: { startsWith: `${prefix}-` } },
       ...(app.clusterId ? [{ containerName: { startsWith: `${prefix}.` } }] : []),
     ];
@@ -2449,10 +2452,11 @@ export class ApplicationsService {
       this.prisma.containerState.findMany({
         where: { serverId: { in: serverIds }, OR: nameMatch },
         select: { containerName: true, status: true, exitCode: true, oomKilled: true, restartCount: true, health: true, startedAt: true, finishedAt: true },
+        orderBy: { containerName: "asc" }, // stable row order so the web badges don't reshuffle between polls
       }),
       this.prisma.containerEvent.findMany({
         where: { serverId: { in: serverIds }, OR: nameMatch },
-        orderBy: { ts: "desc" },
+        orderBy: [{ ts: "desc" }, { id: "desc" }], // id tiebreaker keeps same-timestamp episodes deterministic
         take: 20,
       }),
     ]);

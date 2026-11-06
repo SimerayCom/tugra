@@ -243,12 +243,15 @@ export function Badge({
   tone = "muted",
 }: {
   children: ReactNode;
-  tone?: "muted" | "gold" | "lapis";
+  tone?: "muted" | "gold" | "lapis" | "danger" | "warn" | "ok";
 }) {
   const tones: Record<string, CSSProperties> = {
     muted: { background: "var(--c-el)", color: "var(--c-tx3)" },
     gold: { background: "var(--c-ad)", color: "var(--c-a)" },
     lapis: { background: "rgba(61,111,229,0.15)", color: "var(--c-lapis)" },
+    danger: { background: "color-mix(in srgb, var(--c-r) 15%, transparent)", color: "var(--c-r)" },
+    warn: { background: "color-mix(in srgb, var(--c-am) 15%, transparent)", color: "var(--c-am)" },
+    ok: { background: "color-mix(in srgb, var(--c-g) 15%, transparent)", color: "var(--c-g)" },
   };
   return (
     <span

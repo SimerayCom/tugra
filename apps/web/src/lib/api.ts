@@ -50,6 +50,7 @@ import type {
   AppContainerMetrics,
   ServerContainers,
   HostContainers,
+  AppRuntimeState,
   DiscoveredContainer,
   CloudCredential,
   DnsCredential,
@@ -600,6 +601,11 @@ export const api = {
   // Live host-wide list incl. stopped containers (for the Start action on a stopped container).
   getServerContainersAll(id: string) {
     return apiFetch<HostContainers>(`/servers/${id}/containers/all`);
+  },
+  // Read-level, DB-only: last-known container state + recent crash/OOM episodes for an app (agent need
+  // not be online). logTail is redacted server-side unless the caller may read secrets.
+  getAppRuntimeState(id: string) {
+    return apiFetch<AppRuntimeState>(`/apps/${id}/runtime-state`);
   },
   // Fleet overview: newest metrics sample for every server the caller can see, in one call.
   getFleetMetrics() {

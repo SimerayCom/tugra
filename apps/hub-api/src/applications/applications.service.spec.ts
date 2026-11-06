@@ -4551,10 +4551,15 @@ describe("ApplicationsService.runtimeState", () => {
     const res = await svc.runtimeState("u1", "a1", true);
     expect(res.containers[0]).toMatchObject({ containerName: "tugra_a1", restartCount: 5, startedAt: "2026-11-01T00:00:00.000Z", finishedAt: null });
     expect(res.events[0]).toMatchObject({ kind: "crash", exitCode: 137, ts: "2026-11-05T00:00:00.000Z", logTail: "panic: boom", logRedacted: false });
-    // Airtight prefix match (delimiter required so a sibling app id can't leak in).
+    // Airtight prefix match (delimiter required so a sibling app id can't leak in); the rolling-deploy
+    // candidate is matched exactly, and a non-cluster app carries NO swarm `.` clause.
     const where = (prisma.containerState.findMany as jest.Mock).mock.calls[0][0].where;
     expect(where.serverId).toEqual({ in: ["s1"] });
-    expect(where.OR).toEqual(expect.arrayContaining([{ containerName: "tugra_a1" }, { containerName: { startsWith: "tugra_a1-" } }]));
+    expect(where.OR).toEqual([
+      { containerName: "tugra_a1" },
+      { containerName: "tugra_a1__rollout" },
+      { containerName: { startsWith: "tugra_a1-" } },
+    ]);
   });
 
   it("throws for a non-member (require → ForbiddenException)", async () => {
@@ -4574,5 +4579,26 @@ describe("ApplicationsService.runtimeState", () => {
     const res = await svc.runtimeState("u1", "a1", true);
     expect(res.events[0].logTail).toBeNull();
     expect(res.events[0].logRedacted).toBe(true);
+  });
+
+  it("queries every member server of a cluster app and adds the swarm `.` task clause", async () => {
+    const clusterApp = { ...app, clusterId: "c1" };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(clusterApp) },
+      server: { findMany: jest.fn().mockResolvedValue([{ id: "s1" }, { id: "s2" }]) },
+      containerState: { findMany: jest.fn().mockResolvedValue([stateRow]) },
+      containerEvent: { findMany: jest.fn().mockResolvedValue([eventRow]) },
+    } as unknown as PrismaService;
+    const svc = make(prisma, accessWith({}), {} as AgentWsServer);
+    await svc.runtimeState("u1", "a1", true);
+    expect(prisma.server.findMany as jest.Mock).toHaveBeenCalledWith({ where: { clusterId: "c1" }, select: { id: true } });
+    const where = (prisma.containerState.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where.serverId).toEqual({ in: ["s1", "s2"] });
+    expect(where.OR).toEqual([
+      { containerName: "tugra_a1" },
+      { containerName: "tugra_a1__rollout" },
+      { containerName: { startsWith: "tugra_a1-" } },
+      { containerName: { startsWith: "tugra_a1." } },
+    ]);
   });
 });
