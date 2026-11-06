@@ -41,6 +41,7 @@ export const EVENT_TYPES = [
   "container_crashed",
   "container_oom",
   "container_unhealthy",
+  "container_mem_pressure",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

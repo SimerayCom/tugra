@@ -7,6 +7,8 @@ import {
   CONTAINER_HEALTH_SCRIPT,
   parseHealthOutput,
   diffContainerStates,
+  memUnderPressure,
+  COOLDOWN_MS,
   type ContainerSnap,
   type PrevState,
   type NextState,
@@ -14,6 +16,8 @@ import {
 
 const POLL_TIMEOUT_MS = 15_000;
 const SEED_WINDOW_SEC = 120; // first tick: look back this far for the events cursor
+const MEM_WINDOW_MS = 5 * 60 * 1000; // look back this far for container-metric samples when judging mem pressure
+const MEM_SAMPLE_MAX_AGE_MS = 60 * 1000; // newest sample must be at most this old (agent samples ~15s) — else stale
 const MAX_LOG_FETCH_PER_TICK = 8; // cap the extra `docker logs` pulls per server per tick (a mass-crash storm)
 const LOG_TAIL_LINES = 80;
 const LOG_TAIL_MAX_BYTES = 8192; // frozen pre-crash log snapshot kept on the ContainerEvent row
@@ -62,13 +66,35 @@ export class ContainerHealthRunnerService {
     const parsed = parseHealthOutput(r.output);
     if (parsed.truncated) this.logger.warn(`container-health output truncated on server ${server.id} (too many containers)`);
 
-    const [apps, dbs] = await Promise.all([
-      this.prisma.application.findMany({ where: { serverId: server.id }, select: { id: true, name: true, status: true } }),
-      this.prisma.database.findMany({ where: { serverId: server.id }, select: { id: true, name: true } }),
+    const [apps, dbs, metricRows] = await Promise.all([
+      this.prisma.application.findMany({ where: { serverId: server.id }, select: { id: true, name: true, status: true, memoryMb: true } }),
+      this.prisma.database.findMany({ where: { serverId: server.id }, select: { id: true, name: true, memoryMb: true } }),
+      // Recent per-container memory samples (agent-pushed docker stats) for the pre-OOM pressure check.
+      // memTotal is docker stats' LIMIT column (== cgroup limit when one is set, else host RAM); containerId
+      // + ts let us scope to the current incarnation and reject stale data.
+      this.prisma.containerMetric.findMany({
+        where: { serverId: server.id, ts: { gte: new Date(Date.now() - MEM_WINDOW_MS) } },
+        select: { containerName: true, containerId: true, memPct: true, memTotal: true, ts: true },
+        orderBy: { ts: "asc" },
+      }),
     ]);
     const appsById = new Map(apps.map((a) => [a.id, a.name]));
     const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
     const stoppedAppIds = new Set(apps.filter((a) => a.status === "STOPPED").map((a) => a.id));
+    // resourceId → declared memory limit (MB). Only a resource with a memoryMb limit is a candidate; the
+    // sample's own memTotal is then checked against it (below) so a COMPOSE/stale limit that isn't actually
+    // applied to the container can't produce a bogus "N% of the limit" alert.
+    const memLimitByResource = new Map<string, number>();
+    for (const a of apps) if (a.memoryMb && a.memoryMb > 0) memLimitByResource.set(a.id, a.memoryMb);
+    for (const d of dbs) if (d.memoryMb && d.memoryMb > 0) memLimitByResource.set(d.id, d.memoryMb);
+    type MemSample = { containerId: string; memPct: number; memTotal: bigint; ts: Date };
+    const memSamplesByName = new Map<string, MemSample[]>();
+    for (const m of metricRows) {
+      const sample: MemSample = { containerId: m.containerId, memPct: m.memPct, memTotal: m.memTotal, ts: m.ts };
+      const arr = memSamplesByName.get(m.containerName);
+      if (arr) arr.push(sample);
+      else memSamplesByName.set(m.containerName, [sample]);
+    }
     const prevByName = new Map(prevRows.map((row) => [row.containerName, row]));
     const now = Date.now();
     let logFetches = 0;
@@ -143,6 +169,41 @@ export class ContainerHealthRunnerService {
           .catch(() => undefined);
       }
       await this.persist(server.id, snap, next);
+
+      // Pre-OOM memory-pressure alert — only for a RUNNING managed app/db that genuinely runs under a memory
+      // limit (else memPct is share-of-host, meaningless). Guards: scope samples to THIS incarnation, require
+      // the sample's own memTotal to match the declared limit (rejects a COMPOSE/stale/unredeployed limit),
+      // require the newest sample to be fresh (rejects a dead container / stopped agent), own cooldown + same
+      // suppression, and a sustained-high series.
+      const memLimitMb = (label.kind === "app" || label.kind === "db") && label.resourceId ? memLimitByResource.get(label.resourceId) : undefined;
+      if (memLimitMb && !suppressed && snap.status === "running") {
+        const samples = (memSamplesByName.get(snap.name) ?? []).filter((m) => m.containerId === snap.id);
+        const latest = samples[samples.length - 1];
+        const limitBytes = memLimitMb * 1024 * 1024;
+        const runsUnderLimit = latest != null && Math.abs(Number(latest.memTotal) - limitBytes) <= limitBytes * 0.05;
+        const fresh = latest != null && now - latest.ts.getTime() < MEM_SAMPLE_MAX_AGE_MS;
+        const memCooldown = prevRow?.memNotifiedAt != null && now - prevRow.memNotifiedAt.getTime() < COOLDOWN_MS;
+        if (runsUnderLimit && fresh && !memCooldown && memUnderPressure(samples.map((m) => m.memPct))) {
+          await this.notifications
+            .fireForEvent(server.teamId, "container_mem_pressure", {
+              serverId: server.id,
+              serverName: server.name,
+              hostname: server.hostname ?? "",
+              containerName: snap.name,
+              label: label.label,
+              kind: label.kind,
+              resourceId: label.resourceId ?? "",
+              memPct: Math.round(latest.memPct),
+              limitMb: memLimitMb,
+            })
+            .catch(() => undefined);
+          // Record the cooldown on the (just-upserted) row. memNotifiedAt isn't in persist()'s data, so the
+          // health upsert never clobbers it; best-effort (the row can't be gone — we just wrote it).
+          await this.prisma.containerState
+            .update({ where: { serverId_containerName: { serverId: server.id, containerName: snap.name } }, data: { memNotifiedAt: new Date(now) } })
+            .catch(() => undefined);
+        }
+      }
 
       // Append the timeline row AFTER state is persisted, isolated per container: a bad row (or a byte Postgres
       // rejects) must never drop another container's episode or abort the tick.

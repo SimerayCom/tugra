@@ -10,15 +10,17 @@ function inspectOut(restartCount: number, extra = "") {
   return ["##INSPECT", `/tugra_app1\tc1\trunning\t0\tfalse\t${restartCount}\t2026-10-30T00:00:00Z\t0001-01-01T00:00:00Z\t`, "##EVENTS", extra].join("\n");
 }
 
-function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitCode?: number; apps?: unknown[] } = {}) {
+function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitCode?: number; apps?: unknown[]; metrics?: unknown[] } = {}) {
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
   const upsert = jest.fn().mockResolvedValue({});
+  const update = jest.fn().mockResolvedValue({});
   const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
   const create = jest.fn().mockResolvedValue({});
   const prisma = {
     server: { findMany: jest.fn().mockResolvedValue([SERVER]) },
-    containerState: { findMany: jest.fn().mockResolvedValue(opts.rows ?? []), upsert, deleteMany },
+    containerState: { findMany: jest.fn().mockResolvedValue(opts.rows ?? []), upsert, update, deleteMany },
     containerEvent: { create },
+    containerMetric: { findMany: jest.fn().mockResolvedValue(opts.metrics ?? []) },
     application: { findMany: jest.fn().mockResolvedValue(opts.apps ?? [{ id: "app1", name: "Shop", status: "RUNNING" }]) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
   } as unknown as PrismaService;
@@ -32,7 +34,7 @@ function make(opts: { rows?: unknown[]; online?: boolean; output?: string; exitC
   );
   const agentWs = { isOnline: jest.fn().mockReturnValue(opts.online ?? true), sendCommand } as unknown as AgentWsServer;
   const notifications = { fireForEvent } as unknown as NotificationsService;
-  return { svc: new ContainerHealthRunnerService(prisma, agentWs, notifications), fireForEvent, upsert, deleteMany, create, sendCommand };
+  return { svc: new ContainerHealthRunnerService(prisma, agentWs, notifications), fireForEvent, upsert, update, deleteMany, create, sendCommand };
 }
 
 const prevRow = (over: Record<string, unknown> = {}) => ({
@@ -157,6 +159,73 @@ describe("ContainerHealthRunnerService.runTick", () => {
     const data = upsert.mock.calls[0][0].create as { unhealthySince: Date | null; healthNotifiedAt: Date | null };
     expect(data.unhealthySince).toBeInstanceOf(Date);
     expect(data.healthNotifiedAt).toBeInstanceOf(Date); // seed-ack ⇒ the diff treats this episode as already alerted
+  });
+
+  const LIMIT_512 = 512 * 1024 * 1024; // docker stats' memTotal for `--memory 512m`
+  const memSample = (over: Record<string, unknown> = {}) => ({ containerName: "tugra_app1", containerId: "c1", memPct: 95, memTotal: BigInt(LIMIT_512), ts: new Date(), ...over });
+  const MEM_HIGH = [memSample({ memPct: 95 }), memSample({ memPct: 93 }), memSample({ memPct: 96 })];
+  const APP_512 = [{ id: "app1", name: "Shop", status: "RUNNING", memoryMb: 512 }];
+
+  it("fires container_mem_pressure for a LIMITED, running app under sustained pressure and records the cooldown", async () => {
+    const { svc, fireForEvent, update } = make({ rows: [prevRow()], output: inspectOut(0), metrics: MEM_HIGH, apps: APP_512 });
+    await svc.runTick();
+    expect(fireForEvent).toHaveBeenCalledTimes(1);
+    const [teamId, type, ctx] = fireForEvent.mock.calls[0];
+    expect(teamId).toBe("t1");
+    expect(type).toBe("container_mem_pressure");
+    expect(ctx).toMatchObject({ containerName: "tugra_app1", limitMb: 512, memPct: 96 });
+    expect((update.mock.calls[0][0].data as { memNotifiedAt: Date }).memNotifiedAt).toBeInstanceOf(Date);
+  });
+
+  it("does NOT fire for an app with NO memory limit (memPct would be share-of-host)", async () => {
+    const { svc, fireForEvent } = make({ rows: [prevRow()], output: inspectOut(0), metrics: MEM_HIGH, apps: [{ id: "app1", name: "Shop", status: "RUNNING", memoryMb: null }] });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire when the sample's memTotal does not match the declared limit (COMPOSE/stale limit not actually applied)", async () => {
+    // memoryMb=512 but the running container is unlimited → memTotal is host RAM (8 GB), not 512 MB.
+    const hostRam = 8 * 1024 * 1024 * 1024;
+    const { svc, fireForEvent } = make({
+      rows: [prevRow()], output: inspectOut(0), apps: APP_512,
+      metrics: [memSample({ memTotal: BigInt(hostRam) }), memSample({ memTotal: BigInt(hostRam) }), memSample({ memTotal: BigInt(hostRam) })],
+    });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire on stale samples (newest sample older than the freshness window → dead container / stopped agent)", async () => {
+    const old = new Date(Date.now() - 120_000);
+    const { svc, fireForEvent } = make({
+      rows: [prevRow()], output: inspectOut(0), apps: APP_512,
+      metrics: [memSample({ ts: old }), memSample({ ts: old }), memSample({ ts: old })],
+    });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("ignores samples from a previous incarnation (different containerId)", async () => {
+    const { svc, fireForEvent } = make({
+      rows: [prevRow()], output: inspectOut(0), apps: APP_512,
+      metrics: [memSample({ containerId: "old" }), memSample({ containerId: "old" }), memSample({ containerId: "old" })],
+    });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("suppresses mem pressure within its own cooldown", async () => {
+    const { svc, fireForEvent } = make({ rows: [prevRow({ memNotifiedAt: new Date() })], output: inspectOut(0), metrics: MEM_HIGH, apps: APP_512 });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire when usage is below the threshold", async () => {
+    const { svc, fireForEvent } = make({
+      rows: [prevRow()], output: inspectOut(0), apps: APP_512,
+      metrics: [memSample({ memPct: 40 }), memSample({ memPct: 42 }), memSample({ memPct: 39 })],
+    });
+    await svc.runTick();
+    expect(fireForEvent).not.toHaveBeenCalled();
   });
 
   it("suppresses the unhealthy alert for a STOPPED app (still persists state)", async () => {

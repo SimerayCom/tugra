@@ -51,7 +51,12 @@
       "summary": "{container}'s healthcheck is failing — it is reporting unhealthy (the process is up but not serving correctly).",
       "state": "Unhealthy"
     },
-    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind", "reason": "Reason", "status": "Status" },
+    "memPressure": {
+      "title": "Container nearing its memory limit — {container}",
+      "summary": "{container} has been using {pct}% of its {limit} MB memory limit — it may be OOM-killed soon.",
+      "usage": "{pct}% of {limit} MB"
+    },
+    "field": { "server": "Server", "container": "Container", "exitCode": "Exit code", "restarts": "Restarts", "kind": "Kind", "reason": "Reason", "status": "Status", "memory": "Memory" },
     "link": { "openApp": "Open app", "openDatabase": "Open database", "openServer": "Open server" }
   },
   "volumeBackup": {

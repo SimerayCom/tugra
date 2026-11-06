@@ -14,6 +14,25 @@
 export const COOLDOWN_MS = 15 * 60 * 1000; // ≤1 crash-loop alert per container per 15 min (carries total restarts)
 const IGNORED_EXIT = new Set([0, 137, 143]); // clean exit, SIGKILL/`docker stop`, SIGTERM — never a "crash" by code
 
+export const MEM_PRESSURE_PCT = 90; // sustained ≥90% of the cgroup memory limit → a pre-OOM warning
+export const MEM_MIN_SAMPLES = 3; // need a few samples so a single 15s spike / page-cache blip can't trip it
+
+/**
+ * Decide whether a container is under SUSTAINED memory pressure from its recent `docker stats` memPct
+ * samples (oldest→newest). Pure + unit-tested. The caller MUST only pass containers that have a REAL
+ * memory limit (a managed app/db with `memoryMb` set) — for an unlimited container `docker stats` reports
+ * percent-of-HOST-RAM, which is meaningless as a pre-OOM signal. Requires enough samples AND a high average
+ * AND the latest sample still high, so a spike that has already subsided does not alert.
+ */
+export function memUnderPressure(samplesPct: number[], opts: { thresholdPct?: number; minSamples?: number } = {}): boolean {
+  const threshold = opts.thresholdPct ?? MEM_PRESSURE_PCT;
+  const minSamples = opts.minSamples ?? MEM_MIN_SAMPLES;
+  if (samplesPct.length < minSamples) return false;
+  const avg = samplesPct.reduce((a, b) => a + b, 0) / samplesPct.length;
+  const latest = samplesPct[samplesPct.length - 1];
+  return avg >= threshold && latest >= threshold;
+}
+
 /**
  * Human-readable meaning of a container exit code — the headline answer to "why did it die". OOM takes
  * precedence because both OOM and `docker stop` surface as 137, so the flag disambiguates. Pure + unit-tested;

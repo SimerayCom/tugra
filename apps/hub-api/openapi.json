@@ -5091,7 +5091,8 @@
                         "docker_cleanup_failed",
                         "container_crashed",
                         "container_oom",
-                        "container_unhealthy"
+                        "container_unhealthy",
+                        "container_mem_pressure"
                       ]
                     }
                   },
@@ -5287,7 +5288,8 @@
                         "docker_cleanup_failed",
                         "container_crashed",
                         "container_oom",
-                        "container_unhealthy"
+                        "container_unhealthy",
+                        "container_mem_pressure"
                       ]
                     }
                   },

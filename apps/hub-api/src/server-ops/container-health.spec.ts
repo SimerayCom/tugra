@@ -1,4 +1,4 @@
-import { CONTAINER_HEALTH_SCRIPT, parseHealthOutput, diffContainerStates, explainExit, COOLDOWN_MS, type ContainerSnap, type PrevState } from "./container-health";
+import { CONTAINER_HEALTH_SCRIPT, parseHealthOutput, diffContainerStates, explainExit, memUnderPressure, COOLDOWN_MS, type ContainerSnap, type PrevState } from "./container-health";
 
 const snap = (over: Partial<ContainerSnap> = {}): ContainerSnap => ({
   name: "tugra_app1",
@@ -187,6 +187,28 @@ describe("diffContainerStates — unhealthy healthcheck alert", () => {
     const r = diffContainerStates(prev({ health: null }), snap({ health: null }), [], { now: NOW });
     expect(r.healthFire).toBeNull();
     expect(r.next.unhealthySince).toBeNull();
+  });
+});
+
+describe("memUnderPressure", () => {
+  it("fires when the average AND the latest sample are at/above the threshold with enough samples", () => {
+    expect(memUnderPressure([95, 93, 96])).toBe(true);
+    expect(memUnderPressure([90, 90, 90])).toBe(true); // exactly at threshold
+  });
+  it("does not fire with too few samples (a single 15s spike must not trip it)", () => {
+    expect(memUnderPressure([99, 99])).toBe(false);
+    expect(memUnderPressure([99])).toBe(false);
+    expect(memUnderPressure([])).toBe(false);
+  });
+  it("does not fire when the average is below the threshold", () => {
+    expect(memUnderPressure([40, 42, 39])).toBe(false);
+  });
+  it("does not fire when the spike has already subsided (latest below threshold)", () => {
+    expect(memUnderPressure([99, 99, 50])).toBe(false);
+  });
+  it("honours a custom threshold / minSamples", () => {
+    expect(memUnderPressure([80, 82, 81], { thresholdPct: 75 })).toBe(true);
+    expect(memUnderPressure([99, 99], { minSamples: 2 })).toBe(true);
   });
 });
 

@@ -520,6 +520,7 @@ model ContainerState {
   restartCountAtNotify Int       @default(0)
   unhealthySince       DateTime? // when the container first reported `unhealthy` (continuous; cleared on recovery)
   healthNotifiedAt     DateTime? // last unhealthy alert — own cooldown, separate from the crash lastNotifiedAt
+  memNotifiedAt        DateTime? // last memory-pressure (pre-OOM) alert — own cooldown
   updatedAt            DateTime  @updatedAt
 
   @@id([serverId, containerName])
