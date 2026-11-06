@@ -106,8 +106,9 @@ describe("planImport — volume declare honesty (Portability-V1)", () => {
     const a = app("app:s:named");
     const named = a.risks.find((r) => r.code === "app.volume.named")!;
     expect(named.message).toMatch(/EMPTY named volume/);
-    expect(named.message).toMatch(/not copied/i);
+    expect(named.message).toMatch(/upload its DATA to the hub/i); // P3 v1: manual tar+curl upload, NOT an automated migrator step
     expect(named.message).not.toMatch(/converted/i);
+    expect(named.message).not.toMatch(/the migrator('s)? volume step/i); // never claim an automated step that isn't shipped
     expect(a.proposed.volumeMounts).toBe(1); // the file mount is skipped; the named mount is declared
     expect(a.risks.find((r) => r.code === "app.volume.skipped")!.message).toMatch(/file-mount/);
   });

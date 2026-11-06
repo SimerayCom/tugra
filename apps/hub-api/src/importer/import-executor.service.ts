@@ -388,12 +388,28 @@ export class ImportExecutorService {
     await this.prisma.bulkOperation.update({ where: { id: opId }, data: { meta: { ...meta, rolledBackAt: new Date().toISOString() } } });
     await this.migrationTokens.revoke(opId, userId).catch((e) => this.logger.warn(`migration-token revoke failed for ${opId}: ${msg(e)}`));
 
+    // Apps whose volume DATA this migration touched (P3) must NOT be torn down: apps.remove runs
+    // `docker volume rm`, which would silently destroy the migrated data. The data task stamps the owning
+    // app's provisioning itemRef in result.appItemRef AT CLAIM TIME, so a DONE, FAILED, or stale-reaped data
+    // task all carry it — a FAILED resync can leave the earlier good data intact (the import script stages to
+    // a temp file BEFORE the wipe), and a mid-extract failure can leave partial data. Either way, never
+    // auto-remove: collect every data task's appItemRef regardless of status, then skip those apps.
+    const restoredDataApps = new Set<string>();
+    for (const dt of op.tasks.filter((t) => t.kind === "data")) {
+      const air = typeof dt.result === "object" && dt.result ? (dt.result as { appItemRef?: string }).appItemRef : undefined;
+      if (air) restoredDataApps.add(air);
+    }
+
     const done = op.tasks.filter((t) => t.status === "DONE" && t.resourceType === "application" && t.resourceId);
     for (const t of done) {
       const appId = t.resourceId!;
       const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { id: true } });
       if (!app) {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { status: "ROLLED_BACK", output: "app already removed", finishedAt: new Date() } });
+        continue;
+      }
+      if (t.itemRef && restoredDataApps.has(t.itemRef)) {
+        await this.prisma.bulkTask.update({ where: { id: t.id }, data: { output: "rollback skipped: app volume data was restored by this migration — remove it manually if intended" } });
         continue;
       }
       if ((await this.prisma.deployment.count({ where: { appId } })) > 0) {

@@ -4,6 +4,7 @@ import { CryptoModule } from "../crypto/crypto.module";
 import { ApplicationsModule } from "../applications/applications.module";
 import { DatabasesModule } from "../databases/databases.module";
 import { BackupsModule } from "../backups/backups.module";
+import { VolumeBackupsModule } from "../volume-backups/volume-backups.module";
 import { ImporterController } from "./importer.controller";
 import { MigrationIngestController } from "./migration-ingest.controller";
 import { MigrationArtifactController } from "./migration-artifact.controller";
@@ -19,7 +20,7 @@ import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 // databases for the coolify copy executor, and CryptoService (CryptoModule) for the session token at
 // rest. PrismaService, TeamAccessService and AuditService are provided by @Global modules.
 @Module({
-  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule],
+  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
   providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory],
   exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools

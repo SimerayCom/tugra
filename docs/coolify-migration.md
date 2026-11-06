@@ -25,7 +25,7 @@ Two paths, used **together**:
 | **MongoDB** data | **Manual** runbook (one-click deferred) |
 | **ClickHouse** data | **Manual** dump by hand (no tool yet) |
 | **LibSQL** data | **Manual** — it's a single SQLite file; copy the volume (`tar`/`rsync`) |
-| App **volume** data | **Manual** — not moved by the one-click migrator; use `tar`/`rsync` (or export a tarball and the volume `import-from-url` endpoint) |
+| App **volume** data | **Hub-staged upload** — before the first deploy, `tar` one declared app volume on the source and `curl -T` it to the migration volume endpoint (up to ~256 MiB gzip per volume; file ownership is **not** preserved; stop the source app first for a consistent copy). Larger volumes: manual `tar`/`rsync`. The automated one-click volume step is not shipped yet. |
 | `DATABASE_URL` rewrite (apps → new Tugra DB) | **Env remap** step — a preview then a confirm-gated apply (API/CLI: `GET/POST /import/operations/:opId/remap-env`), since the migrated DB gets **fresh** Tugra credentials. Compose/swarm/cross-host apps are flagged needs-manual. |
 | DNS cutover | **Manual** (point your records at the Tugra server) |
 
@@ -41,8 +41,11 @@ live replication — so the cutover discipline at the end of this page still app
 ### What it does, and what it does NOT do
 
 - **Moves:** the data of Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly databases.
-- **Does not move:** app **volume** data, DNS, or **MongoDB / ClickHouse / LibSQL** data — use the manual
-  runbook for those. The app's `DATABASE_URL` (the Tugra DB gets new credentials) is rewritten by the
+- **Does not move:** DNS, or **MongoDB / ClickHouse / LibSQL** data — use the manual runbook for those. App
+  **volume** data is moved by a separate **hub-staged upload** (tar the declared volume on the source and
+  `curl -T` it to `PUT /import/migration/artifacts/:itemRef/volumes/:name`, then `POST …/restore`), done
+  before the first deploy and gated so a started app's volume is never wiped; the automated one-click volume
+  step is not shipped yet. The app's `DATABASE_URL` (the Tugra DB gets new credentials) is rewritten by the
   separate **env remap** step (preview + confirm-gated apply), not by this data migrator.
 - **Dumps one database per container** (MySQL/MariaDB need `MYSQL_DATABASE`/`MARIADB_DATABASE`; no
   `--all-databases`). Redis/KeyDB run a synchronous `SAVE`, which **blocks** the source for the whole

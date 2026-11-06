@@ -100,6 +100,22 @@ describe("volume-backup-script", () => {
       expect(s.indexOf("curl")).toBeLessThan(s.indexOf("gpg"));
       expect(s.indexOf("gpg")).toBeLessThan(s.indexOf("gunzip"));
     });
+
+    it("leaves the decode UNBOUNDED for the trusted user path (no maxDecodedBytes)", () => {
+      const s = buildVolumeImportScript("v", "https://x/d.tar.gz", { encrypted: false, key: "", gzip: true });
+      expect(s).not.toContain("head -c"); // the user-driven import-from-url path is unchanged
+      expect(s).not.toMatch(/exceeds the \d+-byte cap/);
+    });
+
+    it("bounds the DECODED size with head -c + a size check when a cap is given (gzip-bomb guard)", () => {
+      const s = buildVolumeImportScript("v", "https://x/d.tar.gz", { encrypted: false, key: "", gzip: true, maxDecodedBytes: 1000 });
+      expect(s).toContain("| head -c 1001"); // cap + 1 so the exact-boundary case is detectable
+      expect(s).toContain('if [ "$(wc -c < "$TMP")" -gt 1000 ]'); // explicit boundary check
+      expect(s).toMatch(/exceeds the 1000-byte cap/);
+      // the bound is applied to the decoded stream BEFORE the wipe
+      expect(s.indexOf("head -c")).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
+      expect(s.indexOf("wc -c")).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
+    });
   });
 });
 

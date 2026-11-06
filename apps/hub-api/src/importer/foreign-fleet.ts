@@ -185,6 +185,13 @@ export interface ImportPlan {
 /** How a database's DATA will move (distinct from whether its CONFIG imports). */
 export type DbDataPlane = "one-click" | "manual" | "blocked";
 
+/** How an app volume's DATA will move.
+ *  - hub-staged: the migrator copies it through hub staging (up to the per-volume cap).
+ *  - manual-large: measured over the cap → copy it by hand (tar + rsync/scp); never ride hub staging.
+ *  - manual: the mount is not declared on the target (compose-managed / file / invalid / duplicate / over-limit).
+ *  - unknown-size: eligible, but its size was not measured (copied up to the cap at migrate time). */
+export type VolumeDataPlane = "hub-staged" | "manual-large" | "manual" | "unknown-size";
+
 /**
  * Secret-free, advisory summary attached to a plan so the review screen can show, up front, what actually
  * moves: per-database data-movement class, the services the plan does NOT import, and the volume-data caveat.
@@ -194,7 +201,11 @@ export interface ImportPreflight {
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
    *  never a silent drop on the review screen. */
   services: Array<{ name: string; members: number; note: string }>;
-  /** Number of apps that declare a volume whose DATA this import does not copy (config only). */
+  /** Number of apps that declare a volume whose DATA must be copied (config-only was the old behavior). */
   appsWithVolumeData: number;
   volumeDataNote?: string;
+  /** Per declared/skipped app volume: how its DATA will move. Additive; NOT part of planHash. A size is only
+   *  known when an inventory was supplied (the Go `--inventory` producer is deferred), so at plan time an
+   *  eligible mount is `hub-staged` and size-unmeasured, never silently assumed small. */
+  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string }>;
 }

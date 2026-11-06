@@ -119,12 +119,19 @@ export function buildVolumeRestoreScript(
 export function buildVolumeImportScript(
   dockerVolume: string,
   url: string,
-  opts: { encrypted: boolean; key: string; gzip: boolean },
+  opts: { encrypted: boolean; key: string; gzip: boolean; maxDecodedBytes?: number },
 ): string {
   const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
   const decode = [`curl -fsSL ${shq(url)}`];
   if (opts.encrypted) decode.push(gpgDecrypt(dest));
   if (opts.gzip) decode.push("gunzip");
+  // Bound the DECODED size when the tarball is UNTRUSTED (migration ingest passes maxDecodedBytes): a gzip
+  // bomb (~1000:1) would otherwise decompress to hundreds of GiB and fill the target host's disk during the
+  // restore. `head -c (cap+1)` stops reading past the cap — gunzip then dies on SIGPIPE, which trips pipefail
+  // and aborts BEFORE the wipe; the explicit size check below also catches the exact-boundary case. Unset
+  // (the user-driven import-from-url path) keeps the original unbounded behavior.
+  const cap = opts.maxDecodedBytes && opts.maxDecodedBytes > 0 ? Math.floor(opts.maxDecodedBytes) : 0;
+  if (cap) decode.push(`head -c ${cap + 1}`);
   // Download + decode to a TEMP FILE FIRST. With `set -e` + `set -o pipefail`, a failed/expired URL,
   // wrong key, or gzip-flag mismatch aborts HERE — before the volume is touched — so a failed import
   // never destroys existing data. Only once a valid archive is staged do we wipe + extract (clean
@@ -133,14 +140,16 @@ export function buildVolumeImportScript(
   const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq(
     "cd /data && find . -mindepth 1 -delete 2>/dev/null; tar --no-same-owner -xf -",
   )} < "$TMP"`;
-  return [
+  const lines = [
     "set -e",
     "set -o pipefail",
     "TMP=$(mktemp)",
     `trap 'rm -f "$TMP"' EXIT`,
     `${decode.join(" | ")} > "$TMP"`,
-    extract,
-  ].join("\n");
+  ];
+  if (cap) lines.push(`if [ "$(wc -c < "$TMP")" -gt ${cap} ]; then echo "decoded volume exceeds the ${cap}-byte cap" >&2; exit 1; fi`);
+  lines.push(extract);
+  return lines.join("\n");
 }
 
 export function buildVolumeDeleteScript(
