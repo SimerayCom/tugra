@@ -10,6 +10,7 @@ import type {
   ImportRisk,
 } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
+import { foreignAppToVolumes } from "./apply-map";
 
 // Engines whose CONFIG cannot be imported (the planner emits a blocker; the executor skips the item, so NO
 // target database is created). Exported so the preflight classifies them identically — one source, no drift.
@@ -100,8 +101,24 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
 
   const domains = app.domains ?? [];
   if (domains.length > 1) risks.push({ level: "warn", code: "app.domain.multi", message: `${domains.length} domains — the first ("${domains[0].host}") is primary; add the rest after` });
-  if ((app.volumes ?? []).some((v) => v.type === "bind")) risks.push({ level: "warn", code: "app.volume.bind", message: "host bind-mounts are converted to named volumes; data must be copied manually" });
-  if ((app.volumes ?? []).some((v) => v.type === "named")) risks.push({ level: "warn", code: "app.volume.named", message: namedVolumeMessage(volumesCarried) });
+  // What runCopyApp will actually declare (same mapper → the plan can't drift from the executor). null for
+  // local-docker, which adopts in place and re-attaches the original named volumes by name (not via this mapper).
+  const mappedVolumes = volumesCarried ? null : foreignAppToVolumes(app);
+  const appVolumes = app.volumes ?? [];
+  if (!volumesCarried && build.source === "COMPOSE" && appVolumes.length) {
+    risks.push({ level: "info", code: "app.volume.compose", message: "volumes of a compose app live in its compose file; they are not declared separately and their data is not copied" });
+  } else {
+    // Only claim a volume is "declared" when the mapper actually declared one (carried = local-docker always
+    // describes; non-carried only when ≥1 mount survived) — else app.volume.skipped carries the whole story.
+    const declaredSome = !mappedVolumes || mappedVolumes.volumes.length > 0;
+    if (declaredSome && appVolumes.some((v) => v.type === "bind")) risks.push({ level: "warn", code: "app.volume.bind", message: bindVolumeMessage(volumesCarried) });
+    if (declaredSome && appVolumes.some((v) => v.type === "named")) risks.push({ level: "warn", code: "app.volume.named", message: namedVolumeMessage(volumesCarried) });
+    if (mappedVolumes && mappedVolumes.skipped.length) {
+      // sort() so the hash stays independent of the source's mount discovery order (planHash invariant).
+      const reasons = [...new Set(mappedVolumes.skipped.map((s) => s.reason))].sort().join(", ");
+      risks.push({ level: "warn", code: "app.volume.skipped", message: `${mappedVolumes.skipped.length} mount(s) not declared (${reasons}) — recreate them on the target manually if needed` });
+    }
+  }
   if (build.source === "COMPOSE") risks.push({ level: "info", code: "app.compose", message: "compose file is rewritten (magic vars) and validated (assertSafeCompose) on import" });
   if (app.privileged || app.mountsDockerSock) risks.push({ level: "warn", code: "app.privileged", message: "source uses privileged mode or mounts the docker socket — requires explicit acknowledgement to import" });
   if (app.installCommand) risks.push({ level: "warn", code: "app.installCommand", message: "source has an install command Tugra does not model — fold it into the build" });
@@ -110,12 +127,14 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
   }
   if (app.serviceRef) risks.push({ level: "info", code: "app.service.member", message: "part of a multi-container service — imported with its stack" });
 
-  // Ordering: the app waits for its linked databases and its volumes.
+  // Ordering: the app waits for its linked databases and its volumes. Volume refs are sorted + de-duped so the
+  // item (hence planHash) is independent of the source's mount discovery order — the apply-time stale-guard
+  // relies on two scans of an unchanged host hashing equal.
   const dependsOn = [
     ...(app.links ?? [])
       .filter((l) => l.kind === "database")
       .map((l) => ns("database", dbByRef.get(l.ref)?.serverRef ?? app.serverRef, l.ref)),
-    ...(app.volumes ?? []).map((v) => ns("volume", app.serverRef, volKey(v))),
+    ...[...new Set((app.volumes ?? []).map((v) => ns("volume", app.serverRef, volKey(v))))].sort(),
   ];
 
   return {
@@ -132,22 +151,40 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
       envCount: (app.env ?? []).length, // count only — values are never in the plan
       replicas: app.replicas ?? 1,
       templateSlug: app.templateSlug ?? null,
+      ...(mappedVolumes ? { volumeMounts: mappedVolumes.volumes.length } : {}),
     },
     risks,
     dependsOn,
   };
 }
 
+function bindVolumeMessage(carried: boolean): string {
+  return carried
+    ? "host bind-mounts are not carried over (only named volumes are re-attached); their data stays on the host"
+    : "host bind-mounts are declared as EMPTY named volumes at the same container path; the source host folder is not mounted on the target and its data is not copied";
+}
+
 function namedVolumeMessage(carried: boolean): string {
   return carried
     ? "named volume is re-attached to the adopted container by its original name on redeploy (data is not copied, and it is not removed with the app)"
-    : "named volume data is not copied by this import — it stays on the source host; copy it to the target before cutover or the app starts empty";
+    : "an EMPTY named volume is declared on the target app at the container path; its data is NOT copied by this import — copy it before the first deploy or the app starts empty";
 }
 
 function planVolume(vol: ForeignVolume, serverRef: string | undefined, carried: boolean): ImportPlanItem {
+  // Per-volume item: whether a mount is actually DECLARED is decided per-app by the mapper and reported on the
+  // owning app's item (app.volume.*). Here we only state the data-movement truth, which holds for every case
+  // (app-owned or standalone, declared or skipped), so this item can never contradict the app item.
   const risks: ImportRisk[] = [];
-  if (vol.type === "bind") risks.push({ level: "warn", code: "volume.bind", message: "host bind-mount — converted to a named volume; data copied manually" });
-  if (vol.type === "named") risks.push({ level: "warn", code: "volume.named", message: namedVolumeMessage(carried) });
+  if (vol.type === "bind") {
+    risks.push({ level: "warn", code: "volume.bind", message: carried
+      ? "host bind-mount is not carried over (only named volumes are re-attached); its data stays on the host"
+      : "host bind-mount — the source host folder is not mounted on the target and its data is not copied by this import" });
+  }
+  if (vol.type === "named") {
+    risks.push({ level: "warn", code: "volume.named", message: carried
+      ? namedVolumeMessage(true)
+      : "named volume — its data is NOT copied by this import; copy it to the target before the first deploy or the app starts empty" });
+  }
   return {
     itemRef: ns("volume", serverRef, volKey(vol)),
     kind: "volume",

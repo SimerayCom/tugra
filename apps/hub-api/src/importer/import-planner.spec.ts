@@ -89,6 +89,77 @@ describe("planImport", () => {
   });
 });
 
+describe("planImport — volume declare honesty (Portability-V1)", () => {
+  const withVols: ForeignFleet = {
+    servers: [{ ref: "s", name: "box" }],
+    apps: [
+      { sourceRef: "named", name: "named", kind: "git", buildPack: "nixpacks", serverRef: "s", git: { url: "g" }, volumes: [{ mountPath: "/data", type: "named" }, { mountPath: "/etc/x.conf", type: "file" }] },
+      { sourceRef: "bindapp", name: "bindapp", kind: "git", buildPack: "nixpacks", serverRef: "s", git: { url: "g" }, volumes: [{ mountPath: "/media", hostPath: "/srv/m", type: "bind" }] },
+      { sourceRef: "composed", name: "composed", kind: "compose", buildPack: "dockercompose", serverRef: "s", composeFile: "services: {}", volumes: [{ mountPath: "/data", type: "named" }] },
+    ],
+    databases: [], services: [], volumes: [], sharedEnv: [], warnings: [],
+  };
+  const plan = planImport(withVols, { sourceKind: "coolify" });
+  const app = (ref: string) => plan.items.find((i) => i.itemRef === ref)!;
+
+  it("describes an empty-but-declared named volume and no longer claims conversion; reports skipped mounts", () => {
+    const a = app("app:s:named");
+    const named = a.risks.find((r) => r.code === "app.volume.named")!;
+    expect(named.message).toMatch(/EMPTY named volume/);
+    expect(named.message).toMatch(/not copied/i);
+    expect(named.message).not.toMatch(/converted/i);
+    expect(a.proposed.volumeMounts).toBe(1); // the file mount is skipped; the named mount is declared
+    expect(a.risks.find((r) => r.code === "app.volume.skipped")!.message).toMatch(/file-mount/);
+  });
+
+  it("describes a bind as an empty named volume at the container path (host folder not mounted)", () => {
+    const b = app("app:s:bindapp");
+    const bind = b.risks.find((r) => r.code === "app.volume.bind")!;
+    expect(bind.message).toMatch(/EMPTY named volume/);
+    expect(bind.message).not.toMatch(/converted/i);
+    expect(b.proposed.volumeMounts).toBe(1);
+  });
+
+  it("does not declare volumes for a compose app; flags that they live in the compose file", () => {
+    const c = app("app:s:composed");
+    expect(c.proposed.volumeMounts).toBe(0);
+    expect(c.risks.some((r) => r.code === "app.volume.compose")).toBe(true);
+    expect(c.risks.some((r) => r.code === "app.volume.bind" || r.code === "app.volume.named")).toBe(false);
+  });
+
+  it("local-docker (carried) keeps the re-attach wording and declares no mapper-derived mounts", () => {
+    const carried = planImport({ ...withVols, apps: [withVols.apps[0]] }, { sourceKind: "local-docker" });
+    const a = carried.items.find((i) => i.itemRef === "app:s:named")!;
+    const named = a.risks.find((r) => r.code === "app.volume.named")!;
+    expect(named.message).toMatch(/re-attached/);
+    expect(a.proposed.volumeMounts).toBeUndefined(); // the mapper is not run for local-docker (it adopts in place)
+  });
+
+  it("does not claim a volume is declared when every mount of the app is skipped", () => {
+    const f: ForeignFleet = {
+      servers: [{ ref: "s", name: "b" }],
+      apps: [{ sourceRef: "x", name: "x", kind: "git", buildPack: "nixpacks", serverRef: "s", git: { url: "g" }, volumes: [{ mountPath: "/my data", type: "named" }] }],
+      databases: [], services: [], volumes: [], sharedEnv: [], warnings: [],
+    };
+    const a = planImport(f, { sourceKind: "coolify" }).items.find((i) => i.itemRef === "app:s:x")!;
+    expect(a.risks.some((r) => r.code === "app.volume.named")).toBe(false); // the only mount was skipped (invalid-path)
+    expect(a.risks.find((r) => r.code === "app.volume.skipped")!.message).toMatch(/invalid-path/);
+    expect(a.proposed.volumeMounts).toBe(0);
+  });
+
+  it("keeps planHash independent of the source's mount discovery order", () => {
+    const mk = (vols: unknown[]): ForeignFleet => ({
+      servers: [{ ref: "s", name: "b" }],
+      apps: [{ sourceRef: "x", name: "x", kind: "git", buildPack: "nixpacks", serverRef: "s", git: { url: "g" }, volumes: vols as never }],
+      databases: [], services: [], volumes: [], sharedEnv: [], warnings: [],
+    });
+    const vols = [{ mountPath: "/a", type: "file" }, { mountPath: "/b/../c", type: "named" }];
+    const forward = planImport(mk(vols), { sourceKind: "coolify" }).planHash;
+    const reversed = planImport(mk([...vols].reverse()), { sourceKind: "coolify" }).planHash;
+    expect(forward).toBe(reversed);
+  });
+});
+
 describe("planImport — private GitHub-App repos (İş 2)", () => {
   const gh: ForeignFleet = {
     servers: [{ ref: "s", name: "box" }],

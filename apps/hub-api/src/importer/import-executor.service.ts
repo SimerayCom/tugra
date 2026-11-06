@@ -11,7 +11,7 @@ import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
-import { foreignAppToCreateInput } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
@@ -120,7 +120,8 @@ export class ImportExecutorService {
       const dbByRef = new Map(fleet.databases.map((d) => [`database:${d.serverRef ?? "_"}:${d.sourceRef}`, d]));
       // Per task, the exact work to run. Apps are copied; databases are provisioned as empty resources
       // (their DATA is restored later by the migrator) so a destResourceId exists to restore INTO.
-      // Volumes are still skipped here — they are declared on / restored with their owning app/db.
+      // Volume items stay SKIPPED here — a volume is DECLARED (empty) inside its owning app's task; its DATA
+      // is not copied by this import yet.
       const runners = new Map<string, () => Promise<void>>();
       for (const item of plan.items) {
         const app = item.kind === "app" ? appByRef.get(item.itemRef) : undefined;
@@ -134,7 +135,7 @@ export class ImportExecutorService {
           : hasBlocker
             ? "blocked by a plan risk"
             : item.kind === "volume"
-              ? "volume data is not copied by this import yet — it is restored with its app/database"
+              ? "handled with its owning app (declared there when eligible); its data is not copied by this import yet"
               : item.kind === "database" && !provisionableDb
                 ? "database engine has no Tugra equivalent"
                 : "could not resolve the source resource";
@@ -250,13 +251,44 @@ export class ImportExecutorService {
       const gitSourceId = await this.resolveGitSourceId(targetServerId, app);
       const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: "coolify", gitSourceId });
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
+      // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
+      // mirroring resolveGitSourceId: a failure here must NEVER reach the outer catch, or it would leave an
+      // orphan app with a FAILED task and no resourceId → a retry (alreadyImported trusts only DONE + live
+      // resource) would create a DUPLICATE app. setVolumes is a whole-column replace → idempotent on retry.
+      const mapped = foreignAppToVolumes(app);
+      let volumes: { declared: number; skipped: number; mounts: { path: string; name: string }[]; skippedReasons: { path: string; reason: string }[]; error?: string } | undefined;
+      if (mapped.volumes.length || mapped.skipped.length) {
+        volumes = {
+          declared: mapped.volumes.length,
+          skipped: mapped.skipped.length,
+          mounts: mapped.volumes.map((v) => ({ path: v.path, name: v.name })), // destination slug for the data slice; no host paths, no secrets
+          skippedReasons: mapped.skipped.map((s) => ({ path: s.mountPath.slice(0, 200), reason: s.reason })),
+        };
+        if (mapped.volumes.length) {
+          try {
+            await this.apps.setVolumes(userId, created.id, mapped.volumes);
+          } catch (e) {
+            volumes.declared = 0;
+            volumes.error = msg(e);
+          }
+        }
+      }
+      // Surface a declare FAILURE or skipped mounts on the task itself (the view renders `output` as the task
+      // message) — otherwise a silently-empty app contradicts the plan's "a volume is declared" promise. A clean
+      // declare (or a no-volume app) leaves `output` unset, so those rows stay byte-identical to before.
+      const volNote =
+        volumes && (volumes.error || volumes.skipped > 0)
+          ? `volumes: ${volumes.declared} declared${volumes.skipped ? `, ${volumes.skipped} skipped (${[...new Set(mapped.skipped.map((s) => s.reason))].sort().join(", ")})` : ""}${volumes.error ? `; declare FAILED: ${volumes.error}` : ""}`
+          : undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
           status: "DONE",
           resourceType: "application",
           resourceId: created.id,
-          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length }, // count only — never the values
+          // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
+          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(volumes ? { volumes } : {}) },
+          ...(volNote ? { output: volNote } : {}),
           finishedAt: new Date(),
         },
       });

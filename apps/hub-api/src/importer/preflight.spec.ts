@@ -59,6 +59,15 @@ describe("buildPreflight", () => {
     expect(pf.services).toEqual([{ name: "signoz", members: 2, note: expect.stringMatching(/not imported/i) }]);
     expect(pf.appsWithVolumeData).toBe(1);
     expect(pf.volumeDataNote).toMatch(/not copied/i);
+    expect(pf.volumeDataNote).toMatch(/empty/i); // the mounts ARE declared (empty) now — the data is what is not copied
+  });
+
+  it("does not claim volumes are declared for a compose-only fleet (nothing is declared)", () => {
+    const f = fleet({ apps: [{ sourceRef: "a1", name: "web", kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", volumes: [{ mountPath: "/data", type: "named", name: "v" }] }] });
+    const pf = buildPreflight(f, opts);
+    expect(pf.appsWithVolumeData).toBe(1); // the app does carry volume data…
+    expect(pf.volumeDataNote).toMatch(/not copied/i); // …which still is not copied
+    expect(pf.volumeDataNote).not.toMatch(/declared/i); // but nothing is declared (compose volumes live in the compose file)
   });
 
   it("local-docker adopts volumes in place → no volume-data caveat", () => {

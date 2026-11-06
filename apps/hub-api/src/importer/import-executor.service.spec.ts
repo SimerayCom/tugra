@@ -21,7 +21,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; gitSources?: Array<{ id: string }> } = {}) {
+function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }> } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -42,7 +42,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }), // claim succeeds
     },
-    application: { findMany: jest.fn().mockResolvedValue([]) },
+    application: { findMany: jest.fn().mockResolvedValue((over.liveAppIds ?? []).map((id) => ({ id }))) },
     database: { findMany: jest.fn().mockResolvedValue((over.liveDbIds ?? []).map((id) => ({ id }))) },
     gitSource: { findMany: jest.fn().mockResolvedValue(over.gitSources ?? []) }, // İş 2: team GitSources for private-repo auto-link
   };
@@ -54,7 +54,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
-  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }) };
+  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined) };
   const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }) };
   const migrationTokens = { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn().mockResolvedValue(false), validate: jest.fn() };
   const svc = new ImportExecutorService(
@@ -137,6 +137,100 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never);
   return { svc, prisma, dbs, migrationTokens };
 }
+
+describe("ImportExecutorService.applyCoolify — app volume declare (Portability-V1)", () => {
+  // Single-app, no-DB coolify fleet whose app carries `volumes`; run apply and return the app's DONE payload.
+  async function applyWithVolumes(
+    volumes: unknown[],
+    over: Parameters<typeof harness>[0] = {},
+    appOver: Record<string, unknown> = {},
+  ) {
+    const h = harness(over);
+    const base = fleet();
+    const f = { ...base, databases: [], apps: [{ ...base.apps[0], volumes, ...appOver }] } as unknown as ForeignFleet;
+    h.source.discover.mockResolvedValue(f);
+    const planHash = planImport(f, { sourceKind: "coolify" }).planHash;
+    await h.svc.apply("user-1", { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash });
+    await flush();
+    const appDone = h.prisma.bulkTask.update.mock.calls
+      .map((c: unknown[]) => c[0] as { data: Record<string, unknown> })
+      .find((a) => a.data.resourceType === "application");
+    return { ...h, appDone, result: appDone?.data.result as Record<string, unknown> | undefined };
+  }
+
+  it("declares the app's named + bind volumes as empty named volumes after create (sorted, source paths/names dropped)", async () => {
+    const { apps, result } = await applyWithVolumes([
+      { name: "7f3e_X", mountPath: "/data", type: "named" },
+      { hostPath: "/srv/media", mountPath: "/media", type: "bind" },
+    ]);
+    expect(apps.setVolumes).toHaveBeenCalledTimes(1);
+    expect(apps.setVolumes).toHaveBeenCalledWith("user-1", "app-new", [
+      { name: "data", path: "/data" },
+      { name: "media", path: "/media" },
+    ]);
+    expect(result?.volumes).toMatchObject({ declared: 2, skipped: 0 });
+  });
+
+  it("leaves a volume-less app's result byte-identical and never calls setVolumes", async () => {
+    const { apps, result } = await applyWithVolumes([]);
+    expect(apps.setVolumes).not.toHaveBeenCalled();
+    expect(result).toEqual({ name: "web", appId: "app-new", unresolvedEnv: 0 });
+  });
+
+  it("never reflects a bind's source host path onto the target, and never uses host mounts", async () => {
+    const { apps } = await applyWithVolumes([{ hostPath: "/var/run/docker.sock", mountPath: "/sock", type: "bind" }]);
+    expect(apps.setVolumes).toHaveBeenCalledWith("user-1", "app-new", [{ name: "sock", path: "/sock" }]);
+    expect(JSON.stringify(apps.setVolumes.mock.calls)).not.toContain("docker.sock");
+    expect((apps as Record<string, unknown>).setHostMounts).toBeUndefined(); // this slice never calls setHostMounts
+  });
+
+  it("keeps the task DONE (not FAILED) and records the error if declaring volumes throws — no duplicate app on retry", async () => {
+    const h = harness();
+    h.apps.setVolumes.mockRejectedValueOnce(new Error("cluster has no swarm manager to pin this stateful app to"));
+    const base = fleet();
+    const f = { ...base, databases: [], apps: [{ ...base.apps[0], volumes: [{ mountPath: "/data", type: "named" }] }] } as unknown as ForeignFleet;
+    h.source.discover.mockResolvedValue(f);
+    const planHash = planImport(f, { sourceKind: "coolify" }).planHash;
+    await h.svc.apply("user-1", { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash });
+    await flush();
+    expect(h.apps.create).toHaveBeenCalledTimes(1); // app created exactly once (no orphan/duplicate)
+    const appDone = h.prisma.bulkTask.update.mock.calls
+      .map((c: unknown[]) => c[0] as { data: Record<string, unknown> })
+      .find((a) => a.data.resourceType === "application");
+    expect(appDone?.data.status).toBe("DONE");
+    expect(appDone?.data.resourceId).toBe("app-new");
+    expect((appDone?.data.result as Record<string, unknown>).volumes).toMatchObject({ declared: 0, error: expect.stringMatching(/swarm/) });
+    expect(appDone?.data.output).toMatch(/declare FAILED/); // the failure is surfaced on the task, not silently DONE
+  });
+
+  it("does not declare volumes for a compose-source app (they live in its compose file)", async () => {
+    const { apps, result } = await applyWithVolumes(
+      [{ mountPath: "/data", type: "named" }],
+      {},
+      { kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", git: undefined },
+    );
+    expect(apps.setVolumes).not.toHaveBeenCalled();
+    expect(result?.volumes).toMatchObject({ declared: 0, skipped: 1 });
+  });
+
+  it("records skipped file mounts and does not call setVolumes when nothing is declarable", async () => {
+    const { apps, result } = await applyWithVolumes([{ mountPath: "/etc/app.conf", type: "file" }]);
+    expect(apps.setVolumes).not.toHaveBeenCalled();
+    expect(result?.volumes).toMatchObject({ declared: 0, skipped: 1 });
+  });
+
+  it("is idempotent: an app already imported (still live) is SKIPPED and setVolumes is not re-invoked", async () => {
+    const h = harness({ priorImported: [{ itemRef: "app:srv-a:app-1", resourceId: "app-existing", resourceType: "application" }], liveAppIds: ["app-existing"] });
+    const base = fleet();
+    const f = { ...base, databases: [], apps: [{ ...base.apps[0], volumes: [{ mountPath: "/data", type: "named" }] }] } as unknown as ForeignFleet;
+    h.source.discover.mockResolvedValue(f);
+    const planHash = planImport(f, { sourceKind: "coolify" }).planHash;
+    await h.svc.apply("user-1", { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash });
+    await flush();
+    expect(h.apps.create).not.toHaveBeenCalled();
+    expect(h.apps.setVolumes).not.toHaveBeenCalled();
+  });
+});
 
 describe("ImportExecutorService.rollback — database teardown guard (S1)", () => {
   it("tears down a still-EMPTY provisioned database (status NEW, no restores/backups) and revokes the migration token", async () => {
