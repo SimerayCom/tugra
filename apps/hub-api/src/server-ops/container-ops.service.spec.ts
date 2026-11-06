@@ -27,11 +27,14 @@ function make(over: {
   forServer?: jest.Mock;
   stream?: jest.Mock;
   sendCommand?: jest.Mock;
+  stateFindMany?: jest.Mock;
 } = {}) {
   const prisma = {
     server: { findUnique: jest.fn().mockResolvedValue(server) },
     application: { findMany: jest.fn().mockResolvedValue([]) },
     database: { findMany: jest.fn().mockResolvedValue([]) },
+    // list() joins ContainerState for crash/health badges; default empty so existing list() tests stay bare.
+    containerState: { findMany: over.stateFindMany ?? jest.fn().mockResolvedValue([]) },
   } as unknown as PrismaService;
   const access = { requirePermission: over.requirePermission ?? jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
   const agentWs = {
@@ -173,5 +176,19 @@ describe("ContainerOpsService.list (host-wide incl. stopped)", () => {
   it("rejects when the agent is offline", async () => {
     const isOnline = jest.fn().mockReturnValue(false);
     await expect(make({ isOnline }).list("u1", "s1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("enriches a stopped container with its crash state (exit code / OOM / restart count, ISO finishedAt); unseen stays bare", async () => {
+    const finishedAt = new Date("2026-11-05T00:00:00.000Z");
+    const stateFindMany = jest.fn().mockResolvedValue([
+      { containerName: "nginx", exitCode: 137, oomKilled: true, restartCount: 4, health: null, finishedAt },
+    ]);
+    const r = await make({ stateFindMany }).list("u1", "s1");
+    expect(stateFindMany.mock.calls[0][0].where).toEqual({ serverId: "s1" });
+    const nginx = r.containers.find((c) => c.name === "nginx")!;
+    expect(nginx).toMatchObject({ exitCode: 137, oomKilled: true, restartCount: 4 });
+    expect(nginx.finishedAt).toBe(finishedAt.toISOString());
+    // A container with no ContainerState row keeps only its docker ps fields.
+    expect(r.containers.find((c) => c.name === "tugra_db_x")!.exitCode).toBeUndefined();
   });
 });

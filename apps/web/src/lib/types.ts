@@ -613,6 +613,13 @@ export interface ContainerInventoryRow extends ContainerMetricSample {
   kind: "app" | "db" | "system" | "other";
   resourceId?: string;
   service?: string;
+  // Last-known crash/health state (from the container-health poll), joined server-side for badges.
+  // Optional: absent when the poll hasn't recorded this container yet, so a row with none shows no badge.
+  restartCount?: number;
+  exitCode?: number;
+  oomKilled?: boolean;
+  health?: string | null;
+  finishedAt?: string | null;
 }
 
 export interface ServerContainers {
@@ -627,6 +634,13 @@ export interface HostContainer {
   kind: "app" | "db" | "system" | "other";
   label: string;
   resourceId?: string;
+  // Last-known crash/health state (from the container-health poll), joined server-side so a stopped
+  // container can be badged "Exit 137" / "OOM" / restart count. Optional — absent when not yet recorded.
+  restartCount?: number;
+  exitCode?: number;
+  oomKilled?: boolean;
+  health?: string | null;
+  finishedAt?: string | null;
 }
 export interface HostContainers {
   containers: HostContainer[];

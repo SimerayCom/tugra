@@ -31,6 +31,13 @@ export interface ContainerInventoryRow extends ContainerMetricSample {
   kind: "app" | "db" | "system" | "other";
   resourceId?: string;
   service?: string;
+  // Last-known crash/health state from the container-health poll (ContainerState), joined in so the UI
+  // can badge a crash-looping or unhealthy container. Absent when the poll hasn't recorded this one yet.
+  restartCount?: number;
+  exitCode?: number;
+  oomKilled?: boolean;
+  health?: string | null;
+  finishedAt?: string | null;
 }
 
 /** Resolve a friendly label/kind for a raw container name, given this server's apps + databases.
@@ -201,20 +208,27 @@ export class ContainerMetricsService {
    * off. Rows are ordered by name; BigInt byte fields widen to Number.
    */
   async forServer(serverId: string): Promise<ServerContainers> {
-    const [rows, apps, dbs] = await Promise.all([
+    const [rows, apps, dbs, states] = await Promise.all([
       this.prisma.containerMetric.findMany({
         where: { serverId, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
         orderBy: { ts: "asc" },
       }),
       this.prisma.application.findMany({ where: { serverId }, select: { id: true, name: true } }),
       this.prisma.database.findMany({ where: { serverId }, select: { id: true, name: true } }),
+      // Last-known crash/health state so a crash-looping or unhealthy container can be badged. DB-only.
+      this.prisma.containerState.findMany({
+        where: { serverId },
+        select: { containerName: true, exitCode: true, oomKilled: true, restartCount: true, health: true, finishedAt: true },
+      }),
     ]);
     const appsById = new Map(apps.map((a) => [a.id, a.name]));
     const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
+    const stateByName = new Map(states.map((s) => [s.containerName, s]));
     // ts asc → the last row seen per name is its most recent sample.
     const latest = new Map<string, ContainerInventoryRow>();
     for (const r of rows) {
       const friendly = resolveContainerLabel(r.containerName, appsById, dbsById);
+      const st = stateByName.get(r.containerName);
       latest.set(r.containerName, {
         name: r.containerName,
         containerId: r.containerId,
@@ -228,6 +242,13 @@ export class ContainerMetricsService {
         netTx: Number(r.netTx),
         blkRead: Number(r.blkRead),
         blkWrite: Number(r.blkWrite),
+        ...(st && {
+          restartCount: st.restartCount,
+          exitCode: st.exitCode,
+          oomKilled: st.oomKilled,
+          health: st.health,
+          finishedAt: st.finishedAt ? st.finishedAt.toISOString() : null,
+        }),
       });
     }
     const containers = [...latest.values()].sort((a, b) => a.label.localeCompare(b.label));
