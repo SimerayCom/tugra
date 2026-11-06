@@ -95,6 +95,9 @@ describe("SsoConfigCard", () => {
     wrap();
     const issuer = (await screen.findByLabelText("Issuer URL")) as HTMLInputElement;
     await waitFor(() => expect(issuer.value).toBe("https://idp.example.com"));
+    // Gate on the loaded `enabled` state actually reaching the DOM before saving — the config arrives via a
+    // second query (settings→isPro→oidcConfig), so clicking Save too early would send the default enabled=false.
+    await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "Save SSO settings" }));
     await waitFor(() => expect(api.updateOidcConfig).toHaveBeenCalled());
     const arg = (api.updateOidcConfig as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as Record<string, unknown>;
