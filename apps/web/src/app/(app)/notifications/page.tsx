@@ -65,6 +65,7 @@ const EVENT_LABEL: Record<string, string> = {
   container_crashed: "eventContainerCrashed",
   container_oom: "eventContainerOom",
   container_unhealthy: "eventContainerUnhealthy",
+  container_mem_pressure: "eventContainerMemPressure",
 };
 
 export default function NotificationsPage() {

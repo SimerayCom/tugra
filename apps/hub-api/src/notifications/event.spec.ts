@@ -354,4 +354,14 @@ describe("renderEvent — typed per-event templates", () => {
     expect(fieldVal(m, "Status")).toBe("Unhealthy");
     expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
   });
+
+  it("container_mem_pressure: warning (not critical), Memory usage field, db deep-link", () => {
+    const m = render("container_mem_pressure", { label: "shop · db", serverName: "box", kind: "db", resourceId: "db1", serverId: "s1", memPct: 96, limitMb: 512 });
+    expect(m.event).toBe("container_mem_pressure");
+    expect(m.level).toBe("warning");
+    expect(m.critical).toBe(false);
+    expect(m.title).toBe("Container nearing its memory limit — shop · db");
+    expect(fieldVal(m, "Memory")).toBe("96% of 512 MB");
+    expect(linkUrl(m, "Open database")).toBe("https://web.test/databases/db1");
+  });
 });

@@ -37,6 +37,7 @@
   "eventContainerCrashed": "Container crashed",
   "eventContainerOom": "Container out of memory",
   "eventContainerUnhealthy": "Container unhealthy",
+  "eventContainerMemPressure": "Container nearing memory limit",
   "f_url": "Webhook URL",
   "f_webhookUrl": "Webhook URL",
   "f_botToken": "Bot token",

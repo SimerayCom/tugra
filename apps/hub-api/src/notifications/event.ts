@@ -118,6 +118,7 @@ const REGISTRY: Record<string, EventTemplate> = {
   container_crashed: containerTemplate,
   container_oom: containerTemplate,
   container_unhealthy: containerTemplate,
+  container_mem_pressure: containerTemplate,
   monitor_up: monitorTemplate,
   monitor_down: monitorTemplate,
   test: testTemplate,
