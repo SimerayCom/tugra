@@ -1,5 +1,6 @@
 import { MIGRATOR_ENGINES } from "./migrator-recipe";
 import { UNSUPPORTED_DB_IMPORT } from "./import-planner";
+import { foreignAppToVolumes } from "./apply-map";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import type { DbDataPlane, ForeignFleet, ImportOptions, ImportPreflight } from "./foreign-fleet";
 
@@ -47,13 +48,19 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions): Imp
   }));
 
   const appsWithVolumeData = carried ? 0 : fleet.apps.filter((a) => (a.volumes ?? []).length > 0).length;
+  // Does ANY app actually get an empty volume declared? (A compose-only / all-skipped fleet declares none, so the
+  // note must not claim "declared" in that case.)
+  const appsDeclaringVolumes = carried ? 0 : fleet.apps.filter((a) => foreignAppToVolumes(a).volumes.length > 0).length;
 
   return {
     databases,
     services,
     appsWithVolumeData,
-    volumeDataNote: appsWithVolumeData > 0
-      ? "named/bind volume DATA is not copied by this import — copy it to the target before cutover or the app starts empty"
-      : undefined,
+    volumeDataNote:
+      appsWithVolumeData === 0
+        ? undefined
+        : appsDeclaringVolumes > 0
+          ? "empty volumes are declared on the new apps, but named/bind volume DATA is not copied by this import — copy it to the target before the first deploy or the app starts empty"
+          : "named/bind volume DATA is not copied by this import — copy it to the target before the first deploy or the app starts empty",
   };
 }
