@@ -64,6 +64,27 @@ export interface ForeignLink {
   internalHost?: string; // the source-side internal hostname to replace
 }
 
+/** Resource limits in Tugra units. Reservations are soft swarm scheduling hints (apps only). */
+export interface ForeignLimits {
+  memoryMb?: number;
+  cpus?: number;
+  reserveMemoryMb?: number;
+  reserveCpus?: number;
+}
+
+/** A connected git provider (today: a GitHub App) the source PaaS clones private repos through.
+ *  SECRET-FREE: identity only. The App's private key / client secret / webhook secret are NEVER here — they
+ *  are returned only by `ImportSource.fetchSecrets("gitProvider:<ref>")`. */
+export interface ForeignGitProvider {
+  ref: string; // the source provider id (Dokploy githubId); namespaced to "gitProvider:<ref>" for fetchSecrets
+  kind: "github";
+  appSlug?: string;
+  appId?: string;
+  installationId?: string;
+  htmlUrl?: string;
+  appName?: string;
+}
+
 export interface ForeignApp {
   sourceRef: string;
   name: string;
@@ -90,6 +111,24 @@ export interface ForeignApp {
   volumes?: ForeignVolume[];
   links?: ForeignLink[];
   replicas?: number;
+  /** Push-to-deploy switch (Tugra `setAutoDeploy`). Absent = the source did not say (Tugra default: on). */
+  autoDeploy?: boolean;
+  /** Repo-relative glob patterns gating whether a push deploys (Tugra `setWatchPaths`). */
+  watchPaths?: string[];
+  /** Exec-form argv overrides for the container ENTRYPOINT / CMD (Tugra `setContainerCommand`). */
+  containerEntrypoint?: string[];
+  containerCommand?: string[];
+  /** Hard limits + soft swarm reservations, already in Tugra units (MB / CPUs) (Tugra `setLimits`). */
+  limits?: ForeignLimits;
+  /** Dockerfile multi-stage target (Tugra `dockerBuildTarget`, via `setBuild`). */
+  dockerBuildTarget?: string;
+  /** The connected git provider this app clones through: a {@link ForeignGitProvider.ref}. Lets the apply
+   *  step resolve the app's link to a Tugra GitSource. Never a credential. */
+  gitProviderRef?: string;
+  // ── Carried for honesty only — Tugra has NO target for these yet (apply reports them, never drops silently).
+  triggerType?: string; // Dokploy "push" | "tag" — Tugra deploys on push only
+  dockerContextPath?: string; // Dokploy docker build context dir (Tugra has baseDirectory only)
+  staticSpa?: boolean; // Dokploy isStaticSpa — Tugra's static builds always serve an SPA fallback
   restart?: string;
   healthcheck?: { type?: "http" | "cmd" | "none"; path?: string; port?: number; command?: string };
   cron?: Array<{ name: string; schedule: string; command: string }>;
@@ -109,6 +148,8 @@ export interface ForeignDb {
   externalPort?: number;
   volumes?: ForeignVolume[];
   backupSchedule?: { s3?: boolean; interval?: string };
+  /** Hard limits in Tugra units (Tugra Database has memoryMb/cpus only — no reservation column). */
+  limits?: Pick<ForeignLimits, "memoryMb" | "cpus">;
   serviceRef?: string;
   serverRef?: string;
 }
@@ -132,6 +173,8 @@ export interface ForeignFleet {
   services: ForeignService[];
   volumes: ForeignVolume[]; // standalone volumes not owned by one app/db
   sharedEnv: ForeignEnv[]; // team/project/environment-scoped shared variables to resolve references against
+  /** Connected git providers (secret-free identity). Optional — sources without git-provider discovery omit it. */
+  gitProviders?: ForeignGitProvider[];
   warnings: string[];
 }
 

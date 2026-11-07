@@ -6,8 +6,11 @@ import {
   mapApplication,
   mapCompose,
   mapDatabase,
+  commandLooksSecret,
+  mapCommand,
   mapDomain,
   mapEnvBlob,
+  mapLimits,
   mapMount,
   parseDotenv,
   type DokployApplication,
@@ -170,5 +173,85 @@ describe("buildDokployFleet — assembly, links, secret-free", () => {
     f.apps[0].detail.env = "X=postgresql://u:p@db-replica:5432/x"; // "db" must NOT match "db-replica"
     const web = buildDokployFleet(f).apps.find((a) => a.sourceRef === "web-a1b2c3")!;
     expect(web.links ?? []).toEqual([]);
+  });
+});
+
+describe("dokploy-map — L1 widened fields", () => {
+  it("carries autoDeploy, watchPaths, dockerBuildStage (dockerfile only), publishDirectory, buildPath, isStaticSpa (static only), triggerType, dockerContextPath", () => {
+    const a = mapApplication(
+      baseApp({ buildType: "dockerfile", owner: "o", repository: "r", buildPath: "/svc", autoDeploy: false, watchPaths: ["src/**", " "], dockerBuildStage: "prod", dockerContextPath: "./ctx", triggerType: "tag", isStaticSpa: true, publishDirectory: "dist" }),
+    );
+    expect(a).toMatchObject({ autoDeploy: false, watchPaths: ["src/**"], dockerBuildTarget: "prod", dockerContextPath: "./ctx", triggerType: "tag", publishDirectory: "dist" });
+    expect(a.git?.baseDirectory).toBe("/svc");
+    expect(a.staticSpa).toBeUndefined(); // not a static build
+    const st = mapApplication(baseApp({ buildType: "static", isStaticSpa: true, dockerBuildStage: "x" }));
+    expect(st.staticSpa).toBe(true);
+    expect(st.dockerBuildTarget).toBeUndefined(); // build stage only for dockerfile builds
+  });
+
+  it("splits command → ENTRYPOINT argv and args → CMD argv (and keeps the legacy startCommand)", () => {
+    expect(mapCommand("node  server.js", ["--port", "3000"])).toEqual({ startCommand: "node server.js --port 3000", containerEntrypoint: ["node", "server.js"], containerCommand: ["--port", "3000"], withheld: false });
+    expect(mapCommand(null, ["a"])).toMatchObject({ containerEntrypoint: undefined, containerCommand: ["a"] });
+    expect(mapCommand("", [])).toEqual({ withheld: false });
+  });
+
+  it("WITHHOLDS a command/args that looks credential-bearing (never a secret in the fleet)", () => {
+    for (const [c, args] of [["redis-server --requirepass hunter2", []], ["run", ["--token=abc123"]], ["app", ["postgres://u:pw@db/x"]]] as Array<[string, string[]]>) {
+      const m = mapCommand(c, args);
+      expect(m.withheld).toBe(true);
+      expect(JSON.stringify(m)).not.toMatch(/hunter2|abc123|u:pw/);
+    }
+    expect(commandLooksSecret(["--port=3000"])).toBe(false);
+    const a = mapApplication(baseApp({ command: "redis-server --requirepass hunter2" }));
+    expect(JSON.stringify(a)).not.toContain("hunter2");
+    expect(a.startCommand).toBeUndefined();
+    // a benign flag NAME that merely contains "password"/"auth" is carried, not withheld
+    expect(commandLooksSecret(["--mysql-native-password=ON"])).toBe(false);
+    expect(commandLooksSecret(["node", "auth-server.js"])).toBe(false);
+    expect(commandLooksSecret(["--author"])).toBe(false);
+    expect(mapCommand("mysqld", ["--mysql-native-password=ON"])).toMatchObject({ containerCommand: ["--mysql-native-password=ON"], withheld: false });
+  });
+
+  it("converts Swarm bytes/NanoCPUs → MB/CPUs; ignores unset/zero/garbage", () => {
+    expect(mapLimits({ memoryLimit: "536870912", cpuLimit: "1500000000", memoryReservation: "268435456", cpuReservation: "500000000" })).toEqual({ memoryMb: 512, cpus: 1.5, reserveMemoryMb: 256, reserveCpus: 0.5 });
+    expect(mapLimits({ memoryLimit: 1073741824 })).toEqual({ memoryMb: 1024 });
+    expect(mapLimits({ memoryLimit: "", cpuLimit: null, memoryReservation: "0", cpuReservation: "abc" })).toBeUndefined();
+  });
+
+  it("app limits + a DB's hard limits carry (a DB reservation has no Tugra column and is warned, not carried)", () => {
+    expect(mapApplication(baseApp({ memoryLimit: "536870912" })).limits).toEqual({ memoryMb: 512 });
+    const db = mapDatabase({ appName: "m", memoryLimit: "1073741824", cpuLimit: "2000000000", memoryReservation: "536870912" } as DokployDatabase, "MYSQL");
+    expect(db.limits).toEqual({ memoryMb: 1024, cpus: 2 });
+  });
+
+  it("an app/compose links to its GitHub App by githubId (github source only); other sources carry no ref", () => {
+    expect(mapApplication(baseApp({ sourceType: "github", owner: "o", repository: "r", githubId: "gh-1" })).gitProviderRef).toBe("gh-1");
+    expect(mapApplication(baseApp({ sourceType: "github", owner: "o", repository: "r", github: { githubId: "gh-2", gitProviderId: "gp-2" } })).gitProviderRef).toBe("gh-2");
+    expect(mapApplication(baseApp({ sourceType: "gitlab", gitlabPathNamespace: "g/p", githubId: "gh-1" })).gitProviderRef).toBeUndefined();
+    const c = mapCompose({ composeId: "c", appName: "stk", sourceType: "github", owner: "o", repository: "r", githubId: "gh-3", autoDeploy: true, watchPaths: ["a/**"], triggerType: "push" });
+    expect(c).toMatchObject({ gitProviderRef: "gh-3", autoDeploy: true, watchPaths: ["a/**"], triggerType: "push" });
+  });
+
+  it("warns (never silently drops) for tag triggers, build context, non-SPA static, DB command/args + reservation, unreadable GitHub App, withheld command", () => {
+    const f: DokployFleetInput = {
+      servers: [],
+      apps: [
+        { detail: baseApp({ appName: "a1", triggerType: "tag", dockerContextPath: "./svc", githubId: "gh-missing", owner: "o", repository: "r" }) },
+        { detail: baseApp({ appName: "a2", buildType: "static", isStaticSpa: false, command: "x --password y", memoryLimit: "12abc" }) },
+        { detail: baseApp({ appName: "a3", buildType: "paketo_buildpacks" }) },
+      ],
+      composes: [],
+      databases: [{ detail: { appName: "m", args: ["--mysql-native-password=ON"], memoryReservation: "536870912" } as DokployDatabase, engineTable: "mysql" }],
+      sharedEnvBlobs: [],
+      gitProviders: [],
+    };
+    const w = buildDokployFleet(f).warnings.join("\n");
+    for (const re of [/deploy on git TAGS/, /docker build context/, /disable SPA fallback/, /credential-bearing/, /could not be parsed/, /override the container command\/args/, /RESERVATION/, /GitHub App that could not be read/, /Paketo buildpacks/]) expect(w).toMatch(re);
+    expect(w).toMatch(/NOT carried\): m\b/); // DB command/args warning names the database
+  });
+
+  it("passes secret-free gitProviders through to the fleet", () => {
+    const f: DokployFleetInput = { servers: [], apps: [], composes: [], databases: [], sharedEnvBlobs: [], gitProviders: [{ ref: "gh-1", kind: "github", appSlug: "s" }] };
+    expect(buildDokployFleet(f).gitProviders).toEqual([{ ref: "gh-1", kind: "github", appSlug: "s" }]);
   });
 });

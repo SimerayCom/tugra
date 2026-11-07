@@ -1,4 +1,12 @@
-import { DokploySource, type DokployClient } from "./dokploy.source";
+import { DokploySource, toForeignGitProvider, type DokployClient } from "./dokploy.source";
+
+/** GitHub App credentials seeded into the fake `github.one` — none may ever surface in discover(). */
+const GH_SECRETS = {
+  privateKey: "-----BEGIN RSA PRIVATE KEY-----\nMIIEsentinelPRIVATEKEYbody123\n-----END RSA PRIVATE KEY-----",
+  clientSecret: "CLIENTSECRET_sentinel_9f8e",
+  webhookSecret: "WEBHOOKSECRET_sentinel_7d6c",
+  clientId: "Iv1.sentinelclientid",
+};
 
 /** A fake Dokploy client whose GETs resolve from a route map (missing → throws, like a 404). An Error value
  *  in the map is thrown (to simulate a per-endpoint 403). */
@@ -31,6 +39,10 @@ const ROUTES: Record<string, unknown> = {
     name: "web",
     sourceType: "github",
     buildType: "nixpacks",
+    githubId: "gh-1",
+    autoDeploy: true,
+    watchPaths: ["src/**"],
+    memoryLimit: "536870912",
     owner: "acme",
     repository: "web",
     branch: "main",
@@ -48,6 +60,21 @@ const ROUTES: Record<string, unknown> = {
     dockerImage: "postgres:16",
   },
   "/server.all": [{ serverId: "srv-1", name: "box", ipAddress: "1.2.3.4" }],
+  "/gitProvider.getAll": [
+    { gitProviderId: "gp-1", name: "diesdigital-app", providerType: "github", github: { githubId: "gh-1" } },
+    { gitProviderId: "gp-2", name: "a-gitlab", providerType: "gitlab", gitlab: { gitlabId: "gl-1" } },
+  ],
+  "/github.one?githubId=gh-1": {
+    githubId: "gh-1",
+    gitProviderId: "gp-1",
+    githubAppName: "diesdigital-tugra",
+    githubAppId: 4242,
+    githubInstallationId: "99001",
+    githubClientId: GH_SECRETS.clientId,
+    githubClientSecret: GH_SECRETS.clientSecret,
+    githubPrivateKey: GH_SECRETS.privateKey,
+    githubWebhookSecret: GH_SECRETS.webhookSecret,
+  },
 };
 
 const makeClient = (over: Record<string, unknown> = {}): { get: jest.Mock } => {
@@ -95,6 +122,44 @@ describe("DokploySource.discover", () => {
     expect(json).toContain("DATABASE_URL"); // the KEY is carried; the value is not
   });
 
+  it("discovers git providers as secret-free identity and links the app to its GitHub App", async () => {
+    const fleet = await source().discover();
+    expect(fleet.gitProviders).toEqual([
+      { ref: "gh-1", kind: "github", appSlug: "diesdigital-tugra", appId: "4242", installationId: "99001", htmlUrl: "https://github.com/apps/diesdigital-tugra", appName: "diesdigital-app" },
+    ]);
+    expect(fleet.apps[0]).toMatchObject({ gitProviderRef: "gh-1", autoDeploy: true, watchPaths: ["src/**"], limits: { memoryMb: 512 } });
+    expect(fleet.warnings.some((w) => /GitHub App that could not be read/.test(w))).toBe(false);
+  });
+
+  it("SENTINEL: no GitHub App credential (private key / client secret / webhook secret / client id) ever appears in the discovered fleet", async () => {
+    const json = JSON.stringify(await source().discover());
+    expect(json).toContain("diesdigital-tugra"); // identity is carried
+    for (const secret of [GH_SECRETS.privateKey, "MIIEsentinelPRIVATEKEYbody123", "BEGIN RSA PRIVATE KEY", GH_SECRETS.clientSecret, GH_SECRETS.webhookSecret, GH_SECRETS.clientId]) {
+      expect(json).not.toContain(secret);
+    }
+    // the shape itself has no secret-named key
+    for (const p of (await source().discover()).gitProviders ?? []) {
+      expect(Object.keys(p).filter((k) => /key|secret|token|password/i.test(k))).toEqual([]);
+    }
+  });
+
+  it("toForeignGitProvider is a whitelist: a row full of credentials yields identity only", () => {
+    const p = toForeignGitProvider("gh-9", { githubAppName: "bad slug!", githubAppId: "1", githubInstallationId: "2", githubPrivateKey: "PK", githubClientSecret: "CS", githubWebhookSecret: "WS", extra: "X" }, null);
+    expect(p).toEqual({ ref: "gh-9", kind: "github", appSlug: undefined, appId: "1", installationId: "2", htmlUrl: undefined, appName: undefined });
+    expect(JSON.stringify(p)).not.toMatch(/PK|CS|WS|"X"/);
+  });
+
+  it("degrades an unreadable gitProvider.getAll / github.one to a warning and keeps the rest of the fleet", async () => {
+    const a = await source({ "/gitProvider.getAll": new Error("403") }).discover();
+    expect(a.gitProviders).toEqual([]);
+    expect(a.warnings.some((w) => /could not read git providers/.test(w))).toBe(true);
+    expect(a.apps.length).toBe(1);
+    const b = await source({ "/github.one?githubId=gh-1": new Error("500") }).discover();
+    expect(b.gitProviders).toEqual([]);
+    expect(b.warnings.some((w) => /could not read GitHub App gh-1/.test(w))).toBe(true);
+    expect(b.warnings.some((w) => /GitHub App that could not be read/.test(w))).toBe(true); // the app that needs it is flagged
+  });
+
   it("degrades a failed server.all to a warning and still returns the fleet", async () => {
     const fleet = await source({ "/server.all": new Error("403") }).discover();
     expect(fleet.servers).toEqual([]);
@@ -119,6 +184,18 @@ describe("DokploySource.fetchSecrets", () => {
     expect(values.DATABASE_URL).toContain("db-pg1");
     expect(values.SHARED_REF).toBeUndefined(); // a reference is not resolved in S1
     expect(unresolved).toEqual([{ key: "SHARED_REF", secret: true, ref: { type: "shared" } }]);
+  });
+
+  it('returns the GitHub App credentials ONLY via the namespaced "gitProvider:<id>" ref', async () => {
+    const src = source();
+    const { values, unresolved } = await src.fetchSecrets("gitProvider:gh-1");
+    expect(values).toEqual(GH_SECRETS);
+    expect(unresolved).toEqual([]);
+    // an unknown / unreadable provider degrades to empty, never throws
+    expect((await src.fetchSecrets("gitProvider:nope")).values).toEqual({});
+    expect((await source({ "/github.one?githubId=gh-1": new Error("500") }).fetchSecrets("gitProvider:gh-1")).values).toEqual({});
+    // and it does not need a prior discover (no index dependency)
+    expect(Object.keys((await source().fetchSecrets("gitProvider:gh-1")).values).sort()).toEqual(["clientId", "clientSecret", "privateKey", "webhookSecret"]);
   });
 
   it("rebuilds the index on a cold call (no prior discover)", async () => {

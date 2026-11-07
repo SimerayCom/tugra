@@ -1,5 +1,5 @@
-import type { CreateAppInput } from "../applications/dto";
-import { SetVolumesSchema } from "../applications/dto";
+import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetLimitsInput } from "../applications/dto";
+import { SetBuildSchema, SetContainerCommandSchema, SetLimitsSchema, SetVolumesSchema, SetWatchPathsSchema } from "../applications/dto";
 import type { AppVolume } from "../deploy/deploy-script";
 import type { ForeignApp } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
@@ -69,6 +69,94 @@ export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, str
     if (opts.gitSourceId) input.gitSourceId = opts.gitSourceId; // link a private GitHub-App repo to a connected GitSource
   }
   return input;
+}
+
+/** The post-create configuration an imported app needs beyond what `CreateAppSchema` can carry — each part is
+ *  the exact input of an existing ApplicationsService setter, already schema-validated. */
+export interface PostCreateConfig {
+  /** `setBuild` — only emitted for a Dockerfile app with a multi-stage target (the one build field create can't carry). */
+  build?: SetBuildInput;
+  /** `setWatchPaths` */
+  watchPaths?: string[];
+  /** `setAutoDeploy` */
+  autoDeploy?: boolean;
+  /** `setLimits` */
+  limits?: SetLimitsInput;
+  /** `setContainerCommand` */
+  containerCommand?: SetContainerCommandInput;
+  /** `setClusterConfig.replicas` — only meaningful when the import targets a swarm cluster. */
+  replicas?: number;
+  /** Source fields that were present but could NOT be carried (no Tugra target, or invalid for Tugra's schema). */
+  unmapped: Array<{ field: string; reason: string }>;
+}
+
+/**
+ * Pure: derive the setter inputs for the fields `foreignAppToCreateInput` cannot carry (autoDeploy, watch
+ * paths, limits, exec-form command, Dockerfile build target). Every value is re-validated against the same Zod
+ * schema the controller enforces, and a field that fails (or has no Tugra target) is reported in `unmapped`
+ * rather than silently dropped. The executor calls the setters with these (a later slice wires that).
+ */
+export function foreignAppToPostCreateConfig(app: ForeignApp): PostCreateConfig {
+  const out: PostCreateConfig = { unmapped: [] };
+  const skip = (field: string, reason: string) => out.unmapped.push({ field, reason });
+  const build = mapBuildPack(app);
+  const isGit = build.source === "GIT";
+
+  // autoDeploy — a tag-triggered source must NOT become push-to-deploy, so it is turned off (and reported).
+  if (app.triggerType === "tag") {
+    out.autoDeploy = false;
+    skip("triggerType", "tag-triggered deploys have no Tugra equivalent (push only) — auto-deploy turned off");
+  } else if (app.autoDeploy !== undefined) {
+    out.autoDeploy = app.autoDeploy;
+  }
+  if (app.triggerType && app.triggerType !== "tag" && app.triggerType !== "push") skip("triggerType", `unknown trigger "${app.triggerType}"`);
+
+  if (app.watchPaths?.length) {
+    const parsed = SetWatchPathsSchema.safeParse({ watchPaths: app.watchPaths });
+    if (parsed.success) out.watchPaths = parsed.data.watchPaths;
+    else skip("watchPaths", "a pattern is not a valid Tugra watch-path glob — none carried");
+  }
+
+  if (app.limits) {
+    const parsed = SetLimitsSchema.safeParse(app.limits);
+    if (parsed.success) out.limits = parsed.data;
+    else skip("limits", "CPU/memory limits are outside Tugra's accepted range — none carried");
+  }
+
+  if (app.containerEntrypoint?.length || app.containerCommand?.length) {
+    if (build.source === "COMPOSE") {
+      skip("containerCommand", "a compose app declares its command in its compose file");
+    } else {
+      const parsed = SetContainerCommandSchema.safeParse({
+        containerEntrypoint: app.containerEntrypoint?.length ? app.containerEntrypoint : null,
+        containerCommand: app.containerCommand?.length ? app.containerCommand : null,
+      });
+      if (parsed.success) out.containerCommand = parsed.data;
+      else skip("containerCommand", "the command/args are not valid for Tugra's exec-form override");
+    }
+  }
+
+  if (app.dockerBuildTarget) {
+    if (isGit && build.buildType === "DOCKERFILE") {
+      const parsed = SetBuildSchema.safeParse({
+        buildType: "DOCKERFILE",
+        dockerfilePath: relPath(app.git?.dockerfilePath) ?? null,
+        dockerBuildTarget: app.dockerBuildTarget,
+        baseDirectory: relPath(app.git?.baseDirectory) ?? null,
+      });
+      if (parsed.success) out.build = parsed.data;
+      else skip("dockerBuildTarget", "the build target is not a valid Dockerfile stage name");
+    } else {
+      skip("dockerBuildTarget", "a build target applies only to Dockerfile builds");
+    }
+  }
+
+  if (app.replicas !== undefined && app.replicas > 1) out.replicas = app.replicas;
+
+  // Present on the source, but Tugra has no target — surfaced, never silently dropped.
+  if (app.dockerContextPath && !/^\.?\/?$/.test(app.dockerContextPath)) skip("dockerContextPath", "Tugra has no separate docker build context (base directory only)");
+  if (app.staticSpa === false) skip("staticSpa", "Tugra's static builds always serve an SPA fallback");
+  return out;
 }
 
 /** Why a declared mount was NOT turned into a Tugra volume. */
