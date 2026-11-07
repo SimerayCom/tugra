@@ -24722,56 +24722,104 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 1
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "gitea",
+                          "forgejo",
+                          "codeberg"
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "teamId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "apiUrl": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048
+                      },
+                      "token": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "name",
+                      "teamId",
+                      "token"
+                    ],
+                    "additionalProperties": false
                   },
-                  "teamId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "appId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "privateKey": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "installationId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "webhookSecret": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "clientId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "clientSecret": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "appSlug": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "htmlUrl": {
-                    "type": "string",
-                    "minLength": 1
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "github"
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "teamId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "appId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "privateKey": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "installationId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "webhookSecret": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "clientId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "clientSecret": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "appSlug": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "htmlUrl": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "teamId",
+                      "appId",
+                      "privateKey"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "name",
-                  "teamId",
-                  "appId",
-                  "privateKey"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           }
@@ -24844,6 +24892,84 @@
     "/api/v1/git-sources/{id}/repos": {
       "get": {
         "operationId": "GitSourcesController_repos",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "git-sources"
+        ]
+      }
+    },
+    "/api/v1/git-sources/{id}/branches": {
+      "get": {
+        "operationId": "GitSourcesController_branches",
         "parameters": [
           {
             "name": "id",

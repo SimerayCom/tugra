@@ -40,6 +40,7 @@ import type {
   SecretRefView,
   GitSource,
   SourceRepo,
+  SourceBranch,
   Registry,
   VolumeBackup,
   DbEngine,
@@ -996,18 +997,18 @@ export const api = {
   listGitSources() {
     return apiFetch<GitSource[]>("/git-sources");
   },
-  createGitSource(input: {
-    name: string;
-    teamId: string;
-    appId: string;
-    privateKey: string;
-    installationId?: string;
-    webhookSecret?: string;
-  }) {
+  createGitSource(
+    input:
+      | { name: string; teamId: string; appId: string; privateKey: string; installationId?: string; webhookSecret?: string }
+      | { kind: "gitea" | "forgejo" | "codeberg"; name: string; teamId: string; apiUrl?: string; token: string },
+  ) {
     return apiFetch<GitSource>("/git-sources", { method: "POST", body: JSON.stringify(input) });
   },
   listSourceRepos(id: string) {
     return apiFetch<SourceRepo[]>(`/git-sources/${id}/repos`);
+  },
+  listSourceBranches(id: string, repo: string) {
+    return apiFetch<SourceBranch[]>(`/git-sources/${id}/branches?repo=${encodeURIComponent(repo)}`);
   },
   deleteGitSource(id: string) {
     return apiFetch<{ ok: true }>(`/git-sources/${id}`, { method: "DELETE" });

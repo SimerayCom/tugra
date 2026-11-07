@@ -162,7 +162,7 @@ function make(
     crypto,
     monitors as unknown as import("../monitors/monitors.service").MonitorsService,
     { fireForEvent: jest.fn().mockResolvedValue(undefined) } as unknown as import("../notifications/notifications.service").NotificationsService,
-    { installationToken: jest.fn().mockResolvedValue("ghs_inst") } as unknown as import("../git-sources/git-sources.service").GitSourcesService,
+    { installationToken: jest.fn().mockResolvedValue("ghs_inst"), cloneToken: jest.fn().mockResolvedValue("ghs_inst") } as unknown as import("../git-sources/git-sources.service").GitSourcesService,
     ai as unknown as import("./ai.service").AiService,
     teamDefaults as unknown as import("../teams/team-defaults.service").TeamDefaultsService,
     { forApp: jest.fn().mockResolvedValue({ containers: [] }) } as unknown as import("../metrics/container-metrics.service").ContainerMetricsService,
@@ -1632,6 +1632,25 @@ describe("ApplicationsService", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await expect(make(prisma, access, {} as AgentWsServer).setSource("u1", "app1", { gitSourceId: "gs1" })).rejects.toBeInstanceOf(BadRequestException);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setSource (GIT) links a Gitea source only to a repo on the instance host", async () => {
+    const mk = (gitUrl: string) => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, gitUrl }), update },
+        gitSource: { findUnique: jest.fn().mockResolvedValue({ id: "gs2", teamId: "t1", provider: "gitea", apiUrl: "https://git.example.com" }) },
+        deployment: noActiveDeploy,
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      return { update, svc: make(prisma, access, {} as AgentWsServer) };
+    };
+    const ok = mk("https://git.example.com/acme/app.git");
+    await ok.svc.setSource("u1", "app1", { gitSourceId: "gs2" });
+    expect(ok.update.mock.calls[0][0].data.gitSourceId).toBe("gs2");
+    const bad = mk("https://github.com/acme/app.git"); // a Gitea token must never be sent to github.com
+    await expect(bad.svc.setSource("u1", "app1", { gitSourceId: "gs2" })).rejects.toThrow(/only authenticates git\.example\.com/);
+    expect(bad.update).not.toHaveBeenCalled();
   });
 
   it("setBuild rejects a non-GIT app", async () => {

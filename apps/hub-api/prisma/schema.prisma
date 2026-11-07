@@ -713,20 +713,27 @@ model MonitorChannel {
 }
 
 // A registered Git provider app (GitHub App) for private-repo deploys.
+/// A team's connection to a git host. `provider` is the kind discriminator: "github" (a GitHub App: appId +
+/// privateKeyEnc + installationId) or the Gitea family "gitea" | "forgejo" | "codeberg" (a personal access token:
+/// apiUrl + tokenEnc). appId / privateKeyEnc are GitHub-App-only so they are nullable; @@unique([teamId, appId])
+/// still holds because Postgres treats NULLs as distinct (any number of token sources per team, one row per
+/// GitHub App). tokenEnc is encrypted at rest and NEVER returned in any view.
 model GitSource {
   id               String        @id @default(cuid())
   team             Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId           String
   name             String
-  provider         String        @default("github")
-  appId            String
+  provider         String        @default("github") // github | gitea | forgejo | codeberg
+  appId            String?
   appSlug          String?
   clientId         String?
   clientSecretEnc  String?
-  privateKeyEnc    String
+  privateKeyEnc    String?
   webhookSecretEnc String?
   installationId   String?
   htmlUrl          String?
+  apiUrl           String? // token providers: the instance base URL (https, no trailing slash), e.g. https://codeberg.org
+  tokenEnc         String? // token providers: the encrypted personal access token
   applications     Application[]
   createdAt        DateTime      @default(now())
 

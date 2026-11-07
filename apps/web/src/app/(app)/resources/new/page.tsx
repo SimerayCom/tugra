@@ -113,6 +113,14 @@ function Wizard() {
     enabled: !!gitSourceId,
   });
 
+  // Repo picked from a connected source → its branches (and the repo's default branch) for the branch picker.
+  const pickedRepo = gitSourceId ? sourceRepos.find((r) => r.cloneUrl === gitUrl) : undefined;
+  const { data: sourceBranches = [] } = useQuery({
+    queryKey: ["sourceBranches", gitSourceId, pickedRepo?.fullName],
+    queryFn: () => api.listSourceBranches(gitSourceId, pickedRepo!.fullName),
+    enabled: !!gitSourceId && !!pickedRepo,
+  });
+
   const noServer = servers.length === 0;
 
   const projectParam = sp.get("project");
@@ -426,7 +434,7 @@ function Wizard() {
                         <Field label={t("sources.repo")} style={{ gridColumn: "1 / -1" }}>
                           <Select
                             value={gitUrl}
-                            onChange={setGitUrl}
+                            onChange={(v) => { setGitUrl(v); setGitBranch(sourceRepos.find((r) => r.cloneUrl === v)?.defaultBranch ?? ""); }}
                             placeholder={t("sources.repo")}
                             options={sourceRepos.map((r) => ({ value: r.cloneUrl, label: r.fullName }))}
                           />
@@ -437,7 +445,11 @@ function Wizard() {
                         </Field>
                       )}
                       <Field label={t("apps.branch")}>
-                        <TextInput value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder="main" />
+                        {pickedRepo && sourceBranches.length > 0 ? (
+                          <Select value={gitBranch} onChange={setGitBranch} placeholder={t("sources.branch")} options={sourceBranches.map((b) => ({ value: b.name, label: b.name }))} />
+                        ) : (
+                          <TextInput value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder="main" />
+                        )}
                       </Field>
                       <Field label={t("apps.buildType")}>
                         <Select value={buildType} onChange={(v) => setBuildType(v as "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU")}

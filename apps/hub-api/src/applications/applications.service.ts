@@ -41,7 +41,7 @@ import { PlacementConstraintSchema } from "./dto";
 import { serviceName, parseServiceTasks, parseSwarmTasks, type SwarmTask } from "../deploy/service-script";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { GitSourcesService } from "../git-sources/git-sources.service";
+import { GitSourcesService, sourceCloneHost } from "../git-sources/git-sources.service";
 import {
   buildImageRemoveScriptForTags,
   buildAppImagesRemoveScript,
@@ -590,6 +590,7 @@ export class ApplicationsService {
     if (dto.gitSourceId) {
       const gs = await this.prisma.gitSource.findUnique({ where: { id: dto.gitSourceId } });
       if (!gs || gs.teamId !== server.teamId) throw new BadRequestException("git source not found in this team");
+      this.assertSourceHost(gs, dto.gitUrl);
     }
 
     const source = dto.source ?? "IMAGE";
@@ -1490,9 +1491,11 @@ export class ApplicationsService {
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
       await this.hydrateCertSpec(app, spec);
-      // Private repo via a GitHub App: mint a fresh installation token for the clone (GIT build or git-compose).
+      // Private repo via a connected git source: a GitHub App mints a fresh installation token, a Gitea/Forgejo/
+      // Codeberg source supplies its stored access token (GIT build or git-compose). The credential is pinned to
+      // the source's own host (cloneToken refuses a repo URL anywhere else) and reaches git via GIT_ASKPASS only.
       if (app.gitSourceId && (app.source === "GIT" || isGitCompose)) {
-        spec.gitToken = await this.gitSources.installationToken(app.gitSourceId);
+        spec.gitToken = await this.gitSources.cloneToken(app.gitSourceId, app.gitUrl);
       }
       // Push the built image to the app's team registry (build-time), if configured.
       if (app.pushToRegistry && app.registryId && !isCompose) {
@@ -2798,8 +2801,9 @@ export class ApplicationsService {
 
       // A GitHub App installation token only authenticates github.com — it must never be injected into
       // a clone of any other host.
-      if (effectiveSourceId && !nowSsh && nextHost && nextHost !== "github.com") {
-        throw new BadRequestException("the linked GitHub App only authenticates github.com repositories — unlink it or point the repo at github.com");
+      if (effectiveSourceId && !nowSsh && nextHost) {
+        const linked = await this.prisma.gitSource.findUnique({ where: { id: effectiveSourceId } });
+        if (linked) this.assertSourceHost(linked, nextUrl);
       }
     }
 
@@ -3687,6 +3691,17 @@ export class ApplicationsService {
       constraints: Array.isArray(p?.constraints) ? (p!.constraints as PlacementConstraint[]) : [],
       spreadLabelKey: typeof p?.spreadLabelKey === "string" ? (p!.spreadLabelKey as string) : null,
     };
+  }
+
+  /** A linked git source's credential only authenticates its own host (github.com for a GitHub App, the instance
+   *  host for a Gitea/Forgejo/Codeberg token). Refuse a repo URL anywhere else so the secret can never be sent there. */
+  private assertSourceHost(gs: { provider: string; apiUrl: string | null }, gitUrl: string | null | undefined): void {
+    if (!gitUrl || isSshGitUrl(gitUrl)) return; // ssh clones with a deploy key (guarded separately); no URL → nothing to pin yet
+    const want = sourceCloneHost(gs);
+    const host = gitUrlHost(gitUrl);
+    if (host && host !== want) {
+      throw new BadRequestException(`the linked ${gs.provider} source only authenticates ${want} repositories — unlink it or point the repo at ${want}`);
+    }
   }
 
   private appGitToken(app: Application): string | null {

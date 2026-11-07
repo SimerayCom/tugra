@@ -792,18 +792,32 @@ export interface GitSource {
   name: string;
   teamId: string;
   provider: string;
-  appId: string;
+  /** Provider kind: a GitHub App or a token provider of the Gitea family. */
+  kind: GitSourceKind;
+  /** GitHub App id (github only; null for a token source). */
+  appId: string | null;
   appSlug: string | null;
   installationId: string | null;
   htmlUrl: string | null;
+  /** Token providers: the instance base URL. */
+  apiUrl: string | null;
+  /** A credential is stored. The credential itself is write-only and never returned. */
+  hasToken: boolean;
   createdAt: string;
   canWrite: boolean;
 }
+
+export type GitSourceKind = "github" | "gitea" | "forgejo" | "codeberg";
 
 export interface SourceRepo {
   fullName: string;
   cloneUrl: string;
   private: boolean;
+  defaultBranch: string | null;
+}
+
+export interface SourceBranch {
+  name: string;
 }
 
 export interface Registry {

@@ -2340,6 +2340,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/git-sources/{id}/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["GitSourcesController_branches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/git-sources/{id}": {
         parameters: {
             query?: never;
@@ -18210,6 +18226,15 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @enum {string} */
+                    kind: "gitea" | "forgejo" | "codeberg";
+                    name: string;
+                    teamId: string;
+                    apiUrl?: string;
+                    token: string;
+                } | {
+                    /** @enum {string} */
+                    kind?: "github";
                     name: string;
                     teamId: string;
                     appId: string;
@@ -18278,6 +18303,70 @@ export interface operations {
         };
     };
     GitSourcesController_repos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    GitSourcesController_branches: {
         parameters: {
             query?: never;
             header?: never;

@@ -45,12 +45,6 @@ export class GuardedHttpGet {
         clearTimeout(deadline);
         fn();
       };
-      // Hard overall deadline — independent of the per-byte idle timeout — so a trickled or stalled body
-      // cannot keep the request (and its socket) alive indefinitely.
-      const deadline = setTimeout(() => {
-        req.destroy(new Error(`${label} request exceeded the time limit`));
-      }, DEADLINE_MS);
-
       const req = doRequest(
         url,
         {
@@ -93,6 +87,12 @@ export class GuardedHttpGet {
           );
         },
       );
+      // Hard overall deadline — set AFTER req exists so a synchronous throw from doRequest can never leave an
+      // orphan timer that later dereferences an unassigned req (a remote-triggered crash). Independent of the
+      // per-byte idle timeout, so a trickled/stalled body cannot keep the socket alive indefinitely.
+      const deadline = setTimeout(() => {
+        req.destroy(new Error(`${label} request exceeded the time limit`));
+      }, DEADLINE_MS);
       req.on("timeout", () => req.destroy(new Error(`${label} request timed out`)));
       req.on("error", (e) => done(() => reject(e)));
       req.end();

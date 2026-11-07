@@ -8,7 +8,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { GitSourcesService } from "./git-sources.service";
-import { CreateGitSourceInput, CreateGitSourceSchema } from "./dto";
+import { CreateGitSourceInput, CreateGitSourceSchema, GitBranchesQuerySchema } from "./dto";
 
 @ApiTags("git-sources")
 @ApiSecurity("pat")
@@ -35,6 +35,15 @@ export class GitSourcesController {
   @Get(":id/repos")
   repos(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.svc.listRepos(user.userId, id);
+  }
+
+  @Get(":id/branches")
+  branches(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query(new ZodValidationPipe(GitBranchesQuerySchema)) q: { repo: string },
+  ) {
+    return this.svc.listBranches(user.userId, id, q.repo);
   }
 
   @Delete(":id")

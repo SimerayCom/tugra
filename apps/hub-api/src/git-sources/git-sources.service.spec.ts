@@ -78,7 +78,7 @@ describe("GitSourcesService", () => {
       { teamRole: jest.fn().mockResolvedValue(Role.OWNER) },
     );
     const repos = await svc.listRepos("u1", "s2");
-    expect(repos).toEqual([{ fullName: "acme/web", cloneUrl: "https://github.com/acme/web.git", private: true }]);
+    expect(repos).toEqual([{ fullName: "acme/web", cloneUrl: "https://github.com/acme/web.git", private: true, defaultBranch: null }]);
   });
 
   it("list() sets canWrite per the caller's role in each source's team", async () => {
