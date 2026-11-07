@@ -129,7 +129,8 @@ export const envSchema = z
   // (or a self-hosted wildcard) if sslip.io is blocked; per-server magicSuffix wins.
   MAGIC_DOMAIN_SUFFIX: z.string().min(1).default("sslip.io"),
   // Transactional email (password reset, email verification, team invites). All optional:
-  // when MAIL_HOST is unset the mailer is fail-soft (no email is sent, flows still work).
+  // when MAIL_HOST is unset the mailer is fail-soft (no email is sent, flows still work; reset/verify
+  // links are logged to the hub server console, i.e. `docker logs`).
   MAIL_HOST: z.string().min(1).optional(),
   MAIL_PORT: z.coerce.number().int().positive().default(587),
   MAIL_SECURE: z.enum(["true", "false"]).default("false"),

@@ -2,13 +2,14 @@ import { Controller, Get } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import { InstanceSettingsService } from "./instance-settings.service";
+import { MailService } from "../mail/mail.service";
 import { currentEdition, editionAtLeast } from "../common/edition";
 
 /**
  * Public onboarding/instance status. No `@UseGuards` → unauthenticated by default (auth is opt-in per
  * controller here), like Health/Version. The web root reads this before any login to decide whether a
  * fresh instance should show the welcome/onboarding flow instead of the login page. Returns only
- * non-secret bootstrap state: `{ initialized, allowRegistration, edition, ssoEnabled, setupCodeRequired, hubPublicUrl, authProviders }`.
+ * non-secret bootstrap state: `{ initialized, allowRegistration, edition, ssoEnabled, setupCodeRequired, hubPublicUrl, authProviders, mailConfigured }`.
  */
 @ApiTags("instance")
 @Controller("instance")
@@ -16,6 +17,7 @@ export class InstanceController {
   constructor(
     private readonly instance: InstanceSettingsService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
   ) {}
 
   /** Public white-label branding so the login page (and the whole app) can theme before/without auth. Only
@@ -52,6 +54,9 @@ export class InstanceController {
       hubPublicUrl: (this.config.get<string>("HUB_PUBLIC_URL") ?? "").replace(/\/$/, ""),
       // Which SSO providers are CONFIGURED (booleans only — never IDs or secrets).
       authProviders: { github, oidc },
+      // Whether an outbound mailer (MAIL_HOST) is configured — a boolean only, never credentials. Lets the UI
+      // stop implying that reset/verification email was sent when this hub cannot send any.
+      mailConfigured: this.mail.isConfigured(),
     };
   }
 }

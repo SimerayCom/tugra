@@ -858,7 +858,7 @@ describe("AuthService password reset", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("forgot: fail-soft — a mailer failure still resolves (link goes to the audit log)", async () => {
+  it("forgot: fail-soft — a mailer failure still resolves (link goes to the server console log)", async () => {
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue({ id: "u1", email: "a@b.c", name: null }) },
       verificationToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), create: jest.fn().mockResolvedValue({}) },

@@ -1,10 +1,11 @@
 import type { ConfigService } from "@nestjs/config";
 import { InstanceController } from "./instance.controller";
 import type { InstanceSettingsService } from "./instance-settings.service";
+import type { MailService } from "../mail/mail.service";
 
-function controllerWith(settings: Record<string, unknown>, setupCode?: string): InstanceController {
+function controllerWith(settings: Record<string, unknown>, setupCode?: string, mailConfigured = false): InstanceController {
   const config = { get: (k: string) => (k === "SETUP_CODE" ? setupCode : undefined) } as unknown as ConfigService;
-  return new InstanceController({ get: jest.fn().mockResolvedValue(settings) } as unknown as InstanceSettingsService, config);
+  return new InstanceController({ get: jest.fn().mockResolvedValue(settings) } as unknown as InstanceSettingsService, config, { isConfigured: () => mailConfigured } as unknown as MailService);
 }
 
 // `edition` is env-authoritative (currentEdition() reads TUGRA_EDITION), NOT the DB column.
@@ -18,14 +19,14 @@ describe("InstanceController", () => {
   it("reports initialized=false and the env edition before the first user is claimed", async () => {
     delete process.env.TUGRA_EDITION; // → community
     const res = await controllerWith({ initializedAt: null, allowRegistration: false }).status();
-    expect(res).toEqual({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: false, hubPublicUrl: "", authProviders: { github: false, oidc: false } });
+    expect(res).toEqual({ initialized: false, allowRegistration: false, edition: "community", ssoEnabled: false, setupCodeRequired: false, hubPublicUrl: "", authProviders: { github: false, oidc: false }, mailConfigured: false });
   });
 
   it("reports initialized=true and the env edition (ignoring the inert DB column)", async () => {
     process.env.TUGRA_EDITION = "pro";
     // Even if the DB row said community, the env is authoritative:
     const res = await controllerWith({ initializedAt: new Date(), allowRegistration: true, edition: "community" }).status();
-    expect(res).toEqual({ initialized: true, allowRegistration: true, edition: "pro", ssoEnabled: false, setupCodeRequired: false, hubPublicUrl: "", authProviders: { github: false, oidc: false } });
+    expect(res).toEqual({ initialized: true, allowRegistration: true, edition: "pro", ssoEnabled: false, setupCodeRequired: false, hubPublicUrl: "", authProviders: { github: false, oidc: false }, mailConfigured: false });
   });
 
   it("does not leak any other settings fields (only the public set)", async () => {
@@ -37,7 +38,7 @@ describe("InstanceController", () => {
       publicUrl: "https://internal",
       oidcClientSecretEnc: "ENC(shh)",
     }).status();
-    expect(Object.keys(res).sort()).toEqual(["allowRegistration", "authProviders", "edition", "hubPublicUrl", "initialized", "setupCodeRequired", "ssoEnabled"]);
+    expect(Object.keys(res).sort()).toEqual(["allowRegistration", "authProviders", "edition", "hubPublicUrl", "initialized", "mailConfigured", "setupCodeRequired", "ssoEnabled"]);
   });
 
   it("setupCodeRequired is true only when a SETUP_CODE is configured AND the instance is not yet initialized", async () => {
@@ -66,5 +67,11 @@ describe("InstanceController", () => {
     delete process.env.TUGRA_EDITION; // → community
     const res = await controllerWith({ initializedAt: new Date(), allowRegistration: false, oidcEnabled: true, oidcIssuer: "https://idp", oidcClientId: "cid", oidcClientSecretEnc: "ENC(x)" }).status();
     expect(res.ssoEnabled).toBe(false);
+  });
+
+  it("mailConfigured mirrors MailService.isConfigured() and is a bare boolean", async () => {
+    const settings = { initializedAt: new Date(), allowRegistration: false };
+    expect((await controllerWith(settings, undefined, true).status()).mailConfigured).toBe(true);
+    expect((await controllerWith(settings, undefined, false).status()).mailConfigured).toBe(false);
   });
 });

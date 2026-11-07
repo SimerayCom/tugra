@@ -6,8 +6,8 @@ import type { RenderedEmail } from "./templates";
 /**
  * Transactional mailer. Reads SMTP config from env (MAIL_*). When MAIL_HOST is unset the
  * mailer is FAIL-SOFT: `isConfigured()` is false and `send()` logs + returns false without
- * throwing — callers (password reset, verification, invites) then fall back to an audit
- * log and still return 200, so a hub with no SMTP configured stays fully usable.
+ * throwing — callers (password reset, verification, invites) then log the link to the hub
+ * server console (docker logs) and still return 200, so a hub with no SMTP configured stays fully usable.
  */
 @Injectable()
 export class MailService {

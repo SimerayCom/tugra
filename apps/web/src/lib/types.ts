@@ -208,6 +208,9 @@ export interface InstanceStatus {
   hubPublicUrl?: string;
   /** Which SSO providers are CONFIGURED (booleans only, never secrets) — hide unconfigured buttons. */
   authProviders?: { github: boolean; oidc: boolean };
+  /** An outbound mailer (MAIL_HOST) is configured on the hub. `false` → reset/verification/invite email is
+   *  never sent, so the UI must not imply it was. Optional: an older hub omits it (treated as unknown). */
+  mailConfigured?: boolean;
 }
 
 /** Owner license status (GET/PATCH /instance/license). The token is write-only (never returned) —

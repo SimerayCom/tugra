@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
@@ -23,6 +23,11 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Operator hint only when the hub reports no mailer. Generic text: says nothing about any account.
+  const [mailOff, setMailOff] = useState(false);
+  useEffect(() => {
+    api.getInstanceStatus().then((s) => setMailOff(s?.mailConfigured === false)).catch(() => undefined);
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,10 +43,14 @@ export default function ForgotPasswordPage() {
     <Card style={{ padding: 24 }}>
       <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 16px" }}>{t("auth.forgotTitle")}</h1>
       {sent ? (
-        <div style={{ fontSize: 14, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("auth.forgotSent")}</div>
+        <div style={{ fontSize: 14, color: "var(--c-tx2)", lineHeight: 1.5 }}>
+          {t("auth.forgotSent")}
+          {mailOff && <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--c-tx3)" }}>{t("auth.forgotNoMail")}</p>}
+        </div>
       ) : (
         <form onSubmit={submit}>
           <p style={{ fontSize: 13, color: "var(--c-tx3)", margin: "0 0 14px", lineHeight: 1.5 }}>{t("auth.forgotDesc")}</p>
+          {mailOff && <p style={{ fontSize: 13, color: "var(--c-am)", margin: "0 0 14px", lineHeight: 1.5 }}>{t("auth.forgotNoMail")}</p>}
           <input style={field} type="email" placeholder={t("auth.email")} value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           <Btn type="submit" disabled={busy} style={{ width: "100%" }}>{busy ? "…" : t("auth.forgotSubmit")}</Btn>
         </form>
