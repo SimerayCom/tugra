@@ -50,6 +50,7 @@ function harness(opts: {
     {} as never,
     migrationTokens as never,
     {} as never, // crypto (unused on this path)
+    {} as never, // gitSources (unused on this path)
   );
   return { svc, prisma, access, audit, migrationTokens };
 }

@@ -21,11 +21,11 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }> } = {}) {
+function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] } } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
-    server: { findUnique: jest.fn().mockResolvedValue({ id: "srv-tugra", teamId: "team-1" }) },
+    server: { findUnique: jest.fn().mockResolvedValue({ id: "srv-tugra", teamId: "team-1", clusterId: over.clusterId ?? null }) },
     bulkOperation: {
       findFirst: jest.fn().mockResolvedValue(null), // assertNoInflight: nothing in progress
       create: jest.fn().mockResolvedValue({ id: "op-1" }),
@@ -44,17 +44,18 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
     },
     application: { findMany: jest.fn().mockResolvedValue((over.liveAppIds ?? []).map((id) => ({ id }))) },
     database: { findMany: jest.fn().mockResolvedValue((over.liveDbIds ?? []).map((id) => ({ id }))) },
-    gitSource: { findMany: jest.fn().mockResolvedValue(over.gitSources ?? []) }, // İş 2: team GitSources for private-repo auto-link
+    gitSource: { findMany: jest.fn().mockResolvedValue(over.gitSources ?? []), findFirst: jest.fn().mockResolvedValue(over.carriedSource === undefined ? { id: "gs-new" } : over.carriedSource) }, // İş 2: team GitSources for private-repo auto-link
   };
   const source = {
-    discover: jest.fn().mockResolvedValue(fleet()),
-    fetchSecrets: jest.fn().mockResolvedValue({ values: {}, unresolved: [] }),
+    discover: jest.fn().mockResolvedValue(over.fleet ?? fleet()),
+    fetchSecrets: jest.fn().mockImplementation(async (ref: string) => (over.secrets ? over.secrets(ref) : { values: {}, unresolved: [] })),
     close: jest.fn().mockResolvedValue(undefined),
   };
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
-  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined) };
+  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined) };
+  const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
   const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }) };
   const migrationTokens = { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn().mockResolvedValue(false), validate: jest.fn() };
   const svc = new ImportExecutorService(
@@ -67,12 +68,13 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
     dbs as never,
     migrationTokens as never,
     {} as never, // crypto (unused on this path)
+    gitSources as never,
   );
-  return { svc, prisma, source, apps, dbs, created };
+  return { svc, prisma, source, apps, dbs, created, gitSources };
 }
 
-function input() {
-  const planHash = planImport(fleet(), { sourceKind: "coolify" }).planHash;
+function input(f: ForeignFleet = fleet()) {
+  const planHash = planImport(f, { sourceKind: "coolify" }).planHash;
   return { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash };
 }
 
@@ -134,7 +136,7 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const dbs = { remove: jest.fn().mockResolvedValue(undefined), create: jest.fn() };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never, {} as never);
   return { svc, prisma, dbs, migrationTokens };
 }
 
@@ -276,7 +278,7 @@ function appRollbackHarness(sourceKind: string, compensation: unknown) {
   const migrator = { unadopt: jest.fn().mockResolvedValue(undefined) };
   const apps = { remove: jest.fn().mockResolvedValue(undefined) };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never);
+  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never, {} as never);
   return { svc, apps, migrator, prisma };
 }
 
@@ -349,5 +351,179 @@ describe("ImportExecutorService.resolveGitSourceId — private GitHub-App auto-l
     await flush();
     expect(apps.create).toHaveBeenCalledTimes(1);
     expect(apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
+  });
+});
+
+
+// ── L2-APPLY: GitHub-App carry + link, and post-create setters ─────────────────────────────────────────────
+const PRIV = "-----BEGIN RSA PRIVATE KEY-----\nSECRET-PRIVATE-KEY-BODY\n-----END RSA PRIVATE KEY-----";
+const CLIENT_SECRET = "SECRET-CLIENT-SECRET";
+const WEBHOOK_SECRET = "SECRET-WEBHOOK-SECRET";
+const providerSecrets = (ref: string): { values: Record<string, string>; unresolved: [] } =>
+  ref === "gitProvider:gh-1"
+    ? { values: { privateKey: PRIV, clientSecret: CLIENT_SECRET, webhookSecret: WEBHOOK_SECRET, clientId: "Iv1.abc" }, unresolved: [] }
+    : { values: {}, unresolved: [] };
+
+function ghFleet(appOver: Record<string, unknown> = {}, providers?: ForeignFleet["gitProviders"]): ForeignFleet {
+  const base = fleet();
+  return {
+    ...base,
+    databases: [],
+    gitProviders: providers ?? [{ ref: "gh-1", kind: "github", appId: "4242", appSlug: "my-app", installationId: "777", htmlUrl: "https://github.com/apps/my-app", appName: "My App" }],
+    apps: [{ ...base.apps[0], git: { url: "https://github.com/o/r.git", branch: "main", provider: "github" }, gitProviderRef: "gh-1", ...appOver }],
+  };
+}
+const run = async (h: ReturnType<typeof harness>, f: ForeignFleet) => {
+  await h.svc.apply("user-1", input(f));
+  await flush();
+};
+
+describe("ImportExecutorService — GitHub App carry + link (L2-APPLY)", () => {
+  it("upserts the provider into a GitSource on the TARGET team and links the app by gitProviderRef", async () => {
+    const f = ghFleet();
+    const h = harness({ fleet: f, secrets: providerSecrets, gitSources: [{ id: "x1" }, { id: "x2" }] }); // 2 team sources → exactly-one heuristic would NOT link
+    await run(h, f);
+    expect(h.source.fetchSecrets).toHaveBeenCalledWith("gitProvider:gh-1");
+    expect(h.gitSources.upsertForImport).toHaveBeenCalledTimes(1);
+    expect(h.gitSources.upsertForImport).toHaveBeenCalledWith("user-1", "team-1", expect.objectContaining({ appId: "4242", appSlug: "my-app", installationId: "777", privateKey: PRIV, name: "My App" }));
+    // verified on the target team + installed before linking
+    expect(h.prisma.gitSource.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "gs-new", teamId: "team-1" }) }));
+    expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-new" }));
+  });
+
+  it("falls back to the exactly-one-installed heuristic when the app has no gitProviderRef", async () => {
+    const f = ghFleet({ gitProviderRef: undefined }, []);
+    const h = harness({ fleet: f, gitSources: [{ id: "gs-only" }] });
+    await run(h, f);
+    expect(h.gitSources.upsertForImport).not.toHaveBeenCalled();
+    expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-only" }));
+  });
+
+  it("stays UNLINKED when a ref'd app's carried GitSource is not on the target team / not installed (never links to an unrelated App)", async () => {
+    const f = ghFleet();
+    const h = harness({ fleet: f, secrets: providerSecrets, carriedSource: null, gitSources: [{ id: "gs-only" }] });
+    await run(h, f);
+    // the app cloned through a SPECIFIC App we could not verify installed → unlinked, NOT linked to gs-only
+    expect(h.apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
+  });
+
+  it("degrades gracefully when the source yields no private key: provider skipped, warning on the op, app still imported unlinked", async () => {
+    const f = ghFleet();
+    const h = harness({ fleet: f }); // fetchSecrets → {} (no privateKey)
+    await run(h, f);
+    expect(h.gitSources.upsertForImport).not.toHaveBeenCalled();
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    expect(h.apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
+    const meta = h.prisma.bulkOperation.create.mock.calls[0][0].data.meta;
+    expect(meta.warnings).toEqual([expect.stringMatching(/gh-1.*no private key/)]);
+    expect(h.prisma.bulkTask.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "DONE", resourceType: "application" }) }));
+  });
+
+  it("degrades gracefully when the upsert throws (never aborts the import, never echoes the error)", async () => {
+    const f = ghFleet();
+    const upsert = jest.fn().mockRejectedValue(new Error(`boom ${PRIV}`));
+    const h = harness({ fleet: f, secrets: providerSecrets, upsert, gitSources: [] });
+    await run(h, f);
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    const meta = h.prisma.bulkOperation.create.mock.calls[0][0].data.meta;
+    expect(JSON.stringify(meta.warnings)).not.toContain("SECRET");
+    expect(meta.warnings).toEqual([expect.stringMatching(/could not be carried/)]);
+  });
+
+  it("is idempotent: a retry upserts again with the same (team, appId) input and the app-duplicate guard still holds", async () => {
+    const f = ghFleet();
+    const h1 = harness({ fleet: f, secrets: providerSecrets });
+    await run(h1, f);
+    // second apply: the app was already imported by a prior (live) op → SKIPPED, no duplicate; the provider upsert is idempotent by key
+    const h2 = harness({ fleet: f, secrets: providerSecrets, priorImported: [{ itemRef: "app:srv-a:app-1", resourceId: "app-old", resourceType: "application" }], liveAppIds: ["app-old"] });
+    await run(h2, f);
+    expect(h2.apps.create).not.toHaveBeenCalled();
+    expect(h2.gitSources.upsertForImport.mock.calls[0]).toEqual(h1.gitSources.upsertForImport.mock.calls[0]);
+  });
+
+  it("SECRET LEAK: privateKey/clientSecret/webhookSecret never appear in any BulkTask write, the op meta/plan, audit, or logger", async () => {
+    const f = ghFleet();
+    const h = harness({ fleet: f, secrets: providerSecrets });
+    const logger = (h.svc as unknown as { logger: Record<string, (...a: unknown[]) => void> }).logger;
+    const logSpies = (["log", "warn", "error", "debug", "verbose"] as const).map((m) => jest.spyOn(logger, m as never) as unknown as jest.SpyInstance);
+    logSpies.forEach((sp) => sp.mockImplementation(() => undefined));
+    await run(h, f);
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    const everything = JSON.stringify({
+      taskCreates: h.prisma.bulkTask.create.mock.calls,
+      taskUpdates: h.prisma.bulkTask.update.mock.calls,
+      opCreate: h.prisma.bulkOperation.create.mock.calls,
+      opUpdate: h.prisma.bulkOperation.update.mock.calls,
+      logs: logSpies.map((s) => s.mock.calls),
+      appCreate: h.apps.create.mock.calls,
+    });
+    for (const needle of ["SECRET-PRIVATE-KEY-BODY", "BEGIN RSA PRIVATE KEY", CLIENT_SECRET, WEBHOOK_SECRET]) expect(everything).not.toContain(needle);
+    // and the audit trail (op + import.apply) carries none either
+    const auditCalls = (h.svc as unknown as { audit: { log: jest.Mock } }).audit.log.mock.calls;
+    expect(JSON.stringify(auditCalls)).not.toContain("SECRET");
+  });
+});
+
+describe("ImportExecutorService — post-create setters (L2-APPLY)", () => {
+  const cfgApp = {
+    autoDeploy: false,
+    watchPaths: ["apps/api/**"],
+    limits: { memoryMb: 512, cpus: 1 },
+    containerCommand: ["node", "server.js", "--token=SECRET-ARG"],
+    dockerBuildTarget: "prod",
+    buildPack: "dockerfile",
+    replicas: 3,
+  };
+  const lastResult = (h: ReturnType<typeof harness>) => {
+    const call = h.prisma.bulkTask.update.mock.calls.map((c: unknown[]) => (c[0] as { data: Record<string, unknown> }).data).find((d: Record<string, unknown>) => d.status === "DONE" && d.resourceType === "application")!;
+    return call as { result: { postCreate?: { applied: string[]; unmapped: Array<{ field: string; reason: string }> } }; output?: string };
+  };
+
+  it("applies the mapped setters on the created app and records applied + unmapped (names/reasons only)", async () => {
+    const base = fleet();
+    const f: ForeignFleet = { ...base, databases: [], apps: [{ ...base.apps[0], ...cfgApp } as never] };
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.apps.setAutoDeploy).toHaveBeenCalledWith("user-1", "app-new", false);
+    expect(h.apps.setWatchPaths).toHaveBeenCalledWith("user-1", "app-new", ["apps/api/**"]);
+    expect(h.apps.setLimits).toHaveBeenCalledWith("user-1", "app-new", expect.objectContaining({ memoryMb: 512 }));
+    expect(h.apps.setBuild).toHaveBeenCalledWith("user-1", "app-new", expect.objectContaining({ dockerBuildTarget: "prod" }));
+    expect(h.apps.setContainerCommand).toHaveBeenCalledTimes(1);
+    expect(h.apps.setClusterConfig).not.toHaveBeenCalled(); // no cluster target
+    const r = lastResult(h);
+    expect(r.result.postCreate!.applied.sort()).toEqual(["autoDeploy", "build", "containerCommand", "limits", "watchPaths"]);
+    expect(r.result.postCreate!.unmapped).toEqual([expect.objectContaining({ field: "replicas" })]);
+    expect(r.output).toMatch(/config not carried: replicas/);
+    expect(JSON.stringify(r)).not.toContain("SECRET-ARG"); // argv values never recorded
+  });
+
+  it("never auto-applies replicas (setClusterConfig would convert the app to a swarm service) — records it unmapped even with a cluster target", async () => {
+    const base = fleet();
+    const f: ForeignFleet = { ...base, databases: [], apps: [{ ...base.apps[0], replicas: 3 } as never] };
+    const h = harness({ fleet: f, clusterId: "cl-1" });
+    await run(h, f);
+    expect(h.apps.setClusterConfig).not.toHaveBeenCalled();
+    expect(lastResult(h).result.postCreate!.unmapped).toEqual([expect.objectContaining({ field: "replicas" })]);
+  });
+
+  it("is best-effort: a setter failure never reaches the outer catch (task still DONE with the app id, no duplicate on retry)", async () => {
+    const base = fleet();
+    const f: ForeignFleet = { ...base, databases: [], apps: [{ ...base.apps[0], ...cfgApp } as never] };
+    const h = harness({ fleet: f, clusterId: "cl-1" });
+    h.apps.setWatchPaths.mockRejectedValue(new Error("db error with SECRET-ARG"));
+    h.apps.setLimits.mockRejectedValue(new Error("nope"));
+    await run(h, f);
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    const r = lastResult(h);
+    expect(r.result.postCreate!.applied).not.toContain("watchPaths");
+    expect(r.result.postCreate!.unmapped.map((u) => u.field)).toEqual(expect.arrayContaining(["watchPaths", "limits"]));
+    expect(h.prisma.bulkTask.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    expect(JSON.stringify(r)).not.toContain("SECRET-ARG"); // setter error text is never copied
+  });
+
+  it("an app with nothing to configure leaves the task result byte-identical (no postCreate key)", async () => {
+    const h = harness();
+    await run(h, fleet());
+    expect(lastResult(h).result).not.toHaveProperty("postCreate");
   });
 });

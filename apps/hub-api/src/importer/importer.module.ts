@@ -3,6 +3,7 @@ import { MigratorModule } from "../migrator/migrator.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { ApplicationsModule } from "../applications/applications.module";
 import { DatabasesModule } from "../databases/databases.module";
+import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { BackupsModule } from "../backups/backups.module";
 import { VolumeBackupsModule } from "../volume-backups/volume-backups.module";
 import { ImporterController } from "./importer.controller";
@@ -23,7 +24,7 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 // rest. PrismaService, TeamAccessService and AuditService are provided by @Global modules.
 // ImportSourceFactory maps a source kind → its adapter (it depends on CoolifyClientFactory).
 @Module({
-  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule],
+  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
   providers: [ImporterService, ImportExecutorService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory],
   exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools

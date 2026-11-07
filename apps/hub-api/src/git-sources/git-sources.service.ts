@@ -1,11 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { createSign } from "node:crypto";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { createPrivateKey, createSign } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { filterByQuery } from "../common/query-filter";
-import type { CreateGitSourceInput } from "./dto";
+import type { CreateGitSourceInput, UpsertGitSourceForImportInput } from "./dto";
 
 const GH_API = "https://api.github.com";
 const GH_HEADERS = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
@@ -69,23 +69,62 @@ export class GitSourcesService {
 
   async create(userId: string, dto: CreateGitSourceInput): Promise<GitSourceView> {
     await this.access.requirePermission(userId, dto.teamId, "integrations");
-    const s = await this.prisma.gitSource.create({
-      data: {
-        teamId: dto.teamId,
-        name: dto.name,
-        provider: "github",
-        appId: dto.appId,
-        appSlug: dto.appSlug ?? null,
-        clientId: dto.clientId ?? null,
-        clientSecretEnc: dto.clientSecret ? this.crypto.encrypt(dto.clientSecret) : null,
-        privateKeyEnc: this.crypto.encrypt(dto.privateKey),
-        webhookSecretEnc: dto.webhookSecret ? this.crypto.encrypt(dto.webhookSecret) : null,
-        installationId: dto.installationId ?? null,
-        htmlUrl: dto.htmlUrl ?? null,
-      },
-    });
+    let s;
+    try {
+      s = await this.prisma.gitSource.create({
+        data: {
+          teamId: dto.teamId,
+          name: dto.name,
+          provider: "github",
+          appId: dto.appId,
+          appSlug: dto.appSlug ?? null,
+          clientId: dto.clientId ?? null,
+          clientSecretEnc: dto.clientSecret ? this.crypto.encrypt(dto.clientSecret) : null,
+          privateKeyEnc: this.crypto.encrypt(dto.privateKey),
+          webhookSecretEnc: dto.webhookSecret ? this.crypto.encrypt(dto.webhookSecret) : null,
+          installationId: dto.installationId ?? null,
+          htmlUrl: dto.htmlUrl ?? null,
+        },
+      });
+    } catch (e) {
+      // (teamId, appId) is unique: connecting the same GitHub App twice is a 409, not a raw 500.
+      if ((e as { code?: string })?.code === "P2002") throw new ConflictException("this GitHub App is already connected to the team");
+      throw e;
+    }
     await this.audit.log({ actor: userId, action: "git_source.create", target: s.id });
     return this.view(s, true); // only writers reach here (requirePermission above)
+  }
+
+  /** Idempotent carry of a connected GitHub App from an importer into `teamId`, keyed by (teamId, appId): a
+   *  retry reuses the row and refreshes its encrypted credentials + installation + metadata. Authorized on the
+   *  TARGET team like create(). Rejects a private key Node cannot parse (PKCS#1 and PKCS#8 are both accepted) with
+   *  a message that never echoes the key. The user-facing `name` is only set on first create so a later re-import
+   *  never clobbers a rename. Returns the GitSource id; no secret is ever returned or audited. */
+  async upsertForImport(userId: string, teamId: string, dto: UpsertGitSourceForImportInput): Promise<string> {
+    await this.access.requirePermission(userId, teamId, "integrations");
+    try {
+      createPrivateKey(dto.privateKey);
+    } catch {
+      throw new BadRequestException("invalid GitHub App private key (expected a PKCS#1 or PKCS#8 PEM)");
+    }
+    const optional = {
+      ...(dto.appSlug ? { appSlug: dto.appSlug } : {}),
+      ...(dto.clientId ? { clientId: dto.clientId } : {}),
+      ...(dto.clientSecret ? { clientSecretEnc: this.crypto.encrypt(dto.clientSecret) } : {}),
+      ...(dto.webhookSecret ? { webhookSecretEnc: this.crypto.encrypt(dto.webhookSecret) } : {}),
+      ...(dto.installationId ? { installationId: dto.installationId } : {}),
+      ...(dto.htmlUrl ? { htmlUrl: dto.htmlUrl } : {}),
+    };
+    const privateKeyEnc = this.crypto.encrypt(dto.privateKey);
+    const s = await this.prisma.gitSource.upsert({
+      where: { teamId_appId: { teamId, appId: dto.appId } },
+      create: { teamId, name: dto.name, provider: "github", appId: dto.appId, privateKeyEnc, ...optional },
+      update: { privateKeyEnc, ...optional },
+      select: { id: true },
+    });
+    this.tokenCache.delete(s.id); // new credentials/installation → drop any cached installation token
+    await this.audit.log({ actor: userId, action: "git_source.import_upsert", target: s.id });
+    return s.id;
   }
 
   async remove(userId: string, id: string): Promise<void> {
