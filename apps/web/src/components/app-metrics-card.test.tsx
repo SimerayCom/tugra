@@ -74,4 +74,28 @@ describe("AppMetricsCard", () => {
       expect(screen.getByText(/No metrics yet/)).toBeTruthy(),
     );
   });
+
+  it("offers a 30d range and refetches with it", async () => {
+    const spy = vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({ containers: [] });
+    wrap(<AppMetricsCard id="app1" />);
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("app1", "1h"));
+    fireEvent.click(screen.getByText("30d"));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("app1", "30d"));
+  });
+
+  it("a long-range read carrying cpuMax draws the faint peak band on the CPU chart (and a raw read does not)", async () => {
+    vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({
+      containers: [{ name: "tugra_app1", samples: [sample({ ts: 60_000, cpu: 5, cpuMax: 70 }), sample({ ts: 120_000, cpu: 6, cpuMax: 20 })] }],
+    });
+    const { unmount } = wrap(<AppMetricsCard id="app1" />);
+    await waitFor(() => expect(screen.getAllByTestId("chart-peak-band")).toHaveLength(1)); // CPU only
+    unmount();
+    cleanup();
+    vi.spyOn(api, "getAppContainerMetrics").mockResolvedValue({
+      containers: [{ name: "tugra_app1", samples: [sample({ ts: 60_000 }), sample({ ts: 120_000 })] }],
+    });
+    wrap(<AppMetricsCard id="app2" />);
+    await waitFor(() => expect(screen.getAllByTestId("chart-xaxis").length).toBeGreaterThan(0)); // time axis wired
+    expect(screen.queryByTestId("chart-peak-band")).toBeNull();
+  });
 });

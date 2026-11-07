@@ -14,7 +14,7 @@ import { CopyBtn } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
-import { humanizeRateSeries } from "../../../../lib/metrics";
+import { diskPctSeries, humanizeRateSeries } from "../../../../lib/metrics";
 import type { MetricsRange, ServerStatus, ServerView, AgentUpdateResponse, LogDrain, LogDrainType } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart } from "../../../../components/charts";
@@ -95,7 +95,11 @@ export default function ServerDetailPage() {
   if (isError && !server) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !server) return <ServerDetailSkeleton />;
 
+  const times = metrics.map((m) => m.ts);
   const cpu = metrics.map((m) => m.cpu);
+  // 7d/30d rollup points carry the stored per-minute peak → a faint max band behind the average line.
+  const cpuPeaks = metrics.some((m) => m.cpuMax !== undefined) ? metrics.map((m) => m.cpuMax ?? m.cpu) : undefined;
+  const disk = diskPctSeries(metrics); // disk % history from the stored diskUsed/diskTotal (own time axis)
   const ram = metrics.map((m) => pct(m.memUsed, m.memTotal));
   const netIn = humanizeRateSeries(metrics.map((m) => m.netRx));
   const netOut = humanizeRateSeries(metrics.map((m) => m.netTx));
@@ -180,7 +184,7 @@ export default function ServerDetailPage() {
       {tab === "monitoring" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {(["live", "1h", "6h", "24h", "7d"] as const).map((r) => (
+            {(["live", "1h", "6h", "24h", "7d", "30d"] as const).map((r) => (
               <Btn key={r} variant={r === range ? "primary" : "ghost"} onClick={() => setRange(r)}>
                 {t(`servers.range${r === "live" ? "Live" : r}`)}
               </Btn>
@@ -190,12 +194,13 @@ export default function ServerDetailPage() {
             <Card style={{ padding: 16 }}><EmptyState>{t("servers.noMetrics")}</EmptyState></Card>
           ) : (
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-              <MetricChart data={cpu} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
-              <MetricChart data={ram} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
-              <MetricChart data={netIn.data} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
-              <MetricChart data={netOut.data} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
-              <MetricChart data={diskRead.data} label={t("servers.diskRead")} unit={" " + diskRead.unit} color="var(--c-lapis)" decimals={1} />
-              <MetricChart data={diskWrite.data} label={t("servers.diskWrite")} unit={" " + diskWrite.unit} color="var(--c-am)" decimals={1} />
+              <MetricChart data={cpu} peaks={cpuPeaks} times={times} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
+              <MetricChart data={ram} times={times} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
+              <MetricChart data={disk.data} times={disk.times} label={t("servers.diskHistory")} unit="%" color="var(--c-g)" decimals={1} />
+              <MetricChart data={netIn.data} times={times} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
+              <MetricChart data={netOut.data} times={times} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
+              <MetricChart data={diskRead.data} times={times} label={t("servers.diskRead")} unit={" " + diskRead.unit} color="var(--c-lapis)" decimals={1} />
+              <MetricChart data={diskWrite.data} times={times} label={t("servers.diskWrite")} unit={" " + diskWrite.unit} color="var(--c-am)" decimals={1} />
             </div>
           )}
         </div>

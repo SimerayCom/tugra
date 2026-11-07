@@ -221,4 +221,33 @@ describe("Bulk ops (e2e)", () => {
 
     await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
   });
+
+  it("fleet metrics/trend returns only the caller's servers' recent points, never another team's", async () => {
+    const mine = await request(app.getHttpServer())
+      .post("/servers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "ft-mine", teamId })
+      .expect(201);
+    const mineId = mine.body.server.id;
+
+    const otherTeam = await prisma.team.create({ data: { name: "ft-other" } });
+    const foreign = await prisma.server.create({
+      data: { name: "ft-foreign", teamId: otherTeam.id, enrollToken: `fttok-${Date.now()}` },
+    });
+
+    const B = (n: number) => BigInt(n);
+    const base = { memUsed: B(100), memTotal: B(200), diskUsed: B(10), diskTotal: B(50), netRx: B(0), netTx: B(0) };
+    await prisma.metric.create({ data: { serverId: mineId, cpu: 20, ...base } });
+    await prisma.metric.create({ data: { serverId: foreign.id, cpu: 99, ...base } });
+
+    const res = await request(app.getHttpServer())
+      .get("/fleet/metrics/trend?minutes=30")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const ids = res.body.map((r: { serverId: string }) => r.serverId);
+    expect(ids).toContain(mineId);
+    expect(ids).not.toContain(foreign.id); // cross-team isolation — the trend endpoint must not leak another team
+
+    await prisma.team.deleteMany({ where: { id: otherTeam.id } }).catch(() => undefined);
+  });
 });

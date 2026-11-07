@@ -23,3 +23,20 @@ export function humanizeRateSeries(values: number[]): { data: number[]; unit: st
     unit: RATE_UNITS[i],
   };
 }
+
+/** Disk-usage % history from the used/total pair every host sample (raw row or rollup bucket) already
+ *  carries. Samples with no usable total (0 / missing / non-finite) are skipped, and `times` stays aligned
+ *  with `data` so the chart's time axis is correct. */
+export function diskPctSeries(
+  samples: { ts: number; diskUsed: number; diskTotal: number }[],
+): { times: number[]; data: number[] } {
+  const times: number[] = [];
+  const data: number[] = [];
+  for (const s of samples) {
+    if (Number.isFinite(s.diskUsed) && Number.isFinite(s.diskTotal) && s.diskTotal > 0 && Number.isFinite(s.ts)) {
+      times.push(s.ts);
+      data.push(Math.min(Math.max((s.diskUsed / s.diskTotal) * 100, 0), 100));
+    }
+  }
+  return { times, data };
+}

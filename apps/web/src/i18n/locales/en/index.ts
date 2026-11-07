@@ -2,6 +2,7 @@ import apps from "./apps.json";
 import audit from "./audit.json";
 import auth from "./auth.json";
 import bulk from "./bulk.json";
+import charts from "./charts.json";
 import common from "./common.json";
 import dashboard from "./dashboard.json";
 import databases from "./databases.json";
@@ -33,6 +34,6 @@ import templates from "./templates.json";
 import terminal from "./terminal.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, audit, auth, bulk, cloudCredentials, secretProviders, clusters, common, dashboard, databases, destinations, domains, errors, fleet, home, import: importNs, logdrains, monitors, nav, notifications, onboarding, patching, projects, registries, resources, servers, settings, sources, shared, tags, teams, templates, terminal };
+const en = { apps, audit, auth, bulk, charts, cloudCredentials, secretProviders, clusters, common, dashboard, databases, destinations, domains, errors, fleet, home, import: importNs, logdrains, monitors, nav, notifications, onboarding, patching, projects, registries, resources, servers, settings, sources, shared, tags, teams, templates, terminal };
 
 export default en;

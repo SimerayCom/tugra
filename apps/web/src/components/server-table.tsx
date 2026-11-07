@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Server } from "lucide-react";
-import type { ServerView, ServerStatus } from "../lib/types";
+import type { ServerView, ServerStatus, FleetTrendRow } from "../lib/types";
+import { TrendCell } from "./trend-cell";
 import { relativeTime, statusCounts, writableIds, teamLabel, filterByStatus } from "../lib/fleet";
 import { clickedInteractive } from "../lib/row-nav";
 import { useT } from "../i18n/provider";
@@ -27,7 +28,10 @@ export function ServerTable({
   teams = [],
   status = null,
   onStatusChange,
+  trends,
 }: {
+  /** Recent CPU/RAM trend per server (one batch call) → the sparkline column; absent → "—" cells. */
+  trends?: Map<string, FleetTrendRow>;
   servers: ServerView[];
   teams?: { id: string; name: string }[];
   status?: ServerStatus | null;
@@ -79,12 +83,13 @@ export function ServerTable({
       </div>
 
       <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: 640, borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", minWidth: 740, borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "var(--c-sb)", color: "var(--c-tx3)", textAlign: "left" }}>
               <th style={{ ...cell, width: 36 }}></th>
               <th style={cell}>{t("servers.server")}</th>
               <th style={cell}>{t("servers.team")}</th>
+              <th style={cell}>{t("servers.colTrend")}</th>
               <th style={cell}>{t("servers.access")}</th>
               <th style={cell}>{t("servers.lastSeen")}</th>
               <th style={{ ...cell, width: 70 }}></th>
@@ -119,6 +124,9 @@ export function ServerTable({
                   </span>
                 </td>
                 <td style={cell}>
+                  <TrendCell row={trends?.get(s.id)} cpuLabel={t("servers.trendCpu")} memLabel={t("servers.trendMem")} />
+                </td>
+                <td style={cell}>
                   {!s.canWrite && <Badge tone="muted">{t("servers.readOnly")}</Badge>}
                 </td>
                 <td style={{ ...cell, color: "var(--c-tx3)" }}>{relativeTime(s.lastSeenAt)}</td>
@@ -129,7 +137,7 @@ export function ServerTable({
             ))}
             {servers.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ ...cell, padding: 0 }}>
+                <td colSpan={7} style={{ ...cell, padding: 0 }}>
                   <EmptyState
                     icon={Server}
                     title={t("servers.emptyTitle")}
@@ -142,7 +150,7 @@ export function ServerTable({
             )}
             {servers.length > 0 && rows.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ ...cell, textAlign: "center", color: "var(--c-tx3)", padding: 24 }}>{t("servers.noMatch")}</td>
+                <td colSpan={7} style={{ ...cell, textAlign: "center", color: "var(--c-tx3)", padding: 24 }}>{t("servers.noMatch")}</td>
               </tr>
             )}
           </tbody>

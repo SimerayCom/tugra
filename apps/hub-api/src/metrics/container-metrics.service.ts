@@ -14,6 +14,8 @@ export interface ContainerMetricSample {
   netTx: number; // B/s
   blkRead: number; // B/s
   blkWrite: number; // B/s
+  /** Per-minute PEAK cpu % — only on rollup-backed (long-range) reads, where `cpu` is the bucket average. */
+  cpuMax?: number;
 }
 
 export interface AppContainerMetrics {
@@ -73,14 +75,16 @@ const LIVE_WINDOW_MS = 90_000;
 
 const MAX_POINTS = 1000; // per-container chart density cap (LTTB keeps the shape while down-sampling)
 // Ranges within this window are served from RAW rows at full fidelity (raw is retained 48h, so
-// 1h/6h/24h all fit comfortably and keep sub-minute spikes). Only longer ranges (7d) read the
+// 1h/6h/24h all fit comfortably and keep sub-minute spikes). Only longer ranges (7d/30d) read the
 // 1-minute rollups, because they reach past the raw retention window where no raw rows survive.
+// 30d matches the default rollup retention (METRICS_ROLLUP_RETENTION_DAYS=30).
 const RAW_THRESHOLD_MS = 24 * 3600_000;
 const RANGES: Record<string, number> = {
   "1h": 3600_000,
   "6h": 6 * 3600_000,
   "24h": 24 * 3600_000,
   "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
 };
 
 /** Map a range token to a lookback window in ms + whether it reads rollups (>2h) rather than raw
@@ -134,7 +138,7 @@ export class ContainerMetricsService {
    * app's `tugra_<id>` — a row matches if its name IS the prefix (single-container app) OR starts
    * with `<prefix>-` (a compose service container). The `-` separator makes the prefix match airtight
    * against a sibling app whose id merely starts with this one's. Ranges within raw retention (≤24h)
-   * read raw rows; longer ranges (7d) read the 1-minute rollups so history survives past it. Both paths are
+   * read raw rows; longer ranges (7d/30d) read the 1-minute rollups so history survives past it. Both paths are
    * LTTB down-sampled to keep the visual shape. Metrics carry no secrets, so this is a read-level
    * query (any team member); BigInt byte fields widen to Number for the JSON wire.
    */
@@ -173,6 +177,7 @@ export class ContainerMetricsService {
           netTx: Number(r.avgNetTx),
           blkRead: Number(r.avgBlkRead),
           blkWrite: Number(r.avgBlkWrite),
+          ...(Number.isFinite(r.maxCpu) && { cpuMax: r.maxCpu }),
         });
       }
     } else {

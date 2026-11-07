@@ -569,6 +569,8 @@ export interface MetricsSample {
   sensors?: Record<string, number>;
   gpus?: GpuStat[];
   battery?: BatterySample | null;
+  /** Per-minute PEAK cpu % — only on rollup-backed (7d/30d) history reads, where `cpu` is the bucket average. */
+  cpuMax?: number;
 }
 
 export interface GpuStat {
@@ -585,7 +587,13 @@ export interface BatterySample {
   state: string;
 }
 
-export type MetricsRange = "1h" | "6h" | "24h" | "7d";
+export type MetricsRange = "1h" | "6h" | "24h" | "7d" | "30d";
+
+/** One row of GET /fleet/metrics/trend: a server's recent per-minute CPU / memory % (sparkline source). */
+export interface FleetTrendRow {
+  serverId: string;
+  points: { ts: number; cpu: number; mem: number | null }[];
+}
 
 /** One row of GET /fleet/metrics/latest: a server's newest sample, for the fleet overview table. */
 export interface FleetLatestRow {
@@ -603,6 +611,8 @@ export interface ContainerMetricSample {
   netTx: number;
   blkRead: number;
   blkWrite: number;
+  /** Per-minute PEAK cpu % — only on rollup-backed (7d/30d) reads. */
+  cpuMax?: number;
 }
 
 export interface AppContainerMetrics {

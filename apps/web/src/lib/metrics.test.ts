@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { humanizeRateSeries } from "./metrics";
+import { humanizeRateSeries, diskPctSeries } from "./metrics";
 
 describe("humanizeRateSeries", () => {
   it("keeps a small current value in B/s untouched", () => {
@@ -49,5 +49,29 @@ describe("humanizeRateSeries", () => {
     const input = [2048, 4096];
     humanizeRateSeries(input);
     expect(input).toEqual([2048, 4096]);
+  });
+});
+
+describe("diskPctSeries (disk-usage history)", () => {
+  it("maps stored diskUsed/diskTotal to a % series with an aligned time axis", () => {
+    const r = diskPctSeries([
+      { ts: 1000, diskUsed: 25, diskTotal: 100 },
+      { ts: 2000, diskUsed: 50, diskTotal: 100 },
+    ]);
+    expect(r.times).toEqual([1000, 2000]);
+    expect(r.data).toEqual([25, 50]);
+  });
+  it("skips samples with no usable total (older live SSE sample / zero / NaN) and keeps times aligned", () => {
+    const r = diskPctSeries([
+      { ts: 1, diskUsed: 10, diskTotal: 0 },
+      { ts: 2, diskUsed: Number.NaN, diskTotal: 100 },
+      { ts: 3, diskUsed: 30, diskTotal: 60 },
+      { ts: 4, diskUsed: undefined as unknown as number, diskTotal: undefined as unknown as number },
+    ]);
+    expect(r).toEqual({ times: [3], data: [50] });
+  });
+  it("clamps to 0–100 and handles empty input", () => {
+    expect(diskPctSeries([{ ts: 1, diskUsed: 150, diskTotal: 100 }]).data).toEqual([100]);
+    expect(diskPctSeries([])).toEqual({ times: [], data: [] });
   });
 });

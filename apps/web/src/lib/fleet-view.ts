@@ -1,4 +1,4 @@
-import type { FleetLatestRow, MetricsSample, ServerView } from "./types";
+import type { FleetLatestRow, FleetTrendRow, MetricsSample, ServerView } from "./types";
 import { pct } from "./fleet";
 
 /** A server joined with its newest metrics sample + the values the fleet table sorts/colors on. */
@@ -151,4 +151,28 @@ export function batteryTone(percent: number | null, state: string | null): Metri
   if (percent <= 10) return "crit";
   if (percent <= 20) return "warn";
   return "ok";
+}
+
+/** Per-server recent CPU / memory % series for the sparkline columns. Non-finite points are dropped; a
+ *  server with no points (or only one — a single point can't draw a line) maps to empty arrays. */
+export interface ServerTrendSeries {
+  cpu: number[];
+  mem: number[];
+}
+
+/** Index the batch trend response by serverId and split it into plain number series. The row object is
+ *  kept as the map value's identity source (react-query structural sharing keeps it ref-stable across
+ *  refetches when unchanged), so memoized table rows only re-render when their own trend changed. */
+export function trendByServer(rows: FleetTrendRow[] | undefined): Map<string, FleetTrendRow> {
+  const out = new Map<string, FleetTrendRow>();
+  for (const r of Array.isArray(rows) ? rows : []) if (r && typeof r.serverId === "string") out.set(r.serverId, r);
+  return out;
+}
+
+export function trendSeries(row: FleetTrendRow | undefined): ServerTrendSeries {
+  const pts = Array.isArray(row?.points) ? row!.points : [];
+  return {
+    cpu: pts.map((p) => p.cpu).filter((v) => typeof v === "number" && Number.isFinite(v)),
+    mem: pts.map((p) => p.mem).filter((v): v is number => typeof v === "number" && Number.isFinite(v)),
+  };
 }

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { memo, type ReactNode, type CSSProperties } from "react";
 import { fmtBytes, formatUptime } from "../lib/fleet";
+import type { FleetTrendRow } from "../lib/types";
+import { TrendCell } from "./trend-cell";
 import { metricTone, tempTone, batteryTone, type FleetRow, type FleetSortKey, type SortDir, type MetricTone } from "../lib/fleet-view";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, StatusDot } from "./ui";
@@ -23,7 +25,10 @@ export function FleetTable({
   sortDir,
   onSort,
   clusterName,
+  trends,
 }: {
+  /** Recent CPU/RAM trend per server (batch endpoint) → the sparkline column; absent → "—" cells. */
+  trends?: Map<string, FleetTrendRow>;
   rows: FleetRow[];
   sortKey: FleetSortKey;
   sortDir: SortDir;
@@ -62,6 +67,7 @@ export function FleetTable({
                   <SortTh k="cpu" label={t("fleet.colCpu")} icon={Cpu} num {...sortProps} />
                   <SortTh k="mem" label={t("fleet.colMem")} icon={MemoryStick} num {...sortProps} />
                   <SortTh k="disk" label={t("fleet.colDisk")} icon={HardDrive} num {...sortProps} />
+                  <Th>{t("fleet.colTrend")}</Th>
                   <SortTh k="net" label={t("fleet.colNet")} icon={ArrowDownUp} num {...sortProps} />
                   <SortTh k="temp" label={t("fleet.colTemp")} icon={Thermometer} num {...sortProps} />
                   <SortTh k="gpu" label={t("fleet.colGpu")} icon={Gpu} num {...sortProps} />
@@ -73,7 +79,7 @@ export function FleetTable({
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <FleetRowView key={r.server.id} row={r} cluster={clusterFor(r)} staleLabel={staleLabel} />
+                  <FleetRowView key={r.server.id} row={r} cluster={clusterFor(r)} staleLabel={staleLabel} trend={trends?.get(r.server.id)} />
                 ))}
               </tbody>
             </table>
@@ -82,7 +88,7 @@ export function FleetTable({
       </div>
       <ul className="fleet-cards" aria-label={t("fleet.title")}>
         {rows.map((r) => (
-          <FleetCardView key={r.server.id} row={r} cluster={clusterFor(r)} staleLabel={staleLabel} />
+          <FleetCardView key={r.server.id} row={r} cluster={clusterFor(r)} staleLabel={staleLabel} trend={trends?.get(r.server.id)} />
         ))}
       </ul>
     </>
@@ -93,7 +99,7 @@ const pctColor = (value: number | null, stale: boolean) =>
   value === null || stale ? "var(--c-tx3)" : TONE_COLOR[metricTone(value)];
 
 const FleetRowView = memo(
-  function FleetRowView({ row, cluster, staleLabel }: { row: FleetRow; cluster: Cluster; staleLabel: string }) {
+  function FleetRowView({ row, cluster, staleLabel, trend }: { row: FleetRow; cluster: Cluster; staleLabel: string; trend?: FleetTrendRow }) {
     const t = useT();
     const s = row.server;
     return (
@@ -113,6 +119,9 @@ const FleetRowView = memo(
         <MeterTd value={row.cpu} tone={metricTone(row.cpu)} text={pctText(row.cpu)} stale={row.stale} label={t("fleet.colCpu")} />
         <MeterTd value={row.memPct} tone={metricTone(row.memPct)} text={pctText(row.memPct)} stale={row.stale} label={t("fleet.colMem")} />
         <MeterTd value={row.diskPct} tone={metricTone(row.diskPct)} text={pctText(row.diskPct)} stale={row.stale} label={t("fleet.colDisk")} />
+        <Td>
+          <TrendCell row={trend} cpuLabel={t("fleet.trendCpu")} memLabel={t("fleet.trendMem")} />
+        </Td>
         <Td num className="mono" style={{ color: row.stale ? "var(--c-tx3)" : "var(--c-tx2)" }}>
           {row.net === null ? "—" : `${fmtBytes(row.net)}/s`}
         </Td>
@@ -147,11 +156,12 @@ const FleetRowView = memo(
     a.row.gpuTemp === b.row.gpuTemp &&
     a.row.battery === b.row.battery &&
     a.row.batteryState === b.row.batteryState &&
+    a.trend === b.trend &&
     a.row.server === b.row.server, // ServerView is replaced wholesale on a refetch; ref-equal when unchanged
 );
 
 const FleetCardView = memo(
-  function FleetCardView({ row, cluster, staleLabel }: { row: FleetRow; cluster: Cluster; staleLabel: string }) {
+  function FleetCardView({ row, cluster, staleLabel, trend }: { row: FleetRow; cluster: Cluster; staleLabel: string; trend?: FleetTrendRow }) {
     const t = useT();
     const s = row.server;
     return (
@@ -172,6 +182,9 @@ const FleetCardView = memo(
           <Gauge label={t("fleet.colCpu")} value={row.cpu} stale={row.stale} />
           <Gauge label={t("fleet.colMem")} value={row.memPct} stale={row.stale} />
           <Gauge label={t("fleet.colDisk")} value={row.diskPct} stale={row.stale} />
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <TrendCell row={trend} cpuLabel={t("fleet.trendCpu")} memLabel={t("fleet.trendMem")} width={96} height={24} />
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "var(--c-tx3)" }}>
           <span>{t("fleet.colNet")} <b style={{ color: "var(--c-tx2)", fontWeight: 500 }}>{row.net === null ? "—" : `${fmtBytes(row.net)}/s`}</b></span>
@@ -198,6 +211,7 @@ const FleetCardView = memo(
     a.row.gpuTemp === b.row.gpuTemp &&
     a.row.battery === b.row.battery &&
     a.row.batteryState === b.row.batteryState &&
+    a.trend === b.trend &&
     a.row.server === b.row.server,
 );
 

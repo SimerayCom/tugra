@@ -7,9 +7,10 @@ describe("MetricsService", () => {
     const findMany = jest.fn().mockResolvedValue(rows);
     const rollupFindMany = jest.fn().mockResolvedValue(rollupRows);
     const publish = jest.fn().mockResolvedValue(0);
-    const prisma = { metric: { create, findMany }, metricRollup: { findMany: rollupFindMany } } as any;
+    const queryRaw = jest.fn().mockResolvedValue([]);
+    const prisma = { metric: { create, findMany }, metricRollup: { findMany: rollupFindMany }, $queryRaw: queryRaw } as any;
     const redis = { client: { publish } } as any;
-    return { svc: new MetricsService(prisma, redis), create, findMany, rollupFindMany, publish };
+    return { svc: new MetricsService(prisma, redis), create, findMany, rollupFindMany, publish, queryRaw };
   }
 
   const sample: MetricsSample = {
@@ -93,6 +94,65 @@ describe("MetricsService", () => {
     expect(out[0].cpu).toBe(2.5); // avgCpu → cpu
     expect(out[0].memUsed).toBe(100); // avgMemUsed → memUsed (Number)
     expect(out[0].diskRead).toBe(1); // avgDiskRead → diskRead
+  });
+
+  it("history: 30d reads ROLLUPS and returns the per-bucket peak (maxCpu → cpuMax) with the average (cpu)", async () => {
+    const { svc, findMany, rollupFindMany } = make(
+      [],
+      [
+        { bucket: new Date(60_000), avgCpu: 2.5, maxCpu: 91, avgMemUsed: 100n, avgMemTotal: 200n, avgDiskUsed: 10n, avgDiskTotal: 50n, avgNetRx: 7n, avgNetTx: 0n, avgDiskRead: 1n, avgDiskWrite: 2n },
+      ],
+    );
+    const out = await svc.history("s1", "30d");
+    expect(rollupFindMany).toHaveBeenCalledTimes(1);
+    expect(findMany).not.toHaveBeenCalled();
+    const since = rollupFindMany.mock.calls[0][0].where.bucket.gte as Date;
+    expect(Date.now() - since.getTime()).toBeGreaterThanOrEqual(30 * 86_400_000 - 100);
+    expect(out[0]).toMatchObject({ cpu: 2.5, cpuMax: 91, diskUsed: 10, diskTotal: 50 }); // disk% is derivable from the stored pair
+  });
+
+  it("history: a RAW read carries no cpuMax (raw-range behavior unchanged)", async () => {
+    const { svc } = make([{ ts: new Date(1000), cpu: 5, memUsed: 1n, memTotal: 2n, diskUsed: 1n, diskTotal: 2n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n }]);
+    const out = await svc.history("s1", "1h");
+    expect(out[0]).not.toHaveProperty("cpuMax");
+  });
+
+  describe("trendForServers (batch sparkline read)", () => {
+    it("one aggregate query for all servers, grouped into per-server minute points", async () => {
+      const { svc, queryRaw } = make();
+      queryRaw.mockResolvedValueOnce([
+        { serverId: "a", bucket: new Date(60_000), cpu: 10, mem: 40 },
+        { serverId: "a", bucket: new Date(120_000), cpu: 12.5, mem: null },
+        { serverId: "b", bucket: new Date(60_000), cpu: 3, mem: 20 },
+      ]);
+      const out = await svc.trendForServers(["a", "b"], 30);
+      expect(queryRaw).toHaveBeenCalledTimes(1); // ONE query, not N
+      expect(out).toEqual([
+        { serverId: "a", points: [{ ts: 60_000, cpu: 10, mem: 40 }, { ts: 120_000, cpu: 12.5, mem: null }] },
+        { serverId: "b", points: [{ ts: 60_000, cpu: 3, mem: 20 }] },
+      ]);
+    });
+
+    it("empty id set short-circuits without touching the DB", async () => {
+      const { svc, queryRaw } = make();
+      expect(await svc.trendForServers([])).toEqual([]);
+      expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("clamps the window to [5,120] minutes (default 30) and the id set to 500", async () => {
+      const { svc, queryRaw } = make();
+      const sinceOf = () => (queryRaw.mock.calls.at(-1)![0].values as unknown[]).find((v) => v instanceof Date) as Date;
+      const ageMin = () => (Date.now() - sinceOf().getTime()) / 60_000;
+      await svc.trendForServers(["a"], 100000);
+      expect(Math.round(ageMin())).toBe(120);
+      await svc.trendForServers(["a"], 1);
+      expect(Math.round(ageMin())).toBe(5);
+      await svc.trendForServers(["a"], Number.NaN);
+      expect(Math.round(ageMin())).toBe(30);
+      await svc.trendForServers(Array.from({ length: 900 }, (_, i) => `s${i}`), 30);
+      const ids = (queryRaw.mock.calls.at(-1)![0].values as unknown[]).filter((v) => typeof v === "string");
+      expect(ids).toHaveLength(500);
+    });
   });
 
   it("latestForServers: DISTINCT ON newest per server, BigInt→Number, scoped to the given ids", async () => {

@@ -34,7 +34,7 @@ describe("rangeToMs", () => {
   it("falls back to 1h for an unknown/missing range (no injection of arbitrary windows)", () => {
     expect(rangeToMs(undefined).range).toBe("1h");
     expect(rangeToMs("'; DROP" as string).range).toBe("1h");
-    expect(rangeToMs("30d").range).toBe("1h"); // beyond rollup retention → clamped
+    expect(rangeToMs("90d").range).toBe("1h"); // beyond rollup retention → clamped
   });
   it("maps useRollup by window: within raw retention (≤24h) reads raw, only 7d reads rollups", () => {
     expect(rangeToMs("1h").useRollup).toBe(false);
@@ -42,6 +42,13 @@ describe("rangeToMs", () => {
     expect(rangeToMs("24h").useRollup).toBe(false); // ditto — spikes preserved from raw
     expect(rangeToMs("7d").range).toBe("7d");
     expect(rangeToMs("7d").useRollup).toBe(true); // exceeds raw retention → rollup
+  });
+  it("unlocks 30d: it maps to a 30-day window that reads the 1-minute ROLLUPS (like 7d)", () => {
+    const base = Date.now();
+    const r = rangeToMs("30d");
+    expect(r.range).toBe("30d");
+    expect(r.useRollup).toBe(true);
+    expect(base - r.sinceMs).toBeGreaterThanOrEqual(30 * 86_400_000 - 50);
   });
   it("rejects Object.prototype keys (own-property check, not `in`) → never a NaN window", () => {
     for (const k of ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"]) {
@@ -166,6 +173,17 @@ describe("ContainerMetricsService", () => {
     expect(main.samples[0].memPct).toBe(40); // avgMemPct → memPct
     expect(main.samples[0].netRx).toBe(10); // BigInt → Number
     expect(main.samples[0].ts).toBe(1_700_000_000_000); // bucket → unix ms
+  });
+
+  it("forApp: rollup read RETURNS the stored per-bucket peak (maxCpu → cpuMax) next to the average; raw reads omit it", async () => {
+    const rollupFindMany = jest.fn().mockResolvedValue([rollupRow({ containerName: "tugra_app1", avgCpu: 2.5, maxCpu: 88 })]);
+    const { svc } = make(undefined, rollupFindMany);
+    const long = await svc.forApp("s1", "tugra_app1", "30d");
+    expect(rollupFindMany).toHaveBeenCalledTimes(1);
+    expect(long.containers[0].samples[0]).toMatchObject({ cpu: 2.5, cpuMax: 88 });
+    const { svc: rawSvc } = make(jest.fn().mockResolvedValue([row({})]));
+    const raw = await rawSvc.forApp("s1", "tugra_app1", "1h");
+    expect(raw.containers[0].samples[0]).not.toHaveProperty("cpuMax");
   });
 
   it("forApp: down-samples a huge per-container series to the LTTB cap (1000)", async () => {

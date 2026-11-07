@@ -57,6 +57,12 @@ export const FleetLatestRowSchema = z.object({
   sample: MetricsSampleSchema,
 });
 
+// Fleet sparkline source: each server's recent per-minute CPU / memory % (one batch call, bounded window).
+export const FleetTrendRowSchema = z.object({
+  serverId: z.string(),
+  points: z.array(z.object({ ts: z.number(), cpu: z.number(), mem: z.number().nullable() })),
+});
+
 // Lifecycle action on one container from the server's Containers tab. `remove` needs confirmName
 // (type-to-confirm) and is only allowed on foreign containers (service-side guard).
 export const ContainerActionSchema = z.object({

@@ -1,0 +1,7 @@
+{
+  "min": "Min",
+  "avg": "Avg",
+  "max": "Max",
+  "peak": "Peak",
+  "noData": "No data in this range"
+}

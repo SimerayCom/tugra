@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
+import { useFleetTrend } from "../../../hooks/useFleetTrend";
 import { ServerTable } from "../../../components/server-table";
 import { SavedViewsBar } from "../../../components/saved-views-bar";
 import { TagFilter } from "../../../components/tags";
@@ -22,6 +23,7 @@ export default function ServersPage() {
     queryKey: ["servers"],
     queryFn: () => api.listServers(),
   });
+  const trends = useFleetTrend();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [status, setStatus] = useState<ServerStatus | null>(null);
@@ -43,7 +45,7 @@ export default function ServersPage() {
         <>
           <SavedViewsBar status={status} tags={selectedTags} onApply={(v) => { setStatus(v.status); setSelectedTags(v.tags); }} />
           <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
-          <ServerTable servers={visible} teams={teams} status={status} onStatusChange={setStatus} />
+          <ServerTable servers={visible} teams={teams} status={status} onStatusChange={setStatus} trends={trends} />
         </>
       )}
     </div>

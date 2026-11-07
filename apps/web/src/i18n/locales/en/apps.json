@@ -61,6 +61,7 @@
   "metricsRange6h": "6h",
   "metricsRange24h": "24h",
   "metricsRange7d": "7d",
+  "metricsRange30d": "30d",
   "noMetrics": "No metrics yet — they appear a few seconds after the container starts.",
   "crash": {
     "title": "Crash timeline",

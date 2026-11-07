@@ -12,7 +12,7 @@ import { ServersService } from "../servers/servers.service";
 import { MetricsService } from "../metrics/metrics.service";
 import { CleanupService } from "./cleanup.service";
 import { PatchService } from "./patch.service";
-import { CleanupConfigBulkInput, CleanupConfigBulkSchema, FleetLatestRowSchema, FleetPatchInput, FleetPatchSchema } from "./dto";
+import { CleanupConfigBulkInput, CleanupConfigBulkSchema, FleetLatestRowSchema, FleetTrendRowSchema, FleetPatchInput, FleetPatchSchema } from "./dto";
 
 /** Fleet-wide bulk operations (cross-team, role-gated per server). */
 @ApiTags("servers")
@@ -40,6 +40,21 @@ export class FleetController {
   ) {
     const servers = await this.servers.listForUser(user.userId, { teamId, status, q });
     return this.metrics.latestForServers(servers.map((s) => s.id));
+  }
+
+  // Sparkline source: the last `minutes` (clamped 5-120, default 30) of per-minute CPU/mem % for every
+  // visible server in ONE aggregate query. Same team scoping as metrics/latest (listForUser).
+  @Get("metrics/trend")
+  @ApiZodResponse(FleetTrendRowSchema, { isArray: true })
+  async trendMetrics(
+    @CurrentUser() user: AuthUser,
+    @Query("minutes") minutes?: string,
+    @Query("teamId") teamId?: string,
+    @Query("status") status?: ServerStatus,
+    @Query("q") q?: string,
+  ) {
+    const servers = await this.servers.listForUser(user.userId, { teamId, status, q });
+    return this.metrics.trendForServers(servers.map((s) => s.id), minutes ? Number(minutes) : undefined);
   }
 
   @Post("cleanup-config")

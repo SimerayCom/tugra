@@ -24,7 +24,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(48);
+    expect(MCP_TOOLS).toHaveLength(50);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -731,5 +731,63 @@ describe("read: fleet aggregators", () => {
       await tool("fleet_status").execute(deps, "u1", {});
       expect(serverList).toHaveBeenCalledWith("u1", undefined);
     });
+  });
+});
+
+describe("read: metrics (get_server_metrics / get_container_metrics)", () => {
+  const point = (over: Record<string, number> = {}) => ({
+    ts: 1_700_000_000_000, cpu: 10, cpuMax: 70, memUsed: 50, memTotal: 100, diskUsed: 20, diskTotal: 100, netRx: 0, netTx: 0, diskRead: 0, diskWrite: 0, ...over,
+  });
+
+  it("both are read-scope tools (visible to a read token, advertised with a range enum incl. 30d)", () => {
+    for (const n of ["get_server_metrics", "get_container_metrics"]) {
+      expect(tool(n).scope).toBe("read");
+      const props = (tool(n).inputSchema as { properties: { range: { enum: string[] } } }).properties;
+      expect(props.range.enum).toContain("30d");
+    }
+  });
+
+  it("get_server_metrics: authz via getForUser FIRST, then returns a compact current/avg/max summary", async () => {
+    const getForUser = jest.fn().mockResolvedValue({ id: "s1" });
+    const history = jest.fn().mockResolvedValue([point(), point({ cpu: 30, cpuMax: 95, memUsed: 70, diskUsed: 40 })]);
+    const deps = { servers: { getForUser }, metrics: { history } } as unknown as McpDeps;
+    const res = (await tool("get_server_metrics").execute(deps, "u1", { id: "s1", range: "30d" })) as Record<string, any>;
+    expect(getForUser).toHaveBeenCalledWith("u1", "s1");
+    expect(history).toHaveBeenCalledWith("s1", "30d");
+    expect(res).toMatchObject({
+      serverId: "s1",
+      range: "30d",
+      samples: 2,
+      cpu: { current: 30, avg: 20, max: 95 },
+      mem: { current: 70, avg: 60, max: 70 },
+      disk: { current: 40, avg: 30, max: 40 },
+    });
+  });
+
+  it("get_server_metrics: an unknown range falls back to 1h; a denied server never reaches history()", async () => {
+    const getForUser = jest.fn().mockResolvedValue({});
+    const history = jest.fn().mockResolvedValue([]);
+    const deps = { servers: { getForUser }, metrics: { history } } as unknown as McpDeps;
+    await tool("get_server_metrics").execute(deps, "u1", { id: "s1", range: "'; DROP" });
+    expect(history).toHaveBeenCalledWith("s1", "1h");
+
+    history.mockClear();
+    getForUser.mockRejectedValueOnce(new Error("forbidden"));
+    await expect(tool("get_server_metrics").execute(deps, "u1", { id: "other" })).rejects.toThrow(/forbidden/);
+    expect(history).not.toHaveBeenCalled();
+    await expect(Promise.resolve().then(() => tool("get_server_metrics").execute(deps, "u1", {}))).rejects.toThrow(/missing required argument: id/);
+  });
+
+  it("get_container_metrics: routes app vs database (team-scoped service methods) and summarizes each container", async () => {
+    const samples = [{ ts: 1, cpu: 5, cpuMax: 60, memUsed: 1, memTotal: 2, memPct: 50, netRx: 100, netTx: 0, blkRead: 0, blkWrite: 0 }];
+    const apps = { containerMetrics: jest.fn().mockResolvedValue({ containers: [{ name: "tugra_a1", samples }] }) };
+    const databases = { containerMetrics: jest.fn().mockResolvedValue({ containers: [{ name: "tugra_db_d1", samples }] }) };
+    const deps = { apps, databases } as unknown as McpDeps;
+    const a = (await tool("get_container_metrics").execute(deps, "u1", { id: "a1", range: "7d" })) as Record<string, any>;
+    expect(apps.containerMetrics).toHaveBeenCalledWith("u1", "a1", "7d");
+    expect(a).toMatchObject({ kind: "app", range: "7d", containers: [{ name: "tugra_a1", cpu: { avg: 5, max: 60 }, mem: { current: 50 } }] });
+    const d = (await tool("get_container_metrics").execute(deps, "u1", { id: "d1", kind: "database" })) as Record<string, any>;
+    expect(databases.containerMetrics).toHaveBeenCalledWith("u1", "d1", "1h");
+    expect(d.kind).toBe("database");
   });
 });

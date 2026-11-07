@@ -9,7 +9,7 @@ import { useT } from "../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "./ui";
 import { MetricChart } from "./charts";
 
-const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d"];
+const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d", "30d"];
 
 /** "Metrics" tab: per-container CPU/RAM/Net/Disk charts, range-switchable, auto-refreshing.
  *  Serves both applications and databases (`kind`) — the agent samples every container, so the chart
@@ -62,7 +62,10 @@ function friendlyContainer(name: string): string {
 
 function ContainerMetricsSection({ name, samples }: { name: string; samples: ContainerMetricSample[] }) {
   const t = useT();
+  const times = samples.map((s) => s.ts);
   const cpu = samples.map((s) => s.cpu);
+  // Long ranges (7d/30d) read rollups, whose points also carry the per-minute peak → faint max band.
+  const cpuPeaks = samples.some((s) => s.cpuMax !== undefined) ? samples.map((s) => s.cpuMax ?? s.cpu) : undefined;
   const ram = samples.map((s) => s.memPct);
   const netIn = humanizeRateSeries(samples.map((s) => s.netRx));
   const netOut = humanizeRateSeries(samples.map((s) => s.netTx));
@@ -72,12 +75,12 @@ function ContainerMetricsSection({ name, samples }: { name: string; samples: Con
     <div>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)", marginBottom: 10, wordBreak: "break-all" }} title={name}>{friendlyContainer(name)}</div>
       <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        <MetricChart data={cpu} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" />
-        <MetricChart data={ram} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} />
-        <MetricChart data={netIn.data} label={t("apps.metricsNetIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
-        <MetricChart data={netOut.data} label={t("apps.metricsNetOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
-        <MetricChart data={blkRead.data} label={t("apps.metricsBlkRead")} unit={" " + blkRead.unit} color="var(--c-lapis)" decimals={1} />
-        <MetricChart data={blkWrite.data} label={t("apps.metricsBlkWrite")} unit={" " + blkWrite.unit} color="var(--c-am)" decimals={1} />
+        <MetricChart data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" />
+        <MetricChart data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} />
+        <MetricChart data={netIn.data} times={times} label={t("apps.metricsNetIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
+        <MetricChart data={netOut.data} times={times} label={t("apps.metricsNetOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
+        <MetricChart data={blkRead.data} times={times} label={t("apps.metricsBlkRead")} unit={" " + blkRead.unit} color="var(--c-lapis)" decimals={1} />
+        <MetricChart data={blkWrite.data} times={times} label={t("apps.metricsBlkWrite")} unit={" " + blkWrite.unit} color="var(--c-am)" decimals={1} />
       </div>
     </div>
   );

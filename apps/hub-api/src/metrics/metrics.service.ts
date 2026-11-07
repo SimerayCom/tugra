@@ -8,6 +8,22 @@ import { rangeToMs } from "./container-metrics.service";
 
 const MAX_POINTS = 1000; // LTTB density cap for the host range charts
 
+/** One host history point: the wire MetricsSample plus, on rollup-backed (7d/30d) reads, the bucket's
+ *  PEAK cpu % (`cpu` is then the bucket average) so the long-range chart can draw a peak band. */
+export type HostMetricPoint = MetricsSample & { cpuMax?: number };
+
+/** Recent-trend bounds for the batch sparkline read (one query, bounded rows = servers × minutes). */
+export const TREND_MIN_MINUTES = 5;
+export const TREND_MAX_MINUTES = 120;
+export const TREND_DEFAULT_MINUTES = 30;
+const TREND_MAX_SERVERS = 500;
+
+/** One server's recent per-minute CPU / memory % trend (sparkline source for the server + fleet tables). */
+export interface ServerTrend {
+  serverId: string;
+  points: { ts: number; cpu: number; mem: number | null }[];
+}
+
 const BATTERY_STATES = new Set(["Charging", "Discharging", "Full", "Not charging", "Unknown", "Idle", "Empty"]);
 
 function finiteIn(n: unknown, lo: number, hi: number): number | null {
@@ -206,9 +222,9 @@ export class MetricsService {
    * retention (48h). The result is LTTB down-sampled to keep the visual shape under MAX_POINTS.
    * `recent()` stays the live/last-N reader; this is the range-aware reader for the monitoring tab.
    */
-  async history(serverId: string, range?: string): Promise<MetricsSample[]> {
+  async history(serverId: string, range?: string): Promise<HostMetricPoint[]> {
     const { sinceMs, useRollup } = rangeToMs(range);
-    let samples: MetricsSample[];
+    let samples: HostMetricPoint[];
     if (useRollup) {
       const rows = await this.prisma.metricRollup.findMany({
         where: { serverId, bucket: { gte: new Date(sinceMs) } },
@@ -225,6 +241,7 @@ export class MetricsService {
         netTx: Number(r.avgNetTx),
         diskRead: Number(r.avgDiskRead),
         diskWrite: Number(r.avgDiskWrite),
+        ...(Number.isFinite(r.maxCpu) && { cpuMax: r.maxCpu }),
       }));
     } else {
       const rows = await this.prisma.metric.findMany({
@@ -234,5 +251,40 @@ export class MetricsService {
       samples = rows.map((r) => this.toSample(r)); // carries the optional sensor fields too (≤24h raw)
     }
     return downsampleLTTB(samples, MAX_POINTS, (s) => s.cpu);
+  }
+
+  /**
+   * Recent per-minute CPU + memory % for each of `serverIds` over the last `minutes` — ONE aggregate
+   * query (date_trunc minute, grouped per server), so the sparkline columns never cost N round-trips.
+   * Bounded: `minutes` is clamped to [5,120] and the id set to 500, so rows <= servers x minutes. Servers
+   * with no samples in the window are absent. The caller MUST pass only ids the requester may see
+   * (ServersService.listForUser); this method performs no authorization itself.
+   */
+  async trendForServers(serverIds: string[], minutes?: number): Promise<ServerTrend[]> {
+    const ids = serverIds.slice(0, TREND_MAX_SERVERS);
+    if (ids.length === 0) return [];
+    const n = Math.trunc(Number(minutes));
+    const mins = Number.isFinite(n) ? Math.min(TREND_MAX_MINUTES, Math.max(TREND_MIN_MINUTES, n)) : TREND_DEFAULT_MINUTES;
+    const since = new Date(Date.now() - mins * 60_000);
+    const rows = await this.prisma.$queryRaw<{ serverId: string; bucket: Date; cpu: number; mem: number | null }[]>(Prisma.sql`
+      SELECT "serverId",
+             date_trunc('minute', "ts") AS bucket,
+             AVG("cpu")::float8 AS cpu,
+             AVG(CASE WHEN "memTotal" > 0 THEN "memUsed"::float8 / "memTotal"::float8 * 100 END)::float8 AS mem
+      FROM "Metric"
+      WHERE "serverId" IN (${Prisma.join(ids)}) AND "ts" >= ${since}
+      GROUP BY "serverId", date_trunc('minute', "ts")
+      ORDER BY "serverId", bucket ASC`);
+    const byServer = new Map<string, ServerTrend>();
+    for (const r of rows) {
+      let t = byServer.get(r.serverId);
+      if (!t) byServer.set(r.serverId, (t = { serverId: r.serverId, points: [] }));
+      t.points.push({
+        ts: new Date(r.bucket).getTime(),
+        cpu: Number.isFinite(Number(r.cpu)) ? Number(r.cpu) : 0,
+        mem: r.mem != null && Number.isFinite(Number(r.mem)) ? Number(r.mem) : null,
+      });
+    }
+    return [...byServer.values()];
   }
 }

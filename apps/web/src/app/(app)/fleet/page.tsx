@@ -8,6 +8,7 @@ import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { statusCounts, filterByStatus } from "../../../lib/fleet";
 import { buildFleetRows, sortFleetRows, matchesFleetSearch, type FleetSortKey, type SortDir } from "../../../lib/fleet-view";
+import { useFleetTrend } from "../../../hooks/useFleetTrend";
 import { FleetTable } from "../../../components/fleet-table";
 import { ErrorState } from "../../../components/error-state";
 import { SkeletonTable } from "../../../components/skeleton";
@@ -31,6 +32,7 @@ export default function FleetPage() {
     select: (d) => (Array.isArray(d) ? d : EMPTY_METRICS),
     refetchInterval: 5000,
   });
+  const trends = useFleetTrend();
   const { data: clusters = [] } = useQuery({ queryKey: ["clusters"], queryFn: () => api.listClusters(), staleTime: 30_000 });
 
   const [status, setStatus] = useState<ServerStatus | null>(null);
@@ -97,7 +99,7 @@ export default function FleetPage() {
 
       {isLoading && !servers && <SkeletonTable rows={6} />}
       {isError && !servers && <ErrorState onRetry={() => refetch()} />}
-      {servers && <FleetTable rows={rows} sortKey={sortKey} sortDir={sortDir} onSort={onSort} clusterName={clusterName} />}
+      {servers && <FleetTable rows={rows} sortKey={sortKey} sortDir={sortDir} onSort={onSort} clusterName={clusterName} trends={trends} />}
     </div>
   );
 }

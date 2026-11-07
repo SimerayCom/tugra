@@ -14,6 +14,9 @@ import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
 import { REMOTE_SOURCE_KINDS, isRemoteSourceKind } from "../importer/dto";
 import type { LicenseService } from "../license/license.service";
+import type { MetricsService } from "../metrics/metrics.service";
+import { rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
+import { summarizeContainer, summarizeHost } from "../metrics/metrics-summary";
 
 /** The domain services an MCP tool may call. Every read tool passes the caller's `userId` straight
  *  through — team scoping is resolved DB-side inside each service (never trusted from the client). */
@@ -29,6 +32,7 @@ export interface McpDeps {
   importer: ImporterService;
   executor: ImportExecutorService;
   license: LicenseService;
+  metrics: MetricsService;
 }
 
 export interface McpTool {
@@ -233,6 +237,45 @@ export const MCP_TOOLS: McpTool[] = [
       const id = reqStr(a, "id");
       await d.servers.getForUser(userId, id);
       return { capabilities: await d.servers.grantedCapabilities(id) };
+    },
+  },
+  {
+    name: "get_server_metrics",
+    description:
+      "Compact resource summary for one server over a range (1h|6h|24h|7d|30d, default 1h): current, average and peak CPU %, memory % and disk % plus the sample window. Read-only; any team member may read it. Args: id (server), range (optional).",
+    scope: "read",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" }, range: { type: "string", enum: ["1h", "6h", "24h", "7d", "30d"] } },
+      required: ["id"],
+    },
+    execute: async (d, userId, a) => {
+      const id = reqStr(a, "id");
+      await d.servers.getForUser(userId, id); // authz: membership check (history() performs none)
+      const { range } = rangeToMs(optStr(a, "range")); // unknown token -> 1h, never an arbitrary window
+      return { serverId: id, ...summarizeHost(range, await d.metrics.history(id, range)) };
+    },
+  },
+  {
+    name: "get_container_metrics",
+    description:
+      "Compact per-container resource summary for an application (or a managed database with kind=database) over a range (1h|6h|24h|7d|30d, default 1h): current, average and peak CPU %, memory % and average network rates for each of its containers. Read-only; any team member may read it. Args: id, kind (app|database, default app), range (optional).",
+    scope: "read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        kind: { type: "string", enum: ["app", "database"] },
+        range: { type: "string", enum: ["1h", "6h", "24h", "7d", "30d"] },
+      },
+      required: ["id"],
+    },
+    execute: async (d, userId, a) => {
+      const id = reqStr(a, "id");
+      const { range } = rangeToMs(optStr(a, "range"));
+      const kind = optStr(a, "kind") === "database" ? "database" : "app";
+      const data: AppContainerMetrics = kind === "database" ? await d.databases.containerMetrics(userId, id, range) : await d.apps.containerMetrics(userId, id, range);
+      return { id, kind, range, containers: data.containers.map((c) => summarizeContainer(c.name, c.samples)) };
     },
   },
   // ── clusters / swarm ──

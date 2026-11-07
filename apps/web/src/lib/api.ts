@@ -47,6 +47,7 @@ import type {
   MetricsSample,
   FleetLatestRow,
   MetricsRange,
+  FleetTrendRow,
   AppContainerMetrics,
   ServerContainers,
   HostContainers,
@@ -610,6 +611,10 @@ export const api = {
   // Fleet overview: newest metrics sample for every server the caller can see, in one call.
   getFleetMetrics() {
     return apiFetch<FleetLatestRow[]>("/fleet/metrics/latest");
+  },
+  // Sparkline source: each visible server's last `minutes` of per-minute CPU/mem %, in one batch call.
+  getFleetTrend(minutes = 30) {
+    return apiFetch<FleetTrendRow[]>(`/fleet/metrics/trend?minutes=${minutes}`);
   },
   containerAction(id: string, container: string, action: "start" | "restart" | "stop" | "remove", confirmName?: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/containers/action`, {

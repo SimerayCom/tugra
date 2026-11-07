@@ -5,7 +5,7 @@ import type { McpTool } from "./mcp-tools";
 function make() {
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
   const empty = {} as never;
-  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, audit);
+  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, audit);
   return { svc, audit };
 }
 
@@ -109,6 +109,16 @@ describe("McpService.handle", () => {
     expect(payload.password).toBeNull(); // sanitizer redacted the secret field
     expect(payload.ok).toBe(1);
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.tools_call", target: "get_thing", actor: "u1" }));
+  });
+
+  it("real catalog: the metrics tools are auth-gated — listed + callable with read scope, refused with no scope", async () => {
+    const { svc } = make();
+    const listed = ((await svc.handle(ctx(["read"]), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+    expect(listed).toEqual(expect.arrayContaining(["get_server_metrics", "get_container_metrics"]));
+    const none = ((await svc.handle(ctx([]), rpc("tools/list"))) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+    expect(none).not.toContain("get_server_metrics");
+    const res = (await svc.handle(ctx([]), rpc("tools/call", { name: "get_server_metrics", arguments: { id: "s1" } }))) as { error: { code: number } };
+    expect(res.error.code).toBe(-32001); // insufficient scope → never executes
   });
 
   it("real catalog: scope tiers gate the mutate tools (read < deploy < admin)", async () => {

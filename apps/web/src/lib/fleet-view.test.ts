@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { FleetLatestRow, MetricsSample, ServerView } from "./types";
-import { buildFleetRows, sortFleetRows, matchesFleetSearch, metricTone, tempTone, batteryTone, type FleetRow } from "./fleet-view";
+import type { FleetLatestRow, FleetTrendRow, MetricsSample, ServerView } from "./types";
+import { trendByServer, trendSeries, buildFleetRows, sortFleetRows, matchesFleetSearch, metricTone, tempTone, batteryTone, type FleetRow } from "./fleet-view";
 
 const NOW = 1_700_000_000_000;
 
@@ -164,5 +164,27 @@ describe("sensor metrics (temp / GPU / battery)", () => {
     expect(batteryTone(5, "Charging")).toBe("ok"); // charging overrides low
     expect(batteryTone(5, "Full")).toBe("ok");
     expect(batteryTone(null, null)).toBe("ok");
+  });
+});
+
+describe("sparkline data path (trendByServer / trendSeries)", () => {
+  const rows: FleetTrendRow[] = [
+    { serverId: "a", points: [{ ts: 1, cpu: 10, mem: 40 }, { ts: 2, cpu: 20, mem: null }, { ts: 3, cpu: Number.NaN, mem: 50 }] },
+    { serverId: "b", points: [] },
+  ];
+  it("indexes the batch response by serverId and keeps the row object (ref-stable for memoized rows)", () => {
+    const m = trendByServer(rows);
+    expect(m.get("a")).toBe(rows[0]);
+    expect(m.has("zzz")).toBe(false);
+  });
+  it("splits into finite cpu / mem series, dropping NaN and null points", () => {
+    expect(trendSeries(rows[0])).toEqual({ cpu: [10, 20], mem: [40, 50] });
+  });
+  it("tolerates a missing/garbage payload (server with no trend → empty series)", () => {
+    expect(trendSeries(undefined)).toEqual({ cpu: [], mem: [] });
+    expect(trendSeries(rows[1])).toEqual({ cpu: [], mem: [] });
+    expect(trendByServer(undefined).size).toBe(0);
+    expect(trendByServer({} as unknown as FleetTrendRow[]).size).toBe(0);
+    expect(trendSeries({ serverId: "x", points: null } as unknown as FleetTrendRow)).toEqual({ cpu: [], mem: [] });
   });
 });
