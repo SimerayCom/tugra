@@ -16,6 +16,8 @@
 
 [Website](https://tugra.io) · [Docs](docs/README.md) · [Releasing](docs/RELEASING.md) · [Roadmap](#roadmap)
 
+**English** · [Türkçe](README.tr.md) · [Español](README.es.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Português](README.pt.md) · [简体中文](README.zh.md) · [日本語](README.ja.md)
+
 </div>
 
 ---
