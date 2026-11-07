@@ -184,3 +184,42 @@ describe("planImport — private GitHub-App repos (İş 2)", () => {
     expect(pub.risks.some((x) => x.code === "app.git.private")).toBe(false);
   });
 });
+
+describe("planImport — compose source blocker (git-sourced compose)", () => {
+  const compose = (over: Record<string, unknown>) =>
+    planImport({ ...fleet, databases: [], apps: [{ sourceRef: "c", name: "c", kind: "compose", buildPack: "dockercompose", serverRef: "srv1", ...over }] }, opts).items.find((i) => i.kind === "app")!;
+  const codes = (item: { risks: Array<{ code: string }> }) => item.risks.map((r) => r.code);
+
+  it("does NOT raise app.compose.missing for a git-compose (no composeFile, git source with composePath)", () => {
+    const it1 = compose({ git: { url: "https://github.com/acme/playtolk.git", branch: "main", composePath: "docker-compose.prod.yml" } });
+    expect(codes(it1)).not.toContain("app.compose.missing");
+    expect(it1.risks.some((r) => r.level === "blocker")).toBe(false);
+  });
+
+  it("STILL raises app.compose.missing when there is neither a composeFile nor a git source", () => {
+    expect(codes(compose({}))).toContain("app.compose.missing");
+  });
+
+  it("a raw compose (composeFile set) plans without the blocker", () => {
+    const it2 = compose({ composeFile: "services: {}" });
+    expect(codes(it2)).not.toContain("app.compose.missing");
+    expect(codes(it2)).toContain("app.compose");
+  });
+
+  it("a git-compose is honest: deploy-time validation note, and warns per-service domains aren't carried; no path warn when composePath is known", () => {
+    const it3 = compose({
+      git: { url: "https://github.com/acme/playtolk.git", branch: "main", composePath: "docker-compose.prod.yml", provider: "github" },
+      domains: [{ host: "playtolk.com", primary: true, serviceRef: "playtolk-web" }],
+    });
+    expect(it3.risks.find((r) => r.code === "app.compose")?.message).toMatch(/cloned from git and validated at deploy/i);
+    expect(codes(it3)).toContain("app.compose.domains"); // per-service domains deferred → warned, not silently lost
+    expect(it3.risks.find((r) => r.code === "app.compose.domains")?.message).toContain("playtolk-web");
+    expect(codes(it3)).not.toContain("app.compose.path"); // composePath is known
+  });
+
+  it("a git-compose with an UNKNOWN composePath (e.g. a tokenless Coolify git-compose) warns instead of silently defaulting", () => {
+    const it4 = compose({ git: { url: "https://github.com/acme/x.git", branch: "main" } });
+    expect(codes(it4)).not.toContain("app.compose.missing"); // allowed…
+    expect(codes(it4)).toContain("app.compose.path"); // …but the compose path is flagged, not silently docker-compose.yml
+  });
+});

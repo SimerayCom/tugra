@@ -1,5 +1,5 @@
 import { foreignAppToCreateInput, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
-import { SetVolumesSchema } from "../applications/dto";
+import { CreateAppSchema, SetVolumesSchema } from "../applications/dto";
 import type { ForeignApp, ForeignVolume } from "./foreign-fleet";
 
 const base = (over: Partial<ForeignApp>): ForeignApp => ({ sourceRef: "a", name: "app", kind: "git", buildPack: "nixpacks", ...over });
@@ -44,6 +44,26 @@ describe("foreignAppToCreateInput", () => {
   it("maps a compose app carrying its compose file (when resolved)", () => {
     const input = foreignAppToCreateInput(base({ kind: "compose", buildPack: "dockercompose", composeFile: "services: {}" }), {}, { serverId: "t-srv" });
     expect(input).toMatchObject({ source: "COMPOSE", composeFile: "services: {}" });
+  });
+
+  it("maps a git-sourced compose to COMPOSE + gitUrl + composePath (no baseDirectory, no composeFile) and links gitSourceId", () => {
+    const input = foreignAppToCreateInput(
+      base({ kind: "compose", buildPack: "dockercompose", git: { url: "https://github.com/acme/playtolk.git", branch: "main", composePath: "./docker-compose.prod.yml", provider: "github" } }),
+      {},
+      { serverId: "t-srv", gitSourceId: "gs-1" },
+    );
+    expect(input).toMatchObject({ source: "COMPOSE", gitUrl: "https://github.com/acme/playtolk.git", gitBranch: "main", composePath: "docker-compose.prod.yml", gitSourceId: "gs-1" });
+    expect(input.composeFile).toBeUndefined();
+    expect(input.baseDirectory).toBeUndefined();
+    expect(CreateAppSchema.safeParse(input).success).toBe(true); // satisfies the dto refine (composePath only for COMPOSE+gitUrl, never both)
+  });
+
+  it("a compose with a stored composeFile never also gets a git source (dto: never both)", () => {
+    const input = foreignAppToCreateInput(base({ kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", git: { url: "https://x/y.git", composePath: "c.yml" } }), {}, { serverId: "t-srv", gitSourceId: "gs-1" });
+    expect(input.composeFile).toBe("services: {}");
+    expect(input.gitUrl).toBeUndefined();
+    expect(input.composePath).toBeUndefined();
+    expect(input.gitSourceId).toBeUndefined();
   });
 
   it("coerces empty-string optional fields to undefined (Coolify stores '') so the schema accepts them", () => {

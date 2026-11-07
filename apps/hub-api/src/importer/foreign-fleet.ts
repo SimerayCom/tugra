@@ -94,7 +94,7 @@ export interface ForeignApp {
   image?: string;
   imageOrigin?: ImageOrigin;
   registry?: { host: string; secretRef?: string }; // private registry the image is pulled from
-  git?: { url: string; branch?: string; dockerfilePath?: string; dockerfileContent?: string; baseDirectory?: string; provider?: string }; // provider "github" = a private GitHub-App repo (needs a connected GitSource to clone)
+  git?: { url: string; branch?: string; dockerfilePath?: string; dockerfileContent?: string; baseDirectory?: string; composePath?: string; provider?: string }; // composePath = the compose FILE's path within the repo (kind "compose" only; NOT a build-context dir); provider "github" = a private GitHub-App repo (needs a connected GitSource to clone)
   buildCommand?: string;
   startCommand?: string;
   installCommand?: string;

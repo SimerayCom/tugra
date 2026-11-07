@@ -512,6 +512,14 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
   };
 }
 
+/** Repo-relative form of an in-repo file path: strip surrounding whitespace, leading "./" and "/" (Dokploy stores
+ *  "./docker-compose.prod.yml"); empty / "." → undefined. */
+function normalizeRepoFilePath(v?: string | null): string | undefined {
+  if (!v) return undefined;
+  const s = v.trim().replace(/^(?:\.?\/+)+/, "");
+  return s && s !== "." ? s : undefined;
+}
+
 export function mapCompose(c: DokployCompose, serverRef?: string): ForeignApp {
   const raw = c.sourceType === "raw";
   const domains = withPrimary((c.domains ?? []).map(mapDomain).filter((d): d is ForeignDomain => !!d));
@@ -522,7 +530,9 @@ export function mapCompose(c: DokployCompose, serverRef?: string): ForeignApp {
       ? {
           url: c.customGitUrl ? stripUrlCredentials(c.customGitUrl) : c.owner && c.repository ? `https://github.com/${c.owner}/${c.repository}.git` : "",
           branch: c.customGitBranch ?? c.branch ?? undefined,
-          baseDirectory: c.composePath ?? undefined,
+          // The compose FILE's path in the repo (Dokploy default "./docker-compose.yml"). Not a build-context dir —
+          // Dokploy compose has none — so baseDirectory is deliberately left unset.
+          composePath: normalizeRepoFilePath(c.composePath),
           provider: c.sourceType ?? undefined,
         }
       : undefined;

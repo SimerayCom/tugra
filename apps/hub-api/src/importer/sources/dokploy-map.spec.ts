@@ -224,6 +224,17 @@ describe("dokploy-map — L1 widened fields", () => {
     expect(db.limits).toEqual({ memoryMb: 1024, cpus: 2 });
   });
 
+  it("a git-sourced compose (composeFile empty) carries git {url, branch, composePath} and NO baseDirectory; a raw compose keeps composeFile", () => {
+    const g = mapCompose({ composeId: "c", appName: "playtolk", sourceType: "github", owner: "acme", repository: "playtolk", branch: "main", composeFile: "", composePath: "./docker-compose.prod.yml", githubId: "gh-1" });
+    expect(g.git).toEqual({ url: "https://github.com/acme/playtolk.git", branch: "main", composePath: "docker-compose.prod.yml", provider: "github" });
+    expect(g.git).not.toHaveProperty("baseDirectory");
+    expect(g.composeFile).toBeUndefined();
+    expect(g.gitProviderRef).toBe("gh-1");
+    const raw = mapCompose({ composeId: "r", appName: "stk", sourceType: "raw", composeFile: "services: {}", composePath: "./docker-compose.yml" });
+    expect(raw.composeFile).toBe("services: {}");
+    expect(raw.git).toBeUndefined();
+  });
+
   it("an app/compose links to its GitHub App by githubId (github source only); other sources carry no ref", () => {
     expect(mapApplication(baseApp({ sourceType: "github", owner: "o", repository: "r", githubId: "gh-1" })).gitProviderRef).toBe("gh-1");
     expect(mapApplication(baseApp({ sourceType: "github", owner: "o", repository: "r", github: { githubId: "gh-2", gitProviderId: "gp-2" } })).gitProviderRef).toBe("gh-2");

@@ -395,6 +395,17 @@ describe("ImportExecutorService — GitHub App carry + link (L2-APPLY)", () => {
     expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-new" }));
   });
 
+  it("a git-sourced COMPOSE with a gitProviderRef links to the carried GitSource and wires gitUrl + composePath (no composeFile/baseDirectory)", async () => {
+    const f = ghFleet({ kind: "compose", buildPack: "dockercompose", git: { url: "https://github.com/o/r.git", branch: "main", composePath: "docker-compose.prod.yml", provider: "github" } });
+    const h = harness({ fleet: f, secrets: providerSecrets, gitSources: [{ id: "x1" }, { id: "x2" }] });
+    await run(h, f);
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    const input = h.apps.create.mock.calls[0][1];
+    expect(input).toMatchObject({ source: "COMPOSE", gitUrl: "https://github.com/o/r.git", composePath: "docker-compose.prod.yml", gitSourceId: "gs-new" });
+    expect(input.composeFile).toBeUndefined();
+    expect(input.baseDirectory).toBeUndefined();
+  });
+
   it("falls back to the exactly-one-installed heuristic when the app has no gitProviderRef", async () => {
     const f = ghFleet({ gitProviderRef: undefined }, []);
     const h = harness({ fleet: f, gitSources: [{ id: "gs-only" }] });

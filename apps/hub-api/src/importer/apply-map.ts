@@ -55,7 +55,19 @@ export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, str
   if (build.source === "IMAGE") {
     input.image = opt(app.image);
   } else if (build.source === "COMPOSE") {
-    input.composeFile = opt(app.composeFile); // may be absent without a read:sensitive token → create validates
+    // A compose is EITHER pasted (composeFile) OR cloned from git (gitUrl + composePath) — the DTO forbids both.
+    // A stored composeFile wins (raw Dokploy / Coolify compose); only a compose with NO stored YAML but a git
+    // source (YAML lives in the repo) becomes a git-compose. No baseDirectory: that is GIT-build-only.
+    const composeFile = opt(app.composeFile);
+    const gitUrl = opt(app.git?.url);
+    if (composeFile || !gitUrl) {
+      input.composeFile = composeFile; // may be absent without a read:sensitive token → create validates
+    } else {
+      input.gitUrl = gitUrl;
+      input.gitBranch = opt(app.git?.branch);
+      input.composePath = relPath(app.git?.composePath?.trim().replace(/^(?:\.?\/+)+/, ""));
+      if (opts.gitSourceId) input.gitSourceId = opts.gitSourceId; // link a private GitHub-App repo to a connected GitSource
+    }
   } else {
     input.gitUrl = opt(app.git?.url);
     input.gitBranch = opt(app.git?.branch);

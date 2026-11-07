@@ -96,8 +96,8 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
   if (build.source === "GIT" && !app.git) risks.push({ level: "blocker", code: "app.git.missing", message: "a Git build has no repository URL (e.g. a git-push-only source) — connect a repo or import as an image" });
   if (build.source === "IMAGE" && !app.image && app.imageOrigin === "local") risks.push({ level: "warn", code: "app.image.transfer", message: "image is local-only on the source — it must be shipped (docker save/load or a registry)" });
   if (build.source === "IMAGE" && !app.image && app.imageOrigin !== "local") risks.push({ level: "blocker", code: "app.image.missing", message: "nothing to deploy — no image and no git repository" });
-  if (build.source === "COMPOSE" && !app.composeFile) risks.push({ level: "blocker", code: "app.compose.missing", message: "compose app has no compose file to import" });
-  if (build.source === "GIT" && app.git?.provider === "github") risks.push({ level: "warn", code: "app.git.private", message: "GitHub source via the source PaaS's GitHub-App install — if the repo is private, Tugra links it to your connected GitHub App on import ONLY when your team has exactly one installed; with none or several, connect/pick one in the app's Git settings before the first deploy or the clone fails" });
+  if (build.source === "COMPOSE" && !app.composeFile && !app.git?.url) risks.push({ level: "blocker", code: "app.compose.missing", message: "compose app has no compose file and no git source to import" });
+  if ((build.source === "GIT" || build.source === "COMPOSE") && app.git?.provider === "github") risks.push({ level: "warn", code: "app.git.private", message: "GitHub source via the source PaaS's GitHub-App install — if the repo is private, Tugra links it to your connected GitHub App on import ONLY when your team has exactly one installed; with none or several, connect/pick one in the app's Git settings before the first deploy or the clone fails" });
 
   const domains = app.domains ?? [];
   if (domains.length > 1) risks.push({ level: "warn", code: "app.domain.multi", message: `${domains.length} domains — the first ("${domains[0].host}") is primary; add the rest after` });
@@ -119,7 +119,18 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
       risks.push({ level: "warn", code: "app.volume.skipped", message: `${mappedVolumes.skipped.length} mount(s) not declared (${reasons}) — recreate them on the target manually if needed` });
     }
   }
-  if (build.source === "COMPOSE") risks.push({ level: "info", code: "app.compose", message: "compose file is rewritten (magic vars) and validated (assertSafeCompose) on import" });
+  if (build.source === "COMPOSE") {
+    const gitCompose = !!app.git?.url && !app.composeFile;
+    if (gitCompose) {
+      // A git-compose is NOT validated at import (there is no stored YAML) — it is cloned and validated at deploy.
+      risks.push({ level: "info", code: "app.compose", message: "compose is cloned from git and validated at deploy (assertSafeCompose) — a service using host networking, privileged mode or a docker-socket bind will be rejected then" });
+      if (!app.git?.composePath) risks.push({ level: "warn", code: "app.compose.path", message: "the compose file path is unknown — Tugra will look for docker-compose.yml at the repo root; set the compose path in the app's Git settings if the file is elsewhere" });
+      const svcDomains = [...new Set((app.domains ?? []).map((d) => d.serviceRef).filter((s): s is string => !!s))];
+      if (svcDomains.length) risks.push({ level: "warn", code: "app.compose.domains", message: `per-service domains are not carried for a git compose yet — after import, set each service's domain (source services: ${svcDomains.join(", ")})` });
+    } else {
+      risks.push({ level: "info", code: "app.compose", message: "compose file is rewritten (magic vars) and validated (assertSafeCompose) on import" });
+    }
+  }
   if (app.privileged || app.mountsDockerSock) risks.push({ level: "warn", code: "app.privileged", message: "source uses privileged mode or mounts the docker socket — requires explicit acknowledgement to import" });
   if (app.installCommand) risks.push({ level: "warn", code: "app.installCommand", message: "source has an install command Tugra does not model — fold it into the build" });
   if ((app.env ?? []).some((e) => e.ref?.type === "vault" || e.ref?.type === "encrypted")) {
