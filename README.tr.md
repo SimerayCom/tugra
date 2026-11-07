@@ -6,7 +6,7 @@
 
 *Her sunucuda senin mührün.*
 
-**Filolar ve yapay zekâ ajanları için geliştirilmiş, açık çekirdekli, kendi sunucunda barındırılabilen PaaS.**
+**Sunucu filoları ve yapay zekâ ajanları için geliştirilmiş, açık çekirdekli, self-host edilebilir PaaS.**
 
 [![GitHub stars](https://img.shields.io/github/stars/SimerayCom/tugra?style=flat&logo=github&label=stars)](https://github.com/SimerayCom/tugra/stargazers)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
@@ -22,21 +22,21 @@
 
 ---
 
-> **Durum:** Beta. Aktif olarak geliştiriliyor; API'ler minör sürümler arasında değişebilir. Yıldızlar, issue'lar ve geri bildirimler çok değerli.
+> **Durum:** Beta. Aktif olarak geliştiriliyor; API'ler ara sürümler arasında değişebilir. Yıldızlar, issue'lar ve geri bildirimler çok değerli.
 
 <div align="center">
 
-<img src="docs/assets/screenshot-app-store.png" alt="Tugra Uygulama Mağazası — yüzlerce kendi sunucunda barındırılabilen uygulama şablonundan tek tıkla dağıtım" width="860" />
+<img src="docs/assets/screenshot-app-store.png" alt="Tugra App Store — kendi sunucunda çalıştırabileceğin yüzlerce uygulama şablonundan tek tıkla deploy" width="860" />
 
-<img src="docs/assets/screenshot-dashboard.png" alt="Komuta Merkezi — her ekibin uygulamaları, veritabanları ve filosu tek bakışta" width="860" />
+<img src="docs/assets/screenshot-dashboard.png" alt="Command Center — her ekibin uygulamaları, veritabanları ve filosu tek bakışta" width="860" />
 
-<img src="docs/assets/screenshot-app-detail.png" alt="Uygulama detayı — uygulama başına dağıtım, yeniden başlatma, ölçekleme, loglar ve dosyalar" width="420" />&nbsp;<img src="docs/assets/screenshot-databases.png" alt="Kalıcı disklerle tek tıkla yönetilen veritabanları" width="420" />
+<img src="docs/assets/screenshot-app-detail.png" alt="Uygulama detayı — her uygulama için deploy, restart, ölçekleme, loglar ve dosyalar" width="420" />&nbsp;<img src="docs/assets/screenshot-databases.png" alt="Kalıcı volume'larla tek tıkla kurulan yönetilen veritabanları" width="420" />
 
 </div>
 
-## Varsayılan olarak ajan odaklı
+## Varsayılan olarak yapay zekâ ajanlarına yerel destek
 
-Tugra, yerleşik bir [MCP](https://modelcontextprotocol.io) sunucusuyla gelir — Claude'u, Cursor'ı veya kendi ajanını altyapına yönlendir; REST API ile aynı kişisel erişim token'larını, kapsamları ve denetim kaydını kullanarak altyapını incelesin, dağıtsın, ölçeklesin ve yönetsin. Ayrı bir entegrasyon paketi yok, modele hiçbir gizli değer asla geri döndürülmez.
+Tugra, yerleşik bir [MCP](https://modelcontextprotocol.io) sunucusuyla gelir. Claude'u, Cursor'ı ya da kendi ajanını altyapına bağla; REST API ile aynı kişisel erişim token'larını, scope'ları ve audit trail'i kullanarak altyapını incelemesini, deploy etmesini, ölçeklemesini ve yönetmesini sağla. Ayrı bir entegrasyon paketine gerek yok; modele hiçbir secret değeri asla döndürülmez.
 
 ```bash
 # List every tool the server exposes
@@ -52,73 +52,73 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-Altta yatan REST API ile aynı `POST /api/v1/mcp` uç noktası, aynı kişisel erişim token'ı doğrulaması, kapsamlar ve IP izin listesi söz konusu — yönetilecek ayrı bir kimlik bilgisi yok ve çözülmüş hiçbir gizli değer modele geri döndürülmez. Katalog **48 araçtan** oluşur: 26'sı salt okunur (tek çağrıda filo durumu / sağlık / uygulama listesi özetleri ve korumalı alanda çalışan bir disk dosya tarayıcısı dahil) ve 22'si PAT kapsamlı değiştirme/operasyon aracı (dağıtım · kuyruktaki dağıtımı iptal etme · yeniden başlatma · canlı ölçekleme · geri alma · env ayarlama · swarm oluşturma/büyütme · bir kümede filo çapında eylemler · tek tıkla alan adı DNS kurulumu). Her değiştirme aracı REST API'nin tam ekip izin kontrollerini ve denetim kaydını yeniden kullanır; geri alınamaz olanlar (bir swarm'ı dağıtma, bir uygulamayı kaldırma) açık bir ad onayı gerektirir. Üçüncü taraf istemciler için OAuth hâlâ yol haritasında.
+Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'i; kişisel erişim token'ıyla kimlik doğrulama, scope'lar ve IP allowlist de aynı. Yönetmen gereken ayrı bir kimlik bilgisi yok ve çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **48 tool** var: 26'sı salt okunur (tek çağrıda filo durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 22'si ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lar (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · swarm kurma/büyütme · bir cluster genelinde filo çapında eylemler · tek tıkla alan adı DNS kurulumu). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit log'unu birebir kullanır; geri alınamayan işlemler (swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasında.
 
 ## Tugra nedir?
 
-Tugra; uygulamaları ve veritabanlarını kendi sunucularında dağıtmak, izlemek ve işletmek için kendi sunucunda barındırılabilen, açık çekirdekli bir kontrol düzlemidir — Heroku, Render veya Railway'in gündelik işlevleri, altyapını başkasının bulutuna teslim etmeden. Odağı **filodur**: sunucuların arasında gerçek Docker Swarm kümeleri (yalnızca tek tek kutu yönetimi değil), filo çapında toplu işlemler ve yapay zekâ destekli operasyonlar için yerleşik bir MCP sunucusu — hepsi gerçekten okuyabileceğin bir lisans altında.
+Tugra; uygulamaları ve veritabanlarını kendi sunucularında deploy etmek, izlemek ve işletmek için self-host edebileceğin, açık çekirdekli bir control plane'dir. Heroku, Render ya da Railway'in sunduğu gündelik deneyimi veriyor, ama altyapını başkasının bulutuna teslim etmeni gerektirmiyor. Odağı **filo**: sunucularına yayılan gerçek Docker Swarm cluster'ları (tek seferde tek sunucu yönetmenin ötesinde), filo çapında toplu işlemler ve yapay zekâ destekli operasyonlar için yerleşik bir MCP sunucusu — hepsi gerçekten okuyabileceğin bir lisansla.
 
 ## Neden Tugra
 
-- **Önce filo, tek kutu değil** — sunucuları kümelere grupla, aralarında gerçek bir Docker Swarm oluştur ve her kutuya tek tek SSH ile bağlanmak yerine tüm filonda tek bir toplu işlem çağrısıyla tek bir komut çalıştır.
-- **Ajan odaklı da** — yerleşik bir MCP sunucusu, `POST /api/v1/mcp` üzerinden 48 araç (okuma + PAT kapsamlı değiştirme/filo operasyonları) sunar ve REST API ile aynı kişisel erişim token'larıyla kapsamlandırılır.
-- **9 veritabanı motoru, tek iş akışı** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse ve LibSQL, hepsi aynı şekilde kurulur; sekizinde yerleşik mantıksal dump/restore yedekleri vardır (dump aracı olmayan LibSQL, disk yedekleriyle kapsanır).
-- **Gerçek TLS, gerçek wildcard'lar** — Traefik üzerinden uygulama başına otomatik Let's Encrypt ve kümelenmiş/Swarm ingress için DNS-01 wildcard sertifikaları (`*.yourdomain.com`) — yalnızca tek alan adlı HTTP-01 değil.
-- **Binanın dışına çıkan yedekler** — yerel diske veya S3 uyumlu depolamaya (S3/R2/MinIO) zamanlanmış, şifreli dump'lar ve tek tıkla geri yükleme.
-- **Açık çekirdekli, göstermelik açık değil** — yukarıdakilerin hepsi *bu* depoda AGPL-3.0 altında ücretsiz gelir. Pro/Cloud (SSO, denetim kaydı dışa aktarma, whitelabel, çok kiracılı faturalama) ayrı lisanslı bir eklentidir — buradaki hiçbir şey seni yükseltmeye zorlamaz ya da yapabileceklerini sessizce kısıtlamaz. Tugra varsayılan olarak açık olan anonim kullanım istatistikleri gönderir — toplu sayılar (sunucular, uygulamalar, veritabanları, dağıtımlar) ile sürümün, edisyonun ve işletim sistemin, rastgele bir kimlik altında; ad, IP, alan adı veya gizli değer yok ve alıcı IP'ni saklamaz — bunları istediğin zaman `--no-telemetry` / `TUGRA_TELEMETRY=0` ile ya da Ayarlar'dan kapatabilirsin. Güncelleme kontrolleri ve genel IP tespiti isteğe bağlıdır ve varsayılan olarak kapalıdır.
+- **Tek sunucu değil, filo öncelikli** — sunucuları cluster'lar halinde grupla, aralarında gerçek bir Docker Swarm kur ve her sunucuya tek tek SSH ile bağlanmak yerine tüm filonda tek bir toplu işlem çağrısıyla aynı komutu çalıştır.
+- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 48 tool (okuma + PAT scope'lu değişiklik yapan/filo operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
+- **9 veritabanı motoru, tek iş akışı** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse ve LibSQL; hepsi aynı şekilde kurulur. Sekizinde yerleşik mantıksal dump/restore yedeklemesi var (dump aracı olmayan LibSQL, volume yedekleriyle kapsanır).
+- **Gerçek TLS, gerçek wildcard'lar** — Traefik üzerinden uygulama başına otomatik Let's Encrypt ve cluster'lı/Swarm ingress için DNS-01 wildcard sertifikaları (`*.yourdomain.com`) — yalnızca tek alan adlı HTTP-01 değil.
+- **Sunucu dışına çıkan (off-site) yedekler** — yerel diske ya da S3 uyumlu depolamaya (S3/R2/MinIO) zamanlanmış, şifreli dump'lar ve tek tıkla restore.
+- **Açık çekirdek, sahte açıklık değil** — yukarıdakilerin hepsi *bu* repoda AGPL-3.0 altında ücretsiz gelir. Pro/Cloud (SSO, audit log dışa aktarma, whitelabel, multi-tenant faturalama) ayrı lisanslı bir eklentidir — buradaki hiçbir şey seni yükseltmeye zorlamaz ya da yapabileceklerini sessizce kısıtlamaz. Tugra, varsayılan olarak açık olan anonim kullanım istatistikleri gönderir. Bunlar toplu/özet sayılar (sunucu, uygulama, veritabanı, deploy) ile sürüm, edition ve işletim sistemi bilgisinden oluşur; rastgele bir kimlikle iletilir, ad, IP, alan adı ya da secret içermez ve alıcı IP adresini saklamaz. İstediğin zaman `--no-telemetry` / `TUGRA_TELEMETRY=0` ile ya da Settings'ten kapatabilirsin. Güncelleme kontrolleri ve genel IP tespiti opt-in'dir, varsayılan olarak kapalıdır.
 
-## Tugra rakiplerle nasıl kıyaslanır
+## Tugra rakipleriyle nasıl karşılaştırılır
 
-İnsanların gerçekten değerlendirdiği, kendi sunucunda barındırılabilen PaaS araçlarıyla yan yana bir karşılaştırma (rakip verileri 2026-10'da kontrol edildi). `✅` yerleşik · `~` kısmi / sınırlı · `—` belgelenmiş yerleşik karşılığı yok · `🔜` Tugra'nın yol haritasında. Bir hata mı gördün? [Bir issue aç](https://github.com/SimerayCom/tugra/issues).
+İnsanların gerçekten değerlendirdiği self-host edilebilir PaaS araçlarıyla yan yana bir karşılaştırma (rakip verileri 2026-10'da kontrol edildi). `✅` yerleşik · `~` kısmi / sınırlı · `—` belgelenmiş yerleşik karşılığı yok · `🔜` Tugra'nın yol haritasında. Bir hata mı fark ettin? [Issue aç](https://github.com/SimerayCom/tugra/issues).
 
 | | **Tugra** | Coolify | Dokploy | Portainer | CapRover | Dokku |
 |---|---|---|---|---|---|---|
-| **Dağıtım ve derleme** | | | | | | |
-| Web arayüzü paneli | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Git'ten dağıtım | ✅ | ✅ | ✅ | ~ | ~ | ✅ |
-| Docker Compose ile dağıtım | ✅ | ✅ | ✅ | ✅ | ~ | ~ |
-| Önizleme dağıtımları (PR uygulamaları) | ✅ | ✅ | ✅ | — | — | ~ |
-| Geri almalar | ✅ | ✅ | ✅ | — | ✅ | ~ |
-| Uygulama mağazası / tek tıkla şablonlar | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| **Deploy ve build** | | | | | | |
+| Web UI dashboard'u | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Git'ten deploy | ✅ | ✅ | ✅ | ~ | ~ | ✅ |
+| Docker Compose ile deploy | ✅ | ✅ | ✅ | ✅ | ~ | ~ |
+| Preview deploy'lar (PR uygulamaları) | ✅ | ✅ | ✅ | — | — | ~ |
+| Rollback'ler | ✅ | ✅ | ✅ | — | ✅ | ~ |
+| App store / tek tıkla şablonlar | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | **Veri** | | | | | | |
 | Yönetilen veritabanı motorları | **9** | 8 | 6 | — | — | — |
-| Zamanlanmış S3 yedekleri + geri yükleme | ✅ | ✅ | ✅ | — | — | ~ |
-| Uygulama Docker disk yedekleri | ✅ | — | ✅ | — | — | — |
+| Zamanlanmış S3 yedekleri + restore | ✅ | ✅ | ✅ | — | — | ~ |
+| Uygulama Docker volume yedekleri | ✅ | — | ✅ | — | — | — |
 | **Alan adları ve TLS** | | | | | | |
 | Özel alan adları + otomatik SSL | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | DNS-01 wildcard sertifikaları | ✅ | ~ | — | — | — | ~ |
 | **Filo ve HA** | | | | | | |
-| Çok düğümlü kümeleme | ✅ Swarm | Tekil¹ | ✅ Swarm | ✅ | ✅ | ~ k3s⁶ |
-| Çok yöneticili Raft HA + ingress HA | ✅ | — | — | — | — | — |
+| Çok düğümlü (multi-node) cluster | ✅ Swarm | Tek tek¹ | ✅ Swarm | ✅ | ✅ | ~ k3s⁶ |
+| Çok yöneticili (multi-manager) Raft HA + ingress HA | ✅ | — | — | — | — | — |
 | Filo çapında toplu işlemler (tek çağrı) | ✅ | — | — | — | — | — |
 | İşletim sistemi yamalama (sunucu başına + filo) | ✅ | — | — | — | — | — |
 | **Gözlemlenebilirlik** | | | | | | |
 | Yerleşik metrikler (CPU/RAM/disk) | ✅ | ~ | ✅ | ~ | — | — |
-| Çalışma süresi izleyicileri + bildirimler | ✅ | ~ | ✅ | — | — | — |
-| Uygulama / konteyner log görüntüleyici | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Uptime izleme + bildirimler | ✅ | ~ | ✅ | — | — | — |
+| Uygulama / container log görüntüleyici | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | **Erişim ve ajan** | | | | | | |
 | Ekipler / RBAC | ✅ | ~ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
-| Denetim kaydı | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / ajan kontrolü | ✅ 48 araç⁵ | ✅ | ✅ | — | — | ~² |
+| Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
+| MCP / ajan kontrolü | ✅ 48 tool⁵ | ✅ | ✅ | — | — | ~² |
 | **Güven ve lisans** | | | | | | |
-| Telemetri | Anonim, vazgeçilebilir (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
-| İçe taşıma (Coolify'dan içe aktarma) | ✅⁹ | — | — | — | — | — |
-| Çekirdek lisans | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + şartlar⁴ | MIT |
+| Telemetri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
+| Migrasyon (Coolify'dan import) | ✅⁹ | — | — | — | — | — |
+| Çekirdek lisans | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + ek şartlar⁴ | MIT |
 
-<sub>¹ Coolify v4 sunucuları tek tek yönetir (yerleşik kümeleme yok). ² Resmî bir sürüm değil, üçüncü taraf, erken aşamada bir Dokku MCP projesi. ³ Dokploy'un çekirdeği Apache-2.0'dır; ayrı bir Source-Available lisansı kurumsal `proprietary/` dizinini (SSO, denetim kayıtları, whitelabel) kapsar — Tugra'nın kullandığı aynı açık çekirdek biçimi. ⁴ CapRover'ın `LICENSE` dosyası Apache-2.0'dır ve ücretli özelliklerin değiştirilmesini/yeniden dağıtılmasını kısıtlayan bir ek içerir. ⁵ Tugra, Coolify ve Dokploy'un üçü de okuma ve yazma araçlı MCP sunucuları sunar, dolayısıyla ajan kontrolünde eşitlik vardır; Tugra buna filo çapında eylemler (bir kümede tek çağrı), yıkıcı araçlarda ad onayı ve gizli değer maskeleme ekler. ⁶ Dokku'da Docker Swarm desteği yoktur; çok düğümlü seçeneği farklı bir mimari olan `scheduler-k3s` eklentisidir (k3s/Kubernetes). ⁷ Portainer'ın RBAC, SSO ve denetim kayıtları ücretli Business Edition'ın parçasıdır. ⁸ Tugra'nın çekirdeği ücretsiz ve tam özelliklidir (ekipler/RBAC, denetim kaydı, yedekler, izleme, MCP, migrator, çok düğümlü HA); SSO/OIDC bir Pro özelliğidir. ⁹ Coolify uygulamalarını ve yapılandırmalarını/env değerlerini yeni Tugra kaynakları olarak içe aktarır (kopyalama modu); ayrı bir yerel Docker benimseyicisi aynı ana makinedeki konteynerleri yerinde devralır (adlandırılmış disklerini koruyarak). Postgres, MySQL, MariaDB, Redis, KeyDB ve Dragonfly için veritabanı **verisi**, Coolify ana makinesine yapıştırdığın tek komutluk bir migrator ile ana makineler arasında taşınır; MongoDB verisi rehberli bir dump-ve-restore ile (import-from-url), LibSQL ve uygulama **disk** verisi `tar`/`rsync` ile taşınır ve ClickHouse için henüz bir taşıma aracı yoktur ([docs/coolify-migration.md](docs/coolify-migration.md)). Ürün adları ilgili sahiplerinin ticari markalarıdır; Tugra onlarla bağlantılı değildir ve onlar tarafından onaylanmamıştır.</sub>
+<sub>¹ Coolify v4 sunucuları tek tek yönetir (yerleşik cluster desteği yok). ² Erken aşamadaki, üçüncü taraf bir Dokku MCP projesi; resmî bir sürüm değil. ³ Dokploy'un çekirdeği Apache-2.0'dır; kurumsal `proprietary/` dizinini (SSO, audit log'lar, whitelabel) ayrı bir Source-Available lisansı kapsar — Tugra'nın kullandığı açık çekirdek modelinin aynısı. ⁴ CapRover'ın `LICENSE` dosyası Apache-2.0'dır; ancak ücretli özelliklerin değiştirilmesini/yeniden dağıtılmasını kısıtlayan bir ek içerir. ⁵ Tugra, Coolify ve Dokploy'un üçü de read ve write tool'lu MCP sunucuları sunar; yani ajan kontrolünde eşitiz. Tugra buna filo çapında eylemleri (bir cluster'da tek çağrı), yıkıcı tool'larda isim onayını ve secret maskelemeyi ekler. ⁶ Dokku'nun Docker Swarm desteği yoktur; çok düğümlü seçeneği, farklı bir mimari olan `scheduler-k3s` eklentisidir (k3s/Kubernetes). ⁷ Portainer'ın RBAC, SSO ve audit log özellikleri ücretli Business Edition'ın parçasıdır. ⁸ Tugra'nın çekirdeği ücretsiz ve tam özellikli (ekipler/RBAC, audit log, yedekler, izleme, MCP, migrator, çok düğümlü HA); SSO/OIDC ise bir Pro özelliğidir. ⁹ Coolify uygulamalarını, yapılandırma/env değerleriyle birlikte yeni Tugra kaynakları olarak import eder (kopyalama modu); ayrı bir yerel Docker devralma aracı, aynı host'taki container'ları yerinde devralır (adlandırılmış volume'larını koruyarak). Postgres, MySQL, MariaDB, Redis, KeyDB ve Dragonfly için veritabanı **verisi**, Coolify host'una yapıştırdığın tek komutluk bir migrator ile host'lar arasında taşınır; MongoDB verisi rehberli bir dump-ve-restore ile (import-from-url), LibSQL ve uygulama **volume** verisi ise `tar`/`rsync` ile taşınır; ClickHouse için henüz bir migrasyon aracı yoktur ([docs/coolify-migration.md](docs/coolify-migration.md)). Ürün adları ilgili sahiplerinin ticari markalarıdır; Tugra bu ürünlerle bağlantılı değildir ve onlar tarafından onaylanmamıştır.</sub>
 
 ## Hızlı başlangıç
 
-Yeni bir Linux ana makinesinde **tek bir komut** ön koşulları (git, Docker) kurar, depoyu klonlar ve yığını ayağa kaldırır:
+Yeni kurulmuş bir Linux host'unda **tek bir komut** ön koşulları (git, Docker) kurar, repoyu klonlar ve stack'i ayağa kaldırır:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SimerayCom/tugra/main/scripts/bootstrap.sh | sh
 ```
 
-<p align="center"><img src="docs/assets/install.png" alt="Yeni bir Ubuntu ana makinesinde Tugra tek komutla kurulum: ön koşullar kuruldu, yapılandırma yazıldı, yığın sağlıklı şekilde ayağa kalkıyor ve sahip kurulum kodu" width="840" /></p>
+<p align="center"><img src="docs/assets/install.png" alt="Yeni bir Ubuntu host'ta Tugra'nın tek komutla kurulumu: ön koşullar kuruldu, yapılandırma yazıldı, stack sağlıklı biçimde ayağa kalkıyor ve owner kurulum kodu görünüyor" width="840" /></p>
 
-Çalıştırmadan önce okumayı mı tercih edersin (root'a yakın Docker erişimi verdiğin her betik için mantıklı)? Depoyu klonla ve kurulum betiğini kendin çalıştır — yalnızca yerel bir `.env` yazar ve `docker compose` çağırır, eksikse Docker'ı kurar ve idempotent'tir (yeniden çalıştırması güvenlidir):
+Çalıştırmadan önce okumayı mı tercih edersin (root'a yakın Docker erişimi verdiğin her script için akıllıca bir alışkanlık)? Repoyu klonla ve kurulum script'ini kendin çalıştır — yalnızca yerel bir `.env` yazar ve `docker compose` çağırır, Docker eksikse kurar ve idempotent'tir (tekrar çalıştırmak güvenlidir):
 
 ```bash
 git clone https://github.com/SimerayCom/tugra.git
@@ -127,17 +127,17 @@ less scripts/install.sh   # review it first
 ./scripts/install.sh
 ```
 
-Kurulum betiği güçlü gizli değerleri yerel bir `.env` dosyasına üretir (yeniden çalıştırmak bunları korur), ardından `docker compose` ile hub'ı, web arayüzünü, PostgreSQL'i ve Redis'i ayağa kaldırır. İş bittiğinde yazdırılan **Web UI** URL'sini (`http://<host-ip>:3001`; hub/API tabanı `http://<host-ip>:3000`) aç ve ilk hesabı oluştur — bu hesap örneğin **sahibi** olur. Yeni bir kurulumda betik ayrıca, o hesabı oluştururken girmen gereken tek seferlik bir **kurulum kodu** yazdırır (`grep SETUP_CODE .env` ile geri bulabilirsin). Ardından ilk sunucunu bağlamak için karşılama sihirbazını izle.
+Kurulum script'i güçlü secret'ları yerel bir `.env` dosyasına üretir (yeniden çalıştırınca korunurlar), ardından `docker compose` ile hub'ı, web arayüzünü, PostgreSQL'i ve Redis'i ayağa kaldırır. İş bittiğinde yazdırılan **Web UI** URL'sini (`http://<host-ip>:3001`; hub/API base URL'i `http://<host-ip>:3000`) aç ve ilk hesabı oluştur — bu hesap instance'ın **owner**'ı olur. Yeni bir kurulumda script ayrıca, o hesabı oluştururken girmen gereken tek seferlik bir **setup code** yazdırır (`grep SETUP_CODE .env` ile tekrar bulabilirsin). Ardından ilk sunucunu bağlamak için onboarding sihirbazını izle.
 
-`./scripts/install.sh` dosyasını yeniden çalıştırmak (ör. `git pull` sonrası) güvenlidir — gizli değerlerini korur ve yalnızca yapılandırmayı günceller, bu yüzden aynı zamanda yükseltme yolu işlevi görür.
+`./scripts/install.sh` dosyasını yeniden çalıştırmak (ör. `git pull` sonrasında) güvenlidir — secret'larını korur, yalnızca yapılandırmayı günceller; dolayısıyla aynı zamanda upgrade yolu görevi görür.
 
-**Üretim (TLS + alan adı).** Yığın, hızlı başlangıç için bu ana makinenin portlarında düz HTTP sunar; onu TLS'i sonlandıran kendi ters vekil sunucunun arkasına koy ve alan adınla yeniden çalıştır:
+**Production (TLS + alan adı).** Stack, hızlı başlangıç için bu host'un portlarında düz HTTP sunar; onu TLS'i sonlandıran kendi reverse proxy'nin arkasına koy ve alan adınla yeniden çalıştır:
 
 ```bash
 ./scripts/install.sh --domain tugra.example.com
 ```
 
-Trafiğin çoğunu **web**'e (`:3001`) yönlendir — REST API'yi ve OAuth başlangıcını senin için hub'a vekiller — ve yalnızca web'in işleyemediği yolları **hub**'a (`:3000`) gönder:
+Trafiğin çoğunu **web**'e (`:3001`) yönlendir — REST API'yi ve OAuth başlatma isteğini senin yerine hub'a proxy'ler — ve yalnızca web'in işleyemediği yolları **hub**'a (`:3000`) ilet:
 
 | Yol öneki | → |
 |---|---|
@@ -146,13 +146,13 @@ Trafiğin çoğunu **web**'e (`:3001`) yönlendir — REST API'yi ve OAuth başl
 
 Notlar:
 
-- **TLS pakete dahil değildir** — kendi ters vekil sunucunu getir (Caddy, Traefik, nginx, …). `--domain`, bu kurulum için `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` ayarlar.
-- **Ham portları kilitle.** `HUB_TRUSTED_PROXY=true` ile hub `X-Forwarded-For` başlığına güvenir, bu yüzden ham `:3000`/`:3001` portlarına **yalnızca** vekil sunucu erişebilmelidir. Yeni bir `--domain` kurulumu bunları `127.0.0.1`'e bağlar (aynı ana makinedeki vekil). Vekil başka bir ana makinede çalışıyorsa `HUB_BIND`/`WEB_BIND` değerini bu kutunun özel arayüz IP'sine ayarla ve portları güvenlik duvarıyla koru — Docker'ın yayımladığı portlar `ufw`'yi atlar.
-- **"Sign in with GitHub"** yalnızca bu tek kaynaklı (single-origin) vekil dağıtımında çalışır (oturum çerezinin SPA tarafından görülebilmesi için hub ve web ortak bir genel kaynağı paylaşır); düz iki portlu hızlı başlangıçta kullanılamaz.
+- **TLS pakete dahil değildir** — kendi reverse proxy'ni getir (Caddy, Traefik, nginx, …). `--domain`, bu kurulum için `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` ayarlar.
+- **Ham portları kilitle.** `HUB_TRUSTED_PROXY=true` iken hub `X-Forwarded-For` başlığına güvenir; bu yüzden ham `:3000`/`:3001` portlarına **yalnızca** proxy erişebilmelidir. Yeni bir `--domain` kurulumu bunları `127.0.0.1`'e bağlar (aynı host'taki proxy için). Proxy başka bir host'ta çalışıyorsa `HUB_BIND`/`WEB_BIND` değerini bu makinenin private arayüz IP'sine ayarla ve portları firewall ile koru — Docker'ın publish ettiği portlar `ufw`'yi atlar.
+- **"Sign in with GitHub"** yalnızca bu single-origin proxy kurulumunda çalışır (session cookie'sinin SPA tarafından görülebilmesi için hub ve web ortak bir public origin'i paylaşır); düz iki portlu hızlı başlangıçta kullanılamaz.
 
-> Yayımlanmış imajlar (`ghcr.io/simeraycom/tugra-*`) ilk etiketli sürümle birlikte gelir. O zamana kadar kurulum betiği otomatik olarak senin checkout'undan derler — aynı komut, hiçbir değişiklik gerekmez.
+> Yayımlanmış image'lar (`ghcr.io/simeraycom/tugra-*`) ilk etiketli sürümle birlikte gelecek. O zamana kadar kurulum script'i, checkout'undan otomatik olarak build eder — aynı komut, hiçbir değişiklik gerekmez.
 
-**MCP hızlı başlangıç.** Tugra ayağa kalktıktan sonra bir kişisel erişim token'ı oluştur (**Settings → API tokens**) ve herhangi bir MCP istemcisini ona yönlendir:
+**MCP hızlı başlangıç.** Tugra ayağa kalktıktan sonra bir kişisel erişim token'ı oluştur (**Settings → API tokens**) ve herhangi bir MCP client'ını ona yönlendir:
 
 ```bash
 curl -s http://<web-url>/api/v1/mcp \
@@ -162,56 +162,56 @@ curl -s http://<web-url>/api/v1/mcp \
 
 ## Kendi sunucunda barındırma ve bulut
 
-Yukarıdaki [Neden Tugra](#neden-tugra) bölümündeki her şey, AGPL-3.0 altında, kendi sunucularında barındırılarak **sonsuza dek ücretsiz ve açık kaynaktır** — yapay bir sınır yok, para karşılığı açılmayı bekleyen bir özellik bayrağı yok. Bu depodaki Community edisyonu gerçek üründür, sakatlanmış bir demo değil.
+Yukarıdaki [Neden Tugra](#neden-tugra) bölümündeki her şey, kendi sunucularında self-host edilmek üzere AGPL-3.0 altında **sonsuza dek ücretsiz ve açık kaynaktır** — yapay bir limit yok, para karşılığı açılmayı bekleyen bir feature flag yok. Bu repodaki Community edition gerçek ürünün kendisidir, kırpılmış bir demo değil.
 
-Pro ve Cloud edisyonları (SSO, denetim kaydı dışa aktarma, whitelabel, yönetilen kontrol düzlemi) ayrı bir ticari lisans altında sunulur. AGPL dışı bir lisans için ya da Community'nin yapamadığı bir şey için **license@tugra.io** ile iletişime geç.
+Pro ve Cloud edition'ları (SSO, audit log dışa aktarma, whitelabel, managed control plane) ayrı bir ticari lisansla sunulur. AGPL dışı bir lisans için ya da Community'nin yapamadığı bir şey için **license@tugra.io** adresiyle iletişime geç.
 
 ## Mimari
 
 | Bileşen | Teknoloji |
 |---|---|
-| Hub (API + beyin) | NestJS · PostgreSQL (Prisma) · Redis / BullMQ |
+| Hub (API + merkez) | NestJS · PostgreSQL (Prisma) · Redis / BullMQ |
 | Web | Next.js |
-| Ajan | Go (sunucu başına tek binary) |
-| Vekil sunucu | Traefik (otomatik SSL, DNS-01 wildcard dahil) |
+| Agent | Go (sunucu başına tek binary) |
+| Proxy | Traefik (otomatik SSL, DNS-01 wildcard dahil) |
 
-Canlı loglar, metrikler ve terminal WebSocket'ler üzerinden akar. Ayrıntılı döküm [docs/architecture.md](docs/architecture.md) içinde.
+Canlı loglar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrıntılar [docs/architecture.md](docs/architecture.md) içinde.
 
 ## Yol haritası
 
-**Yayımlananlar**
+**Tamamlananlar**
 
-- [x] Hub ↔ Ajan protokolü + sunucu kaydı (dışa bağlanan WSS · ed25519 · imzalı komutlar + yetenek kapsamı)
-- [x] Git / Docker Compose / imajdan dağıtım (Nixpacks · Dockerfile · statik site)
-- [x] Ters vekil sunucu + otomatik SSL (Traefik · Let's Encrypt, DNS-01 wildcard dahil)
-- [x] Canlı metrikler, derleme logları ve web terminali (WebSocket akışları)
-- [x] Yedekleme ve geri yüklemeli veritabanları (9 motor) (yerel + S3/R2 uzak konum)
-- [x] Çok sunuculu kümeler + Docker Swarm oluşturma, filo genelinde toplu işlemler
-- [x] Yerel MCP sunucusu — 48 araç (okuma + PAT kapsamlı değiştirme/filo operasyonları) + rehberli istemler
-- [x] Uygulama mağazası — tek tıkla şablon kataloğu + Home modu başlatıcısı
-- [x] Uygulama diskleri için salt okunur dosya tarayıcısı (web arayüzü + MCP `list_files`)
-- [x] Önizleme dağıtımları (pull request başına)
-- [x] Çalışma süresi izleme (HTTP/TCP/metrik) + bildirim kanalları
-- [x] Zamanlanmış görevler (cron) · geri almalar · kaynak limitleri ve sağlık kontrolleri
+- [x] Hub ↔ Agent protokolü + sunucu kaydı (dışa bağlanan WSS · ed25519 · imzalı komutlar + capability scope)
+- [x] Git / Docker Compose / image'dan deploy (Nixpacks · Dockerfile · statik site)
+- [x] Reverse proxy + otomatik SSL (Traefik · Let's Encrypt, DNS-01 wildcard dahil)
+- [x] Canlı metrikler, build log'ları ve web terminal (WebSocket akışları)
+- [x] Yedekleme ve restore destekli veritabanları (9 motor; yerel + S3/R2 off-site)
+- [x] Çok sunuculu cluster'lar + Docker Swarm kurulumu, filo genelinde toplu işlemler
+- [x] Yerleşik MCP sunucusu — 48 tool (okuma + PAT scope'lu değişiklik yapan/filo operasyonları) + yönlendirmeli prompt'lar
+- [x] App store — tek tıkla şablon kataloğu + Home modu launcher'ı
+- [x] Uygulama volume'ları için salt okunur dosya tarayıcısı (web UI + MCP `list_files`)
+- [x] Preview deploy'lar (pull request başına)
+- [x] Uptime izleme (HTTP/TCP/metrik) + bildirim kanalları
+- [x] Zamanlanmış görevler (cron) · rollback'ler · kaynak limitleri ve health check'ler
 - [x] Projeler / ortamlar · ekipler, roller ve davetler · etiketler · paylaşılan değişkenler
-- [x] Genel API (OpenAPI) + CLI (`tugra`)
+- [x] Public API (OpenAPI) + CLI (`tugra`)
 - [x] Sunucu yamalama (işletim sistemi paket güncellemeleri)
-- [x] Kendi kendini güncelleme (imzalı sürümler) + rehberli karşılama
-- [x] Migrator — yerel Docker konteynerlerini benimseme + Coolify'dan içe aktarma (bağlan · planla · uygula · geri al) + tek komutla ana makineler arası veritabanı verisi taşıma (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
+- [x] Self-update (imzalı sürümler) + yönlendirmeli onboarding
+- [x] Migrator — yerel Docker container'larını devralma + Coolify'dan import (bağlan · planla · uygula · rollback) + tek komutla host'lar arası veritabanı verisi migrasyonu (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
 
 **Sırada**
 
-- [ ] Üçüncü taraf istemciler için MCP OAuth (dinamik istemci kaydı, PKCE)
+- [ ] Üçüncü taraf client'lar için MCP OAuth (dinamik client kaydı, PKCE)
 - [ ] Dosya yöneticisi — yazma desteği (yükleme / yeniden adlandırma / silme)
-- [ ] ClickHouse + MongoDB verisi ve uygulama disk verisi için tek tıkla taşıma
-- [ ] Daha fazla taşıma kaynağı (Dokploy, CapRover)
+- [ ] ClickHouse + MongoDB verisi ve uygulama volume verisi için tek tıkla migrasyon
+- [ ] Daha fazla migrasyon kaynağı (Dokploy, CapRover)
 - [ ] Mobil uygulama
 
 ## Topluluk ve dokümantasyon
 
 - [Tam dokümantasyon](docs/README.md) — kurulum, mimari, API, CLI, güvenlik, açık çekirdek
 - [Issues](https://github.com/SimerayCom/tugra/issues) — hata bildirimleri ve özellik istekleri
-- [Discussions](https://github.com/SimerayCom/tugra/discussions) — sorular, fikirler, göster-ve-anlat
+- [Discussions](https://github.com/SimerayCom/tugra/discussions) — sorular, fikirler, yaptıklarını paylaş
 - [Katkıda bulunma](CONTRIBUTING.md) · [Davranış Kuralları](CODE_OF_CONDUCT.md) · [CLA](CLA.md)
 - [Güvenlik politikası](SECURITY.md)
 
@@ -223,7 +223,7 @@ Canlı loglar, metrikler ve terminal WebSocket'ler üzerinden akar. Ayrıntılı
 
 ## Sponsorlar
 
-Tugra açıkça geliştirilir ve sürdürülür. Sana ya da ekibine faydalıysa [projeye GitHub'da sponsor olmayı](https://github.com/sponsors/mrcandev) düşün — henüz bir sponsor kademesi yok, yani ilk sen olursun ve her katkı geliştirmeyi bağımsız tutmaya yardım eder.
+Tugra, açık kaynak olarak ve herkesin gözü önünde geliştiriliyor ve sürdürülüyor. Sana ya da ekibine faydalıysa [projeye GitHub'da sponsor olmayı](https://github.com/sponsors/mrcandev) düşünebilirsin — henüz bir sponsor kademesi yok, yani ilk sponsor sen olabilirsin; her destek geliştirmenin bağımsız kalmasına yardımcı olur.
 
 ## Yıldız geçmişi
 
@@ -231,13 +231,13 @@ Tugra açıkça geliştirilir ve sürdürülür. Sana ya da ekibine faydalıysa 
 
 ## Lisans
 
-Tugra bir **açık çekirdek** modeli kullanır:
+Tugra, **açık çekirdek** modelini kullanır:
 
-- **Çekirdek** (bu depo) — [GNU AGPLv3](LICENSE). Kullanması, kendi sunucunda barındırması, incelemesi ve değiştirmesi ücretsiz. Değiştirilmiş bir sürümü ağ hizmeti olarak çalıştırırsan, değişikliklerini aynı lisans altında paylaşmak zorundasın.
-- **Ajan ve CLI** — [MIT](agent/LICENSE). Her yerde kullan, hiçbir şart yok.
+- **Çekirdek** (bu repo) — [GNU AGPLv3](LICENSE). Kullanması, self-host etmesi, incelemesi ve değiştirmesi ücretsiz. Değiştirilmiş bir sürümü ağ hizmeti olarak çalıştırırsan, değişikliklerini aynı lisansla paylaşmak zorundasın.
+- **Agent ve CLI** — [MIT](agent/LICENSE). İstediğin yerde kullan, hiçbir şart yok.
 - **Tugra Cloud ve Pro özellikleri** — kapalı kaynak, henüz yayımlanmadı ([Kendi sunucunda barındırma ve bulut](#kendi-sunucunda-barındırma-ve-bulut) bölümüne bak).
 
-**Ticari lisans:** AGPLv3'e uyamıyorsan (ör. Tugra'nın üzerine kapalı kaynaklı veya SaaS bir ürün inşa etmek istiyorsan), ticari bir lisans mevcuttur. **license@tugra.io** ile iletişime geç. Ayrıntılı döküm [docs/open-core.md](docs/open-core.md) içinde.
+**Ticari lisans:** AGPLv3'e uyamıyorsan (ör. Tugra'nın üzerine kapalı kaynaklı ya da SaaS bir ürün kurmak istiyorsan) ticari lisans mevcut. **license@tugra.io** adresiyle iletişime geç. Tüm ayrıntılar [docs/open-core.md](docs/open-core.md) içinde.
 
 ---
 
