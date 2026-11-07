@@ -26,7 +26,7 @@ import type { DatabaseView } from "../databases/databases.service";
 /** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
  *  is skipped by a plan blocker, but we re-check here so a bad engine never reaches DatabasesService. */
 const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
-import type { ImportSource } from "./import-source";
+import type { ImportSource, FetchedDbCredentials } from "./import-source";
 import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind } from "./dto";
 
 const CONCURRENCY = 5;
@@ -34,6 +34,8 @@ const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treat
 /** Source kinds that create FRESH Tugra resources (copy-mode): rollback REMOVES them, and only these may
  *  migrate data. local-docker is NOT here — it adopts live containers in place (rollback un-adopts). */
 const COPY_MODE_KINDS = new Set<string>(REMOTE_SOURCE_KINDS);
+/** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
+const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
 
 /**
@@ -166,7 +168,7 @@ export class ImportExecutorService {
           },
         });
         if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, input.environmentId, gitSourceByRef));
-        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, db, userId, input.targetServerId, input.environmentId));
+        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, input.environmentId));
       }
       await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
       void this.fanout(op.id, [...runners.keys()], (taskId) => runners.get(taskId)!())
@@ -432,21 +434,82 @@ export class ImportExecutorService {
 
   /** Provision an empty Tugra database for a discovered source DB (deploy:false — the record is created,
    *  the container + DATA come later). Records the sourceRef→destResourceId mapping so the migrator can
-   *  restore into it. Fresh credentials are minted (the app's DATABASE_URL is rewired at cutover). */
-  private async runCreateDb(taskId: string, db: ForeignDb, userId: string, targetServerId: string, environmentId?: string): Promise<void> {
+   *  restore into it. When the source can supply the DB's REAL credentials (source.fetchDbCredentials) they are
+   *  carried — together with the VERBATIM image and the published host port — through
+   *  DatabasesService.createForImport, so a migrated app reconnects with the SAME password. The credentials flow
+   *  source → memory → DatabasesService (encrypted at rest) only: the task result/output carries flags and fixed
+   *  strings, never a value. Without credentials it falls back to a freshly minted password + a warning. */
+  private async runCreateDb(taskId: string, source: ImportSource, db: ForeignDb, userId: string, targetServerId: string, environmentId?: string): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
-      const input: CreateDatabaseInput = {
-        name: db.name,
-        serverId: targetServerId,
-        engine: db.engine as CreateDatabaseInput["engine"], // PROVISIONABLE_ENGINES-gated before enqueue
-        version: db.version,
-        environmentId,
-      };
-      const created = await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
+      const engine = db.engine as CreateDatabaseInput["engine"]; // PROVISIONABLE_ENGINES-gated before enqueue
+      // A source WITHOUT the method (?. → undefined) degrades to fresh credentials. But a source that HAS it and
+      // THROWS (a transient / permission read error) must FAIL the task, never silently mint a fresh password the
+      // retry would keep as DONE. Re-throw a FIXED message: the raw client error could echo the response body
+      // (which carries the password), so it must not reach the FAILED task output.
+      let carried: FetchedDbCredentials | undefined;
+      try {
+        carried = (await source.fetchDbCredentials?.(db.sourceRef)) ?? undefined;
+      } catch {
+        throw new Error("could not read the source database credentials — retry the import");
+      }
+      const notes: string[] = [];
+      let created: DatabaseView;
+      let flags: { credentialsCarried: boolean; imageCarried?: boolean; hostPortCarried?: boolean };
+      if (carried?.password) {
+        // The host port is carried only when valid and not already published by another Tugra database on the
+        // target server (a clash would keep the container from starting) — otherwise dropped with a note.
+        let hostPort: number | undefined;
+        if (db.externalPort !== undefined) {
+          if (Number.isInteger(db.externalPort) && db.externalPort >= 1 && db.externalPort <= 65535) {
+            const taken = await this.prisma.database.findFirst({ where: { serverId: targetServerId, hostPort: db.externalPort }, select: { id: true } });
+            if (taken) notes.push(`host port ${db.externalPort} is already used by another database on this server — not published; set one in Tugra`);
+            else hostPort = db.externalPort;
+          } else {
+            notes.push("the source host port is invalid — not published");
+          }
+        }
+        created = await this.dbs.createForImport(userId, {
+          name: db.name,
+          serverId: targetServerId,
+          engine,
+          version: db.version,
+          image: db.image, // verbatim; createForImport validates it as a shell-safe OCI ref and gates it behind apps:config
+          username: carried.user || db.credentials?.username || "tugra",
+          password: carried.password,
+          database: carried.database || db.credentials?.database || safeDbIdent(db.name),
+          hostPort,
+          environmentId,
+        });
+        flags = { credentialsCarried: true, imageCarried: !!db.image, hostPortCarried: hostPort !== undefined };
+        if (carried.rootPassword && carried.rootPassword !== carried.password && (engine === "MYSQL" || engine === "MARIADB")) {
+          notes.push("the source has a separate root password — Tugra uses one password for the user and root, so root logins need the user password");
+        }
+      } else {
+        const input: CreateDatabaseInput = { name: db.name, serverId: targetServerId, engine, version: db.version, environmentId };
+        created = await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
+        flags = { credentialsCarried: false };
+        notes.push("DB credentials not carried — fresh password minted; rewire the app DB_PASSWORD");
+      }
+      // Carry the DB's hard CPU/memory limits. Best-effort, like the app post-create setters: the DB row already
+      // exists with its resourceId, so a setLimits failure must NOT fail the task (a retry would skip the DB).
+      if (db.limits && (db.limits.memoryMb !== undefined || db.limits.cpus !== undefined)) {
+        try {
+          await this.dbs.setLimits(userId, created.id, { memoryMb: db.limits.memoryMb ?? null, cpus: db.limits.cpus ?? null });
+        } catch {
+          notes.push("the CPU/memory limit was not applied — set it on the Tugra database");
+        }
+      }
       await this.prisma.bulkTask.update({
         where: { id: taskId },
-        data: { status: "DONE", resourceType: "database", resourceId: created.id, result: { name: created.name, databaseId: created.id }, finishedAt: new Date() },
+        data: {
+          status: "DONE",
+          resourceType: "database",
+          resourceId: created.id,
+          result: { name: created.name, databaseId: created.id, ...flags }, // flags only — never a credential value
+          ...(notes.length ? { output: notes.join("; ") } : {}),
+          finishedAt: new Date(),
+        },
       });
     } catch (e) {
       await this.prisma.bulkTask.update({ where: { id: taskId }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });

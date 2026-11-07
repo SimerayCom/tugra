@@ -1,5 +1,5 @@
 import type { ForeignFleet, ForeignGitProvider } from "../foreign-fleet";
-import type { ImportSource, ImportSourceCapabilities, FetchedSecrets } from "../import-source";
+import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, FetchedDbCredentials } from "../import-source";
 import { mapLimit } from "./map-limit";
 import {
   buildDokployFleet,
@@ -278,6 +278,31 @@ export class DokploySource implements ImportSource {
       }
     }
     return { values, unresolved };
+  }
+
+  /**
+   * A database's REAL credentials at apply time (server-side only — SECRET path, never part of discover()).
+   * Re-locates the DB by its appName (sourceRef) through the refIndex, GETs `<engine>.one` and reads
+   * databaseUser / databasePassword / databaseRootPassword / databaseName. Returns undefined when the DB cannot
+   * be located/read or carries no password at all (e.g. a restricted key) so the executor falls back to fresh
+   * credentials rather than importing an unusable half-set.
+   */
+  async fetchDbCredentials(ref: string): Promise<FetchedDbCredentials | undefined> {
+    let target = this.refIndex.get(ref);
+    if (!target) {
+      await this.discover().catch(() => undefined);
+      target = this.refIndex.get(ref);
+    }
+    if (!target || target.kind !== "database") return undefined;
+    // A failed read (transient / permission) MUST propagate so the executor FAILS the task (retryable) instead of
+    // minting a fresh password that a later re-apply would trust as DONE. Only a genuinely absent DB or one with
+    // no password returns undefined (→ the executor's fresh-credential fallback).
+    const row = await this.client.get<Record<string, unknown> | null>(DB_TABLES.find((t) => t.table === target!.table)!.one(target.id));
+    if (!row || typeof row !== "object") return undefined;
+    const password = str(row.databasePassword);
+    const rootPassword = str(row.databaseRootPassword);
+    if (!password && !rootPassword) return undefined;
+    return { user: str(row.databaseUser), password, rootPassword, database: str(row.databaseName) };
   }
 
   private async fetchGitProviderSecrets(githubId: string): Promise<FetchedSecrets> {
