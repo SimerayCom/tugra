@@ -40508,7 +40508,9 @@
                   "provider": {
                     "type": "string",
                     "enum": [
-                      "hetzner"
+                      "hetzner",
+                      "digitalocean",
+                      "vultr"
                     ]
                   },
                   "location": {

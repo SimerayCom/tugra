@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { CryptoModule } from "../crypto/crypto.module";
 import { ServersModule } from "../servers/servers.module";
 import { HetznerApiClient } from "./providers/hetzner.client";
+import { DigitalOceanApiClient } from "./providers/digitalocean.client";
+import { VultrApiClient } from "./providers/vultr.client";
 import { CloudProviderFactory } from "./providers/provider-factory.service";
 import { CloudCredentialsService } from "./cloud-credentials.service";
 import { CloudCredentialsController } from "./cloud-credentials.controller";
@@ -17,6 +19,8 @@ import { PROVISIONING_SERVICE } from "./cloud.tokens";
   controllers: [CloudCredentialsController, ProvisioningController],
   providers: [
     HetznerApiClient,
+    DigitalOceanApiClient,
+    VultrApiClient,
     CloudProviderFactory,
     CloudCredentialsService,
     ProvisioningService,

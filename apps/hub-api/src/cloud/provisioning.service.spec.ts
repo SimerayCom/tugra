@@ -81,6 +81,38 @@ describe("ProvisioningService.provision", () => {
     await expect(svc.provision("u1", { ...dto, serverType: "cx11" })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("provisions with a DigitalOcean credential: validates against the DO catalog and reaches the DO client", async () => {
+    const doCred = { id: "cc2", teamId: "t1", provider: "digitalocean", apiTokenEnc: "enc" };
+    const { svc, providers, client, servers } = make({ credRow: doCred });
+    await svc.provision("u1", { ...dto, cloudCredentialId: "cc2", provider: "digitalocean", location: "fra1", serverType: "s-2vcpu-4gb" });
+    expect(providers.get as jest.Mock).toHaveBeenCalledWith("digitalocean");
+    expect((servers.createServer as jest.Mock).mock.calls[0][4]).toEqual({ provider: "digitalocean", cloudCredentialId: "cc2" });
+    expect((client.createServer as jest.Mock).mock.calls[0]).toEqual([
+      TOKEN,
+      expect.objectContaining({ name: "web", location: "fra1", serverType: "s-2vcpu-4gb", image: "ubuntu-24.04" }),
+    ]);
+  });
+
+  it("provisions with a Vultr credential", async () => {
+    const vCred = { id: "cc3", teamId: "t1", provider: "vultr", apiTokenEnc: "enc" };
+    const { svc, providers } = make({ credRow: vCred });
+    await svc.provision("u1", { ...dto, cloudCredentialId: "cc3", provider: "vultr", location: "ewr", serverType: "vc2-1c-2gb" });
+    expect(providers.get as jest.Mock).toHaveBeenCalledWith("vultr");
+  });
+
+  it("validates keys per provider: a Hetzner key is rejected for a DO credential", async () => {
+    const doCred = { id: "cc2", teamId: "t1", provider: "digitalocean", apiTokenEnc: "enc" };
+    const { svc, client } = make({ credRow: doCred });
+    await expect(svc.provision("u1", { ...dto, cloudCredentialId: "cc2", provider: "digitalocean" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(client.createServer as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a dto.provider that does not match the credential's provider", async () => {
+    const { svc, servers } = make();
+    await expect(svc.provision("u1", { ...dto, provider: "vultr" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(servers.createServer as jest.Mock).not.toHaveBeenCalled();
+  });
+
   it("404s a credential from another team", async () => {
     const { svc } = make({ credRow: { id: "cc1", teamId: "OTHER", provider: "hetzner", apiTokenEnc: "enc" } });
     await expect(svc.provision("u1", dto)).rejects.toBeInstanceOf(NotFoundException);

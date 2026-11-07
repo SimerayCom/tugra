@@ -9,7 +9,7 @@ import { isPublicIp } from "../common/observed-ip";
 import { CloudProviderFactory } from "./providers/provider-factory.service";
 import type { CloudServerCreateResult } from "./providers/cloud-provider.interface";
 import { buildCloudInitUserData } from "./cloud-init";
-import { HETZNER_DEFAULT_IMAGE, isValidHetznerImage, isValidHetznerLocation, isValidHetznerServerType } from "./hetzner-catalog";
+import { catalogFor } from "./provider-catalogs";
 import type { ProvisionServerInput } from "./dto";
 
 /**
@@ -35,13 +35,17 @@ export class ProvisioningService {
     if (!hubUrl || !isPubliclyReachableUrl(hubUrl)) {
       throw new BadRequestException("set HUB_PUBLIC_URL to a publicly reachable URL before provisioning cloud servers");
     }
-    if (!isValidHetznerLocation(dto.location)) throw new BadRequestException("unknown location");
-    if (!isValidHetznerServerType(dto.serverType)) throw new BadRequestException("unknown server type");
-    const image = dto.image ?? HETZNER_DEFAULT_IMAGE;
-    if (!isValidHetznerImage(image)) throw new BadRequestException("unknown image");
 
     const cred = await this.prisma.cloudCredential.findUnique({ where: { id: dto.cloudCredentialId } });
     if (!cred || cred.teamId !== dto.teamId) throw new NotFoundException("cloud credential not found");
+    if (cred.provider !== dto.provider) throw new BadRequestException("provider does not match the cloud credential");
+    // Curated keys are per-provider: validate against the credential's provider catalog.
+    const catalog = catalogFor(cred.provider);
+    if (!catalog) throw new BadRequestException(`provider not yet supported: ${cred.provider}`);
+    if (!catalog.locations.some((l) => l.value === dto.location)) throw new BadRequestException("unknown location");
+    if (!catalog.serverTypes.some((s) => s.value === dto.serverType)) throw new BadRequestException("unknown server type");
+    const image = dto.image ?? catalog.defaultImage;
+    if (!catalog.images.some((i) => i.value === image)) throw new BadRequestException("unknown image");
     const client = this.providers.get(cred.provider); // BadRequest if the provider has no client
     const token = this.crypto.decrypt(cred.apiTokenEnc);
 

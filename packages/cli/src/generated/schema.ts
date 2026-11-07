@@ -28232,7 +28232,7 @@ export interface operations {
                     name: string;
                     cloudCredentialId: string;
                     /** @enum {string} */
-                    provider: "hetzner";
+                    provider: "hetzner" | "digitalocean" | "vultr";
                     location: string;
                     serverType: string;
                     image?: string;
