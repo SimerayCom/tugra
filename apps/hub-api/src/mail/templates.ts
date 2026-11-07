@@ -99,3 +99,15 @@ export function teamInviteEmail(v: { inviterName: string | null; teamName: strin
     text: `${v.inviterName ?? "Someone"} invited you to join the team "${v.teamName}" on Tugra.\n\nAccept the invitation:\n${v.acceptUrl}`,
   };
 }
+
+/** Sent by the owner's "Send test email" action to verify the effective mail config end to end. */
+export function mailTestEmail(): RenderedEmail {
+  return {
+    subject: "Tugra test email",
+    html: layout(
+      "Your Tugra mail settings work",
+      `<p style="margin:0 0 12px;">Hi,</p><p style="margin:0;">This is a test message from your Tugra control panel. If you can read it, outgoing email is configured correctly.</p>`,
+    ),
+    text: "Hi,\n\nThis is a test message from your Tugra control panel. If you can read it, outgoing email is configured correctly.",
+  };
+}

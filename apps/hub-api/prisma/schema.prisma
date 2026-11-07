@@ -1529,5 +1529,17 @@ model InstanceSettings {
   brandFaviconUrl     String?
   brandAccentColor    String?
   brandHidePoweredBy  Boolean   @default(false)
+  // Outbound mail (in-panel Email settings). mailProvider: "none" (default → fall back to the MAIL_* env) |
+  // "smtp" | "resend". The SMTP password and the Resend API key are stored ENCRYPTED (CryptoService) and are
+  // never surfaced in any view — write-only. Resend is a preset SMTP transport (smtp.resend.com:465) so it
+  // needs only the key + from. When the provider is "none" the env config (MAIL_*) is used unchanged.
+  mailProvider        String    @default("none")
+  mailHost            String?
+  mailPort            Int?
+  mailSecure          Boolean   @default(false)
+  mailUser            String?
+  mailPassEnc         String? // libsodium-encrypted SMTP password
+  mailFrom            String?
+  mailResendKeyEnc    String? // libsodium-encrypted Resend API key
   updatedAt           DateTime  @updatedAt
 }

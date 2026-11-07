@@ -26,7 +26,12 @@ import {
   UpdateTelemetrySchema,
   UpdateBrandingInput,
   UpdateBrandingSchema,
+  UpdateMailSettingsInput,
+  UpdateMailSettingsSchema,
+  MailTestInput,
+  MailTestSchema,
 } from "./dto";
+import { MailService } from "../mail/mail.service";
 import { UpdateService } from "../update/update.service";
 import { UpdaterService, isTerminalPhase } from "../update/updater.service";
 import { UpdateApplyResultSchema, UpdateStatusViewSchema } from "../update/dto";
@@ -50,6 +55,7 @@ export class InstanceSettingsController {
     private readonly crypto: CryptoService,
     private readonly license: LicenseService,
     private readonly telemetry: TelemetryService,
+    private readonly mail: MailService,
   ) {}
 
   /**
@@ -330,5 +336,42 @@ export class InstanceSettingsController {
     await this.settings.update(patch);
     await this.audit.log({ actor: user.userId, action: "instance.branding", target: "singleton" });
     return this.settings.effectiveBranding();
+  }
+  /**
+   * In-panel Email (SMTP / Resend) settings. Owner-only (class guards). The SMTP password and Resend key are
+   * write-only — the view carries only `hasPassword` / `hasResendKey`. `effective` says where the mailer is
+   * actually reading its config from ("db" = these settings, "env" = MAIL_* fallback, "none" = unconfigured).
+   */
+  @Get("mail")
+  async getMail() {
+    await this.mail.refresh();
+    return { ...(await this.settings.getMailSettings()), effective: this.mail.source() };
+  }
+
+  @Patch("mail")
+  @ApiZodBody(UpdateMailSettingsSchema)
+  async updateMail(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(UpdateMailSettingsSchema)) body: UpdateMailSettingsInput,
+  ) {
+    const view = await this.settings.setMailSettings(body);
+    await this.mail.refresh(); // drop the cached effective config so the change applies immediately
+    // Audit the provider only — never the host credentials or any secret.
+    await this.audit.log({ actor: user.userId, action: "instance_settings.mail", target: "singleton", meta: { provider: view.provider } });
+    return { ...view, effective: this.mail.source() };
+  }
+
+  /** Send a test email to `to` with the EFFECTIVE config. Always 200 with `{ok, reason?}`; the reason is scrubbed
+   *  of secrets and capped, never the password / API key. */
+  @Post("mail/test")
+  @HttpCode(200)
+  @ApiZodBody(MailTestSchema)
+  async testMail(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(MailTestSchema)) body: MailTestInput,
+  ) {
+    const res = await this.mail.sendTest(body.to);
+    await this.audit.log({ actor: user.userId, action: "instance_settings.mail_test", target: "singleton", meta: { ok: res.ok } });
+    return res;
   }
 }

@@ -316,6 +316,22 @@ export interface Branding {
   hidePoweredBy: boolean;
 }
 
+/** Owner mail settings (GET/PATCH /instance/mail). The SMTP password and Resend key are write-only — only
+ *  `hasPassword` / `hasResendKey` reveal whether one is stored. `effective` is where the mailer actually reads
+ *  its config: "db" (these settings), "env" (MAIL_* fallback) or "none" (mail not configured). */
+export type MailProvider = "none" | "smtp" | "resend";
+export interface MailSettings {
+  provider: MailProvider;
+  host: string | null;
+  port: number | null;
+  secure: boolean;
+  user: string | null;
+  from: string | null;
+  hasPassword: boolean;
+  hasResendKey: boolean;
+  effective: "db" | "env" | "none";
+}
+
 /** Control-panel HTTPS status (GET /instance/panel-tls, DİLİM 1). Owner-only. */
 export interface PanelTlsStatus {
   enabled: boolean;

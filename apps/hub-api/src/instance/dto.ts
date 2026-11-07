@@ -90,3 +90,34 @@ export const UpdateBrandingSchema = z.object({
   hidePoweredBy: z.boolean().optional(),
 });
 export type UpdateBrandingInput = z.infer<typeof UpdateBrandingSchema>;
+
+// Outbound mail (in-panel Email settings). All optional (partial patch); "" clears a text field (the service
+// maps it to null). `from` is a bare address or `Name <address>` with NO CR/LF (blocks header injection).
+// `password` / `resendKey` are WRITE-ONLY: a non-empty value is encrypted + stored, a blank/omitted one keeps
+// the stored secret — neither is ever returned in any view.
+const mailFrom = z
+  .string()
+  .max(320)
+  .refine((v) => v === "" || /^(?:[^<>\r\n]*<[^<>@\s]+@[^<>@\s]+>|[^<>@\s]+@[^<>@\s]+)$/.test(v.trim()), "must be an email address or Name <address>");
+const mailHost = z
+  .string()
+  .max(255)
+  .refine((v) => v === "" || /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(v.trim()), "must be a hostname");
+export const MAIL_PROVIDERS = ["none", "smtp", "resend"] as const;
+export const UpdateMailSettingsSchema = z.object({
+  provider: z.enum(MAIL_PROVIDERS).optional(),
+  host: mailHost.nullable().optional(),
+  port: z.number().int().min(1).max(65535).nullable().optional(),
+  secure: z.boolean().optional(),
+  user: z.string().max(255).nullable().optional(),
+  from: mailFrom.nullable().optional(),
+  password: z.string().max(1024).optional(),
+  resendKey: z.string().max(1024).optional(),
+});
+export type UpdateMailSettingsInput = z.infer<typeof UpdateMailSettingsSchema>;
+
+/** Owner action: send a test email to `to` using the EFFECTIVE mail config. */
+export const MailTestSchema = z.object({
+  to: z.string().trim().email().max(320),
+});
+export type MailTestInput = z.infer<typeof MailTestSchema>;

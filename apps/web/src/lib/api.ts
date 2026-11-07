@@ -10,6 +10,8 @@ import type {
   PanelTlsStatus,
   OwnerInstanceSettings,
   OidcConfig,
+  MailSettings,
+  MailProvider,
   LicenseStatus,
   Cluster,
   ClusterDetail,
@@ -354,6 +356,25 @@ export const api = {
     oidcAllowedDomains?: string[];
   }) {
     return apiFetch<OidcConfig>("/instance/oidc", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  // Owner-only outbound mail (SMTP / Resend) settings. password / resendKey are write-only (blank = keep).
+  getMailSettings() {
+    return apiFetch<MailSettings>("/instance/mail");
+  },
+  updateMailSettings(patch: {
+    provider?: MailProvider;
+    host?: string | null;
+    port?: number | null;
+    secure?: boolean;
+    user?: string | null;
+    from?: string | null;
+    password?: string;
+    resendKey?: string;
+  }) {
+    return apiFetch<MailSettings>("/instance/mail", { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  testMailSettings(to: string) {
+    return apiFetch<{ ok: boolean; reason?: string }>("/instance/mail/test", { method: "POST", body: JSON.stringify({ to }) });
   },
   // Owner-only self-update status + preferences (session-guarded on the hub).
   getInstanceUpdate() {

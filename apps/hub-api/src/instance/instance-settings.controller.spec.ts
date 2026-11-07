@@ -7,6 +7,8 @@ import type { UpdaterService } from "../update/updater.service";
 import type { CryptoService } from "../crypto/crypto.service";
 import type { LicenseService } from "../license/license.service";
 import type { TelemetryService } from "../telemetry/telemetry.service";
+import type { MailService } from "../mail/mail.service";
+import { UpdateMailSettingsSchema, MailTestSchema } from "./dto";
 import { REQUIRE_EDITION } from "../common/edition";
 
 // The SSRF guard does real DNS resolution (tested in safe-url's own spec); mock it here so the controller
@@ -50,6 +52,8 @@ function make(current: CurrentSettings) {
   const settings = {
     get: jest.fn().mockResolvedValue(full),
     update: jest.fn().mockImplementation((patch) => Promise.resolve(Object.assign(updated, patch))),
+    getMailSettings: jest.fn().mockResolvedValue({ provider: "smtp", host: "h", port: 587, secure: false, user: "u", from: "a@b.co", hasPassword: true, hasResendKey: false }),
+    setMailSettings: jest.fn().mockResolvedValue({ provider: "smtp", host: "h", port: 587, secure: false, user: "u", from: "a@b.co", hasPassword: true, hasResendKey: false }),
     effectiveBranding: jest.fn().mockResolvedValue({ name: "Acme", logoUrl: null, faviconUrl: null, accentColor: "#112233", hidePoweredBy: true }),
   } as unknown as InstanceSettingsService;
   const audit = { log: jest.fn() } as unknown as AuditService;
@@ -80,7 +84,12 @@ function make(current: CurrentSettings) {
     sendNow: jest.fn().mockResolvedValue({ status: "sent" }),
     resetInstanceId: jest.fn().mockResolvedValue("anon-id-2"),
   } as unknown as TelemetryService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry), settings, audit, update, updater, crypto, license, telemetry };
+  const mail = {
+    refresh: jest.fn().mockResolvedValue(undefined),
+    source: jest.fn().mockReturnValue("db"),
+    sendTest: jest.fn().mockResolvedValue({ ok: true }),
+  } as unknown as MailService;
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail), settings, audit, update, updater, crypto, license, telemetry, mail };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -375,5 +384,62 @@ describe("InstanceSettingsController — branding (white-label)", () => {
     expect((settings.update as jest.Mock).mock.calls[0][0]).not.toHaveProperty("brandFaviconUrl");
     expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance.branding", actor: "owner1" });
     expect(out).toMatchObject({ name: "Acme" }); // returns the effective branding
+  });
+});
+
+describe("InstanceSettingsController — email settings", () => {
+  it("GET returns the view + effective source and never a secret", async () => {
+    const { ctrl } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const out = await ctrl.getMail();
+    expect(out).toMatchObject({ provider: "smtp", hasPassword: true, effective: "db" });
+    expect(JSON.stringify(out)).not.toMatch(/Enc"|"password"|"resendKey"/);
+    expect(Object.keys(out)).not.toEqual(expect.arrayContaining(["password", "resendKey", "mailPassEnc"]));
+  });
+
+  it("PATCH persists via setMailSettings, refreshes the mailer, audits only the provider (no secret)", async () => {
+    const { ctrl, settings, mail, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.updateMail(OWNER, { provider: "smtp", host: "h", password: "topsecret" });
+    expect(settings.setMailSettings).toHaveBeenCalledWith({ provider: "smtp", host: "h", password: "topsecret" });
+    expect(mail.refresh).toHaveBeenCalled();
+    const logged = (audit.log as jest.Mock).mock.calls[0][0];
+    expect(logged).toMatchObject({ action: "instance_settings.mail", actor: "owner1", meta: { provider: "smtp" } });
+    expect(JSON.stringify(logged)).not.toContain("topsecret");
+  });
+
+  it("POST test-send forwards the address, returns ok/reason, audits without secrets", async () => {
+    const { ctrl, mail, audit } = make({ apiEnabled: true, apiAllowedIps: [] });
+    (mail.sendTest as jest.Mock).mockResolvedValueOnce({ ok: false, reason: "Invalid login: ***" });
+    const out = await ctrl.testMail(OWNER, { to: "me@x.io" });
+    expect(mail.sendTest).toHaveBeenCalledWith("me@x.io");
+    expect(out).toEqual({ ok: false, reason: "Invalid login: ***" });
+    expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "instance_settings.mail_test", meta: { ok: false } });
+  });
+
+  it("all mail endpoints inherit the owner guards (session + InstanceOwnerGuard)", () => {
+    const guards = (Reflect.getMetadata("__guards__", InstanceSettingsController) ?? []).map((g: unknown) => (g as { name: string }).name);
+    expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "InstanceOwnerGuard"]));
+    // test-send must be a method on the guarded class (not a separate unguarded controller)
+    expect(typeof InstanceSettingsController.prototype.testMail).toBe("function");
+  });
+
+  describe("DTO validation", () => {
+    it("accepts a valid SMTP patch and Name <addr> from", () => {
+      expect(UpdateMailSettingsSchema.safeParse({ provider: "smtp", host: "smtp.example.com", port: 587, secure: false, user: "u", password: "p", from: "Tugra <no-reply@example.com>" }).success).toBe(true);
+    });
+    it("rejects an unknown provider, out-of-range port, bad from and header-injection from", () => {
+      expect(UpdateMailSettingsSchema.safeParse({ provider: "sendgrid" }).success).toBe(false);
+      expect(UpdateMailSettingsSchema.safeParse({ port: 0 }).success).toBe(false);
+      expect(UpdateMailSettingsSchema.safeParse({ port: 70000 }).success).toBe(false);
+      expect(UpdateMailSettingsSchema.safeParse({ from: "not-an-email" }).success).toBe(false);
+      expect(UpdateMailSettingsSchema.safeParse({ from: "Evil <a@b.co>\r\nBcc: x@y.z" }).success).toBe(false);
+      expect(UpdateMailSettingsSchema.safeParse({ host: "bad host!" }).success).toBe(false);
+    });
+    it("allows clearing text fields with empty string / null", () => {
+      expect(UpdateMailSettingsSchema.safeParse({ host: "", from: "", user: null, port: null }).success).toBe(true);
+    });
+    it("test-send requires a valid email", () => {
+      expect(MailTestSchema.safeParse({ to: "me@x.io" }).success).toBe(true);
+      expect(MailTestSchema.safeParse({ to: "nope" }).success).toBe(false);
+    });
   });
 });

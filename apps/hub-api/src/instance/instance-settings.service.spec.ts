@@ -1,5 +1,6 @@
 import { InstanceSettingsService } from "./instance-settings.service";
 import { PrismaService } from "../prisma/prisma.service";
+import type { CryptoService } from "../crypto/crypto.service";
 
 const ROW = {
   id: "singleton",
@@ -15,7 +16,8 @@ function make(over: { findUnique?: jest.Mock; upsert?: jest.Mock; update?: jest.
   const upsert = over.upsert ?? jest.fn().mockResolvedValue(ROW);
   const update = over.update ?? jest.fn().mockResolvedValue(ROW);
   const prisma = { instanceSettings: { findUnique, upsert, update } } as unknown as PrismaService;
-  return { svc: new InstanceSettingsService(prisma), findUnique, upsert, update };
+  const crypto = { encrypt: jest.fn((s: string) => `ENC(${s})`) };
+  return { svc: new InstanceSettingsService(prisma, crypto as unknown as CryptoService), findUnique, upsert, update, crypto };
 }
 
 describe("InstanceSettingsService", () => {
@@ -98,5 +100,80 @@ describe("InstanceSettingsService.effectiveBranding (Pro paywall at read time)",
       accentColor: "#112233",
       hidePoweredBy: true,
     });
+  });
+});
+
+describe("InstanceSettingsService — mail settings", () => {
+  const MAILROW = { ...ROW, mailProvider: "smtp", mailHost: "h.example.com", mailPort: 587, mailSecure: false, mailUser: "u", mailPassEnc: "ENC(old)", mailFrom: "a@b.co", mailResendKeyEnc: null };
+
+  it("getMailSettings returns the config + hasPassword/hasResendKey booleans and NEVER a secret value", async () => {
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue({ ...MAILROW, mailResendKeyEnc: "ENC(re_k)" }) });
+    const v = await svc.getMailSettings();
+    expect(v).toEqual({ provider: "smtp", host: "h.example.com", port: 587, secure: false, user: "u", from: "a@b.co", hasPassword: true, hasResendKey: true });
+    const json = JSON.stringify(v);
+    expect(json).not.toContain("ENC(");
+    expect(json).not.toContain("old");
+    expect(json).not.toContain("re_k");
+  });
+
+  it("defaults to provider none with no secrets set", async () => {
+    const { svc } = make();
+    expect(await svc.getMailSettings()).toMatchObject({ provider: "none", hasPassword: false, hasResendKey: false });
+  });
+
+  it("setMailSettings encrypts the password and resend key before storing (plaintext never reaches the DB)", async () => {
+    const { svc, update, crypto } = make({ findUnique: jest.fn().mockResolvedValue({ ...ROW, mailProvider: "none" }), update: jest.fn().mockResolvedValue({ ...MAILROW }) });
+    await svc.setMailSettings({ provider: "smtp", host: "h.example.com", from: "a@b.co", password: "pw-plain", resendKey: "re_plain" });
+    expect(crypto.encrypt).toHaveBeenCalledWith("pw-plain");
+    expect(crypto.encrypt).toHaveBeenCalledWith("re_plain");
+    const data = update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ mailProvider: "smtp", mailHost: "h.example.com", mailPassEnc: "ENC(pw-plain)", mailResendKeyEnc: "ENC(re_plain)" });
+    expect(JSON.stringify(data)).not.toMatch(/"pw-plain"|"re_plain"/);
+  });
+
+  it("a blank / omitted secret leaves the stored ciphertext untouched (write-only replace semantics)", async () => {
+    const { svc, update, crypto } = make({ findUnique: jest.fn().mockResolvedValue(MAILROW), update: jest.fn().mockResolvedValue(MAILROW) });
+    await svc.setMailSettings({ host: "new.example.com", password: "", resendKey: "" });
+    await svc.setMailSettings({ from: "x@y.co" });
+    expect(crypto.encrypt).not.toHaveBeenCalled();
+    for (const call of update.mock.calls) {
+      expect(call[0].data).not.toHaveProperty("mailPassEnc");
+      expect(call[0].data).not.toHaveProperty("mailResendKeyEnc");
+    }
+  });
+
+  it("maps blank text fields to null (clearable) and only patches provided fields", async () => {
+    const { svc, update } = make({ findUnique: jest.fn().mockResolvedValue({ ...MAILROW, mailProvider: "none" }), update: jest.fn().mockResolvedValue(MAILROW) });
+    await svc.setMailSettings({ user: "  ", from: "", port: null });
+    expect(update.mock.calls[0][0].data).toEqual({ mailUser: null, mailFrom: null, mailPort: null });
+  });
+
+  it("refuses smtp without a host and resend without a key (no half-saved provider)", async () => {
+    const none = { ...ROW, mailProvider: "none", mailHost: null, mailResendKeyEnc: null };
+    const { svc, update } = make({ findUnique: jest.fn().mockResolvedValue(none) });
+    await expect(svc.setMailSettings({ provider: "smtp" })).rejects.toThrow(/SMTP host/);
+    await expect(svc.setMailSettings({ provider: "resend" })).rejects.toThrow(/Resend API key/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("allows switching to resend when a key is already stored (kept) or supplied now", async () => {
+    const stored = { ...ROW, mailProvider: "smtp", mailFrom: "s@d.co", mailResendKeyEnc: "ENC(re)" };
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue(stored), update: jest.fn().mockResolvedValue({ ...stored, mailProvider: "resend" }) });
+    await expect(svc.setMailSettings({ provider: "resend" })).resolves.toMatchObject({ provider: "resend", hasResendKey: true });
+  });
+
+  it("refuses a real provider with no sender (From) — never a 'configured' mailer that silently never delivers", async () => {
+    const stored = { ...ROW, mailProvider: "none", mailHost: "h.example.com", mailResendKeyEnc: "ENC(re)", mailFrom: null };
+    const { svc, update } = make({ findUnique: jest.fn().mockResolvedValue(stored), update: jest.fn().mockResolvedValue({ ...stored, mailProvider: "smtp", mailFrom: "ops@acme.io" }) });
+    await expect(svc.setMailSettings({ provider: "smtp" })).rejects.toThrow(/sender .*From.* required/i);
+    await expect(svc.setMailSettings({ provider: "resend" })).rejects.toThrow(/sender .*From.* required/i);
+    expect(update).not.toHaveBeenCalled();
+    // supplying a From in the same patch is accepted
+    await expect(svc.setMailSettings({ provider: "smtp", from: "ops@acme.io" })).resolves.toMatchObject({ provider: "smtp" });
+  });
+
+  it("switching provider to none is always allowed (back to the env fallback)", async () => {
+    const { svc } = make({ findUnique: jest.fn().mockResolvedValue({ ...ROW, mailProvider: "smtp", mailHost: null }), update: jest.fn().mockResolvedValue({ ...ROW, mailProvider: "none" }) });
+    await expect(svc.setMailSettings({ provider: "none" })).resolves.toMatchObject({ provider: "none" });
   });
 });

@@ -146,7 +146,7 @@ describe("InstanceSettingsService.panelDomainFor — env-over-DB precedence", ()
     const prisma = {
       instanceSettings: { findUnique: jest.fn().mockResolvedValue({ id: "singleton", panelDomain: dbDomain }) },
     } as unknown as PrismaService;
-    return new InstanceSettingsService(prisma);
+    return new InstanceSettingsService(prisma, { encrypt: (s: string) => `ENC(${s})` } as never);
   }
   it("env PANEL_TLS=1 + domain wins over the DB", async () => {
     expect(await svc("db.example.com").panelDomainFor("env.example.com", "1")).toBe("env.example.com");

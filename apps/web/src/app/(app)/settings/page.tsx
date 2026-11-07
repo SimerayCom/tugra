@@ -13,6 +13,7 @@ import { LicenseCard } from "./license-card";
 import { SsoConfigCard } from "./sso-config-card";
 import { TelemetryCard } from "./telemetry-card";
 import { BrandingCard } from "./branding-card";
+import { EmailSettingsCard } from "./email-settings-card";
 import { PanelTlsCard } from "./panel-tls-card";
 import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
@@ -95,6 +96,7 @@ export default function SettingsPage() {
         <SettingsGrid hint={t("settings.sectionInstanceHint")}>
           <LicenseCard />
           <PanelTlsCard />
+          <EmailSettingsCard />
           <HubBackupCard />
           <BrandingCard />
           <InstanceApiAccessCard />
