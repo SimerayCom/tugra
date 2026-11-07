@@ -21,7 +21,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] } } = {}) {
+function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] } } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -43,20 +43,24 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
       updateMany: jest.fn().mockResolvedValue({ count: 1 }), // claim succeeds
     },
     application: { findMany: jest.fn().mockResolvedValue((over.liveAppIds ?? []).map((id) => ({ id }))) },
-    database: { findMany: jest.fn().mockResolvedValue((over.liveDbIds ?? []).map((id) => ({ id }))) },
+    database: {
+      findMany: jest.fn().mockResolvedValue((over.liveDbIds ?? []).map((id) => ({ id }))),
+      findFirst: jest.fn().mockImplementation(async ({ where }: { where: { hostPort: number } }) => ((over.takenHostPorts ?? []).includes(where.hostPort) ? { id: "db-other" } : null)),
+    },
     gitSource: { findMany: jest.fn().mockResolvedValue(over.gitSources ?? []), findFirst: jest.fn().mockResolvedValue(over.carriedSource === undefined ? { id: "gs-new" } : over.carriedSource) }, // İş 2: team GitSources for private-repo auto-link
   };
   const source = {
     discover: jest.fn().mockResolvedValue(over.fleet ?? fleet()),
     fetchSecrets: jest.fn().mockImplementation(async (ref: string) => (over.secrets ? over.secrets(ref) : { values: {}, unresolved: [] })),
     close: jest.fn().mockResolvedValue(undefined),
+    ...(over.dbCreds ? { fetchDbCredentials: jest.fn().mockImplementation(async (ref: string) => over.dbCreds!(ref)) } : {}),
   };
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
   const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined) };
   const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
-  const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }) };
+  const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), createForImport: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), setLimits: jest.fn().mockResolvedValue(undefined) };
   const migrationTokens = { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn().mockResolvedValue(false), validate: jest.fn() };
   const svc = new ImportExecutorService(
     prisma as never,
@@ -70,7 +74,7 @@ function harness(over: { priorImported?: Array<{ itemRef: string; resourceId: st
     {} as never, // crypto (unused on this path)
     gitSources as never,
   );
-  return { svc, prisma, source, apps, dbs, created, gitSources };
+  return { svc, prisma, source: source as typeof source & { fetchDbCredentials?: jest.Mock }, apps, dbs, created, gitSources };
 }
 
 function input(f: ForeignFleet = fleet()) {
@@ -525,5 +529,153 @@ describe("ImportExecutorService — post-create setters (L2-APPLY)", () => {
     const h = harness();
     await run(h, fleet());
     expect(lastResult(h).result).not.toHaveProperty("postCreate");
+  });
+});
+
+
+describe("ImportExecutorService — DB credential carry (L4)", () => {
+  const PW = "DB-PASSWORD-SENTINEL-4c1f";
+  const ROOT_PW = "DB-ROOTPASSWORD-SENTINEL-9a7e";
+  const dbFleet = (over: Record<string, unknown> = {}): ForeignFleet => ({
+    ...fleet(),
+    apps: [],
+    databases: [{ sourceRef: "db-1", name: "orders", engine: "POSTGRES", version: "16", image: "pgvector/pgvector:pg16", externalPort: 5544, credentials: { username: "u", database: "ordersdb", secretRef: "db-1" }, serverRef: "srv-a", ...over }],
+  });
+  const creds = () => ({ user: "app_user", password: PW, rootPassword: undefined, database: "ordersdb" });
+  const dbTaskUpdate = (h: ReturnType<typeof harness>) => h.prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: Record<string, unknown>) => d.resourceType === "database");
+
+  it("creates through createForImport with the PRESERVED credentials, the verbatim image and the host port (no fresh mint)", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f, dbCreds: creds });
+    await run(h, f);
+    expect(h.dbs.create).not.toHaveBeenCalled();
+    expect(h.source.fetchDbCredentials).toHaveBeenCalledWith("db-1");
+    expect(h.dbs.createForImport).toHaveBeenCalledTimes(1);
+    expect(h.dbs.createForImport).toHaveBeenCalledWith("user-1", {
+      name: "orders",
+      serverId: "srv-tugra",
+      engine: "POSTGRES",
+      version: "16",
+      image: "pgvector/pgvector:pg16",
+      username: "app_user",
+      password: PW,
+      database: "ordersdb",
+      hostPort: 5544,
+      environmentId: undefined,
+    });
+    const upd = dbTaskUpdate(h);
+    expect(upd).toEqual(expect.objectContaining({ status: "DONE", resourceType: "database", resourceId: "db-new" }));
+    expect(upd.result).toEqual({ name: "orders", databaseId: "db-new", credentialsCarried: true, imageCarried: true, hostPortCarried: true });
+    expect(upd.output).toBeUndefined();
+  });
+
+  it("carries the DB's hard CPU/memory limits (best-effort) onto the created database", async () => {
+    const f = dbFleet({ limits: { memoryMb: 512, cpus: 1 } });
+    const h = harness({ fleet: f, dbCreds: creds });
+    await run(h, f);
+    expect(h.dbs.setLimits).toHaveBeenCalledWith("user-1", "db-new", { memoryMb: 512, cpus: 1 });
+    expect(dbTaskUpdate(h)).toEqual(expect.objectContaining({ status: "DONE" })); // a limits failure would NOT fail the task
+  });
+
+  it("falls back to fresh credentials + a warning when the source has no fetchDbCredentials", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f }); // coolify-style source: method absent
+    await run(h, f);
+    expect(h.dbs.createForImport).not.toHaveBeenCalled();
+    expect(h.dbs.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ name: "orders", engine: "POSTGRES", version: "16" }));
+    const upd = dbTaskUpdate(h);
+    expect(upd.status).toBe("DONE");
+    expect(upd.result).toEqual({ name: "orders", databaseId: "db-new", credentialsCarried: false });
+    expect(upd.output).toBe("DB credentials not carried — fresh password minted; rewire the app DB_PASSWORD");
+  });
+
+  it.each([
+    ["returns undefined", () => undefined],
+    ["returns no password", () => ({ user: "u", rootPassword: ROOT_PW })],
+  ])("falls back to fresh credentials when fetchDbCredentials %s", async (_n, dbCreds) => {
+    const f = dbFleet();
+    const h = harness({ fleet: f, dbCreds: dbCreds as never });
+    await run(h, f);
+    expect(h.dbs.createForImport).not.toHaveBeenCalled();
+    expect(h.dbs.create).toHaveBeenCalledTimes(1);
+    expect(dbTaskUpdate(h).output).toMatch(/fresh password minted/);
+  });
+
+  it("FAILS the task (retryable, no fresh password) when fetchDbCredentials THROWS — a transient read error must not become a permanent wrong password", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f, dbCreds: (() => Promise.reject(new Error("boom " + PW))) as never });
+    await run(h, f);
+    expect(h.dbs.create).not.toHaveBeenCalled(); // no fresh mint
+    expect(h.dbs.createForImport).not.toHaveBeenCalled();
+    const upd = h.prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: Record<string, unknown>) => d.status === "FAILED");
+    expect(upd?.resourceId).toBeUndefined(); // no resource recorded → a re-apply retries
+    expect(JSON.stringify(h.prisma.bulkTask.update.mock.calls)).not.toContain(PW); // the thrown error text never echoes the password
+  });
+
+  it("drops a host port already published by another DB on the target server, with a note (DB still created)", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f, dbCreds: creds, takenHostPorts: [5544] });
+    await run(h, f);
+    expect(h.dbs.createForImport.mock.calls[0][1].hostPort).toBeUndefined();
+    const upd = dbTaskUpdate(h);
+    expect(upd.result.hostPortCarried).toBe(false);
+    expect(upd.output).toMatch(/host port 5544 is already used/);
+  });
+
+  it("derives username/database from the discovered identity or a safe slug when the secret path omits them", async () => {
+    const f = dbFleet({ credentials: undefined, name: "My Orders DB!", image: undefined, externalPort: undefined });
+    const h = harness({ fleet: f, dbCreds: () => ({ password: PW }) });
+    await run(h, f);
+    expect(h.dbs.createForImport.mock.calls[0][1]).toEqual(expect.objectContaining({ username: "tugra", database: "my_orders_db", password: PW, image: undefined, hostPort: undefined }));
+    expect(dbTaskUpdate(h).result).toEqual(expect.objectContaining({ credentialsCarried: true, imageCarried: false, hostPortCarried: false }));
+  });
+
+  it("notes (without values) that a distinct MySQL root password cannot be carried separately", async () => {
+    const f = dbFleet({ engine: "MYSQL", version: "8", image: "mysql:8" });
+    const h = harness({ fleet: f, dbCreds: () => ({ user: "u", password: PW, rootPassword: ROOT_PW, database: "shop" }) });
+    await run(h, f);
+    const upd = dbTaskUpdate(h);
+    expect(upd.output).toMatch(/separate root password/);
+    expect(JSON.stringify(upd)).not.toContain(ROOT_PW);
+  });
+
+  it("surfaces a createForImport rejection as FAILED with its (fixed) message, no resource recorded", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f, dbCreds: creds });
+    h.dbs.createForImport.mockRejectedValueOnce(new Error("invalid database image reference"));
+    await run(h, f);
+    const upd = dbTaskUpdate(h) ?? h.prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: Record<string, unknown>) => d.status === "FAILED");
+    expect(upd).toEqual(expect.objectContaining({ status: "FAILED", output: "invalid database image reference" }));
+    expect(upd.resourceId).toBeUndefined();
+  });
+
+  it("SECRET LEAK: the DB password / rootPassword never appear in any BulkTask write, the persisted plan/op meta, audit, logger or fleet", async () => {
+    const f = dbFleet({ engine: "MYSQL", version: "8", image: "mysql:8" });
+    const h = harness({ fleet: f, dbCreds: () => ({ user: "u", password: PW, rootPassword: ROOT_PW, database: "shop" }) });
+    const logger = (h.svc as unknown as { logger: Record<string, (...a: unknown[]) => void> }).logger;
+    const logSpies = (["log", "warn", "error", "debug", "verbose"] as const).map((m) => jest.spyOn(logger, m as never) as unknown as jest.SpyInstance);
+    logSpies.forEach((sp) => sp.mockImplementation(() => undefined));
+    await run(h, f);
+    expect(h.dbs.createForImport).toHaveBeenCalledTimes(1); // the secret DID flow to the encrypting service...
+    const everything = JSON.stringify({
+      taskCreates: h.prisma.bulkTask.create.mock.calls,
+      taskUpdates: h.prisma.bulkTask.update.mock.calls,
+      opCreate: h.prisma.bulkOperation.create.mock.calls,
+      opUpdate: h.prisma.bulkOperation.update.mock.calls,
+      logs: logSpies.map((s) => s.mock.calls),
+      audit: (h.svc as unknown as { audit: { log: jest.Mock } }).audit.log.mock.calls,
+      discovered: await h.source.discover(),
+    });
+    for (const needle of [PW, ROOT_PW]) expect(everything).not.toContain(needle); // ...and nowhere else
+  });
+
+  it("is idempotent: a retry skips a DB a prior (live) op already imported — createForImport is not called again", async () => {
+    const f = dbFleet();
+    const h = harness({ fleet: f, dbCreds: creds, priorImported: [{ itemRef: DB_ITEMREF, resourceId: "db-existing", resourceType: "database" }], liveDbIds: ["db-existing"] });
+    await run(h, f);
+    expect(h.dbs.createForImport).not.toHaveBeenCalled();
+    expect(h.dbs.create).not.toHaveBeenCalled();
+    expect(h.source.fetchDbCredentials).not.toHaveBeenCalled(); // the secret is not even fetched for a skipped DB
+    expect(h.created.find((c) => c.data.itemRef === DB_ITEMREF)!.data.status).toBe("SKIPPED");
   });
 });

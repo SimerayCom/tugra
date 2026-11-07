@@ -33,6 +33,17 @@ export interface FetchedSecrets {
   unresolved: ForeignEnv[];
 }
 
+/** A source database's REAL credentials, for the apply-time secret path only (never the discovered fleet, a
+ *  task result, the plan, an audit row or a log). Every field is optional: a source that cannot read one
+ *  (restricted API key, engine without that concept) simply omits it. */
+export interface FetchedDbCredentials {
+  user?: string;
+  password?: string;
+  /** The engine's superuser password when the source keeps it separate from `password` (MySQL/MariaDB). */
+  rootPassword?: string;
+  database?: string;
+}
+
 /**
  * One competitor adapter. Every source (Coolify/Dokploy/CapRover/Dokku + local-docker + a pasted compose
  * file) implements this, so the planner and executor stay source-independent. The adapter is constructed
@@ -47,6 +58,10 @@ export interface ImportSource {
   discover(): Promise<ForeignFleet>;
   /** Re-fetch real secret values for one resource at apply time (never sent to the client). */
   fetchSecrets(ref: string): Promise<FetchedSecrets>;
+  /** OPTIONAL secret path: a database's real credentials, re-fetched server-side at apply time and keyed by the
+   *  discovered DB's `sourceRef`. `undefined` when unavailable. A source that does not implement it (Coolify,
+   *  local-docker) makes the executor mint fresh credentials instead. */
+  fetchDbCredentials?(ref: string): Promise<FetchedDbCredentials | undefined>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

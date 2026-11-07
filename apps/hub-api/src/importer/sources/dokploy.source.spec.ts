@@ -209,3 +209,50 @@ describe("DokploySource.fetchSecrets", () => {
     expect(await src.fetchSecrets("does-not-exist")).toEqual({ values: {}, unresolved: [] });
   });
 });
+
+describe("DokploySource.fetchDbCredentials (L4 secret path)", () => {
+  it("reads databaseUser/databasePassword/databaseName from the engine .one endpoint, keyed by appName", async () => {
+    const client = makeClient();
+    const src = new DokploySource(client as unknown as DokployClient);
+    await src.discover();
+    client.get.mockClear();
+    expect(await src.fetchDbCredentials("db-pg1")).toEqual({ user: "u", password: "PWD", rootPassword: undefined, database: "orders" });
+    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.get).toHaveBeenCalledWith("/postgres.one?postgresId=pg-1");
+  });
+
+  it("returns the MySQL root password separately", async () => {
+    const tree = (ROUTES["/project.all"] as Array<{ environments: Array<Record<string, unknown>> }>)[0];
+    const projects = [{ ...tree, environments: [{ ...tree.environments[0], postgres: [], mysql: [{ mysqlId: "my-1" }] }] }];
+    const src = source({
+      "/project.all": projects,
+      "/mysql.one?mysqlId=my-1": { mysqlId: "my-1", appName: "db-my1", name: "shop", databaseUser: "shopper", databaseName: "shop", databasePassword: "USERPW", databaseRootPassword: "ROOTPW", dockerImage: "mysql:8" },
+    });
+    expect(await src.fetchDbCredentials("db-my1")).toEqual({ user: "shopper", password: "USERPW", rootPassword: "ROOTPW", database: "shop" });
+  });
+
+  it("works on a cold call (no prior discover) and never leaks into discover()", async () => {
+    const src = source();
+    expect((await src.fetchDbCredentials("db-pg1"))?.password).toBe("PWD");
+    const fleetJson = JSON.stringify(await source().discover());
+    expect(fleetJson).not.toContain("PWD");
+  });
+
+  it("is undefined for an unknown ref, an app ref, or a DB with no password (restricted key)", async () => {
+    const src = source();
+    await src.discover();
+    expect(await src.fetchDbCredentials("nope")).toBeUndefined();
+    expect(await src.fetchDbCredentials("web-a1b2c3")).toBeUndefined(); // an application, not a database
+    const noPw = source({ "/postgres.one?postgresId=pg-1": { postgresId: "pg-1", appName: "db-pg1", name: "orders", databaseUser: "u", databaseName: "orders", databasePassword: null, dockerImage: "postgres:16" } });
+    await noPw.discover();
+    expect(await noPw.fetchDbCredentials("db-pg1")).toBeUndefined();
+  });
+
+  it("PROPAGATES a read failure (so the executor fails the task + retries, never mints a wrong fresh password)", async () => {
+    const client = makeClient();
+    const src = new DokploySource(client as unknown as DokployClient);
+    await src.discover();
+    client.get.mockRejectedValueOnce(new Error("403"));
+    await expect(src.fetchDbCredentials("db-pg1")).rejects.toThrow(/403/);
+  });
+});
