@@ -7,16 +7,17 @@ import { MigratorService } from "../migrator/migrator.service";
 import { ApplicationsService } from "../applications/applications.service";
 import { DatabasesService } from "../databases/databases.service";
 import { CryptoService } from "../crypto/crypto.service";
+import { GitSourcesService } from "../git-sources/git-sources.service";
 import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
-import { foreignAppToCreateInput, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
-import type { ForeignApp, ForeignDb } from "./foreign-fleet";
+import type { ForeignApp, ForeignDb, ForeignGitProvider } from "./foreign-fleet";
 import { createHash } from "node:crypto";
 import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget } from "./env-rewrite";
 import { tokenizeDockerOptions } from "../deploy/deploy-script";
@@ -58,6 +59,7 @@ export class ImportExecutorService {
     private readonly dbs: DatabasesService,
     private readonly migrationTokens: MigrationTokenService,
     private readonly crypto: CryptoService,
+    private readonly gitSources: GitSourcesService,
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
@@ -114,7 +116,16 @@ export class ImportExecutorService {
       await this.access.requirePermission(userId, server.teamId, "apps:config");
       await this.assertNoInflight(input.targetServerId);
 
-      const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, { sessionId: input.sessionId, plan });
+      // Carry each discovered GitHub App into a Tugra GitSource on the TARGET team (credentials flow
+      // source → memory → GitSourcesService, encrypted at rest; never a task/plan/log). Done BEFORE the op row so
+      // any skipped-provider warning is persisted with it; per-provider failures degrade, never abort the import.
+      const { gitSourceByRef, warnings: providerWarnings } = await this.carryGitProviders(userId, server.teamId, source, fleet.gitProviders ?? []);
+
+      const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, {
+        sessionId: input.sessionId,
+        plan,
+        ...(providerWarnings.length ? { warnings: providerWarnings } : {}),
+      });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
       const already = await this.alreadyImported(input.targetServerId, plan.items.map((i) => i.itemRef), op.id);
@@ -154,7 +165,7 @@ export class ImportExecutorService {
             result: { name: item.name },
           },
         });
-        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, input.environmentId));
+        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, input.environmentId, gitSourceByRef));
         else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, db, userId, input.targetServerId, input.environmentId));
       }
       await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
@@ -167,6 +178,51 @@ export class ImportExecutorService {
       await source.close();
       throw e;
     }
+  }
+
+  /** Upsert each discovered GitHub App into a Tugra GitSource on `teamId`, returning providerRef → gitSourceId.
+   *  Idempotent (keyed by (teamId, appId) in GitSourcesService), so a retry reuses the rows. A provider with no
+   *  resolvable private key / appId, or whose upsert fails (e.g. the caller lacks `integrations` on the team),
+   *  is SKIPPED with a warning — its apps fall back to the unlinked path. Warnings are FIXED strings built from
+   *  the provider ref only: never an error message (a Prisma/validation error can echo the submitted data) and
+   *  never a credential. */
+  private async carryGitProviders(
+    userId: string,
+    teamId: string,
+    source: ImportSource,
+    providers: ForeignGitProvider[],
+  ): Promise<{ gitSourceByRef: Map<string, string>; warnings: string[] }> {
+    const gitSourceByRef = new Map<string, string>();
+    const warnings: string[] = [];
+    for (const p of providers) {
+      const label = `git provider ${p.ref.slice(0, 64)}`;
+      try {
+        const { values } = await source.fetchSecrets(`gitProvider:${p.ref}`);
+        if (!values.privateKey) {
+          warnings.push(`${label}: no private key could be read from the source — its apps are left unlinked`);
+          continue;
+        }
+        if (!p.appId) {
+          warnings.push(`${label}: the GitHub App id is unknown — its apps are left unlinked`);
+          continue;
+        }
+        const id = await this.gitSources.upsertForImport(userId, teamId, {
+          name: p.appName || p.appSlug || `GitHub App ${p.appId}`,
+          appId: p.appId,
+          privateKey: values.privateKey,
+          installationId: p.installationId || undefined,
+          appSlug: p.appSlug || undefined,
+          htmlUrl: p.htmlUrl || undefined,
+          clientId: values.clientId || undefined,
+          clientSecret: values.clientSecret || undefined,
+          webhookSecret: values.webhookSecret || undefined,
+        });
+        gitSourceByRef.set(p.ref, id);
+      } catch {
+        warnings.push(`${label}: could not be carried into a Tugra git source — its apps are left unlinked`);
+      }
+    }
+    return { gitSourceByRef, warnings };
   }
 
   /** Source refs already imported onto `serverId` by a PRIOR op whose created app/database still exists →
@@ -247,11 +303,11 @@ export class ImportExecutorService {
     }
   }
 
-  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string): Promise<void> {
+  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map()): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
       const { values, unresolved } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
-      const gitSourceId = await this.resolveGitSourceId(targetServerId, app);
+      const gitSourceId = await this.resolveGitSourceId(targetServerId, app, gitSourceByRef);
       const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId });
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
@@ -276,6 +332,9 @@ export class ImportExecutorService {
           }
         }
       }
+      // Post-create config the create schema cannot carry (build target, watch paths, auto-deploy, limits, exec-form
+      // command, replicas). Same best-effort contract as setVolumes: a setter failure NEVER reaches the outer catch.
+      const postCreate = await this.applyPostCreateConfig(userId, created.id, app, targetServerId);
       // Surface a declare FAILURE or skipped mounts on the task itself (the view renders `output` as the task
       // message) — otherwise a silently-empty app contradicts the plan's "a volume is declared" promise. A clean
       // declare (or a no-volume app) leaves `output` unset, so those rows stay byte-identical to before.
@@ -283,6 +342,10 @@ export class ImportExecutorService {
         volumes && (volumes.error || volumes.skipped > 0)
           ? `volumes: ${volumes.declared} declared${volumes.skipped ? `, ${volumes.skipped} skipped (${[...new Set(mapped.skipped.map((s) => s.reason))].sort().join(", ")})` : ""}${volumes.error ? `; declare FAILED: ${volumes.error}` : ""}`
           : undefined;
+      const cfgNote = postCreate.unmapped.length
+        ? `config not carried: ${postCreate.unmapped.map((u) => u.field).join(", ")}`
+        : undefined;
+      const note = [volNote, cfgNote].filter(Boolean).join("; ") || undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
@@ -290,8 +353,8 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(volumes ? { volumes } : {}) },
-          ...(volNote ? { output: volNote } : {}),
+          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}) },
+          ...(note ? { output: note } : {}),
           finishedAt: new Date(),
         },
       });
@@ -305,19 +368,66 @@ export class ImportExecutorService {
    *  GitSource (an unambiguous, safe pick); with zero or several it stays unlinked — the plan's
    *  `app.git.private` warning tells the user to connect/pick one, and create() would reject a cross-team id
    *  anyway. Best-effort: never throws (a lookup failure just means no auto-link). */
-  private async resolveGitSourceId(targetServerId: string, app: ForeignApp): Promise<string | undefined> {
+  private async resolveGitSourceId(targetServerId: string, app: ForeignApp, gitSourceByRef: ReadonlyMap<string, string> = new Map()): Promise<string | undefined> {
     if (app.git?.provider !== "github") return undefined;
     try {
       const server = await this.prisma.server.findUnique({ where: { id: targetServerId }, select: { teamId: true } });
       if (!server) return undefined;
-      // Only INSTALLED sources are usable: linking one whose GitHub App was never installed would make the
-      // first deploy throw at token mint ("git source is not installed yet") instead of cloning — worse than
-      // leaving a public repo unlinked. So an un-installed source does not count toward the exactly-one rule.
+      // Preferred: the exact GitHub App this app cloned through at the source, carried into a Tugra GitSource by
+      // carryGitProviders. Re-verified on the TARGET team + installed (an un-installed source would fail at token
+      // mint on the first deploy); otherwise fall through to the conservative exactly-one heuristic.
+      if (app.gitProviderRef) {
+        // This app cloned through a SPECIFIC GitHub App at the source. Link only to that exact carried source
+        // (re-verified on the target team + installed). If it is absent or un-installed, stay UNLINKED — never
+        // fall through to the heuristic below, which could link it to an UNRELATED App that cannot see the repo.
+        const carried = gitSourceByRef.get(app.gitProviderRef);
+        if (!carried) return undefined;
+        const row = await this.prisma.gitSource.findFirst({ where: { id: carried, teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
+        return row ? row.id : undefined;
+      }
+      // No specific provider ref: the conservative exactly-one heuristic. Only INSTALLED sources are usable —
+      // linking one whose GitHub App was never installed would make the first deploy throw at token mint
+      // ("git source is not installed yet") instead of cloning, worse than leaving a public repo unlinked.
       const sources = await this.prisma.gitSource.findMany({ where: { teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
       return sources.length === 1 ? sources[0].id : undefined;
     } catch {
       return undefined;
     }
+  }
+
+  /** Apply {@link foreignAppToPostCreateConfig} through the ApplicationsService setters. Best-effort and idempotent
+   *  (every setter is a whole-value replace): each failure is recorded and NEVER thrown. The returned summary is
+   *  field NAMES + fixed reasons only — never values (an exec-form command can embed credentials). */
+  private async applyPostCreateConfig(
+    userId: string,
+    appId: string,
+    app: ForeignApp,
+    targetServerId: string,
+  ): Promise<{ applied: string[]; unmapped: Array<{ field: string; reason: string }> }> {
+    const applied: string[] = [];
+    const cfg = foreignAppToPostCreateConfig(app);
+    const unmapped = [...cfg.unmapped];
+    const run = async (field: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        applied.push(field);
+      } catch {
+        unmapped.push({ field, reason: "Tugra rejected the setting — set it manually" });
+      }
+    };
+    if (cfg.build) await run("build", () => this.apps.setBuild(userId, appId, cfg.build!));
+    if (cfg.watchPaths) await run("watchPaths", () => this.apps.setWatchPaths(userId, appId, cfg.watchPaths!));
+    if (cfg.autoDeploy !== undefined) await run("autoDeploy", () => this.apps.setAutoDeploy(userId, appId, cfg.autoDeploy!));
+    if (cfg.limits) await run("limits", () => this.apps.setLimits(userId, appId, cfg.limits!));
+    if (cfg.containerCommand) await run("containerCommand", () => this.apps.setContainerCommand(userId, appId, cfg.containerCommand!));
+    if (cfg.replicas !== undefined) {
+      // Replicas map to setClusterConfig, which CONVERTS the app into a swarm service (re-homes its domain, pins
+      // a stateful app to the cluster manager instead of the chosen target server, and needs apps:deploy + a
+      // registry) — far too surprising to apply silently during an import. Carry it as unmapped; the planner
+      // surfaces replicas as an explicit choice (next slice).
+      unmapped.push({ field: "replicas", reason: "replicas convert the app to a swarm service — set the replica count explicitly in Tugra after import" });
+    }
+    return { applied, unmapped };
   }
 
   /** Provision an empty Tugra database for a discovered source DB (deploy:false — the record is created,

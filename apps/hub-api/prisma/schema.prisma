@@ -730,6 +730,7 @@ model GitSource {
   applications     Application[]
   createdAt        DateTime      @default(now())
 
+  @@unique([teamId, appId])
   @@index([teamId])
 }
 

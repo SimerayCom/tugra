@@ -119,6 +119,7 @@ function harness(opts: {
     dbs as never,
     {} as never,
     crypto as never,
+    {} as never, // gitSources (unused on this path)
   );
   return { svc, prisma, access, apps, dbs, audit, crypto, envById };
 }
