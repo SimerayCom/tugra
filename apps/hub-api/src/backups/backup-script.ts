@@ -433,3 +433,24 @@ export function scrubRestoreOutput(output: string): string {
     })
     .join("\n");
 }
+
+/**
+ * Scrub a BACKUP run's output before it is persisted (Backup/VolumeBackup.errorTail) or put on a
+ * notification. Builds on scrubRestoreOutput (row data) and additionally strips credentials: every
+ * literal secret the run was given (DB password, S3 access/secret key, encryption key — redacted BEFORE the
+ * 2KB tail cut so a secret straddling the boundary can't survive), connection-URI userinfo
+ * (`scheme://user:pass@host`) and `PASSWORD=…`/`SECRET=…`/`TOKEN=…`-style assignments (mc/mysql/pg echo these).
+ */
+export function scrubRunOutput(output: string, secrets: ReadonlyArray<string | null | undefined> = []): string {
+  let out = output ?? "";
+  for (const sec of secrets) {
+    if (sec && sec.length >= 4) out = out.split(sec).join("<redacted>");
+  }
+  out = out
+    .replace(/(:\/\/)[^\s/]*@/g, "$1<redacted>@")
+    .replace(
+      /\b(PGPASSWORD|MYSQL_PWD|MC_HOST_\w+|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|password|passwd|secret|token)(\s*[=:]\s*)\S+/gi,
+      "$1$2<redacted>",
+    );
+  return scrubRestoreOutput(out);
+}

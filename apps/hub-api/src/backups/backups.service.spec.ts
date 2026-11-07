@@ -1,6 +1,7 @@
 import { BadGatewayException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { BackupsService } from "./backups.service";
 import { BackupRunnerService } from "./backup-runner.service";
+import type { BackupAlertsService } from "./backup-alerts.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -55,6 +56,7 @@ function make(
     runner as BackupRunnerService,
     scheduler as BackupSchedulerService,
     notifications as NotificationsService,
+    { onScheduleChanged: jest.fn().mockResolvedValue(undefined) } as unknown as BackupAlertsService,
   );
 }
 
@@ -381,5 +383,47 @@ describe("BackupsService.exportUrl", () => {
     const t = setupExport(S3_DEST, { exitCode: 1, output: "mc: <ERROR> share failed" });
     await expect(t.svc.exportUrl("u1", "db1", "bk1", 24)).rejects.toBeInstanceOf(BadGatewayException);
     expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("http");
+  });
+});
+
+describe("BackupsService.list — run outcome, errorTail is WRITER-ONLY", () => {
+  const failed = {
+    id: "b1", status: "FAILED", filename: "f.sql", sizeBytes: null, destinationId: null,
+    createdBy: "u1", createdAt: new Date(), completedAt: new Date(),
+    exitCode: 3, durationMs: 1234, errorTail: "pg_dump: error: scrubbed reason",
+  };
+  const mk = (perms: string[] | null) => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(db) },
+      backup: { findMany: jest.fn().mockResolvedValue([failed]) },
+      backupDestination: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue("VIEWER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(perms ? new Set(perms) : null),
+    } as unknown as TeamAccessService;
+    return make(prisma, access);
+  };
+
+  it("a writer (backups permission) sees errorTail, exitCode and durationMs", async () => {
+    const [v] = await mk(["backups"]).list("u1", "db1");
+    expect(v.errorTail).toBe("pg_dump: error: scrubbed reason");
+    expect(v.exitCode).toBe(3);
+    expect(v.durationMs).toBe(1234);
+    expect(v.destinationId).toBeNull();
+  });
+
+  it("a read-only member gets errorTail=null but still sees exitCode/durationMs", async () => {
+    const [v] = await mk([]).list("u1", "db1");
+    expect(v.errorTail).toBeNull();
+    expect(v.exitCode).toBe(3);
+    expect(v.durationMs).toBe(1234);
+    expect(JSON.stringify(v)).not.toContain("scrubbed reason");
+  });
+
+  it("an unresolvable membership is treated as read-only", async () => {
+    const [v] = await mk(null).list("u1", "db1");
+    expect(v.errorTail).toBeNull();
   });
 });

@@ -1257,6 +1257,9 @@ export interface VolumeBackup {
   createdBy: string;
   createdAt: string;
   completedAt: string | null;
+  exitCode: number | null;
+  durationMs: number | null; // run start → completedAt
+  errorTail: string | null; // scrubbed failure output; null for read-only members (writer-only server-side)
 }
 
 export type DeploymentStatus = "QUEUED" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
@@ -1440,10 +1443,14 @@ export interface Backup {
   status: BackupStatus;
   filename: string;
   sizeBytes: string | null;
+  destinationId: string | null; // which destination stored it (null = local disk)
   destinationType: string | null; // "S3" | "LOCAL" | null — only an S3 backup can export a migration URL
   createdBy: string;
   createdAt: string;
   completedAt: string | null;
+  exitCode: number | null;
+  durationMs: number | null; // run start → completedAt
+  errorTail: string | null; // scrubbed failure output; null for read-only members (writer-only server-side)
 }
 
 export type RestoreKind = "RESTORE" | "RESTORE_TO" | "IMPORT_URL";

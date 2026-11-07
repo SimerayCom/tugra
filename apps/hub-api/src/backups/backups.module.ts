@@ -7,11 +7,12 @@ import { FleetBackupsController } from "./fleet-backups.controller";
 import { BackupsService } from "./backups.service";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
+import { BackupAlertsService } from "./backup-alerts.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule, NotificationsModule],
   controllers: [BackupsController, FleetBackupsController],
-  providers: [BackupsService, BackupRunnerService, BackupSchedulerService],
-  exports: [BackupsService, BackupRunnerService],
+  providers: [BackupsService, BackupRunnerService, BackupSchedulerService, BackupAlertsService],
+  exports: [BackupsService, BackupRunnerService, BackupAlertsService],
 })
 export class BackupsModule {}

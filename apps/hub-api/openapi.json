@@ -5082,6 +5082,8 @@
                         "token_expiring",
                         "backup_failed",
                         "backup_success",
+                        "backup_missing",
+                        "backup_recovered",
                         "backup_restore_failed",
                         "volume_backup_success",
                         "volume_backup_failed",
@@ -5279,6 +5281,8 @@
                         "token_expiring",
                         "backup_failed",
                         "backup_success",
+                        "backup_missing",
+                        "backup_recovered",
                         "backup_restore_failed",
                         "volume_backup_success",
                         "volume_backup_failed",
@@ -32220,6 +32224,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "destinationId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "destinationType": {
                         "type": "string",
                         "nullable": true
@@ -32235,6 +32243,18 @@
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
+                      },
+                      "exitCode": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "durationMs": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "errorTail": {
+                        "type": "string",
+                        "nullable": true
                       }
                     },
                     "required": [
@@ -32242,10 +32262,14 @@
                       "status",
                       "filename",
                       "sizeBytes",
+                      "destinationId",
                       "destinationType",
                       "createdBy",
                       "createdAt",
-                      "completedAt"
+                      "completedAt",
+                      "exitCode",
+                      "durationMs",
+                      "errorTail"
                     ],
                     "additionalProperties": false
                   }
@@ -32346,6 +32370,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "destinationId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "destinationType": {
                       "type": "string",
                       "nullable": true
@@ -32361,6 +32389,18 @@
                       "type": "string",
                       "format": "date-time",
                       "nullable": true
+                    },
+                    "exitCode": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "durationMs": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "errorTail": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -32368,10 +32408,14 @@
                     "status",
                     "filename",
                     "sizeBytes",
+                    "destinationId",
                     "destinationType",
                     "createdBy",
                     "createdAt",
-                    "completedAt"
+                    "completedAt",
+                    "exitCode",
+                    "durationMs",
+                    "errorTail"
                   ],
                   "additionalProperties": false
                 }
@@ -33800,6 +33844,18 @@
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
+                      },
+                      "exitCode": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "durationMs": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "errorTail": {
+                        "type": "string",
+                        "nullable": true
                       }
                     },
                     "required": [
@@ -33812,7 +33868,10 @@
                       "destinationType",
                       "createdBy",
                       "createdAt",
-                      "completedAt"
+                      "completedAt",
+                      "exitCode",
+                      "durationMs",
+                      "errorTail"
                     ],
                     "additionalProperties": false
                   }
@@ -33937,6 +33996,18 @@
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
+                      },
+                      "exitCode": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "durationMs": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "errorTail": {
+                        "type": "string",
+                        "nullable": true
                       }
                     },
                     "required": [
@@ -33949,7 +34020,10 @@
                       "destinationType",
                       "createdBy",
                       "createdAt",
-                      "completedAt"
+                      "completedAt",
+                      "exitCode",
+                      "durationMs",
+                      "errorTail"
                     ],
                     "additionalProperties": false
                   }

@@ -5,8 +5,12 @@ import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
+import { BackupAlertsService } from "../backups/backup-alerts.service";
 
 const QUEUE = "volume-backups";
+/** Repeatable job that runs the missing-backup watchdog (not a per-app backup). */
+const WATCHDOG_JOB = "watchdog";
+const WATCHDOG_EVERY_MS = 3_600_000; // hourly
 
 /** Mirrors BackupSchedulerService: BullMQ repeatable jobs, disabled in tests. */
 @Injectable()
@@ -19,6 +23,7 @@ export class VolumeBackupSchedulerService implements OnApplicationBootstrap, OnM
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly runner: VolumeBackupRunnerService,
+    private readonly alerts: BackupAlertsService,
   ) {}
 
   private connection() {
@@ -31,11 +36,18 @@ export class VolumeBackupSchedulerService implements OnApplicationBootstrap, OnM
     const connection = this.connection();
     this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async (job) => {
+      if (job.name === WATCHDOG_JOB) {
+        await this.alerts.checkApps();
+        return;
+      }
       const appId = job.data.appId as string;
       // Orphan self-heal: the app was deleted → stop this repeatable instead of failing every tick.
       if (!(await reapIfGone(appId, () => this.prisma.application.findUnique({ where: { id: appId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
       await this.runner.runBackup(appId);
     }, { connection });
+
+    // Missing-backup watchdog (see BackupSchedulerService): idempotent re-add of the hourly check.
+    await this.queue.add(WATCHDOG_JOB, {}, { repeat: { every: WATCHDOG_EVERY_MS }, jobId: WATCHDOG_JOB });
 
     const apps = await this.prisma.application.findMany({
       where: { volumeBackupEnabled: true, volumeBackupIntervalHours: { not: null } },

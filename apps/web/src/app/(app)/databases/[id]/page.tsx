@@ -8,7 +8,8 @@ import { api, databaseIconUrl } from "../../../../lib/api";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { useDismiss } from "../../../../lib/use-dismiss";
 import { dbColor, engineLabel, isDbTransitional } from "../../../../lib/databases";
-import { backupColor, formatSize, restoreColor } from "../../../../lib/backups";
+import { backupColor, formatSize, lastErrorLine, restoreColor } from "../../../../lib/backups";
+import { BackupRunModal } from "../../../../components/backup-run-modal";
 import { ErrorState } from "../../../../components/error-state";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
@@ -115,6 +116,9 @@ export default function DatabaseDetailPage() {
     onError: () => toast(t("databases.exportFailed"), "error"),
   });
   const { data: allDatabases = [] } = useQuery({ queryKey: ["databases"], queryFn: () => api.listDatabases() });
+  // Run-detail modal: keep only the id so the open modal tracks the polled row (e.g. RUNNING → FAILED).
+  const [runDetailId, setRunDetailId] = useState<string | null>(null);
+  const runDetail = backups.find((b) => b.id === runDetailId) ?? null;
   const [restoreToBackup, setRestoreToBackup] = useState<string | null>(null);
   const [restoreTarget, setRestoreTarget] = useState("");
   const restoreToMut = useMutation({
@@ -238,6 +242,14 @@ export default function DatabaseDetailPage() {
           pending={clone.isPending}
           onClose={() => setCloneOpen(false)}
           onSave={(name) => clone.mutate(name)}
+        />
+      )}
+      {runDetail && (
+        <BackupRunModal
+          run={runDetail}
+          destinationName={destinations.find((d) => d.id === runDetail.destinationId)?.name ?? null}
+          exportUrl={(bid) => api.exportDatabaseBackupUrl(id, bid)}
+          onClose={() => setRunDetailId(null)}
         />
       )}
       {restoreToBackup && (
@@ -406,6 +418,7 @@ export default function DatabaseDetailPage() {
                   <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{b.filename}</span>
                   <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{formatSize(b.sizeBytes)}</span>
                   <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
+                  <button onClick={() => setRunDetailId(b.id)} style={linkBtn}>{t("databases.runDetails")}</button>
                   {b.destinationType === "S3" && b.status === "SUCCESS" && (
                     <button onClick={() => exportUrl.mutate(b.id)} disabled={exportUrl.isPending} title={t("databases.exportHint")} style={{ ...linkBtn, color: "var(--c-a)" }}>
                       {exportUrl.isPending && exportUrl.variables === b.id ? "…" : t("databases.exportUrl")}
@@ -422,6 +435,12 @@ export default function DatabaseDetailPage() {
                   )}
                   <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)", display: "inline-flex", alignItems: "center" }}><Trash2 size={14} /></button>
                 </div>
+                {b.status === "FAILED" && (
+                  // A failed row must say WHY (not look empty): the last line of the scrubbed output, full text in the modal.
+                  <div className="mono" title={b.errorTail ?? undefined} style={{ padding: "0 12px", fontSize: 11, color: "var(--c-r)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {lastErrorLine(b.errorTail) ?? t("databases.runNoReason")}
+                  </div>
+                )}
                 {exported?.id === b.id && (
                   <div style={{ padding: "0 4px 4px" }}>
                     <CopyRow label={t("databases.exportUrl")} value={exported.url} copy={t("databases.copy")} secret />

@@ -10,8 +10,12 @@ import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { reapIfGone } from "../common/orphan-reap";
 import { PrismaService } from "../prisma/prisma.service";
 import { BackupRunnerService } from "./backup-runner.service";
+import { BackupAlertsService } from "./backup-alerts.service";
 
 const QUEUE = "backups";
+/** Repeatable job that runs the missing-backup watchdog (not a per-database backup). */
+const WATCHDOG_JOB = "watchdog";
+const WATCHDOG_EVERY_MS = 3_600_000; // hourly
 
 /** Mirrors MonitorSchedulerService: BullMQ repeatable jobs, disabled in tests. */
 @Injectable()
@@ -26,6 +30,7 @@ export class BackupSchedulerService
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly runner: BackupRunnerService,
+    private readonly alerts: BackupAlertsService,
   ) {}
 
   private connection() {
@@ -47,6 +52,10 @@ export class BackupSchedulerService
     this.worker = new Worker(
       QUEUE,
       async (job) => {
+        if (job.name === WATCHDOG_JOB) {
+          await this.alerts.checkDatabases();
+          return;
+        }
         const databaseId = job.data.databaseId as string;
         // Orphan self-heal: the database was deleted → stop this repeatable instead of failing every tick.
         if (!(await reapIfGone(databaseId, () => this.prisma.database.findUnique({ where: { id: databaseId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
@@ -54,6 +63,10 @@ export class BackupSchedulerService
       },
       { connection },
     );
+
+    // Missing-backup watchdog: a schedule that silently stops producing runs fires nothing by itself, so
+    // check periodically that every backup-enabled database has a recent SUCCESS. Idempotent re-add.
+    await this.queue.add(WATCHDOG_JOB, {}, { repeat: { every: WATCHDOG_EVERY_MS }, jobId: WATCHDOG_JOB });
 
     const dbs = await this.prisma.database.findMany({
       where: { backupEnabled: true, OR: [{ backupIntervalHours: { not: null } }, { backupCron: { not: null } }] },

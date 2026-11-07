@@ -6,6 +6,9 @@ import type { AuditService } from "../audit/audit.service";
 import type { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import type { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 import type { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
+import type { BackupAlertsService } from "../backups/backup-alerts.service";
+
+const fakeAlerts = { onScheduleChanged: jest.fn().mockResolvedValue(undefined) } as unknown as BackupAlertsService;
 
 function make(opts: { app?: Record<string, unknown> | null; requirePermThrows?: boolean } = {}) {
   const app =
@@ -30,7 +33,7 @@ function make(opts: { app?: Record<string, unknown> | null; requirePermThrows?: 
   const runner = {} as unknown as VolumeBackupRunnerService;
   const scheduler = {} as unknown as VolumeBackupSchedulerService;
 
-  const service = new VolumeBackupsService(prisma, access, audit, agentWs, runner, scheduler);
+  const service = new VolumeBackupsService(prisma, access, audit, agentWs, runner, scheduler, fakeAlerts);
   return { service, prisma, access, audit, agentWs };
 }
 
@@ -102,7 +105,7 @@ describe("VolumeBackupsService.exportUrl", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER"), requireResourceAccess: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = { sendCommand: jest.fn().mockResolvedValue(sendResult) } as unknown as AgentWsServer;
     const runner = { destinationSpecById: jest.fn().mockResolvedValue(dest) } as unknown as VolumeBackupRunnerService;
-    const service = new VolumeBackupsService(prisma, access, audit, agentWs, runner, {} as unknown as VolumeBackupSchedulerService);
+    const service = new VolumeBackupsService(prisma, access, audit, agentWs, runner, {} as unknown as VolumeBackupSchedulerService, fakeAlerts);
     return { service, agentWs, audit };
   }
 
@@ -134,5 +137,35 @@ describe("VolumeBackupsService.exportUrl", () => {
     await t.service.exportUrl("u1", "a1", "vb1", 24);
     expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_export" }));
     expect(JSON.stringify((t.audit.log as jest.Mock).mock.calls)).not.toContain("X-Amz");
+  });
+});
+
+describe("VolumeBackupsService.list — run outcome, errorTail is WRITER-ONLY", () => {
+  const row = {
+    id: "v1", volumeName: "data", status: "FAILED", filename: "f.tar", sizeBytes: null, destinationId: null,
+    createdBy: "u1", createdAt: new Date(), completedAt: new Date(),
+    exitCode: 2, durationMs: 900, errorTail: "tar: scrubbed reason",
+  };
+  const mk = (perms: string[] | null) => {
+    const { service, prisma, access } = make();
+    (prisma as unknown as { volumeBackup: unknown }).volumeBackup = { findMany: jest.fn().mockResolvedValue([row]) };
+    (prisma as unknown as { backupDestination: unknown }).backupDestination = { findMany: jest.fn().mockResolvedValue([]) };
+    (access as unknown as { membershipPermissions: jest.Mock }).membershipPermissions = jest.fn().mockResolvedValue(perms ? new Set(perms) : null);
+    return service;
+  };
+
+  it("a writer sees errorTail + exitCode + durationMs", async () => {
+    const [v] = await mk(["backups"]).list("u1", "a1");
+    expect(v.errorTail).toBe("tar: scrubbed reason");
+    expect(v.exitCode).toBe(2);
+    expect(v.durationMs).toBe(900);
+  });
+
+  it("a read-only member (or unknown membership) gets errorTail=null", async () => {
+    const [v] = await mk([]).list("u1", "a1");
+    expect(v.errorTail).toBeNull();
+    expect(v.exitCode).toBe(2);
+    expect(JSON.stringify(v)).not.toContain("scrubbed reason");
+    expect((await mk(null).list("u1", "a1"))[0].errorTail).toBeNull();
   });
 });

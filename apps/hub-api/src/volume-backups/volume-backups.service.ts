@@ -10,6 +10,7 @@ import { appVolumeName } from "../deploy/deploy-script";
 import { buildVolumeDeleteScript, buildVolumeExportUrlScript, buildVolumeImportScript, buildVolumeRestoreScript, parseShareUrl } from "./volume-backup-script";
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 import { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
+import { BackupAlertsService } from "../backups/backup-alerts.service";
 import type { VolumeBackupConfigInput, VolumeImportFromUrlInput } from "./dto";
 
 export const VolumeBackupViewSchema = z.object({
@@ -23,6 +24,11 @@ export const VolumeBackupViewSchema = z.object({
   createdBy: z.string(),
   createdAt: z.date(),
   completedAt: z.date().nullable(),
+  // Run outcome. exitCode/durationMs are non-sensitive; errorTail (scrubbed command output) is WRITER-ONLY —
+  // null for read-only members, exactly like Restore.errorTail.
+  exitCode: z.number().nullable(),
+  durationMs: z.number().nullable(),
+  errorTail: z.string().nullable(),
 });
 export type VolumeBackupView = z.infer<typeof VolumeBackupViewSchema>;
 
@@ -35,33 +41,36 @@ export class VolumeBackupsService {
     private readonly agentWs: AgentWsServer,
     private readonly runner: VolumeBackupRunnerService,
     private readonly scheduler: VolumeBackupSchedulerService,
+    private readonly alerts: BackupAlertsService,
   ) {}
 
   async backupNow(userId: string, appId: string): Promise<VolumeBackupView[]> {
     await this.requireWrite(userId, appId);
     const rows = await this.runner.runBackup(appId, userId);
-    return this.toViews(rows);
+    return this.toViews(rows, true); // requireWrite above → the caller is a writer
   }
 
   async list(userId: string, appId: string): Promise<VolumeBackupView[]> {
-    await this.require(userId, appId);
+    const app = await this.require(userId, appId);
     const rows = await this.prisma.volumeBackup.findMany({
       where: { appId },
       orderBy: { createdAt: "desc" },
       take: 100,
     });
-    return this.toViews(rows);
+    // errorTail is command output → writers only (same gate as requireWrite).
+    const perms = await this.access.membershipPermissions(userId, app.teamId);
+    return this.toViews(rows, perms?.has("backups") ?? false);
   }
 
   /** Project rows to views, resolving each backup's destination TYPE (so the UI can offer export
    *  only for S3-stored backups) with a single batched lookup (no per-row query, no cred decrypt). */
-  private async toViews(rows: VolumeBackup[]): Promise<VolumeBackupView[]> {
+  private async toViews(rows: VolumeBackup[], canWrite: boolean): Promise<VolumeBackupView[]> {
     const ids = [...new Set(rows.map((r) => r.destinationId).filter((x): x is string => !!x))];
     const dests = ids.length
       ? await this.prisma.backupDestination.findMany({ where: { id: { in: ids } }, select: { id: true, type: true } })
       : [];
     const typeById = new Map(dests.map((d) => [d.id, d.type]));
-    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null));
+    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null, canWrite));
   }
 
   async restore(userId: string, appId: string, backupId: string): Promise<void> {
@@ -185,11 +194,13 @@ export class VolumeBackupsService {
     } else {
       await this.scheduler.unschedule(appId);
     }
+    // Re-arm the missing-backup watchdog from now + clear stale alerts (see BackupAlertsService.onScheduleChanged).
+    await this.alerts.onScheduleChanged("volume", appId);
     await this.audit.log({ actor: userId, action: "app.volume_backup.schedule", target: appId });
     return app;
   }
 
-  private view(b: VolumeBackup, destinationType: string | null): VolumeBackupView {
+  private view(b: VolumeBackup, destinationType: string | null, canWrite: boolean): VolumeBackupView {
     return {
       id: b.id,
       volumeName: b.volumeName,
@@ -201,6 +212,9 @@ export class VolumeBackupsService {
       createdBy: b.createdBy,
       createdAt: b.createdAt,
       completedAt: b.completedAt,
+      exitCode: b.exitCode,
+      durationMs: b.durationMs,
+      errorTail: canWrite ? b.errorTail : null,
     };
   }
 

@@ -27,6 +27,8 @@
   "eventTokenExpiring": "API token expiring",
   "eventBackupFailed": "Backup failed",
   "eventBackupSuccess": "Backup succeeded",
+  "eventBackupMissing": "No recent backup (schedule stalled)",
+  "eventBackupRecovered": "Backups recovered",
   "eventBackupRestoreFailed": "Restore failed",
   "eventVolumeBackupSuccess": "Volume backup succeeded",
   "eventVolumeBackupFailed": "Volume backup failed",

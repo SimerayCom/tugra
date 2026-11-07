@@ -13,7 +13,22 @@
     "failed": { "title": "Backup failed — {db}", "summary": "A backup of {db} failed." },
     "succeeded": { "title": "Backup succeeded — {db}", "summary": "A backup of {db} completed." },
     "restoreFailed": { "title": "Restore failed — {db}", "summary": "A restore into {db} failed." },
+    "missing": {
+      "title": "No recent backup — {name}",
+      "summary": "{name} has had no successful backup in the last {hours} hours — its backup schedule may have stopped.",
+      "volumeTitle": "No recent volume backup — {name}",
+      "volumeSummary": "{name} has had no successful volume backup in the last {hours} hours — its backup schedule may have stopped."
+    },
+    "recovered": {
+      "title": "Backups recovered — {name}",
+      "volumeTitle": "Volume backups recovered — {name}",
+      "after_failed": "A backup of {name} succeeded again after a failure.",
+      "after_missing": "A backup of {name} succeeded again after a stretch with no successful backup."
+    },
     "field": {
+      "lastSuccess": "Last successful backup",
+      "never": "Never",
+      "window": "Alert window",
       "engine": "Engine",
       "destination": "Destination",
       "bucket": "Bucket",
@@ -21,7 +36,7 @@
       "error": "Error",
       "exitCode": "Exit code"
     },
-    "link": { "openDatabase": "Open database" }
+    "link": { "openDatabase": "Open database", "openApp": "Open app" }
   },
   "server": {
     "offline": { "title": "Server offline — {server}", "summary": "Server {server} stopped responding." },

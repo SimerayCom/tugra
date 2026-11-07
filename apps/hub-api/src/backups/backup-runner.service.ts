@@ -15,8 +15,9 @@ import {
   backupFilename,
   buildBackupScript,
   buildDeleteBackupScript,
-  scrubRestoreOutput,
+  scrubRunOutput,
 } from "./backup-script";
+import { BackupAlertsService } from "./backup-alerts.service";
 import { LOCAL_DEST, objectKey, type DestinationSpec } from "./destination";
 
 const BACKUP_TIMEOUT_MS = 300_000; // dumps can be slow
@@ -31,6 +32,7 @@ export class BackupRunnerService {
     private readonly crypto: CryptoService,
     private readonly agentWs: AgentWsServer,
     private readonly notifications: NotificationsService,
+    private readonly alerts: BackupAlertsService,
   ) {}
 
   toSpec(db: Database): DbSpec {
@@ -107,8 +109,18 @@ export class BackupRunnerService {
       },
     });
 
+    // Everything the run was handed that must never reach the persisted/notified output.
+    let dbPassword: string | undefined;
+    try {
+      dbPassword = this.toSpec(db).credentials.password;
+    } catch {
+      /* undecryptable creds → the dump below fails and is recorded; nothing to redact */
+    }
+    const secrets = [dbPassword, dest.s3?.accessKey, dest.s3?.secretKey, dest.encryption?.key];
+    const startedAt = Date.now();
     let succeeded = false;
     let errorText = "";
+    let exitCode: number | null = null;
     let sizeBytes: bigint | null = null;
     try {
       const r = await this.agentWs.sendCommand(
@@ -118,14 +130,19 @@ export class BackupRunnerService {
         BACKUP_TIMEOUT_MS,
       );
       succeeded = r.exitCode === 0;
+      exitCode = r.exitCode;
       if (!succeeded) errorText = r.output;
       sizeBytes = succeeded ? parseSize(r.output) : null;
+      const completedAt = new Date();
       await this.prisma.backup.update({
         where: { id: backup.id },
         data: {
           status: succeeded ? "SUCCESS" : "FAILED",
           sizeBytes,
-          completedAt: new Date(),
+          exitCode,
+          errorTail: succeeded ? null : scrubRunOutput(errorText, secrets),
+          durationMs: completedAt.getTime() - startedAt,
+          completedAt,
         },
       });
     } catch (e) {
@@ -134,9 +151,16 @@ export class BackupRunnerService {
       // a false backup_success for a FAILED row).
       succeeded = false;
       errorText = e instanceof Error ? e.message : String(e);
+      const completedAt = new Date();
       await this.prisma.backup.update({
         where: { id: backup.id },
-        data: { status: "FAILED", completedAt: new Date() },
+        data: {
+          status: "FAILED",
+          exitCode,
+          errorTail: scrubRunOutput(errorText, secrets),
+          durationMs: completedAt.getTime() - startedAt,
+          completedAt,
+        },
       });
     }
     await this.audit.log({ actor, action: "database.backup", target: db.id });
@@ -144,18 +168,22 @@ export class BackupRunnerService {
       // Don't let a silent backup failure go unnoticed (best-effort). Scrub the agent output the same
       // way restore does (pg/mysql can echo row data / connection detail); only bucket/region — never
       // secrets — reach the ctx.
-      await this.notifications
-        .fireForEvent(db.teamId, "backup_failed", {
-          dbId: db.id,
-          dbName: db.name,
-          engine: db.engine,
-          version: db.version,
-          destType: dest.type,
-          bucket: dest.type === "S3" && dest.s3 ? dest.s3.bucket : "",
-          region: dest.type === "S3" && dest.s3 ? dest.s3.region : "",
-          errorTail: scrubRestoreOutput(errorText),
-        })
-        .catch(() => undefined);
+      // Throttled: first failure, then at most daily while it keeps failing (recovery is announced on the
+      // next success). The persisted errorTail above is unaffected — every failed run is still recorded.
+      if (await this.alerts.shouldNotifyFailure("database", db.id)) {
+        await this.notifications
+          .fireForEvent(db.teamId, "backup_failed", {
+            dbId: db.id,
+            dbName: db.name,
+            engine: db.engine,
+            version: db.version,
+            destType: dest.type,
+            bucket: dest.type === "S3" && dest.s3 ? dest.s3.bucket : "",
+            region: dest.type === "S3" && dest.s3 ? dest.s3.region : "",
+            errorTail: scrubRunOutput(errorText, secrets),
+          })
+          .catch(() => undefined);
+      }
     } else {
       // sizeBytes is a Prisma BigInt — stringify before it reaches the notification queue's JSON payload
       // (JSON.stringify throws on a raw BigInt). No agent output in ctx on success (nothing to scrub).
@@ -170,6 +198,10 @@ export class BackupRunnerService {
           region: dest.type === "S3" && dest.s3 ? dest.s3.region : "",
           sizeBytes: sizeBytes != null ? sizeBytes.toString() : "",
         })
+        .catch(() => undefined);
+      // First success after a notified failure / missing-backup alert → one recovery notice.
+      await this.alerts
+        .recover("database", db.id, db.teamId, { dbId: db.id, dbName: db.name, engine: db.engine, version: db.version })
         .catch(() => undefined);
     }
     await this.prune(db);

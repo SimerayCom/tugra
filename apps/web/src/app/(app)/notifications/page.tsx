@@ -55,6 +55,8 @@ const EVENT_LABEL: Record<string, string> = {
   token_expiring: "eventTokenExpiring",
   backup_failed: "eventBackupFailed",
   backup_success: "eventBackupSuccess",
+  backup_missing: "eventBackupMissing",
+  backup_recovered: "eventBackupRecovered",
   backup_restore_failed: "eventBackupRestoreFailed",
   volume_backup_success: "eventVolumeBackupSuccess",
   volume_backup_failed: "eventVolumeBackupFailed",

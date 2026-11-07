@@ -7,6 +7,7 @@ import {
   buildImportScript,
   buildRestoreScript,
   scrubRestoreOutput,
+  scrubRunOutput,
 } from "./backup-script";
 import { LOCAL_DEST, type DestinationSpec } from "./destination";
 import { resolveImage, enginePort, type DbEngine, type DbSpec } from "../databases/database-script";
@@ -360,5 +361,32 @@ describe("backup-script", () => {
       expect(() => buildRestoreScript(spec("DRAGONFLY"), "t.rdb.gz", LOCAL_DEST)).not.toThrow();
       expect(() => buildRestoreScript(spec("CLICKHOUSE"), "t.zip.gz", LOCAL_DEST)).not.toThrow();
     });
+  });
+});
+
+describe("scrubRunOutput — credential-free run output (backup errorTail)", () => {
+  it("redacts every supplied secret literal, even one straddling the 2KB tail cut", () => {
+    const secret = "TopSecretValue123";
+    const out = "x".repeat(1990) + secret + "y".repeat(5);
+    const scrubbed = scrubRunOutput(out, [secret]);
+    expect(scrubbed).not.toContain(secret);
+    expect(scrubbed).not.toContain("TopSecret"); // not even a fragment left at the cut boundary
+    expect(scrubbed.length).toBeLessThanOrEqual(2000);
+  });
+
+  it("redacts URI userinfo and PASSWORD=/SECRET=/TOKEN= assignments", () => {
+    const s = scrubRunOutput("dial postgres://bob:p%40ss@db:5432/x\nPGPASSWORD=abc123\nMC_HOST_tugra=https://AK:SK@s3.example\nsecret: zzz");
+    expect(s).not.toMatch(/p%40ss|abc123|AK:SK|zzz/);
+    expect(s).toContain("postgres://<redacted>@db:5432/x");
+  });
+
+  it("still applies the row-data scrub (DETAIL / Key (…)=(…))", () => {
+    const s = scrubRunOutput("ERROR: dup\nDETAIL:  Key (email)=(a@b.c) already exists.");
+    expect(s).not.toContain("a@b.c");
+  });
+
+  it("ignores empty / very short secrets (no mangling) and tolerates no secrets", () => {
+    expect(scrubRunOutput("abc abc", ["", null, undefined, "ab"])).toBe("abc abc");
+    expect(scrubRunOutput("plain failure")).toBe("plain failure");
   });
 });

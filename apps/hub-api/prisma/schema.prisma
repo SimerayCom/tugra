@@ -931,6 +931,10 @@ model VolumeBackup {
   createdBy     String
   createdAt     DateTime     @default(now())
   completedAt   DateTime?
+  // Run outcome (mirrors Restore): a FAILED row records WHY. errorTail is scrubbed + writer-only exposure.
+  exitCode      Int?
+  errorTail     String?
+  durationMs    Int?
 
   @@index([appId])
 }
@@ -1423,6 +1427,10 @@ model Backup {
   createdBy   String
   createdAt   DateTime     @default(now())
   completedAt DateTime?
+  // Run outcome (mirrors Restore): a FAILED row records WHY. errorTail is scrubbed + writer-only exposure.
+  exitCode    Int?
+  errorTail   String?
+  durationMs  Int?
 
   @@index([databaseId])
 }

@@ -284,6 +284,7 @@ describe("renderEvent — typed per-event templates", () => {
   it("empty ctx never yields the string 'undefined' and drops empty fields", () => {
     for (const type of [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
+      "backup_missing", "backup_recovered",
       "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
@@ -309,10 +310,11 @@ describe("renderEvent — typed per-event templates", () => {
     // critical events are volume_backup_failed and scheduled_task_failed (real failed operations).
     const critical = new Set([
       "deploy_failed", "backup_failed", "backup_restore_failed", "server_offline", "monitor_down",
-      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded",
+      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded", "backup_missing",
     ]);
     const all = [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
+      "backup_missing", "backup_recovered",
       "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
@@ -363,5 +365,46 @@ describe("renderEvent — typed per-event templates", () => {
     expect(m.title).toBe("Container nearing its memory limit — shop · db");
     expect(fieldVal(m, "Memory")).toBe("96% of 512 MB");
     expect(linkUrl(m, "Open database")).toBe("https://web.test/databases/db1");
+  });
+});
+
+describe("renderEvent — backup health (backup_missing / backup_recovered)", () => {
+  it("backup_missing (database): failure + critical, last-success + window, db link", () => {
+    const m = render("backup_missing", {
+      kind: "database", dbId: "db1", dbName: "shop", engine: "POSTGRES", version: "16",
+      lastSuccessAt: "2026-11-04T10:00:00.000Z", windowHours: "48",
+    });
+    expect(m.level).toBe("failure");
+    expect(m.critical).toBe(true);
+    expect(m.title).toBe("No recent backup — shop");
+    expect(m.summary).toContain("48 hours");
+    expect(fieldVal(m, "Last successful backup")).toBe("2026-11-04 10:00 UTC");
+    expect(fieldVal(m, "Alert window")).toBe("48h");
+    expect(linkUrl(m, "Open database")).toBe("https://web.test/databases/db1");
+  });
+
+  it("backup_missing (volume): app wording + app link; never-succeeded shows 'Never'", () => {
+    const m = render("backup_missing", { kind: "volume", appId: "app1", appName: "blog", lastSuccessAt: "", windowHours: "24" });
+    expect(m.title).toBe("No recent volume backup — blog");
+    expect(fieldVal(m, "Last successful backup")).toBe("Never");
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+  });
+
+  it("backup_recovered: success + not critical; wording follows the reason", () => {
+    const failed = render("backup_recovered", { kind: "database", dbId: "db1", dbName: "shop", reason: "failed" });
+    expect(failed.level).toBe("success");
+    expect(failed.critical).toBe(false);
+    expect(failed.title).toBe("Backups recovered — shop");
+    expect(failed.summary).toContain("after a failure");
+    const missing = render("backup_recovered", { kind: "volume", appId: "app1", appName: "blog", reason: "missing" });
+    expect(missing.title).toBe("Volume backups recovered — blog");
+    expect(missing.summary).toContain("no successful backup");
+    expect(linkUrl(missing, "Open app")).toBe("https://web.test/apps/app1");
+  });
+
+  it("both are subscribable event ids", () => {
+    const { EVENT_TYPES } = jest.requireActual("@tugra/shared") as { EVENT_TYPES: readonly string[] };
+    expect(EVENT_TYPES).toContain("backup_missing");
+    expect(EVENT_TYPES).toContain("backup_recovered");
   });
 });

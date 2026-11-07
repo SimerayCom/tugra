@@ -19,6 +19,7 @@ import { buildBackupExportUrlScript, buildDeleteBackupScript, buildImportScript,
 import { parseShareUrl } from "./destination";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
+import { BackupAlertsService } from "./backup-alerts.service";
 import { planTargets } from "../bulk/bulk.service";
 import type { BackupConfigInput, ImportFromUrlInput } from "./dto";
 
@@ -29,10 +30,16 @@ export const BackupViewSchema = z.object({
   status: z.string(),
   filename: z.string(),
   sizeBytes: z.string().nullable(), // BigInt serialized
+  destinationId: z.string().nullable(), // which destination stored it (null = local disk)
   destinationType: z.string().nullable(), // "S3" | "LOCAL" | null — only an S3 backup can export a migration URL
   createdBy: z.string(),
   createdAt: z.date(),
   completedAt: z.date().nullable(),
+  // Run outcome. exitCode/durationMs are non-sensitive; errorTail (scrubbed command output) is WRITER-ONLY —
+  // null for read-only members, exactly like Restore.errorTail.
+  exitCode: z.number().nullable(),
+  durationMs: z.number().nullable(),
+  errorTail: z.string().nullable(),
 });
 export type BackupView = z.infer<typeof BackupViewSchema>;
 
@@ -58,6 +65,7 @@ export class BackupsService {
     private readonly runner: BackupRunnerService,
     private readonly scheduler: BackupSchedulerService,
     private readonly notifications: NotificationsService,
+    private readonly alerts: BackupAlertsService,
   ) {}
 
   /**
@@ -153,17 +161,19 @@ export class BackupsService {
       throw new BadRequestException(`backup not supported for ${db.engine} yet`);
     }
     const backup = await this.runner.runBackup(dbId, userId);
-    return (await this.toViews([backup]))[0];
+    return (await this.toViews([backup], true))[0]; // requireWrite above → the caller is a writer
   }
 
   async list(userId: string, dbId: string): Promise<BackupView[]> {
-    await this.require(userId, dbId);
+    const db = await this.require(userId, dbId);
     const backups = await this.prisma.backup.findMany({
       where: { databaseId: dbId },
       orderBy: { createdAt: "desc" },
       take: 50,
     });
-    return this.toViews(backups);
+    // errorTail is command output → writers only (same gate as listRestores / requireWrite).
+    const perms = await this.access.membershipPermissions(userId, db.teamId);
+    return this.toViews(backups, perms?.has("backups") ?? false);
   }
 
   async restore(userId: string, dbId: string, backupId: string): Promise<void> {
@@ -351,31 +361,38 @@ export class BackupsService {
     } else {
       await this.scheduler.unschedule(dbId);
     }
+    // Re-arm the missing-backup watchdog from now + clear stale alerts, so a re-enable / interval change never
+    // fires a stale backup_missing against an old success.
+    await this.alerts.onScheduleChanged("database", dbId);
     return db;
   }
 
   // ── helpers ──
   /** Project rows to views, resolving each backup's destination TYPE (so the UI offers export only
    *  for S3-stored backups) with a single batched lookup — no per-row query, no cred decrypt. */
-  private async toViews(rows: Backup[]): Promise<BackupView[]> {
+  private async toViews(rows: Backup[], canWrite: boolean): Promise<BackupView[]> {
     const ids = [...new Set(rows.map((r) => r.destinationId).filter((x): x is string => !!x))];
     const dests = ids.length
       ? await this.prisma.backupDestination.findMany({ where: { id: { in: ids } }, select: { id: true, type: true } })
       : [];
     const typeById = new Map(dests.map((d) => [d.id, d.type]));
-    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null));
+    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null, canWrite));
   }
 
-  private view(b: Backup, destinationType: string | null): BackupView {
+  private view(b: Backup, destinationType: string | null, canWrite: boolean): BackupView {
     return {
       id: b.id,
       status: b.status,
       filename: b.filename,
       sizeBytes: b.sizeBytes != null ? b.sizeBytes.toString() : null,
+      destinationId: b.destinationId,
       destinationType,
       createdBy: b.createdBy,
       createdAt: b.createdAt,
       completedAt: b.completedAt,
+      exitCode: b.exitCode,
+      durationMs: b.durationMs,
+      errorTail: canWrite ? b.errorTail : null,
     };
   }
 

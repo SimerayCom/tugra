@@ -31,6 +31,8 @@ export const EVENT_TYPES = [
   "token_expiring",
   "backup_failed",
   "backup_success",
+  "backup_missing",
+  "backup_recovered",
   "backup_restore_failed",
   "volume_backup_success",
   "volume_backup_failed",

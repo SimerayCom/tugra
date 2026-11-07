@@ -9,7 +9,8 @@ import { LiveLogsCard } from "../../../../components/live-logs-card";
 import type { AppVolume, HostMount, Application, AppSource, BuildType, Deployment, ScheduledTask } from "../../../../lib/types";
 import { appColor, appSourceSummary, deploymentColor, shortDigest, webhookUrl } from "../../../../lib/apps";
 import { relativeTime } from "../../../../lib/fleet";
-import { backupColor, formatSize } from "../../../../lib/backups";
+import { backupColor, formatSize, lastErrorLine } from "../../../../lib/backups";
+import { BackupRunModal } from "../../../../components/backup-run-modal";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { AppCrashTimelineCard } from "../../../../components/app-crash-timeline-card";
@@ -2458,6 +2459,9 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
     mutationFn: (bid: string) => api.exportVolumeBackupUrl(id, bid),
     onSuccess: (res, bid) => setExported({ id: bid, url: res.url }),
   });
+  // Run-detail modal: keep only the id so the open modal tracks the polled row (e.g. RUNNING → FAILED).
+  const [runDetailId, setRunDetailId] = useState<string | null>(null);
+  const runDetail = backups.find((b) => b.id === runDetailId) ?? null;
   const save = useMutation({
     mutationFn: () => api.setVolumeBackupConfig(id, { enabled: sched, intervalHours: Number(interval) || 24, retention: Number(ret) || 7, destinationId: dest || null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
@@ -2496,6 +2500,14 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
         </>
       }
     >
+      {runDetail && (
+        <BackupRunModal
+          run={runDetail}
+          destinationName={destinations.find((d) => d.id === runDetail.destinationId)?.name ?? null}
+          exportUrl={(bid) => api.exportVolumeBackupUrl(id, bid)}
+          onClose={() => setRunDetailId(null)}
+        />
+      )}
       {showImport && (
         <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 12, marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.volImportDesc")}</div>
@@ -2559,6 +2571,7 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
               <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", width: 90 }}>{b.volumeName}</span>
               <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{formatSize(b.sizeBytes)}</span>
               <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(b.createdAt).toLocaleString()}</span>
+              <button onClick={() => setRunDetailId(b.id)} style={{ background: "transparent", border: "none", color: "var(--c-tx2)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{t("databases.runDetails")}</button>
               {b.destinationType === "S3" && b.status === "SUCCESS" && (
                 <button onClick={() => exportUrl.mutate(b.id)} disabled={exportUrl.isPending} title={t("apps.volExportHint")} style={{ background: "transparent", border: "none", color: "var(--c-a)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                   {exportUrl.isPending && exportUrl.variables === b.id ? "…" : t("apps.volExportUrl")}
@@ -2569,6 +2582,12 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
               </button>
               <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>
             </div>
+            {b.status === "FAILED" && (
+              // A failed row must say WHY (not look empty): the last line of the scrubbed output, full text in the modal.
+              <div className="mono" title={b.errorTail ?? undefined} style={{ padding: "0 12px", fontSize: 11, color: "var(--c-r)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {lastErrorLine(b.errorTail) ?? t("databases.runNoReason")}
+              </div>
+            )}
             {exported?.id === b.id && (
               <div style={{ padding: "0 4px 4px" }}>
                 <CopyRow label={t("apps.volExportUrl")} value={exported.url} copy={t("apps.copy")} secret />
