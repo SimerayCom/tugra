@@ -50,6 +50,18 @@ export interface AppRemapTarget {
 export interface RemapContext {
   dbs: DbRemapTarget[];
   apps: AppRemapTarget[];
+  /** OPTIONAL gate on which bare values may even be CONSIDERED a host (R2 exact host / host:port). Defaults to
+   *  {@link UUID_RE}, so every caller that omits it (Coolify, whose internal hosts are uuid-shaped) behaves
+   *  byte-identically. It is ONLY a shape gate: a value is still rewritten solely when it EQUALS a known
+   *  `oldHost` from `dbs`/`apps` (exact string equality) — a looser shape never turns an arbitrary word into a
+   *  host. The substring guard ({@link RM_CONTAINS_TOKEN}) is shape-independent. */
+  hostShape?: RegExp;
+  /** OPTIONAL (Dokploy): when true, a BARE value that equals a known `oldHost` is rewritten as a host ONLY if its
+   *  KEY looks host-like (`DB_HOST`, `*_HOST`, `*_ADDR`, `ENDPOINT`, `SERVER`…). Dokploy internal hosts are
+   *  readable slugs, so a non-host var (`APP_NAME`, `COMPOSE_PROJECT_NAME`) could legitimately HOLD that slug and
+   *  rewriting it would corrupt the value; when the key is not host-like the value is reported
+   *  ({@link RM_CONTAINS_TOKEN}), never edited. Off by default so Coolify (uuid hosts, unambiguous) is unchanged. */
+  bareHostKeyGate?: boolean;
 }
 
 export type RemapRule = "url" | "host" | "host-port" | "user" | "database" | "password" | "port";
@@ -89,6 +101,14 @@ export const RM_QUERY_CREDS = "credentials-in-query"; // a connection URL carrie
 
 /** A Coolify resource uuid: ~16-40 chars of [a-z0-9]. Required before matching a bare token as a host. */
 const UUID_RE = /^[a-z0-9]{16,40}$/i;
+/** A var KEY that plausibly holds a host (used only when ctx.bareHostKeyGate is on — i.e. a readable-slug source
+ *  like Dokploy — so a name-shaped value in a non-host var is not mistaken for a host). */
+const HOST_LIKE_KEY = /(?:^|_)(HOST|HOSTNAME|ADDR|ADDRESS|ENDPOINT|SERVER|NODE|MASTER|PRIMARY|REPLICA|LEADER)(?:_|$)/i;
+/** Test a regex without `g`/`y` lastIndex state leaking between calls. */
+const shapeTest = (re: RegExp, v: string): boolean => {
+  re.lastIndex = 0;
+  return re.test(v);
+};
 
 const enc = encodeURIComponent;
 const REDIS_FAMILY = new Set(["REDIS", "KEYDB", "DRAGONFLY"]);
@@ -208,6 +228,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   const changes: RemapChange[] = [];
   const unchanged: string[] = [];
   const needsManual: RemapNeedsManual[] = [];
+  const hostShape = ctx.hostShape ?? UUID_RE;
   const dbByHost = new Map(ctx.dbs.map((d) => [d.oldHost, d]));
   const appByHost = new Map(ctx.apps.map((a) => [a.oldHost, a]));
   const referencedDbs = new Set<DbRemapTarget>(); // DBs an R1/R2 match in THIS env pointed at (gates R3)
@@ -260,7 +281,9 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
     } else {
       // R2 — the value is exactly an old host token, or <host>:<port>.
       const hostOnly = dbByHost.get(value) ?? appByHost.get(value);
-      if (hostOnly && UUID_RE.test(value)) {
+      // bareHostKeyGate (Dokploy): a readable slug could be a non-host var's value — only treat a bare host-equal
+      // value as a host when the KEY looks host-like; otherwise fall through to the RM_CONTAINS_TOKEN report.
+      if (hostOnly && shapeTest(hostShape, value) && (!ctx.bareHostKeyGate || HOST_LIKE_KEY.test(key))) {
         const isDb = "engine" in hostOnly;
         changes.push({
           key,
@@ -274,8 +297,8 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         if (isDb) referencedDbs.add(hostOnly as DbRemapTarget);
         continue;
       }
-      const hp = /^([a-z0-9]{16,40})(?::(\d+))?$/i.exec(value);
-      if (hp && hp[2] && dbByHost.has(hp[1])) {
+      const hp = /^([^:]+):(\d+)$/.exec(value); // <host>:<port>; the host must pass the shape gate AND equal a known oldHost
+      if (hp && shapeTest(hostShape, hp[1]) && dbByHost.has(hp[1])) {
         const db = dbByHost.get(hp[1])!;
         changes.push({ key, rule: "host-port", target: dbRef(db), oldMasked: value, newMasked: `${db.newHost}:${db.newPort}`, newValue: `${db.newHost}:${db.newPort}`, confidence: "exact" });
         referencedDbs.add(db);

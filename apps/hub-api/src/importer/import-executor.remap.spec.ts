@@ -207,6 +207,40 @@ describe("ImportExecutorService.remapEnvPlan", () => {
   });
 });
 
+describe("ImportExecutorService.remapEnvPlan — Dokploy host shape (L3)", () => {
+  const DK_DB = "diesdigital-db-58tvyg";
+  const DK_APP = "diesdigital-web-x1y2z3";
+  const dokployOp = {
+    meta: { sourceKind: "dokploy", serverId: "srv-1" },
+    tasks: [
+      { status: "DONE", resourceType: "database", resourceId: "db-1", itemRef: `database:_:${DK_DB}` },
+      { status: "DONE", resourceType: "application", resourceId: "app-1", itemRef: `app:_:${DK_APP}`, result: { name: "web" } },
+    ],
+  };
+
+  it("a Dokploy app's split DB_HOST=<appName> is rewritten to the Tugra DB internalHost (preview + apply)", async () => {
+    const { svc, apps } = harness({
+      op: dokployOp,
+      apps: [{ id: "app-1", itemRef: `app:_:${DK_APP}`, name: "web", env: { DB_HOST: DK_DB, DB_PORT: "5432", DB_USER: "appuser", KEEP: "x" } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    const change = plan.apps[0].changes.find((c) => c.key === "DB_HOST");
+    expect(change).toMatchObject({ rule: "host", oldMasked: DK_DB, newMasked: "tugra_db_1" });
+    const res = await svc.remapEnvApply("user-1", "op-1", plan.planHash);
+    expect(res.applied).toBe(true);
+    expect(apps.setEnv).toHaveBeenCalledWith("user-1", "app-1", expect.objectContaining({ DB_HOST: "tugra_db_1", KEEP: "x" }));
+  });
+
+  it("the SAME hyphenated env under sourceKind=coolify is NOT rewritten (uuid default shape preserved)", async () => {
+    const { svc } = harness({
+      op: { meta: { sourceKind: "coolify", serverId: "srv-1" }, tasks: dokployOp.tasks },
+      apps: [{ id: "app-1", itemRef: `app:_:${DK_APP}`, name: "web", env: { DB_HOST: DK_DB } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    expect(plan.apps[0].changes.find((c) => c.key === "DB_HOST")).toBeUndefined();
+  });
+});
+
 describe("ImportExecutorService.remapEnvApply + remapEnvUndo (S4d-3 — the first WRITE, confirm-gated)", () => {
   it("writes the rewritten env (merged, other keys kept), stores an undo snapshot, and returns a secret-free summary", async () => {
     const { svc, apps } = harness({ env: { DATABASE_URL: `postgres://appuser:S3cr3t@${UUID}:5432/appdb`, KEEP_ME: "x" } });
