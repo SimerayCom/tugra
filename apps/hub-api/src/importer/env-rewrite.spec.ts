@@ -240,3 +240,164 @@ describe("remapEnv", () => {
     expect(r2.changes.find((c) => c.key === "DB_PORT")).toBeUndefined();
   });
 });
+
+// ---- L3: the host-shape gate (Dokploy appName hosts) ------------------------------------------------------
+const DOKPLOY_SHAPE = /^[a-z0-9][a-z0-9_-]{5,62}$/i; // mirrors DOKPLOY_HOST_SHAPE in import-executor.service
+const DK_HOST = "diesdigital-db-58tvyg";
+const dkMysql = (mode: "preserve" | "rotate", extra: Partial<DbRemapTarget> = {}): DbRemapTarget => ({
+  itemRef: `database:_:${DK_HOST}`,
+  name: "diesdb",
+  engine: "MYSQL",
+  mode,
+  oldHost: DK_HOST,
+  newHost: "tugra_db_dk1",
+  newPort: 3306,
+  newUser: "tugra",
+  newPassword: "NEWpw",
+  newDatabase: "diesdb",
+  oldUser: "dies",
+  oldDatabase: "dies",
+  oldPort: 3306,
+  ...extra,
+});
+const dkCtx = (dbs: DbRemapTarget[], apps: RemapContext["apps"] = []): RemapContext => ({ dbs, apps, hostShape: DOKPLOY_SHAPE, bareHostKeyGate: true });
+
+describe("remapEnv hostShape (L3)", () => {
+  it("COOLIFY byte-identical: hostShape unset == explicit uuid shape, for a mixed uuid env", () => {
+    const env = {
+      DATABASE_URL: `postgres://appuser:S3cr3t@${UUID}:5432/appdb`,
+      DB_HOST: UUID,
+      PGHOSTPORT: `${UUID}:5432`,
+      DB_USER: "appuser",
+      DB_NAME: "appdb",
+      DB_PASSWORD: "S3cr3t",
+      NOTE: `the db is ${UUID}-primary`,
+      LOG_LEVEL: "info",
+    };
+    const dbs = () => [pgTarget("rotate", { oldPassword: "S3cr3t" })];
+    const base = remapEnv(env, { dbs: dbs(), apps: [] });
+    const explicit = remapEnv(env, { dbs: dbs(), apps: [], hostShape: /^[a-z0-9]{16,40}$/i });
+    expect(explicit).toEqual(base);
+    expect(base.changes.map((c) => `${c.key}:${c.rule}`).sort()).toEqual(
+      ["DATABASE_URL:url", "DB_HOST:host", "DB_NAME:database", "DB_PASSWORD:password", "DB_USER:user", "PGHOSTPORT:host-port"].sort(),
+    );
+    expect(base.needsManual).toEqual([{ key: "NOTE", reason: RM_CONTAINS_TOKEN, target: `database:_:${UUID}` }]);
+  });
+
+  it("with the DEFAULT shape a hyphenated host is NOT a bare-host match (Coolify path never recognises it)", () => {
+    const r = remapEnv({ DB_HOST: DK_HOST }, { dbs: [dkMysql("preserve")], apps: [] });
+    expect(r.changes).toHaveLength(0);
+    // (an exact-equal value still trips the substring guard, so it is REPORTED, never silently dropped)
+    expect(r.needsManual).toContainEqual(expect.objectContaining({ key: "DB_HOST", reason: RM_CONTAINS_TOKEN }));
+  });
+
+  it("DOKPLOY split vars: DB_HOST=<appName> is rewritten; DB_PORT/DB_USER/DB_NAME/DB_PASSWORD follow the same R3 rules (rotate)", () => {
+    const r = remapEnv(
+      { DB_HOST: DK_HOST, DB_PORT: "3307", DB_USER: "dies", DB_NAME: "dies", DB_PASSWORD: "S3cr3t" },
+      dkCtx([dkMysql("rotate", { oldPassword: "S3cr3t", oldPort: 3307 })]),
+    );
+    const byKey = Object.fromEntries(r.changes.map((c) => [c.key, c]));
+    expect(byKey.DB_HOST).toMatchObject({ rule: "host", newValue: "tugra_db_dk1" });
+    expect(byKey.DB_PORT).toMatchObject({ rule: "port", newValue: "3306" });
+    expect(byKey.DB_USER).toMatchObject({ rule: "user", newValue: "tugra" });
+    expect(byKey.DB_NAME).toMatchObject({ rule: "database", newValue: "diesdb" });
+    expect(byKey.DB_PASSWORD).toMatchObject({ rule: "password", newValue: "NEWpw" });
+    expect(JSON.stringify(r.changes.map((c) => [c.oldMasked, c.newMasked]))).not.toContain("S3cr3t");
+  });
+
+  it("bareHostKeyGate: a non-host var whose value equals an appName is REPORTED (not rewritten); a host-like key IS rewritten", () => {
+    const r = remapEnv({ DB_HOST: DK_HOST, APP_NAME: DK_HOST, COMPOSE_PROJECT_NAME: DK_HOST }, dkCtx([dkMysql("preserve")]));
+    const byKey = Object.fromEntries(r.changes.map((c) => [c.key, c]));
+    expect(byKey.DB_HOST).toMatchObject({ rule: "host", newValue: "tugra_db_dk1" }); // host-like key → rewritten
+    expect(r.changes.some((c) => c.key === "APP_NAME" || c.key === "COMPOSE_PROJECT_NAME")).toBe(false); // readable slug in a non-host var → NOT corrupted
+    expect(r.needsManual).toContainEqual(expect.objectContaining({ key: "APP_NAME", reason: RM_CONTAINS_TOKEN }));
+    expect(r.needsManual).toContainEqual(expect.objectContaining({ key: "COMPOSE_PROJECT_NAME", reason: RM_CONTAINS_TOKEN }));
+  });
+
+  it("host:port under the DEFAULT shape rejects a hyphenated host (no host-port rewrite; reported, never silently dropped)", () => {
+    const r = remapEnv({ DB_ADDR: `${DK_HOST}:3306` }, { dbs: [dkMysql("preserve")], apps: [] });
+    expect(r.changes).toHaveLength(0);
+    expect(r.needsManual).toContainEqual(expect.objectContaining({ key: "DB_ADDR", reason: RM_CONTAINS_TOKEN }));
+  });
+
+  it("overlapping hyphenated hosts resolve by EXACT equality (longer vs shorter), not substring", () => {
+    const A = dkMysql("preserve", { itemRef: "database:_:appdb-aaaaaa", oldHost: "appdb-aaaaaa", newHost: "tugra_db_A" });
+    const B = dkMysql("preserve", { itemRef: "database:_:appdb-aaaaaa-replica", oldHost: "appdb-aaaaaa-replica", newHost: "tugra_db_B" });
+    const ctx = dkCtx([A, B]);
+    expect(remapEnv({ DB_HOST: "appdb-aaaaaa-replica" }, ctx).changes[0]).toMatchObject({ newValue: "tugra_db_B" });
+    expect(remapEnv({ DB_HOST: "appdb-aaaaaa" }, ctx).changes[0]).toMatchObject({ newValue: "tugra_db_A" });
+  });
+
+  it("DOKPLOY preserve: only the host is swapped, credentials stay untouched", () => {
+    const r = remapEnv({ DB_HOST: DK_HOST, DB_USER: "dies", DB_PASSWORD: "S3cr3t", DB_NAME: "dies" }, dkCtx([dkMysql("preserve")]));
+    expect(r.changes.map((c) => c.key)).toEqual(["DB_HOST"]);
+    expect(r.changes[0].newValue).toBe("tugra_db_dk1");
+    expect(r.unchanged).toEqual(expect.arrayContaining(["DB_USER", "DB_PASSWORD", "DB_NAME"]));
+  });
+
+  it("DOKPLOY host:port and a DATABASE_URL carrying the hyphenated host are rewritten", () => {
+    const r = remapEnv(
+      { DB_ADDR: `${DK_HOST}:3306`, DATABASE_URL: `mysql://dies:S3cr3t@${DK_HOST}:3306/dies` },
+      dkCtx([dkMysql("rotate")]),
+    );
+    const byKey = Object.fromEntries(r.changes.map((c) => [c.key, c]));
+    expect(byKey.DB_ADDR).toMatchObject({ rule: "host-port", newValue: "tugra_db_dk1:3306" });
+    expect(byKey.DATABASE_URL.rule).toBe("url");
+    expect(byKey.DATABASE_URL.newValue).toBe("mysql://tugra:NEWpw@tugra_db_dk1:3306/diesdb");
+    expect(byKey.DATABASE_URL.newMasked).toBe("mysql://tugra:***@tugra_db_dk1:3306/diesdb");
+  });
+
+  it("looser shape does NOT edit ordinary words: only an EXACT oldHost match is ever rewritten", () => {
+    const r = remapEnv(
+      { APP_NAME: "diesdigital", REGION: "eu-central-1", DB_HOST: `${DK_HOST}-replica`, DB_HOST2: "diesdigital-db", MODE: "production-build" },
+      dkCtx([dkMysql("rotate")]),
+    );
+    expect(r.changes).toHaveLength(0);
+  });
+
+  it("boundary safety: a hyphenated host as a NON-boundary substring is flagged contains-token, never edited", () => {
+    const r = remapEnv(
+      { NOTE: `primary is ${DK_HOST} today`, PREFIXED: `x${DK_HOST}`, SUFFIXED: `${DK_HOST}-replica`, DB_HOST: `${DK_HOST}-replica` },
+      dkCtx([dkMysql("rotate")]),
+    );
+    expect(r.changes).toHaveLength(0);
+    for (const key of ["NOTE", "PREFIXED", "SUFFIXED", "DB_HOST"]) {
+      expect(r.needsManual).toContainEqual(expect.objectContaining({ key, reason: RM_CONTAINS_TOKEN, target: `database:_:${DK_HOST}` }));
+    }
+  });
+
+  it("a Dokploy host that fails the shape (too short) is never matched as a bare host", () => {
+    const r = remapEnv({ DB_HOST: "db" }, dkCtx([dkMysql("preserve", { oldHost: "db", itemRef: "database:_:db" })]));
+    expect(r.changes).toHaveLength(0);
+  });
+
+  it("guards intact under the Dokploy shape: RM_AMBIGUOUS, RM_QUERY_CREDS, RM_APP_LINK_REVIEW, RM_PASSWORD_UNKNOWN", () => {
+    const H2 = "other-db-9zzzzz";
+    const db1 = dkMysql("rotate", { oldUser: "shared" });
+    const db2 = dkMysql("preserve", { itemRef: `database:_:${H2}`, oldHost: H2, newHost: "tugra_db_dk2", oldUser: "shared" });
+    const amb = remapEnv({ A_HOST: DK_HOST, B_HOST: H2, DB_USER: "shared" }, dkCtx([db1, db2]));
+    expect(amb.changes.find((c) => c.key === "DB_USER")).toBeUndefined();
+    expect(amb.needsManual).toContainEqual(expect.objectContaining({ key: "DB_USER", reason: RM_AMBIGUOUS }));
+
+    const q = remapEnv({ DATABASE_URL: `mysql://dies:pw@${DK_HOST}:3306/dies?password=old` }, dkCtx([dkMysql("rotate")]));
+    expect(q.changes).toHaveLength(0);
+    expect(q.needsManual).toContainEqual(expect.objectContaining({ reason: RM_QUERY_CREDS }));
+
+    const app = remapEnv(
+      { API_URL: "http://web-app-k3j2h1:3000" },
+      dkCtx([], [{ itemRef: "app:_:web-app-k3j2h1", name: "web", oldHost: "web-app-k3j2h1", newHost: "tugra_app1" }]),
+    );
+    expect(app.changes).toHaveLength(0);
+    expect(app.needsManual).toContainEqual(expect.objectContaining({ key: "API_URL", reason: RM_APP_LINK_REVIEW }));
+
+    const pw = remapEnv({ DB_HOST: DK_HOST, DB_PASSWORD: "whatever" }, dkCtx([dkMysql("rotate")]));
+    expect(pw.needsManual).toContainEqual(expect.objectContaining({ key: "DB_PASSWORD", reason: RM_PASSWORD_UNKNOWN }));
+  });
+
+  it("is idempotent under the Dokploy shape", () => {
+    const first = remapEnv({ DB_HOST: DK_HOST, DB_USER: "dies" }, dkCtx([dkMysql("rotate")]));
+    const next: Record<string, string> = { DB_HOST: DK_HOST, DB_USER: "dies" };
+    for (const c of first.changes) next[c.key] = c.newValue;
+    expect(remapEnv(next, dkCtx([dkMysql("rotate")])).changes).toHaveLength(0);
+  });
+});

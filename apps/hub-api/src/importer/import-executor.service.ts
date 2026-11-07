@@ -34,6 +34,13 @@ const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treat
 /** Source kinds that create FRESH Tugra resources (copy-mode): rollback REMOVES them, and only these may
  *  migrate data. local-docker is NOT here — it adopts live containers in place (rollback un-adopts). */
 const COPY_MODE_KINDS = new Set<string>(REMOTE_SOURCE_KINDS);
+
+/** The env-remap host-shape gate per source. Dokploy internal hosts are the resource `appName` (e.g.
+ *  `diesdigital-db-58tvyg`: hyphens/underscores, not uuid-shaped). Coolify/local-docker pass NOTHING so the
+ *  engine's uuid default applies and their output stays byte-identical. The shape only gates which bare
+ *  values are considered a host; a rewrite still requires an exact match to a known oldHost. */
+export const DOKPLOY_HOST_SHAPE = /^[a-z0-9][a-z0-9_-]{5,62}$/i;
+const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined => (sourceKind === "dokploy" ? DOKPLOY_HOST_SHAPE : undefined);
 /** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
 const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
@@ -722,7 +729,8 @@ export class ImportExecutorService {
   private async computeRemapPlan(userId: string, opId: string) {
     const op = await this.loadOwnedOp(userId, opId, { reapData: false }); // never kill an in-flight restore
     await this.assertCanMigrate(userId, op); // coolify copy-mode, settled, creator still holds apps:config
-    const meta = op.meta as { serverId: string };
+    const meta = op.meta as { serverId: string; sourceKind?: string };
+    const hostShape = remapHostShapeFor(meta.sourceKind);
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
     await this.access.requirePermission(userId, server.teamId, "databases"); // reading DB credentials
@@ -811,7 +819,7 @@ export class ImportExecutorService {
     const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }> }> = [];
     // Pass 1 (sync): run the pure engine per app; collect the public diff + the DBs each app references.
     const prepped = appEnvs.map((a) => {
-      const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef) });
+      const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef), ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}) });
       writes.push({ appId: a.appId, name: a.name, itemRef: a.itemRef, entries: res.changes.map((c) => ({ key: c.key, newValue: c.newValue })) });
       const needsManual = res.needsManual.map((n) => ({ key: n.key, reason: n.reason, targetItemRef: n.target }));
       // A value that references a DB we could NOT load looks "unchanged" but actually needs this DB — surface
