@@ -30,6 +30,7 @@ describe("GET /instance/status (e2e)", () => {
       setupCodeRequired: expect.any(Boolean), // public: first-run owner-claim gate (install page needs it)
       hubPublicUrl: expect.any(String), // public: the SPA resolves the hub origin (terminal WS / webhook URLs) at runtime
       authProviders: { github: expect.any(Boolean), oidc: expect.any(Boolean) }, // public: hide unconfigured SSO buttons
+      mailConfigured: expect.any(Boolean), // public: UI hides verify banner / shows forgot-password hint when no mailer
     });
     // never exposes any other (secret) settings field
     expect(Object.keys(res.body).sort()).toEqual([
@@ -38,6 +39,7 @@ describe("GET /instance/status (e2e)", () => {
       "edition",
       "hubPublicUrl",
       "initialized",
+      "mailConfigured",
       "setupCodeRequired",
       "ssoEnabled",
     ]);

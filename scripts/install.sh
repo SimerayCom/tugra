@@ -658,6 +658,12 @@ fi
 if [ "$ENABLE_UPDATE_CHECKS" != "1" ] && ! env_has UPDATE_MANIFEST_URL; then
   printf '  \033[2mUpdate checks are OFF. Enable signed update checks: re-run with --enable-update-checks (see docs/upgrade.md). Watch GitHub releases for security advisories.\033[0m\n'
 fi
+# Email is OUTBOUND-only and optional: with no MAIL_HOST the hub sends nothing (reset/verify links go to the hub
+# log). `|| true` + quote-stripping keep this safe under `set -euo pipefail` and for a blank `MAIL_HOST=""`.
+_mail_host="$( { env_get MAIL_HOST || true; } | tr -d "\"' " )"
+if [ -z "$_mail_host" ]; then
+  printf '  \033[2mEmail: not configured — set MAIL_* in %s to enable password reset / invites (see docs/email.md).\033[0m\n' "$ENV_FILE"
+fi
 if [ "$(env_get TUGRA_TELEMETRY)" = "0" ]; then
   printf '  \033[2mAnonymous usage stats are OFF.\033[0m\n'
 else

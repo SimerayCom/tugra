@@ -355,8 +355,22 @@ function VerifyBanner() {
   const t = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // Same public status the rest of the app caches; only fetched for an unverified signed-in user.
+  const { data: status } = useQuery({
+    queryKey: ["instanceStatus"],
+    queryFn: () => api.getInstanceStatus(),
+    staleTime: 60_000,
+    enabled: !!user && !user.emailVerified,
+  });
   if (!user || user.emailVerified) return null;
+  // The hub cannot send any email → don't nag the user to verify (they could never receive the link).
+  if (status?.mailConfigured === false) return null;
   const resend = async () => {
+    // Defensive: the banner is hidden when mail is off, but never claim "sent" if status says otherwise.
+    if (status?.mailConfigured === false) {
+      toast(t("auth.resendNoMail"), "error");
+      return;
+    }
     setBusy(true);
     try {
       await api.resendVerification();
