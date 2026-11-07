@@ -134,6 +134,11 @@ export interface ForeignApp {
   cron?: Array<{ name: string; schedule: string; command: string }>;
   templateSlug?: string; // when it maps to a Tugra app-store template (Coolify service overlap)
   serverRef?: string;
+  /** The source project/environment this app lives in ({@link ForeignProject.ref} / {@link ForeignEnvironment.ref}).
+   *  Both optional: a source with no project tree (Coolify, local-docker) leaves them unset → the single
+   *  `input.environmentId` behavior. */
+  projectRef?: string;
+  environmentRef?: string;
 }
 
 export interface ForeignDb {
@@ -152,6 +157,26 @@ export interface ForeignDb {
   limits?: Pick<ForeignLimits, "memoryMb" | "cpus">;
   serviceRef?: string;
   serverRef?: string;
+  /** See {@link ForeignApp.projectRef}. */
+  projectRef?: string;
+  environmentRef?: string;
+}
+
+/** An environment of a {@link ForeignProject} (Dokploy "production"/"staging"). */
+export interface ForeignEnvironment {
+  ref: string; // the source environment id — namespaced by its project, resolved via {@link ForeignProject.environments}
+  name: string;
+  isDefault: boolean;
+}
+
+/** A source project (Dokploy) — the grouping Tugra mirrors as a Project + its Environments. SECRET-FREE:
+ *  names/description/tags only (the project/environment env blobs are carried as keys in `sharedEnv`). */
+export interface ForeignProject {
+  ref: string; // the source project id
+  name: string;
+  description?: string;
+  tags: string[];
+  environments: ForeignEnvironment[];
 }
 
 /** A multi-container stack (Coolify "service", a compose project): a group of member apps/dbs with their own
@@ -175,6 +200,9 @@ export interface ForeignFleet {
   sharedEnv: ForeignEnv[]; // team/project/environment-scoped shared variables to resolve references against
   /** Connected git providers (secret-free identity). Optional — sources without git-provider discovery omit it. */
   gitProviders?: ForeignGitProvider[];
+  /** The source's project → environment tree (Dokploy). Optional — sources with no such tree (Coolify,
+   *  local-docker) omit it and every resource lands in the single `input.environmentId`. */
+  projects?: ForeignProject[];
   warnings: string[];
 }
 

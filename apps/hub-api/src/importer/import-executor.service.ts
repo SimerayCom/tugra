@@ -8,6 +8,7 @@ import { ApplicationsService } from "../applications/applications.service";
 import { DatabasesService } from "../databases/databases.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
+import { ProjectsService } from "../projects/projects.service";
 import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
@@ -17,7 +18,7 @@ import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./imp
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
-import type { ForeignApp, ForeignDb, ForeignGitProvider } from "./foreign-fleet";
+import type { ForeignApp, ForeignDb, ForeignFleet, ForeignGitProvider } from "./foreign-fleet";
 import { createHash } from "node:crypto";
 import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget } from "./env-rewrite";
 import { tokenizeDockerOptions } from "../deploy/deploy-script";
@@ -69,6 +70,7 @@ export class ImportExecutorService {
     private readonly migrationTokens: MigrationTokenService,
     private readonly crypto: CryptoService,
     private readonly gitSources: GitSourcesService,
+    private readonly projects: ProjectsService,
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
@@ -130,10 +132,17 @@ export class ImportExecutorService {
       // any skipped-provider warning is persisted with it; per-provider failures degrade, never abort the import.
       const { gitSourceByRef, warnings: providerWarnings } = await this.carryGitProviders(userId, server.teamId, source, fleet.gitProviders ?? []);
 
+      // Mirror the source's project → environment tree on the TARGET team (find-or-create by name, so a re-import
+      // reuses it). Also before the op row, so the created names + any degrade warning persist with it. A source
+      // with no tree (Coolify) skips this and keeps the single input.environmentId.
+      const tree = await this.buildImportTree(userId, server.teamId, fleet);
+      const opWarnings = [...providerWarnings, ...tree.warnings];
+
       const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, {
         sessionId: input.sessionId,
         plan,
-        ...(providerWarnings.length ? { warnings: providerWarnings } : {}),
+        ...(opWarnings.length ? { warnings: opWarnings } : {}),
+        ...(tree.summary.length ? { projects: tree.summary } : {}),
       });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
@@ -174,8 +183,10 @@ export class ImportExecutorService {
             result: { name: item.name },
           },
         });
-        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, input.environmentId, gitSourceByRef));
-        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, input.environmentId));
+        // The resource's own source environment when the tree resolved it; else the single selected environment.
+        const environmentId = resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
+        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef));
+        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId));
       }
       await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
       void this.fanout(op.id, [...runners.keys()], (taskId) => runners.get(taskId)!())
@@ -187,6 +198,37 @@ export class ImportExecutorService {
       await source.close();
       throw e;
     }
+  }
+
+  /**
+   * Build the target project/environment tree for a fleet that carries one (Dokploy): per source project,
+   * {@link ProjectsService.findOrCreateForImport} (idempotent by name) → projectRef → (environmentRef → Tugra
+   * environmentId). Per-project failures (e.g. the caller lacks `projects` on the target team) DEGRADE: that
+   * project's resources simply stay on the selected environment and a FIXED warning (never an error message) is
+   * recorded. `summary` holds names only (no ids of secrets, no values) for op.meta.
+   */
+  private async buildImportTree(userId: string, teamId: string, fleet: ForeignFleet): Promise<ImportTree> {
+    const tree: ImportTree = { envByRef: new Map(), summary: [], warnings: [] };
+    for (const p of fleet.projects ?? []) {
+      try {
+        const r = await this.projects.findOrCreateForImport(userId, teamId, {
+          name: p.name,
+          description: p.description,
+          tags: p.tags,
+          environments: p.environments.map((e) => ({ name: e.name, isDefault: e.isDefault })),
+        });
+        const byEnvRef = new Map<string, string>();
+        for (const e of p.environments) {
+          const id = r.environments[e.name.trim().slice(0, 80)];
+          if (id) byEnvRef.set(e.ref, id);
+        }
+        tree.envByRef.set(p.ref, byEnvRef);
+        tree.summary.push({ project: p.name, projectCreated: r.created, environments: Object.keys(r.environments), environmentsCreated: r.createdEnvironments });
+      } catch {
+        tree.warnings.push(`project "${p.name}" could not be created on the target team (needs the projects permission) — its resources go to the selected environment`);
+      }
+    }
+    return tree;
   }
 
   /** Upsert each discovered GitHub App into a Tugra GitSource on `teamId`, returning providerRef → gitSourceId.
@@ -1190,6 +1232,21 @@ export class ImportExecutorService {
     if (op.actorId !== userId) throw new ForbiddenException("not your operation");
     return op;
   }
+}
+
+/** The target project/environment tree built for one import apply (see {@link ImportExecutorService.buildImportTree}). */
+interface ImportTree {
+  envByRef: Map<string, Map<string, string>>; // source projectRef → (source environmentRef → Tugra environmentId)
+  summary: Array<{ project: string; projectCreated: boolean; environments: string[]; environmentsCreated: string[] }>;
+  warnings: string[];
+}
+
+/** The Tugra environmentId for a resource's source project/environment, or undefined when it carries no
+ *  (resolvable) refs — Coolify / local-docker, or a Dokploy resource with no ref — so the caller falls back to
+ *  the single selected environment. */
+function resolveTreeEnvironment(envByRef: ReadonlyMap<string, ReadonlyMap<string, string>>, res: { projectRef?: string; environmentRef?: string } | undefined): string | undefined {
+  if (!res?.projectRef || !res.environmentRef) return undefined;
+  return envByRef.get(res.projectRef)?.get(res.environmentRef);
 }
 
 /** The encrypted env-remap undo record stashed on op.meta by {@link ImportExecutorService.remapEnvApply}. */

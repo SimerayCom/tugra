@@ -3,6 +3,7 @@ import type {
   ForeignApp,
   ForeignDb,
   ForeignFleet,
+  ForeignProject,
   ForeignVolume,
   ImportOptions,
   ImportPlan,
@@ -30,7 +31,7 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
   // does NOT copy volume data yet (the user must copy it to the target before cutover).
   const carried = options.sourceKind === "local-docker";
 
-  const dbItems = fleet.databases.map((db) => planDatabase(db));
+  const dbItems = fleet.databases.map((db) => planDatabase(db, treeRisk(fleet.projects, db, "db.project")));
 
   // Volumes: standalone + app-owned, deduped by their namespaced itemRef.
   const volItems = new Map<string, ImportPlanItem>();
@@ -45,7 +46,7 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
     }
   }
 
-  const appItems = fleet.apps.map((app) => planApp(app, dbByRef, carried));
+  const appItems = fleet.apps.map((app) => planApp(app, dbByRef, carried, treeRisk(fleet.projects, app, "app.project")));
 
   const items = [...dbItems, ...volItems.values(), ...appItems];
   const totals = {
@@ -62,8 +63,23 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
   return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, warnings: fleet.warnings, planHash };
 }
 
-function planDatabase(db: ForeignDb): ImportPlanItem {
+/**
+ * Preview visibility for the project/environment tree (Dokploy): an INFO risk naming the target Tugra project +
+ * environment a resource will land in. Derived only from the resource's projectRef/environmentRef and the
+ * fleet's project names, so it is deterministic (planHash stays stable) and never a blocker. Absent for a source
+ * with no tree (Coolify, local-docker) or a ref the fleet cannot name — those keep the single-environment path.
+ */
+function treeRisk(projects: ForeignProject[] | undefined, res: { projectRef?: string; environmentRef?: string }, code: string): ImportRisk | undefined {
+  if (!res.projectRef || !res.environmentRef) return undefined;
+  const project = projects?.find((p) => p.ref === res.projectRef);
+  const env = project?.environments.find((e) => e.ref === res.environmentRef);
+  if (!project || !env) return undefined;
+  return { level: "info", code, message: `imports into project "${project.name}", environment "${env.name}" (created on the target team if missing, reused otherwise)` };
+}
+
+function planDatabase(db: ForeignDb, tree?: ImportRisk): ImportPlanItem {
   const risks: ImportRisk[] = [];
+  if (tree) risks.push(tree);
   if (db.engine === "UNKNOWN") {
     risks.push({ level: "blocker", code: "db.engine.unknown", message: `cannot map database engine for "${db.name}"` });
   } else if (UNSUPPORTED_DB_IMPORT.has(db.engine)) {
@@ -87,8 +103,9 @@ function planDatabase(db: ForeignDb): ImportPlanItem {
   };
 }
 
-function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarried: boolean): ImportPlanItem {
+function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarried: boolean, tree?: ImportRisk): ImportPlanItem {
   const risks: ImportRisk[] = [];
+  if (tree) risks.push(tree);
   const build = mapBuildPack(app);
   if (build.note) risks.push({ level: "warn", code: "app.buildpack", message: build.note });
 

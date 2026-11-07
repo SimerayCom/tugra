@@ -216,6 +216,88 @@ export class ProjectsService {
     return this.get(userId, project.id);
   }
 
+  /**
+   * Idempotent find-or-create for the importer: ensure a Project named `spec.name` exists on `teamId`, with an
+   * Environment for every `spec.environments` name, and return the target ids. Safe to call twice — a second
+   * call REUSES the project/environments (matched by name) and creates nothing. Rules:
+   *  - A project is matched by (teamId, name), oldest first; it is created with isDefault=false, and an existing
+   *    project's isDefault is NEVER touched, so the team default project is never stolen or duplicated.
+   *  - description is filled only when the project has none (a re-import never overwrites an operator's edit);
+   *    tags are unioned.
+   *  - An environment is matched by (projectId, name). A new one is the project default only when the source
+   *    flags it AND the project has no default yet; if no environment ends up default, the oldest is promoted
+   *    (every project keeps exactly one default env). A project with no source environments gets "production".
+   * A pg advisory lock keyed on (team, project name) serializes concurrent imports so they cannot both create it
+   * (there is no unique constraint on Project.name). Requires the `projects` permission on the team and grants
+   * the caller access to a project it created (same as {@link create}).
+   */
+  async findOrCreateForImport(
+    userId: string,
+    teamId: string,
+    spec: { name: string; description?: string; tags?: string[]; environments: Array<{ name: string; isDefault?: boolean }> },
+  ): Promise<{ projectId: string; created: boolean; environments: Record<string, string>; createdEnvironments: string[] }> {
+    await this.access.requirePermission(userId, teamId, "projects");
+    const name = spec.name.trim().slice(0, 80) || "imported";
+    const description = spec.description?.trim() || undefined;
+    const tags = [...new Set((spec.tags ?? []).map((t) => t.trim()).filter(Boolean))];
+    const wanted: Array<{ name: string; isDefault: boolean }> = [];
+    for (const e of spec.environments) {
+      const en = e.name.trim().slice(0, 80);
+      if (en && !wanted.some((w) => w.name === en)) wanted.push({ name: en, isDefault: e.isDefault === true });
+    }
+    if (!wanted.length) wanted.push({ name: "production", isDefault: true });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`import-project:${teamId}:${name}`}))`;
+      let project = await tx.project.findFirst({
+        where: { teamId, name },
+        orderBy: { createdAt: "asc" },
+        include: { environments: { orderBy: { createdAt: "asc" } } },
+      });
+      let created = false;
+      if (!project) {
+        project = await tx.project.create({
+          data: { teamId, name, description: description ?? null, tags },
+          include: { environments: { orderBy: { createdAt: "asc" } } },
+        });
+        created = true;
+      } else {
+        const mergedTags = [...new Set([...(project.tags ?? []), ...tags])];
+        const data: { description?: string; tags?: string[] } = {};
+        if (description && !project.description) data.description = description;
+        if (mergedTags.length !== (project.tags ?? []).length) data.tags = mergedTags;
+        if (Object.keys(data).length) await tx.project.update({ where: { id: project.id }, data });
+      }
+
+      const envs = [...project.environments];
+      let hasDefault = envs.some((e) => e.isDefault);
+      const ids: Record<string, string> = {};
+      const createdEnvironments: string[] = [];
+      for (const w of wanted) {
+        const existing = envs.find((e) => e.name === w.name);
+        if (existing) {
+          ids[w.name] = existing.id;
+          continue;
+        }
+        const isDefault = !hasDefault && w.isDefault;
+        const env = await tx.environment.create({ data: { projectId: project.id, name: w.name, isDefault } });
+        if (isDefault) hasDefault = true;
+        envs.push(env);
+        ids[w.name] = env.id;
+        createdEnvironments.push(w.name);
+      }
+      if (!hasDefault && envs.length) await tx.environment.update({ where: { id: envs[0].id }, data: { isDefault: true } });
+      return { projectId: project.id, created, environments: ids, createdEnvironments };
+    });
+
+    if (result.created) {
+      // Grant-on-create (as in create()): the importer keeps access to the project it made if later restricted.
+      await this.access.grantProjectAccess(userId, teamId, result.projectId);
+      await this.audit.log({ actor: userId, action: "project.create", target: result.projectId, meta: { via: "import" } }).catch(() => undefined);
+    }
+    return result;
+  }
+
   async rename(userId: string, id: string, name: string): Promise<ProjectView> {
     const project = await this.requireProjectWrite(userId, id);
     await this.prisma.project.update({ where: { id: project.id }, data: { name } });

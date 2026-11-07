@@ -21,7 +21,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] } } = {}) {
+function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -60,6 +60,18 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
   const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined) };
   const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
+  // Tree find-or-create: in-memory + idempotent (same name → same ids), like the real ProjectsService.findOrCreateForImport.
+  const treeIds = new Map<string, string>();
+  const projects = {
+    findOrCreateForImport: over.findOrCreateProject ?? jest.fn().mockImplementation(async (_u: string, _t: string, spec: { name: string; environments: Array<{ name: string }> }) => {
+      const first = !treeIds.has(`p:${spec.name}`);
+      const idOf = (k: string) => { if (!treeIds.has(k)) treeIds.set(k, `id-${treeIds.size}`); return treeIds.get(k)!; };
+      const environments: Record<string, string> = {};
+      const createdEnvironments: string[] = [];
+      for (const e of spec.environments) { if (!treeIds.has(`e:${spec.name}:${e.name}`)) createdEnvironments.push(e.name); environments[e.name] = idOf(`e:${spec.name}:${e.name}`); }
+      return { projectId: idOf(`p:${spec.name}`), created: first, environments, createdEnvironments };
+    }),
+  };
   const dbs = { create: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), createForImport: jest.fn().mockResolvedValue({ id: "db-new", name: "orders" }), setLimits: jest.fn().mockResolvedValue(undefined) };
   const migrationTokens = { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn().mockResolvedValue(false), validate: jest.fn() };
   const svc = new ImportExecutorService(
@@ -73,8 +85,9 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     migrationTokens as never,
     {} as never, // crypto (unused on this path)
     gitSources as never,
+    projects as never,
   );
-  return { svc, prisma, source: source as typeof source & { fetchDbCredentials?: jest.Mock }, apps, dbs, created, gitSources };
+  return { svc, prisma, source: source as typeof source & { fetchDbCredentials?: jest.Mock }, apps, dbs, created, gitSources, projects };
 }
 
 function input(f: ForeignFleet = fleet()) {
@@ -140,7 +153,7 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const dbs = { remove: jest.fn().mockResolvedValue(undefined), create: jest.fn() };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never, {} as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never, {} as never, {} as never);
   return { svc, prisma, dbs, migrationTokens };
 }
 
@@ -282,7 +295,7 @@ function appRollbackHarness(sourceKind: string, compensation: unknown) {
   const migrator = { unadopt: jest.fn().mockResolvedValue(undefined) };
   const apps = { remove: jest.fn().mockResolvedValue(undefined) };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never, {} as never);
+  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never, {} as never, {} as never);
   return { svc, apps, migrator, prisma };
 }
 
@@ -688,5 +701,90 @@ describe("ImportExecutorService — DB credential carry (L4)", () => {
     expect(h.dbs.create).not.toHaveBeenCalled();
     expect(h.source.fetchDbCredentials).not.toHaveBeenCalled(); // the secret is not even fetched for a skipped DB
     expect(h.created.find((c) => c.data.itemRef === DB_ITEMREF)!.data.status).toBe("SKIPPED");
+  });
+});
+
+describe("ImportExecutorService.applyRemote — project/environment tree (L5)", () => {
+  const app = (sourceRef: string, name: string, tree: { projectRef?: string; environmentRef?: string } = {}) => ({
+    sourceRef, name, kind: "git" as const, buildPack: "nixpacks" as const, git: { url: "o/r", branch: "main" }, ports: [3000], serverRef: "srv-a", env: [], volumes: [], domains: [], ...tree,
+  });
+  function treeFleet(): ForeignFleet {
+    return {
+      servers: [{ ref: "srv-a" }],
+      apps: [app("laravel", "LaravelApp", { projectRef: "pj-dies", environmentRef: "env-dies" }), app("loose", "Loose")],
+      databases: [{ sourceRef: "pg-1", name: "playdb", engine: "POSTGRES", version: "16", serverRef: "srv-a", projectRef: "pj-play", environmentRef: "env-play" }],
+      services: [],
+      volumes: [],
+      sharedEnv: [],
+      projects: [
+        { ref: "pj-dies", name: "DiesDigital", tags: ["web"], description: "d", environments: [{ ref: "env-dies", name: "production", isDefault: true }] },
+        { ref: "pj-play", name: "PlayTolk", tags: [], environments: [{ ref: "env-play", name: "production", isDefault: true }] },
+      ],
+      warnings: [],
+    };
+  }
+  const dokployInput = (f: ForeignFleet) => ({ sourceKind: "dokploy" as const, sessionId: "sess-1", targetServerId: "srv-tugra", environmentId: "env-selected", planHash: planImport(f, { sourceKind: "dokploy" }).planHash });
+
+  it("routes two projects' resources to two different environments; a ref-less resource uses input.environmentId", async () => {
+    const f = treeFleet();
+    const { svc, apps, dbs, projects, prisma } = harness({ fleet: f });
+    await svc.apply("user-1", dokployInput(f));
+    await flush();
+
+    expect(projects.findOrCreateForImport).toHaveBeenCalledTimes(2);
+    expect(projects.findOrCreateForImport).toHaveBeenCalledWith("user-1", "team-1", expect.objectContaining({ name: "DiesDigital", description: "d", tags: ["web"], environments: [{ name: "production", isDefault: true }] }));
+    const envOf = (name: string) => (apps.create.mock.calls.find((c) => c[1].name === name)?.[1] as { environmentId?: string }).environmentId;
+    const diesEnv = envOf("LaravelApp");
+    const playEnv = (dbs.create.mock.calls[0][1] as { environmentId?: string }).environmentId;
+    expect(diesEnv).toBeDefined();
+    expect(playEnv).toBeDefined();
+    expect(diesEnv).not.toBe(playEnv); // same env NAME "production", different projects → different Tugra environments
+    expect(diesEnv).not.toBe("env-selected");
+    expect(envOf("Loose")).toBe("env-selected"); // no ref → fallback
+    // Names (never secrets) are recorded on op.meta.
+    const meta = (prisma.bulkOperation.create.mock.calls[0][0] as { data: { meta: { projects: Array<{ project: string; projectCreated: boolean; environmentsCreated: string[] }> } } }).data.meta;
+    expect(meta.projects.map((p) => p.project)).toEqual(["DiesDigital", "PlayTolk"]);
+    expect(meta.projects[0]).toEqual(expect.objectContaining({ projectCreated: true, environmentsCreated: ["production"] }));
+  });
+
+  it("a source with no tree (coolify) never touches ProjectsService and keeps the single input.environmentId", async () => {
+    const f = fleet();
+    const { svc, apps, dbs, projects } = harness({ fleet: f });
+    await svc.apply("user-1", { ...input(f), environmentId: "env-selected" });
+    await flush();
+
+    expect(projects.findOrCreateForImport).not.toHaveBeenCalled();
+    expect((apps.create.mock.calls[0][1] as { environmentId?: string }).environmentId).toBe("env-selected");
+    expect((dbs.create.mock.calls[0][1] as { environmentId?: string }).environmentId).toBe("env-selected");
+  });
+
+  it("a re-import REUSES the same projects/environments (no new ones created, same environment ids)", async () => {
+    const f = treeFleet();
+    const { svc, apps, projects, prisma } = harness({ fleet: f });
+    await svc.apply("user-1", dokployInput(f));
+    await flush();
+    await svc.apply("user-1", dokployInput(f));
+    await flush();
+
+    const diesEnvs = apps.create.mock.calls.filter((c) => c[1].name === "LaravelApp").map((c) => (c[1] as { environmentId?: string }).environmentId);
+    expect(diesEnvs).toHaveLength(2);
+    expect(diesEnvs[0]).toBe(diesEnvs[1]);
+    const metas = prisma.bulkOperation.create.mock.calls.map((c) => (c[0] as { data: { meta: { projects: Array<{ projectCreated: boolean; environmentsCreated: string[] }> } } }).data.meta.projects);
+    expect(metas[0].every((p) => p.projectCreated)).toBe(true);
+    expect(metas[1].every((p) => !p.projectCreated && p.environmentsCreated.length === 0)).toBe(true);
+    expect(projects.findOrCreateForImport).toHaveBeenCalledTimes(4);
+  });
+
+  it("a project the caller cannot create DEGRADES: a fixed warning, its resources use input.environmentId", async () => {
+    const f = treeFleet();
+    const fail = jest.fn().mockRejectedValue(new Error("secret-ish prisma detail"));
+    const { svc, apps, prisma } = harness({ fleet: f, findOrCreateProject: fail });
+    await svc.apply("user-1", dokployInput(f));
+    await flush();
+
+    expect((apps.create.mock.calls.find((c) => c[1].name === "LaravelApp")![1] as { environmentId?: string }).environmentId).toBe("env-selected");
+    const meta = (prisma.bulkOperation.create.mock.calls[0][0] as { data: { meta: { warnings: string[] } } }).data.meta;
+    expect(meta.warnings).toHaveLength(2);
+    expect(JSON.stringify(meta.warnings)).not.toContain("secret-ish");
   });
 });

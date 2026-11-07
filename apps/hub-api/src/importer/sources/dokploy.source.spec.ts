@@ -175,6 +175,67 @@ describe("DokploySource.discover", () => {
   });
 });
 
+describe("DokploySource.discover — project/environment tree (L5)", () => {
+  const TREE: Record<string, unknown> = {
+    "/project.all": [
+      {
+        projectId: "p-dies", name: "DiesDigital", description: "agency sites", projectTags: [{ tag: { name: "client" } }, "web", { name: "web" }],
+        environments: [
+          { environmentId: "e-dies-prod", name: "production", isDefault: true, applications: [{ applicationId: "app-1" }], mysql: [{ mysqlId: "my-1" }] },
+          { environmentId: "e-dies-stg", name: "staging", isDefault: false, applications: [], compose: [] },
+        ],
+      },
+      {
+        projectId: "p-play", name: "PlayTolk",
+        environments: [{ environmentId: "e-play-prod", name: "production", isDefault: true, compose: [{ composeId: "cmp-1" }] }],
+      },
+    ],
+    "/mysql.one?mysqlId=my-1": { mysqlId: "my-1", appName: "dies-mysql", name: "dies-db", dockerImage: "mysql:8" },
+    "/compose.one?composeId=cmp-1": { composeId: "cmp-1", appName: "play-compose", name: "playtolk", sourceType: "raw", composeFile: "services: {}" },
+  };
+
+  it("carries fleet.projects[] (name, description, tag names, environments) and tags EVERY app/compose/db with projectRef+environmentRef", async () => {
+    const fleet = await source(TREE).discover();
+    expect(fleet.projects).toEqual([
+      { ref: "p-dies", name: "DiesDigital", description: "agency sites", tags: ["client", "web"], environments: [{ ref: "e-dies-prod", name: "production", isDefault: true }, { ref: "e-dies-stg", name: "staging", isDefault: false }] },
+      { ref: "p-play", name: "PlayTolk", description: undefined, tags: [], environments: [{ ref: "e-play-prod", name: "production", isDefault: true }] },
+    ]);
+    expect(fleet.apps.find((a) => a.sourceRef === "web-a1b2c3")).toMatchObject({ projectRef: "p-dies", environmentRef: "e-dies-prod" });
+    expect(fleet.apps.find((a) => a.sourceRef === "play-compose")).toMatchObject({ projectRef: "p-play", environmentRef: "e-play-prod" });
+    expect(fleet.databases.find((d) => d.sourceRef === "dies-mysql")).toMatchObject({ projectRef: "p-dies", environmentRef: "e-dies-prod" });
+  });
+
+  it("an older Dokploy (services on the project node, no environments) gets a synthetic default 'production' environment", async () => {
+    const fleet = await source({
+      "/project.all": [{ projectId: "p-old", name: "legacy", applications: [{ applicationId: "app-1" }] }],
+    }).discover();
+    expect(fleet.projects).toEqual([{ ref: "p-old", name: "legacy", description: undefined, tags: [], environments: [{ ref: "p-old#production", name: "production", isDefault: true }] }]);
+    expect(fleet.apps[0]).toMatchObject({ projectRef: "p-old", environmentRef: "p-old#production" });
+  });
+
+  it("a real environment node wins over a project node that also lists the same resource (no synthetic env invented)", async () => {
+    const fleet = await source({
+      "/project.all": [{ projectId: "p1", name: "proj", applications: [{ applicationId: "app-1" }], environments: [{ environmentId: "e1", name: "production", isDefault: true, applications: [{ applicationId: "app-1" }] }] }],
+    }).discover();
+    expect(fleet.apps[0]).toMatchObject({ projectRef: "p1", environmentRef: "e1" });
+    expect(fleet.projects![0].environments).toEqual([{ ref: "e1", name: "production", isDefault: true }]);
+  });
+
+  it("an app and a compose that share an (editable) appName keep SEPARATE project trees — no cross-wire", async () => {
+    const fleet = await source({
+      "/project.all": [
+        { projectId: "p-app", name: "AppProj", environments: [{ environmentId: "e-app", name: "production", isDefault: true, applications: [{ applicationId: "app-1" }] }] },
+        { projectId: "p-cmp", name: "CmpProj", environments: [{ environmentId: "e-cmp", name: "production", isDefault: true, compose: [{ composeId: "cmp-x" }] }] },
+      ],
+      "/compose.one?composeId=cmp-x": { composeId: "cmp-x", appName: "web-a1b2c3", name: "clash", sourceType: "raw", composeFile: "services: {}" },
+    }).discover();
+    const asApp = fleet.apps.find((a) => a.sourceRef === "web-a1b2c3" && a.kind !== "compose");
+    const asCompose = fleet.apps.find((a) => a.sourceRef === "web-a1b2c3" && a.kind === "compose");
+    expect(asApp).toMatchObject({ projectRef: "p-app", environmentRef: "e-app" }); // the application keeps its own tree
+    expect(asCompose).toMatchObject({ projectRef: "p-cmp", environmentRef: "e-cmp" }); // the compose keeps its own
+  });
+});
+
 describe("DokploySource.fetchSecrets", () => {
   it("returns plain values server-side and reports ${{…}} references as unresolved (never resolved in S1)", async () => {
     const src = source();

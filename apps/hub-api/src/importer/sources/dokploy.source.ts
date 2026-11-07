@@ -1,4 +1,4 @@
-import type { ForeignFleet, ForeignGitProvider } from "../foreign-fleet";
+import type { ForeignEnvironment, ForeignFleet, ForeignGitProvider, ForeignProject } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, FetchedDbCredentials } from "../import-source";
 import { mapLimit } from "./map-limit";
 import {
@@ -40,6 +40,10 @@ interface DokployTreeNode {
   projectId?: string;
   environmentId?: string;
   name?: string | null;
+  description?: string | null;
+  isDefault?: boolean | null;
+  /** Project tags — tolerated as strings, `{ name }` or the join-row shape `{ tag: { name } }`. */
+  projectTags?: unknown[] | null;
   env?: string | null;
   environments?: DokployTreeNode[] | null;
   applications?: Array<{ applicationId?: string } | null> | null;
@@ -110,6 +114,23 @@ function githubSecretValues(row: DokployGithubRow): Record<string, string> {
   return values;
 }
 
+/** Tag NAMES from a project node's `projectTags` (strings, `{ name }`, or `{ tag: { name } }`); order-preserving, deduped. */
+function tagNames(tags: unknown[] | null | undefined): string[] {
+  const out: string[] = [];
+  for (const t of Array.isArray(tags) ? tags : []) {
+    const rec = t && typeof t === "object" ? (t as { name?: unknown; tag?: { name?: unknown } | null }) : undefined;
+    const name = str(typeof t === "string" ? t : (rec?.name ?? rec?.tag?.name));
+    if (name && !out.includes(name.trim())) out.push(name.trim());
+  }
+  return out;
+}
+
+/** Where a discovered resource sits in the source's project tree. */
+interface TreeLoc {
+  projectRef: string;
+  environmentRef: string;
+}
+
 /** What `fetchSecrets` needs to re-locate a resource's detail endpoint from its appName (sourceRef). */
 type SecretRefTarget =
   | { kind: "application"; id: string }
@@ -168,20 +189,59 @@ export class DokploySource implements ImportSource {
     const dbStubs = new Map<string, { table: DokployEngineTable; id: string }>(); // id → stub (dedupe)
     const sharedEnvBlobs: Array<{ scope: "project" | "environment"; blob?: string | null }> = [];
 
+    const projectTree: ForeignProject[] = [];
+    // Resource id → its project/environment, filled at walk time (the service arrays live under each environment node).
+    const appLoc = new Map<string, TreeLoc>();
+    const composeLoc = new Map<string, TreeLoc>();
+    const dbLoc = new Map<string, TreeLoc>();
+
     for (const project of projects) {
       if (project.env) sharedEnvBlobs.push({ scope: "project", blob: project.env });
       const envNodes = project.environments ?? [];
       for (const envNode of envNodes) if (envNode?.env) sharedEnvBlobs.push({ scope: "environment", blob: envNode.env });
+
+      const projectRef = str(project.projectId);
+      const foreignEnvs: ForeignEnvironment[] = [];
+      for (const envNode of envNodes) {
+        const ref = str(envNode?.environmentId);
+        if (ref && !foreignEnvs.some((e) => e.ref === ref)) {
+          foreignEnvs.push({ ref, name: str(envNode?.name)?.trim() || "production", isDefault: envNode?.isDefault === true });
+        }
+      }
+
       // Read service stubs from BOTH the project node (older Dokploy) and each environment node (newer).
       for (const node of [project, ...envNodes]) {
-        for (const a of node.applications ?? []) if (a?.applicationId) appIds.add(a.applicationId);
-        for (const c of node.compose ?? []) if (c?.composeId) composeIds.add(c.composeId);
+        const isProjectNode = node === project;
+        // Older Dokploy has no environment layer: its project-level services belong to a synthetic "production".
+        const environmentRef = isProjectNode ? (projectRef ? `${projectRef}#production` : undefined) : str(node?.environmentId);
+        const loc: TreeLoc | undefined = projectRef && environmentRef ? { projectRef, environmentRef } : undefined;
+        // A real environment node always wins over the project node's (older-API / flattened) listing of the same id.
+        const note = (m: Map<string, TreeLoc>, id: string) => {
+          if (loc && (!isProjectNode || !m.has(id))) m.set(id, loc);
+        };
+        for (const a of node.applications ?? []) if (a?.applicationId) { appIds.add(a.applicationId); note(appLoc, a.applicationId); }
+        for (const c of node.compose ?? []) if (c?.composeId) { composeIds.add(c.composeId); note(composeLoc, c.composeId); }
         for (const t of DB_TABLES) {
           for (const d of (node[t.table] ?? []) as Array<Record<string, unknown> | null>) {
             const id = d?.[t.idKey];
-            if (typeof id === "string" && id) dbStubs.set(id, { table: t.table, id });
+            if (typeof id === "string" && id) {
+              dbStubs.set(id, { table: t.table, id });
+              note(dbLoc, id);
+            }
           }
         }
+      }
+      if (projectRef) {
+        const synthRef = `${projectRef}#production`;
+        const projectLevelServices = [appLoc, composeLoc, dbLoc].some((m) => [...m.values()].some((l) => l.environmentRef === synthRef));
+        if (projectLevelServices) foreignEnvs.push({ ref: synthRef, name: "production", isDefault: foreignEnvs.length === 0 });
+        projectTree.push({
+          ref: projectRef,
+          name: str(project.name)?.trim() || projectRef,
+          description: str(project.description)?.trim() || undefined,
+          tags: tagNames(project.projectTags),
+          environments: foreignEnvs,
+        });
       }
     }
 
@@ -221,7 +281,7 @@ export class DokploySource implements ImportSource {
       })
     ).filter((p): p is ForeignGitProvider => p !== null);
 
-    return buildDokployFleet({
+    const fleet = buildDokployFleet({
       servers: Array.isArray(servers) ? servers : [],
       apps: appDetails.map((detail) => ({ detail, serverRef: detail.serverId ?? undefined })),
       composes: composeDetails.map((detail) => ({ detail, serverRef: detail.serverId ?? undefined })),
@@ -230,6 +290,27 @@ export class DokploySource implements ImportSource {
       gitProviders,
       warnings,
     });
+
+    // Tag every discovered resource with its source project/environment (sourceRef = appName; the three
+    // appName→loc maps are kept apart so a cross-table appName clash cannot cross-wire two resources' trees).
+    const locByAppName = new Map<string, TreeLoc>();
+    for (const a of appDetails) { const l = appLoc.get(a.applicationId); if (l) locByAppName.set(a.appName, l); }
+    const locByComposeName = new Map<string, TreeLoc>();
+    for (const c of composeDetails) { const l = composeLoc.get(c.composeId); if (l) locByComposeName.set(c.appName, l); }
+    const locByDbName = new Map<string, TreeLoc>();
+    for (const d of dbDetails) { const l = dbLoc.get(d.id); if (l) locByDbName.set(d.detail.appName, l); }
+    for (const a of fleet.apps) {
+      // Apps and composes keep SEPARATE maps so an app and a compose that share an (editable) appName cannot
+      // cross-wire each other's project/environment — dispatch by the resource kind.
+      const l = (a.kind === "compose" ? locByComposeName : locByAppName).get(a.sourceRef);
+      if (l) { a.projectRef = l.projectRef; a.environmentRef = l.environmentRef; }
+    }
+    for (const d of fleet.databases) {
+      const l = locByDbName.get(d.sourceRef);
+      if (l) { d.projectRef = l.projectRef; d.environmentRef = l.environmentRef; }
+    }
+    fleet.projects = projectTree;
+    return fleet;
   }
 
   /**

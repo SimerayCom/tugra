@@ -223,3 +223,47 @@ describe("planImport — compose source blocker (git-sourced compose)", () => {
     expect(codes(it4)).toContain("app.compose.path"); // …but the compose path is flagged, not silently docker-compose.yml
   });
 });
+
+describe("planImport — project/environment tree (L5)", () => {
+  const treeFleet = (): ForeignFleet => ({
+    servers: [{ ref: "s" }],
+    apps: [
+      { sourceRef: "a", name: "web", kind: "image", buildPack: "image", image: "nginx", serverRef: "s", projectRef: "p1", environmentRef: "e1" },
+      { sourceRef: "loose", name: "loose", kind: "image", buildPack: "image", image: "nginx", serverRef: "s" },
+    ],
+    databases: [{ sourceRef: "d", name: "db", engine: "MYSQL", version: "8", credentials: { username: "u" }, serverRef: "s", projectRef: "p2", environmentRef: "e2" }],
+    services: [], volumes: [], sharedEnv: [],
+    projects: [
+      { ref: "p1", name: "DiesDigital", tags: [], environments: [{ ref: "e1", name: "production", isDefault: true }] },
+      { ref: "p2", name: "PlayTolk", tags: [], environments: [{ ref: "e2", name: "staging", isDefault: false }] },
+    ],
+    warnings: [],
+  });
+  const o: ImportOptions = { sourceKind: "dokploy" };
+
+  it("names the target project/environment as an INFO risk (never a blocker) on each tagged app/db", () => {
+    const plan = planImport(treeFleet(), o);
+    const app = plan.items.find((i) => i.itemRef === "app:s:a")!;
+    const db = plan.items.find((i) => i.itemRef === "database:s:d")!;
+    expect(app.risks.find((r) => r.code === "app.project")).toMatchObject({ level: "info", message: expect.stringContaining('project "DiesDigital", environment "production"') });
+    expect(db.risks.find((r) => r.code === "db.project")).toMatchObject({ level: "info", message: expect.stringContaining('project "PlayTolk", environment "staging"') });
+    expect(plan.items.find((i) => i.itemRef === "app:s:loose")!.risks.map((r) => r.code)).not.toContain("app.project"); // no ref → no risk
+    expect(plan.totals.blockers).toBe(0);
+  });
+
+  it("planHash is stable across two scans and independent of discovery order", () => {
+    const a = planImport(treeFleet(), o).planHash;
+    const f2 = treeFleet();
+    f2.apps.reverse();
+    expect(planImport(f2, o).planHash).toBe(a);
+  });
+
+  it("a source with NO tree (coolify) gets no project risk and an identical plan to before", () => {
+    const f = treeFleet();
+    delete f.projects;
+    for (const r of [...f.apps, ...f.databases]) { delete r.projectRef; delete r.environmentRef; }
+    const codes = planImport(f, o).items.flatMap((i) => i.risks.map((r) => r.code));
+    expect(codes).not.toContain("app.project");
+    expect(codes).not.toContain("db.project");
+  });
+});

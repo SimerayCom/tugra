@@ -188,6 +188,8 @@ model Project {
   team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId       String
   name         String
+  description  String?       // carried by the importer from a source project (Dokploy); null for hand-made projects
+  tags         String[]      @default([]) // source project tags (Dokploy projectTags names), informational
   isDefault    Boolean       @default(false) // the team's default project (exactly one per team)
   iconUpdatedAt DateTime?    // list-view marker so the project list never reads the icon bytes
   icon         ProjectIcon?
