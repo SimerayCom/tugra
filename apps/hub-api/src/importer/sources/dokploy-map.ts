@@ -4,6 +4,8 @@ import type {
   ForeignDomain,
   ForeignEnv,
   ForeignFleet,
+  ForeignGitProvider,
+  ForeignLimits,
   ForeignLink,
   ForeignVolume,
   TugraDbEngine,
@@ -71,6 +73,23 @@ export interface DokployApplication {
   command?: string | null;
   args?: string[] | null;
   replicas?: number | null;
+  autoDeploy?: boolean | null; // push-to-deploy switch
+  watchPaths?: string[] | null; // glob patterns gating a push deploy
+  triggerType?: string | null; // "push" | "tag"
+  dockerBuildStage?: string | null; // dockerfile multi-stage target
+  dockerContextPath?: string | null; // dockerfile build context dir (relative to buildPath)
+  isStaticSpa?: boolean | null; // static builds: SPA fallback
+  // Swarm resource limits/reservations. Dokploy stores raw Swarm units as text: memory in BYTES, cpu in
+  // NanoCPUs (1 CPU = 1e9). A number is tolerated too.
+  cpuLimit?: string | number | null;
+  cpuReservation?: string | number | null;
+  memoryLimit?: string | number | null;
+  memoryReservation?: string | number | null;
+  // Git provider link (identity ids only — never the App credentials). `githubId` is the application column;
+  // `github`/`gitProviderId` appear when the API eager-loads the provider relation.
+  githubId?: string | null;
+  gitProviderId?: string | null;
+  github?: { githubId?: string | null; gitProviderId?: string | null } | null;
   env?: string | null; // dotenv blob
   buildArgs?: string | null; // dotenv blob (build-time)
   buildSecrets?: string | null; // dotenv blob (build-time secrets)
@@ -119,6 +138,12 @@ export interface DokployCompose {
   customGitBranch?: string | null;
   randomize?: boolean | null;
   isolatedDeployment?: boolean | null;
+  autoDeploy?: boolean | null;
+  watchPaths?: string[] | null;
+  triggerType?: string | null;
+  githubId?: string | null;
+  gitProviderId?: string | null;
+  github?: { githubId?: string | null; gitProviderId?: string | null } | null;
   serverId?: string | null;
   domains?: DokployDomain[] | null;
   mounts?: DokployMount[] | null;
@@ -135,6 +160,16 @@ export interface DokployDatabase {
   env?: string | null;
   serverId?: string | null;
   mounts?: DokployMount[] | null;
+  // Swarm resource limits (raw Swarm units as text: memory bytes, cpu NanoCPUs). Tugra's Database has
+  // memoryMb/cpus only, so the two reservations are read for an honest warning but have no target.
+  cpuLimit?: string | number | null;
+  cpuReservation?: string | number | null;
+  memoryLimit?: string | number | null;
+  memoryReservation?: string | number | null;
+  // Container command/args override (e.g. mysql ["--mysql-native-password=ON"]). Read ONLY to warn that it has
+  // no Tugra target — it is never carried (an arg can embed a credential, e.g. --requirepass).
+  command?: string | null;
+  args?: string[] | null;
   // databasePassword / databaseRootPassword are plaintext in the API — NOT declared here (never carried).
 }
 
@@ -147,6 +182,8 @@ export interface DokployFleetInput {
   databases: Array<{ detail: DokployDatabase; engineTable: DokployEngineTable; serverRef?: string }>;
   /** project/environment dotenv blobs → sharedEnv (keys only). */
   sharedEnvBlobs: Array<{ scope: "project" | "environment"; blob?: string | null }>;
+  /** Secret-free git-provider identity from discover (see DokploySource). Passed through to the fleet. */
+  gitProviders?: ForeignGitProvider[];
   warnings?: string[];
 }
 
@@ -345,11 +382,81 @@ export function mapMount(m: DokployMount, ownerRef: string): ForeignVolume | und
   }
 }
 
-/** Dokploy's runtime Command/Args override → a single start command (Command split on spaces, then Args). */
-function joinCommand(command?: string | null, args?: string[] | null): string | undefined {
-  const parts = [command?.trim(), ...(args ?? [])].filter((p): p is string => !!p && p.length > 0);
-  return parts.length ? parts.join(" ") : undefined;
+/** A command/args override can embed a credential (`--requirepass X`, `--token=…`, `postgres://u:pw@h`). The
+ *  fleet is secret-free, so we withhold the whole override when a token carries a secret VALUE. We match the
+ *  value, not a benign flag NAME: `--mysql-native-password=ON` (boolean) and `node auth-server.js` are carried;
+ *  only a real secret (a credential flag's value, or URL userinfo) is withheld. Best-effort, fail-safe. */
+const CRED_FLAG = String.raw`(?:pass(?:word|wd)?|secret|token|api[-_]?key|private[-_]?key|credentials?|bearer|requirepass|auth[-_]?(?:token|pass(?:word)?))`;
+const COMMAND_URL_CRED_RE = /:\/\/[^/\s:@]+:[^/\s@]+@/; // scheme://user:pass@host
+const CRED_ASSIGN_RE = new RegExp(String.raw`^--?${CRED_FLAG}=(?!(?:on|off|true|false|yes|no|enabled?|disabled?|\d+)$).+`, "i"); // --token=<secret>
+const CRED_FLAG_RE = new RegExp(String.raw`^--?${CRED_FLAG}$`, "i"); // bare --password (secret is the NEXT token)
+export function commandLooksSecret(tokens: string[]): boolean {
+  return tokens.some((t, i) => {
+    if (COMMAND_URL_CRED_RE.test(t) || CRED_ASSIGN_RE.test(t)) return true;
+    // a bare credential flag whose value follows as the next, non-flag token
+    return CRED_FLAG_RE.test(t) && i + 1 < tokens.length && !tokens[i + 1].startsWith("-");
+  });
 }
+
+/** Dokploy's runtime Command/Args override → Tugra's exec-form argv. Swarm ContainerSpec semantics:
+ *  `command` (split on whitespace) is the ENTRYPOINT, `args` is the CMD. Also yields the legacy single-string
+ *  `startCommand`. `withheld` = a credential-looking token was found, so NOTHING is carried (never a leak). */
+export function mapCommand(command?: string | null, args?: string[] | null): { startCommand?: string; containerEntrypoint?: string[]; containerCommand?: string[]; withheld: boolean } {
+  const entry = (command ?? "").split(/\s+/).filter((p) => p.length > 0);
+  const rest = (args ?? []).filter((p): p is string => typeof p === "string" && p.length > 0);
+  if (!entry.length && !rest.length) return { withheld: false };
+  if (commandLooksSecret([...entry, ...rest])) return { withheld: true };
+  return {
+    startCommand: [...entry, ...rest].join(" "),
+    containerEntrypoint: entry.length ? entry : undefined,
+    containerCommand: rest.length ? rest : undefined,
+    withheld: false,
+  };
+}
+
+/** Parse a Swarm numeric limit (text or number) → a positive finite number, else undefined. */
+function swarmNumber(v: string | number | null | undefined): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = typeof v === "number" ? v : /^\s*\d+(\.\d+)?\s*$/.test(v) ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+const bytesToMb = (v: string | number | null | undefined): number | undefined => {
+  const n = swarmNumber(v);
+  return n === undefined ? undefined : Math.max(1, Math.round(n / (1024 * 1024)));
+};
+const nanoToCpus = (v: string | number | null | undefined): number | undefined => {
+  const n = swarmNumber(v);
+  return n === undefined ? undefined : Math.round((n / 1e9) * 1000) / 1000;
+};
+
+type RawLimits = Pick<DokployApplication, "cpuLimit" | "cpuReservation" | "memoryLimit" | "memoryReservation">;
+/** Dokploy raw Swarm limits (bytes / NanoCPUs) → Tugra units (MB / CPUs). Undefined when none is set/parsable. */
+export function mapLimits(r: RawLimits): ForeignLimits | undefined {
+  const limits: ForeignLimits = {
+    memoryMb: bytesToMb(r.memoryLimit),
+    cpus: nanoToCpus(r.cpuLimit),
+    reserveMemoryMb: bytesToMb(r.memoryReservation),
+    reserveCpus: nanoToCpus(r.cpuReservation),
+  };
+  for (const k of Object.keys(limits) as Array<keyof ForeignLimits>) if (limits[k] === undefined) delete limits[k];
+  return Object.keys(limits).length ? limits : undefined;
+}
+/** True when a raw limit field is set (non-empty, non-zero) but could not be parsed → the fleet warns instead of dropping silently. */
+function hasUnparsableLimit(r: RawLimits): boolean {
+  const raws = [r.memoryLimit, r.cpuLimit, r.memoryReservation, r.cpuReservation];
+  return raws.some((raw) => raw !== null && raw !== undefined && raw !== "" && Number(raw) !== 0 && swarmNumber(raw) === undefined);
+}
+
+/** The connected git provider id an app/compose clones through (github only in this slice). */
+function gitProviderRefOf(c: { sourceType?: string | null; githubId?: string | null; github?: { githubId?: string | null } | null }): string | undefined {
+  if (c.sourceType !== "github") return undefined;
+  return c.githubId || c.github?.githubId || undefined;
+}
+
+const cleanStrings = (a?: string[] | null): string[] | undefined => {
+  const out = (a ?? []).filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  return out.length ? out : undefined;
+};
 
 /** Container ports the app listens on: the HTTP domains' ports plus any raw publish targetPorts (apply-map
  *  uses ports[0] as the container port). */
@@ -369,6 +476,7 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
   const { kind, buildPack } = dokployBuildPack(app);
   const image = kind === "image" ? app.dockerImage ?? undefined : undefined;
   const domains = withPrimary((app.domains ?? []).map(mapDomain).filter((d): d is ForeignDomain => !!d));
+  const cmd = mapCommand(app.command, app.args);
   return {
     sourceRef: app.appName,
     name: app.name ?? app.appName,
@@ -378,7 +486,9 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
     imageOrigin: kind === "image" ? "registry" : kind === "git" ? "built-from-git" : undefined,
     registry: kind === "image" && app.registryUrl ? { host: app.registryUrl, secretRef: app.appName } : undefined,
     git: kind === "git" ? dokployGit(app) : undefined,
-    startCommand: joinCommand(app.command, app.args),
+    startCommand: cmd.startCommand,
+    containerEntrypoint: cmd.containerEntrypoint,
+    containerCommand: cmd.containerCommand,
     publishDirectory: app.publishDirectory ?? undefined,
     ports: appPorts(app),
     domains,
@@ -390,6 +500,14 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
     volumes: (app.mounts ?? []).map((m) => mapMount(m, app.appName)).filter((v): v is ForeignVolume => !!v),
     internalHost: app.appName,
     replicas: app.replicas ?? undefined,
+    autoDeploy: app.autoDeploy ?? undefined,
+    watchPaths: cleanStrings(app.watchPaths),
+    limits: mapLimits(app),
+    dockerBuildTarget: kind === "git" && buildPack === "dockerfile" ? app.dockerBuildStage || undefined : undefined,
+    gitProviderRef: kind === "git" ? gitProviderRefOf(app) : undefined,
+    triggerType: app.triggerType || undefined,
+    dockerContextPath: app.dockerContextPath || undefined,
+    staticSpa: buildPack === "static" ? app.isStaticSpa ?? undefined : undefined,
     serverRef,
   };
 }
@@ -419,8 +537,18 @@ export function mapCompose(c: DokployCompose, serverRef?: string): ForeignApp {
     env: mapEnvBlob(c.env),
     volumes: (c.mounts ?? []).map((m) => mapMount(m, c.appName)).filter((v): v is ForeignVolume => !!v),
     internalHost: c.appName,
+    autoDeploy: c.autoDeploy ?? undefined,
+    watchPaths: cleanStrings(c.watchPaths),
+    gitProviderRef: git ? gitProviderRefOf(c) : undefined,
+    triggerType: c.triggerType || undefined,
     serverRef,
   };
+}
+
+/** Tugra's Database has hard limits only (memoryMb/cpus) — the Swarm reservations have no target. */
+function dbLimits(db: DokployDatabase): ForeignDb["limits"] {
+  const l = mapLimits({ memoryLimit: db.memoryLimit, cpuLimit: db.cpuLimit });
+  return l;
 }
 
 export function mapDatabase(db: DokployDatabase, engine: TugraDbEngine, serverRef?: string): ForeignDb {
@@ -437,6 +565,7 @@ export function mapDatabase(db: DokployDatabase, engine: TugraDbEngine, serverRe
     },
     hostInternal: db.appName,
     externalPort: db.externalPort ?? undefined,
+    limits: dbLimits(db),
     volumes: (db.mounts ?? []).map((m) => mapMount(m, db.appName)).filter((v): v is ForeignVolume => !!v),
     serverRef,
   };
@@ -488,6 +617,28 @@ export function buildDokployFleet(input: DokployFleetInput): ForeignFleet {
   const dynamicComposes = input.composes.filter((c) => c.detail.randomize || c.detail.isolatedDeployment).length;
   if (dynamicComposes > 0) warnings.push(`${dynamicComposes} compose project(s) use randomize/isolated deployment — deployed names differ from the stored file`);
 
+  // Honest warnings for the L1 fields that have NO Tugra target / were withheld / could not be parsed — never a silent drop.
+  const warnApps = (pred: (a: DokployApplication) => boolean): number => input.apps.filter((a) => pred(a.detail)).length;
+  const withheld = warnApps((a) => mapCommand(a.command, a.args).withheld);
+  if (withheld > 0) warnings.push(`${withheld} app(s) have a start command/args that looks credential-bearing — it was NOT carried (set it in Tugra manually)`);
+  const badLimits = warnApps(hasUnparsableLimit) + input.databases.filter((d) => hasUnparsableLimit(d.detail)).length;
+  if (badLimits > 0) warnings.push(`${badLimits} resource(s) have a CPU/memory limit that could not be parsed — not carried`);
+  const tagTriggers = warnApps((a) => a.triggerType === "tag") + input.composes.filter((c) => c.detail.triggerType === "tag").length;
+  if (tagTriggers > 0) warnings.push(`${tagTriggers} resource(s) deploy on git TAGS in Dokploy — Tugra deploys on push only, so auto-deploy is turned off for them`);
+  const ctxApps = warnApps((a) => !!a.dockerContextPath && !/^\.?\/?$/.test(a.dockerContextPath));
+  if (ctxApps > 0) warnings.push(`${ctxApps} app(s) set a docker build context path — Tugra has no separate context (only the base directory); verify the build`);
+  const nonSpa = warnApps((a) => a.buildType === "static" && a.isStaticSpa === false);
+  if (nonSpa > 0) warnings.push(`${nonSpa} static app(s) disable SPA fallback — Tugra's static builds always fall back to index.html`);
+  const paketoApps = warnApps((a) => a.buildType === "paketo_buildpacks");
+  if (paketoApps > 0) warnings.push(`${paketoApps} app(s) build with Paketo buildpacks — Tugra builds these with the Heroku builder, which can produce a different image; verify the build or switch to Nixpacks/Dockerfile`);
+  const dbArgsNames = input.databases.filter((d) => !!d.detail.command || (d.detail.args ?? []).length > 0).map((d) => d.detail.appName);
+  if (dbArgsNames.length > 0) warnings.push(`${dbArgsNames.length} database(s) override the container command/args — Tugra has no target for that yet (NOT carried): ${dbArgsNames.join(", ")}. A flag like mysql's --mysql-native-password=ON changes auth behaviour, so set it on the Tugra database before clients connect.`);
+  const dbReserve = input.databases.filter((d) => swarmNumber(d.detail.memoryReservation) !== undefined || swarmNumber(d.detail.cpuReservation) !== undefined).length;
+  if (dbReserve > 0) warnings.push(`${dbReserve} database(s) set a CPU/memory RESERVATION — Tugra databases support hard limits only (reservation not carried)`);
+  const knownProviders = new Set((input.gitProviders ?? []).map((p) => p.ref));
+  const unlinked = [...apps, ...composeApps].filter((a) => a.gitProviderRef && !knownProviders.has(a.gitProviderRef)).length;
+  if (unlinked > 0) warnings.push(`${unlinked} app(s) clone through a GitHub App that could not be read — they will need a GitHub connection in Tugra`);
+
   // appName collision across all resources (unique per table in Dokploy, but editable → cross-table clashes possible).
   const seen = new Map<string, number>();
   for (const r of [...apps, ...composeApps, ...databases]) seen.set(r.sourceRef, (seen.get(r.sourceRef) ?? 0) + 1);
@@ -514,6 +665,7 @@ export function buildDokployFleet(input: DokployFleetInput): ForeignFleet {
     services: [], // Dokploy compose is mapped as a compose app (not a ForeignService); full stacks are slice S5
     volumes: [],
     sharedEnv,
+    gitProviders: input.gitProviders ?? [],
     warnings,
   };
 }

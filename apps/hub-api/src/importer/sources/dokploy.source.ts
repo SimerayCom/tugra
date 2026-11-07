@@ -1,4 +1,4 @@
-import type { ForeignFleet } from "../foreign-fleet";
+import type { ForeignFleet, ForeignGitProvider } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets } from "../import-source";
 import { mapLimit } from "./map-limit";
 import {
@@ -50,6 +50,64 @@ interface DokployTreeNode {
   mongo?: Array<Record<string, unknown> | null> | null;
   redis?: Array<Record<string, unknown> | null> | null;
   libsql?: Array<Record<string, unknown> | null> | null;
+}
+
+/** Namespace prefix of a git-provider secret ref: `fetchSecrets("gitProvider:<githubId>")`. Distinct from an
+ *  appName (Docker names cannot contain a colon), so it can never collide with a resource ref. */
+export const GIT_PROVIDER_REF_PREFIX = "gitProvider:";
+
+/** A row of `gitProvider.getAll` (the relation objects are eager-loaded; `github` carries the App row). */
+interface DokployGitProviderRow {
+  gitProviderId?: string;
+  name?: string | null;
+  providerType?: string | null;
+  githubId?: string | null;
+  github?: { githubId?: string | null } | null;
+}
+
+/** `github.one` — the GitHub App row. It carries the App CREDENTIALS in plaintext, so it is parsed only
+ *  by {@link toForeignGitProvider} (identity whitelist) and {@link githubSecretValues} (the secret path).
+ *  Field names are Dokploy's `github` table columns (`github*`-prefixed); the unprefixed spellings are
+ *  tolerated so a live-shape difference degrades instead of breaking. */
+type DokployGithubRow = Record<string, unknown>;
+
+const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : typeof v === "number" ? String(v) : undefined);
+const firstStr = (o: DokployGithubRow, ...keys: string[]): string | undefined => {
+  for (const k of keys) {
+    const v = str(o[k]);
+    if (v) return v;
+  }
+  return undefined;
+};
+
+/** Pure, WHITELIST mapper: the secret-free identity of a GitHub App. It reads ONLY appSlug/appId/installationId
+ *  (+ the provider's display name); privateKey / clientSecret / webhookSecret / clientId are never touched
+ *  here, so they cannot ride into the discovered fleet. */
+export function toForeignGitProvider(ref: string, row: DokployGithubRow, providerName?: string | null): ForeignGitProvider {
+  const slug = firstStr(row, "githubAppName", "appName", "appSlug");
+  const safeSlug = slug && /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(slug) ? slug : undefined;
+  return {
+    ref,
+    kind: "github",
+    appSlug: safeSlug,
+    appId: firstStr(row, "githubAppId", "appId"),
+    installationId: firstStr(row, "githubInstallationId", "installationId"),
+    htmlUrl: safeSlug ? `https://github.com/apps/${safeSlug}` : undefined,
+    appName: providerName?.trim() || safeSlug,
+  };
+}
+
+/** The App CREDENTIALS, for the secret path only (never the fleet). Absent fields are simply omitted. */
+function githubSecretValues(row: DokployGithubRow): Record<string, string> {
+  const values: Record<string, string> = Object.create(null);
+  const pairs: Array<[string, string | undefined]> = [
+    ["privateKey", firstStr(row, "githubPrivateKey", "privateKey")],
+    ["clientSecret", firstStr(row, "githubClientSecret", "clientSecret")],
+    ["webhookSecret", firstStr(row, "githubWebhookSecret", "webhookSecret")],
+    ["clientId", firstStr(row, "githubClientId", "clientId")],
+  ];
+  for (const [k, v] of pairs) if (v !== undefined) values[k] = v;
+  return values;
 }
 
 /** What `fetchSecrets` needs to re-locate a resource's detail endpoint from its appName (sourceRef). */
@@ -149,12 +207,27 @@ export class DokploySource implements ImportSource {
 
     const servers = await tryGet<DokployServer[]>("/server.all", [], "servers");
 
+    // Git providers: list them, then read each GitHub App row to extract its secret-free identity. The App
+    // credentials in that same response are dropped here (whitelist mapper) — they are re-fetched only via
+    // fetchSecrets("gitProvider:<githubId>"). A failure degrades to a warning, like the other enrichments.
+    const providerRows = await tryGet<DokployGitProviderRow[]>("/gitProvider.getAll", [], "git providers");
+    const githubTargets = (Array.isArray(providerRows) ? providerRows : [])
+      .map((p) => ({ githubId: p?.githubId || p?.github?.githubId || undefined, name: p?.name, type: p?.providerType }))
+      .filter((p): p is { githubId: string; name: string | null | undefined; type: string | null | undefined } => !!p.githubId && (!p.type || p.type === "github"));
+    const gitProviders = (
+      await mapLimit(githubTargets, DISCOVER_CONCURRENCY, async (t) => {
+        const row = await tryGet<DokployGithubRow | null>(`/github.one?githubId=${enc(t.githubId)}`, null, `GitHub App ${t.githubId}`);
+        return row && typeof row === "object" ? toForeignGitProvider(t.githubId, row, t.name) : null;
+      })
+    ).filter((p): p is ForeignGitProvider => p !== null);
+
     return buildDokployFleet({
       servers: Array.isArray(servers) ? servers : [],
       apps: appDetails.map((detail) => ({ detail, serverRef: detail.serverId ?? undefined })),
       composes: composeDetails.map((detail) => ({ detail, serverRef: detail.serverId ?? undefined })),
       databases: dbDetails.map(({ detail, engineTable, serverRef }) => ({ detail, engineTable, serverRef })),
       sharedEnvBlobs,
+      gitProviders,
       warnings,
     });
   }
@@ -166,6 +239,9 @@ export class DokploySource implements ImportSource {
    * reference string. Full cross-scope `${{project/environment/self}}` EXPANSION is slice S2.
    */
   async fetchSecrets(ref: string): Promise<FetchedSecrets> {
+    // A namespaced git-provider ref ("gitProvider:<githubId>") returns the GitHub App credentials (privateKey,
+    // clientSecret, webhookSecret, clientId). Server-side only; the discovered fleet never carries them.
+    if (ref.startsWith(GIT_PROVIDER_REF_PREFIX)) return this.fetchGitProviderSecrets(ref.slice(GIT_PROVIDER_REF_PREFIX.length));
     let target = this.refIndex.get(ref);
     if (!target) {
       // Cold path (e.g. a new service process that did not run discover): rebuild the index once.
@@ -202,6 +278,20 @@ export class DokploySource implements ImportSource {
       }
     }
     return { values, unresolved };
+  }
+
+  private async fetchGitProviderSecrets(githubId: string): Promise<FetchedSecrets> {
+    const none: FetchedSecrets = { values: Object.create(null), unresolved: [] };
+    if (!githubId) return none;
+    try {
+      const row = await this.client.get<DokployGithubRow | null>(`/github.one?githubId=${enc(githubId)}`);
+      // NOTE (L2-apply): a restricted API key returns the App secrets as null (Dokploy canViewGitProviderSecrets).
+      // The GitSource-upsert step (next slice) MUST hard-fail when `privateKey` is absent rather than cloning
+      // without a credential — surfacing that is apply-time, not discovery-time.
+      return row && typeof row === "object" ? { values: githubSecretValues(row), unresolved: [] } : none;
+    } catch {
+      return none;
+    }
   }
 
   async close(): Promise<void> {}

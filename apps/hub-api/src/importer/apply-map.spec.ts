@@ -1,4 +1,4 @@
-import { foreignAppToCreateInput, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { SetVolumesSchema } from "../applications/dto";
 import type { ForeignApp, ForeignVolume } from "./foreign-fleet";
 
@@ -189,5 +189,59 @@ describe("foreignAppToVolumes", () => {
       expect(SetVolumesSchema.safeParse({ volumes }).success).toBe(true);
       for (const v of volumes) expect(NAME_RE.test(v.name)).toBe(true);
     }
+  });
+});
+
+describe("foreignAppToPostCreateConfig", () => {
+  it("is empty for an app with none of the L1 fields", () => {
+    expect(foreignAppToPostCreateConfig(base({}))).toEqual({ unmapped: [] });
+  });
+
+  it("carries autoDeploy, watchPaths, limits, exec-form command to their setter inputs", () => {
+    const cfg = foreignAppToPostCreateConfig(
+      base({
+        autoDeploy: false,
+        watchPaths: ["src/**", "!docs/**"],
+        limits: { memoryMb: 512, cpus: 1.5, reserveMemoryMb: 256, reserveCpus: 0.5 },
+        containerEntrypoint: ["node"],
+        containerCommand: ["server.js", "--port=3000"],
+        replicas: 3,
+      }),
+    );
+    expect(cfg.autoDeploy).toBe(false);
+    expect(cfg.watchPaths).toEqual(["src/**", "!docs/**"]);
+    expect(cfg.limits).toEqual({ memoryMb: 512, cpus: 1.5, reserveMemoryMb: 256, reserveCpus: 0.5 });
+    expect(cfg.containerCommand).toEqual({ containerEntrypoint: ["node"], containerCommand: ["server.js", "--port=3000"] });
+    expect(cfg.replicas).toBe(3);
+    expect(cfg.unmapped).toEqual([]);
+  });
+
+  it("a Dockerfile build target becomes a schema-valid setBuild input carrying the create-time build fields", () => {
+    const cfg = foreignAppToPostCreateConfig(base({ buildPack: "dockerfile", dockerBuildTarget: "prod", git: { url: "g", dockerfilePath: "/docker/Dockerfile", baseDirectory: "/apps/api" } }));
+    expect(cfg.build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", baseDirectory: "apps/api" });
+    // a target on a non-Dockerfile build is reported, not applied
+    const nix = foreignAppToPostCreateConfig(base({ buildPack: "nixpacks", dockerBuildTarget: "prod" }));
+    expect(nix.build).toBeUndefined();
+    expect(nix.unmapped.map((u) => u.field)).toEqual(["dockerBuildTarget"]);
+  });
+
+  it("a tag trigger turns auto-deploy OFF (never push-to-deploy by accident) and is reported", () => {
+    const cfg = foreignAppToPostCreateConfig(base({ autoDeploy: true, triggerType: "tag" }));
+    expect(cfg.autoDeploy).toBe(false);
+    expect(cfg.unmapped.map((u) => u.field)).toEqual(["triggerType"]);
+    expect(foreignAppToPostCreateConfig(base({ autoDeploy: true, triggerType: "push" })).autoDeploy).toBe(true);
+  });
+
+  it("reports (never silently drops) invalid watch paths / out-of-range limits / no-target fields", () => {
+    const cfg = foreignAppToPostCreateConfig(base({ watchPaths: ["has space"], limits: { memoryMb: 4 }, dockerContextPath: "./svc", staticSpa: false }));
+    expect(cfg.watchPaths).toBeUndefined();
+    expect(cfg.limits).toBeUndefined();
+    expect(cfg.unmapped.map((u) => u.field).sort()).toEqual(["dockerContextPath", "limits", "staticSpa", "watchPaths"]);
+  });
+
+  it("does not apply a container command to a compose app (its YAML owns it)", () => {
+    const cfg = foreignAppToPostCreateConfig(base({ kind: "compose", buildPack: "dockercompose", containerCommand: ["x"] }));
+    expect(cfg.containerCommand).toBeUndefined();
+    expect(cfg.unmapped.map((u) => u.field)).toEqual(["containerCommand"]);
   });
 });
