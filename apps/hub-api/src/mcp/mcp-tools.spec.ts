@@ -24,7 +24,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(50);
+    expect(MCP_TOOLS).toHaveLength(53);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -33,6 +33,24 @@ describe("MCP_TOOLS catalog", () => {
     const t = MCP_TOOLS.find((x) => x.name === "list_database_links");
     expect(t).toBeTruthy();
     expect(t!.scope).toBe("read");
+  });
+
+  describe("integrations read tools (DNS / secret managers / tunnels)", () => {
+    it("list_dns_credentials + list_secret_providers + get_tunnel_status are READ-scoped and delegate to their service", async () => {
+      for (const name of ["list_dns_credentials", "list_secret_providers", "get_tunnel_status"]) expect(tool(name).scope).toBe("read");
+
+      const dnsCredentials = { list: jest.fn().mockResolvedValue([{ id: "d1", name: "cf", provider: "cloudflare" }]) };
+      expect(await tool("list_dns_credentials").execute({ dnsCredentials } as unknown as McpDeps, "u1", {})).toEqual({ dnsCredentials: [{ id: "d1", name: "cf", provider: "cloudflare" }] });
+      expect(dnsCredentials.list).toHaveBeenCalledWith("u1");
+
+      const secretProviders = { list: jest.fn().mockResolvedValue([{ id: "s1", name: "vault", kind: "vault" }]) };
+      expect(await tool("list_secret_providers").execute({ secretProviders } as unknown as McpDeps, "u1", {})).toEqual({ secretProviders: [{ id: "s1", name: "vault", kind: "vault" }] });
+      expect(secretProviders.list).toHaveBeenCalledWith("u1");
+
+      const tunnel = { status: jest.fn().mockResolvedValue({ status: "connected", wildcardDomain: "*.x.io" }) };
+      expect(await tool("get_tunnel_status").execute({ tunnel } as unknown as McpDeps, "u1", { id: "srv-1" })).toMatchObject({ status: "connected" });
+      expect(tunnel.status).toHaveBeenCalledWith("u1", "srv-1");
+    });
   });
 
   it("mutate tools carry the scope of their REST route: config=write, deploy-tier ops=deploy, destructive=admin; else read", () => {

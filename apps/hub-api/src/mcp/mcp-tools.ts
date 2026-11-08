@@ -17,6 +17,9 @@ import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
 import { rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
 import { summarizeContainer, summarizeHost } from "../metrics/metrics-summary";
+import type { SecretProvidersService } from "../secret-providers/secret-providers.service";
+import type { DnsCredentialsService } from "../dns/dns-credentials.service";
+import type { TunnelService } from "../tunnel/tunnel.service";
 
 /** The domain services an MCP tool may call. Every read tool passes the caller's `userId` straight
  *  through — team scoping is resolved DB-side inside each service (never trusted from the client). */
@@ -33,6 +36,9 @@ export interface McpDeps {
   executor: ImportExecutorService;
   license: LicenseService;
   metrics: MetricsService;
+  secretProviders: SecretProvidersService;
+  dnsCredentials: DnsCredentialsService;
+  tunnel: TunnelService;
 }
 
 export interface McpTool {
@@ -277,6 +283,28 @@ export const MCP_TOOLS: McpTool[] = [
       const data: AppContainerMetrics = kind === "database" ? await d.databases.containerMetrics(userId, id, range) : await d.apps.containerMetrics(userId, id, range);
       return { id, kind, range, containers: data.containers.map((c) => summarizeContainer(c.name, c.samples)) };
     },
+  },
+  // ── integrations (DNS / secret managers / tunnels) — read-only, metadata only (never a token) ──
+  {
+    name: "list_dns_credentials",
+    description: "List the team's connected DNS-provider credentials (id, name, provider). Metadata only — the API token is never returned. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: {} },
+    execute: async (d, userId) => ({ dnsCredentials: await d.dnsCredentials.list(userId) }),
+  },
+  {
+    name: "list_secret_providers",
+    description: "List the team's connected external secret managers (id, name, kind, address). Metadata only — no secret values. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: {} },
+    execute: async (d, userId) => ({ secretProviders: await d.secretProviders.list(userId) }),
+  },
+  {
+    name: "get_tunnel_status",
+    description: "Cloudflare Tunnel status for one server (connected state + wildcard domain). Metadata only — no tunnel secret. Read-only. Args: id (server).",
+    scope: "read",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    execute: async (d, userId, a) => d.tunnel.status(userId, reqStr(a, "id")),
   },
   // ── clusters / swarm ──
   {

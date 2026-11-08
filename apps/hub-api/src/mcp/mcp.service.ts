@@ -12,6 +12,9 @@ import { MonitorsService } from "../monitors/monitors.service";
 import { ImporterService } from "../importer/importer.service";
 import { ImportExecutorService } from "../importer/import-executor.service";
 import { LicenseService } from "../license/license.service";
+import { SecretProvidersService } from "../secret-providers/secret-providers.service";
+import { DnsCredentialsService } from "../dns/dns-credentials.service";
+import { TunnelService } from "../tunnel/tunnel.service";
 import { MetricsService } from "../metrics/metrics.service";
 import { MCP_TOOLS, type McpDeps, type McpTool } from "./mcp-tools";
 import { MCP_PROMPTS, type McpPrompt } from "./mcp-prompts";
@@ -59,9 +62,12 @@ export class McpService {
     executor: ImportExecutorService,
     license: LicenseService,
     metrics: MetricsService,
+    secretProviders: SecretProvidersService,
+    dnsCredentials: DnsCredentialsService,
+    tunnel: TunnelService,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, dbLinks, servers, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics };
+    this.deps = { apps, dbLinks, servers, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */
