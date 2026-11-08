@@ -18,6 +18,8 @@ import { BrandMark } from "./branding";
 import {
   Activity,
   Bell,
+  ChevronDown,
+  ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   FolderTree,
@@ -59,7 +61,7 @@ interface NavItem {
 
 export const NAV: { group: string; items: NavItem[] }[] = [
   {
-    group: "Monitor",
+    group: "monitor",
     items: [
       { key: "home", href: "/home", icon: Home, home: true, fleet: false },
       { key: "dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -68,29 +70,39 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     ],
   },
   {
-    group: "Resources",
+    group: "build",
     items: [
       // Coolify-style: resources live under Projects → environment. Apps/Databases
       // aren't top-level nav; reach them via a project, the dashboard, or ⌘K.
       { key: "projects", href: "/projects", icon: FolderTree },
       { key: "appStore", href: "/app-store", icon: Store, home: true },
-      { key: "servers", href: "/servers", icon: Server },
-      { key: "clusters", href: "/clusters", icon: Boxes },
-      { key: "terminal", href: "/shell", icon: Terminal },
       { key: "import", href: "/import", icon: DownloadCloud },
       { key: "sources", href: "/sources", icon: GitBranch },
       { key: "registries", href: "/registries", icon: Package },
-      { key: "cloudCredentials", href: "/cloud-credentials", icon: Cloud },
-      { key: "secretProviders", href: "/secret-providers", icon: KeyRound },
+    ],
+  },
+  {
+    group: "infrastructure",
+    items: [
+      { key: "servers", href: "/servers", icon: Server },
+      { key: "clusters", href: "/clusters", icon: Boxes },
+      { key: "terminal", href: "/shell", icon: Terminal },
       { key: "destinations", href: "/destinations", icon: HardDrive },
-      { key: "sharedVars", href: "/shared-variables", icon: Variable },
       { key: "domains", href: "/domains", icon: Globe },
       // Migration (discover + adopt foreign containers) lives per-server under a server's Maintenance
       // tab (discover-adopt-card), so there's no standalone page — no top-level nav entry for it.
     ],
   },
   {
-    group: "Account",
+    group: "integrations",
+    items: [
+      { key: "cloudCredentials", href: "/cloud-credentials", icon: Cloud },
+      { key: "secretProviders", href: "/secret-providers", icon: KeyRound },
+      { key: "sharedVars", href: "/shared-variables", icon: Variable },
+    ],
+  },
+  {
+    group: "account",
     items: [
       { key: "notifications", href: "/notifications", icon: Bell },
       { key: "audit", href: "/audit", icon: ScrollText },
@@ -152,6 +164,30 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
     });
   };
 
+  // Per-group collapse (expanded sidebar only). Keys present = collapsed; hydrated after mount like the
+  // sidebar collapse above so SSR and first client render agree (default = every group expanded).
+  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    const closed: Record<string, boolean> = {};
+    try {
+      for (const g of NAV) if (localStorage.getItem(`tugra.navgroup.${g.group}`) === "1") closed[g.group] = true;
+    } catch {
+      /* storage unavailable: keep all groups expanded */
+    }
+    setClosedGroups(closed);
+  }, []);
+  const toggleGroup = (group: string) => {
+    setClosedGroups((c) => {
+      const isClosed = !c[group];
+      try {
+        localStorage.setItem(`tugra.navgroup.${group}`, isClosed ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return { ...c, [group]: isClosed };
+    });
+  };
+
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const offline = servers.filter((s) => s.status === "OFFLINE").length;
 
@@ -199,13 +235,30 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
       </div>
 
       <nav style={{ flex: 1, overflowY: "auto", padding: 8 }}>
-        {nav.map((g) => (
+        {nav.map((g) => {
+          // Icon-collapsed mode has no headers, so per-group collapse never hides items there.
+          const groupHasActive = g.items.some((it) => {
+            const b = it.href.split("?")[0];
+            return pathname === b || pathname.startsWith(`${b}/`);
+          });
+          const groupClosed = !col && !!closedGroups[g.group];
+          const panelId = `tg-navgroup-${g.group}${mobile ? "-m" : ""}`;
+          return (
           <div key={g.group}>
             {!col && (
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "10px 10px 3px" }}>
-                {g.group}
-              </div>
+              <button
+                type="button"
+                className="tg-nav-group"
+                onClick={() => toggleGroup(g.group)}
+                aria-expanded={!groupClosed}
+                aria-controls={panelId}
+              >
+                <span style={{ flex: 1 }}>{t(`nav.group.${g.group}`)}</span>
+                {groupClosed && groupHasActive && <span aria-hidden title={t("nav.activeInGroup")} style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--c-a)", marginRight: 4, flexShrink: 0 }} />}
+                {groupClosed ? <ChevronRight size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
+              </button>
             )}
+            <div id={panelId} hidden={groupClosed}>
             {g.items.map((it) => {
               const base = it.href.split("?")[0];
               const active = pathname === base || pathname.startsWith(`${base}/`);
@@ -234,8 +287,10 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
                 </Link>
               );
             })}
+            </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div style={{ padding: 8, borderTop: "1px solid var(--c-bd)", display: "flex", flexDirection: "column", gap: 2 }}>

@@ -44,5 +44,13 @@
   "paletteLoading": "Loading…",
   "paletteCount": "{n} results",
   "paletteListLabel": "Search results",
-  "paletteHint": "↑↓ navigate · ↵ open · esc close"
+  "paletteHint": "↑↓ navigate · ↵ open · esc close",
+  "group": {
+    "monitor": "Monitor",
+    "build": "Build",
+    "infrastructure": "Infrastructure",
+    "integrations": "Integrations",
+    "account": "Account"
+  },
+  "activeInGroup": "Current page is in this group"
 }

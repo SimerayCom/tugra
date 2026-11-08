@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NAV, DESTS, noticeVisible, Sidebar } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
+import { I18nProvider } from "../i18n/provider";
 import en from "../i18n/locales/en";
 
 let mockPath = "/servers/abc";
@@ -16,7 +17,10 @@ vi.mock("../lib/auth", () => ({
 }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: [] }) }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 describe("sidebar active-route semantics", () => {
   const links = () => screen.getAllByRole("link");
@@ -120,5 +124,85 @@ describe("notice banner visibility", () => {
     for (const key of ["noticeInfo", "noticeWarning", "noticeCritical", "noticeDismiss", "noticeLearnMore"]) {
       expect(translate(en, `settings.${key}`), `settings.${key} has no en string`).not.toBe(`settings.${key}`);
     }
+  });
+});
+
+describe("grouped, collapsible sidebar nav", () => {
+  const GROUPS = {
+    monitor: ["home", "dashboard", "fleet", "uptime"],
+    build: ["projects", "appStore", "import", "sources", "registries"],
+    infrastructure: ["servers", "clusters", "terminal", "destinations", "domains"],
+    integrations: ["cloudCredentials", "secretProviders", "sharedVars"],
+    account: ["notifications", "audit", "teams", "settings"],
+  };
+  const renderSb = () => render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+  const header = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
+
+  it("splits Resources into Build / Infrastructure / Integrations with stable i18n keys", () => {
+    expect(NAV.map((g) => g.group)).toEqual(Object.keys(GROUPS));
+    for (const g of NAV) expect(g.items.map((i) => i.key)).toEqual(GROUPS[g.group as keyof typeof GROUPS]);
+    for (const g of NAV) expect(translate(en, `nav.group.${g.group}`)).not.toBe(`nav.group.${g.group}`);
+  });
+
+  it("keeps every item reachable via DESTS", () => {
+    const hrefs = DESTS.map((d) => d.href);
+    for (const it of NAV.flatMap((g) => g.items)) expect(hrefs).toContain(it.href);
+  });
+
+  it("renders a translated header button per fleet-mode group, expanded by default", () => {
+    mockPath = "/servers/abc";
+    renderSb();
+    for (const label of ["Build", "Infrastructure", "Integrations", "Account"]) {
+      expect(header(label).getAttribute("aria-expanded")).toBe("true");
+    }
+    // Monitor's only fleet items are dashboard/fleet/uptime (home is home-only), so the header still shows.
+    expect(header("Monitor")).toBeTruthy();
+    expect(screen.queryByText("Resources")).toBeNull();
+  });
+
+  it("collapses and expands a group, hiding its items, and persists per group", () => {
+    mockPath = "/nowhere";
+    renderSb();
+    const hrefs = () => screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+    expect(hrefs()).toContain("/clusters");
+
+    fireEvent.click(header("Infrastructure"));
+    expect(header("Infrastructure").getAttribute("aria-expanded")).toBe("false");
+    expect(hrefs()).not.toContain("/clusters");
+    expect(hrefs()).not.toContain("/servers");
+    expect(hrefs()).toContain("/projects"); // other groups untouched
+    expect(localStorage.getItem("tugra.navgroup.infrastructure")).toBe("1");
+    expect(localStorage.getItem("tugra.navgroup.build")).toBeNull();
+
+    fireEvent.click(header("Infrastructure"));
+    expect(header("Infrastructure").getAttribute("aria-expanded")).toBe("true");
+    expect(hrefs()).toContain("/clusters");
+    expect(localStorage.getItem("tugra.navgroup.infrastructure")).toBe("0");
+  });
+
+  it("hydrates a persisted collapsed group on mount", () => {
+    localStorage.setItem("tugra.navgroup.integrations", "1");
+    mockPath = "/nowhere";
+    renderSb();
+    expect(header("Integrations").getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getAllByRole("link").map((a) => a.getAttribute("href"))).not.toContain("/secret-providers");
+    expect(header("Build").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps aria-current on the active route and keeps it findable when another group is collapsed", () => {
+    mockPath = "/clusters";
+    renderSb();
+    fireEvent.click(header("Build"));
+    const current = screen.getAllByRole("link").filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current.map((a) => a.getAttribute("href"))).toEqual(["/clusters"]);
+  });
+
+  it("icon-collapsed mode hides headers and ignores per-group collapse (all items shown)", () => {
+    localStorage.setItem("tugra.sidebar", "1");
+    localStorage.setItem("tugra.navgroup.build", "1");
+    mockPath = "/nowhere";
+    renderSb();
+    expect(screen.queryByRole("button", { name: /^Build$/i })).toBeNull();
+    expect(screen.getAllByRole("link").map((a) => a.getAttribute("href"))).toContain("/projects");
   });
 });

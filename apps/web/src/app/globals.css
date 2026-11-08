@@ -385,6 +385,42 @@ body {
   background: color-mix(in srgb, var(--c-a) 16%, transparent);
 }
 
+/* Collapsible sidebar group header: same 10px uppercase label look as before, but a button (toggles, never navigates). */
+.tg-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 10px 3px;
+  border: none;
+  border-radius: var(--r1);
+  background: transparent;
+  color: var(--c-tx3);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+@media (hover: hover) {
+  .tg-nav-group:hover {
+    background: var(--tg-hover);
+    color: var(--c-tx2);
+  }
+}
+.tg-nav-group:active {
+  background: var(--tg-press);
+}
+.tg-nav-group:focus-visible {
+  outline-offset: -2px;
+}
+
 /* Whole-row hover for list rows that navigate on click and have no other row hover (apps list).
    Rows that already carry .row-link keep that hover instead. Layout stays inline. */
 .tg-row {
@@ -522,6 +558,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .tg-nav-link,
+  .tg-nav-group,
   .tg-row,
   .tg-tab,
   .tg-iconbtn,
