@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useGuardedPush } from "../../../hooks/useUnsavedChanges";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
@@ -30,7 +30,7 @@ const formGrid: React.CSSProperties = {
 export default function MonitorsPage() {
   const t = useT();
   const qc = useQueryClient();
-  const router = useRouter();
+  const push = useGuardedPush();
   const { data: monitors = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["monitors"],
     queryFn: () => api.listMonitors(),
@@ -202,7 +202,7 @@ export default function MonitorsPage() {
         <ListCard>
           {monitors.map((m, i) => (
             // Whole row navigates on click; the name link inside is the keyboard path, so no extra tab stop.
-            <ListRow key={m.id} index={i} onClick={() => router.push(`/monitors/${m.id}`)} tabbable={false}>
+            <ListRow key={m.id} index={i} onClick={() => push(`/monitors/${m.id}`)} tabbable={false}>
               <input
                 type="checkbox"
                 disabled={!m.canWrite}

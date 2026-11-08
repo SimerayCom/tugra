@@ -9,6 +9,7 @@ import { useToast } from "../../../components/toast";
 import { Badge, Btn, Card } from "../../../components/ui";
 import { Checkbox, Field, Select, TextInput } from "../../../components/form";
 import type { MailProvider } from "../../../lib/types";
+import { useUnsavedChanges } from "../../../hooks/useUnsavedChanges";
 
 /**
  * Owner-only in-panel Email (SMTP / Resend) settings, so "mail not arriving" is fixed here instead of by
@@ -89,6 +90,8 @@ export function EmailSettingsCard() {
     },
     onError: (e) => toast(e instanceof Error ? e.message : t("settings.mail_saveFailed"), "error"),
   });
+
+  useUnsavedChanges(dirty && !save.isPending);
 
   const test = useMutation({
     mutationFn: () => api.testMailSettings(testTo.trim()),

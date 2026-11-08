@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useGuardedPush } from "../../../../hooks/useUnsavedChanges";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { clickedInteractive } from "../../../../lib/row-nav";
@@ -39,6 +40,7 @@ function StatCard({ label, value, sub, warn }: { label: string; value: string; s
 export default function ClusterDetailPage() {
   const t = useT();
   const router = useRouter();
+  const push = useGuardedPush();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
@@ -177,7 +179,7 @@ export default function ClusterDetailPage() {
               <div
                 key={s.id}
                 className="row-link"
-                onClick={(e) => { if (!clickedInteractive(e)) router.push(`/servers/${s.id}`); }}
+                onClick={(e) => { if (!clickedInteractive(e)) push(`/servers/${s.id}`); }}
                 style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}
               >
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: s.status === "ONLINE" ? "var(--c-g)" : s.status === "OFFLINE" ? "var(--c-r)" : "var(--c-am)" }} />

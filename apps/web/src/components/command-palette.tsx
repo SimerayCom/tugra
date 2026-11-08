@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -53,7 +53,7 @@ export function CommandPalette({
   onClose: () => void;
   fleet?: boolean;
 }) {
-  const router = useRouter();
+  const push = useGuardedPush();
   const t = useT();
   const { teamId } = useTeamScope();
   const isMobile = useIsMobile();
@@ -92,7 +92,8 @@ export function CommandPalette({
     byKeyboard.current = false;
   }, [active, activeItem]);
 
-  const go = (href: string) => { onClose(); router.push(href); };
+  // Guarded: a dirty config page asks before ⌘K navigates away (the palette closes first so the prompt is visible).
+  const go = (href: string) => { onClose(); push(href); };
 
   return (
     <Modal

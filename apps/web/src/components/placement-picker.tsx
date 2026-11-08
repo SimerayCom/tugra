@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Btn } from "./ui";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 import type { Placement, PlacementConstraint } from "../lib/types";
 
 const field: React.CSSProperties = {
@@ -49,8 +50,9 @@ export function PlacementPicker({ appId, clusterId, initial, canWrite }: { appId
 
   const save = useMutation({
     mutationFn: () => api.setAppPlacement(appId, { constraints, spreadLabelKey }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", appId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", appId] }), // returned: isPending covers the refetch
   });
+  useUnsavedChanges(dirty && !save.isPending);
 
   const addRule = () => {
     const rule: PlacementConstraint = hostnames.length

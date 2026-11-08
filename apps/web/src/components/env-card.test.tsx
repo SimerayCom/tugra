@@ -187,4 +187,47 @@ describe("EnvCard", () => {
     expect(keys.some((k) => k.value === "")).toBe(true);
     expect(screen.queryByText(/no keys match/i)).toBeNull();
   });
+  it("surfaces a duplicate key inline on the row (icon + message, described-by) and keeps Save blocked", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    const keys = screen.getAllByLabelText("Key") as HTMLInputElement[];
+    fireEvent.change(keys[1], { target: { value: "A" } });
+    const rowMsgs = screen.getAllByTestId("env-row-problem");
+    expect(rowMsgs).toHaveLength(2); // both colliding rows are flagged
+    expect(rowMsgs[0].textContent).toContain('Duplicate key');
+    expect(rowMsgs[0].querySelector("svg")).toBeTruthy(); // inline icon
+    expect(keys[1].getAttribute("aria-invalid")).toBe("true");
+    expect(keys[1].getAttribute("aria-describedby")).toBe(rowMsgs[1].id);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("surfaces an invalid key name and a value-without-key inline, without blocking Save", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    const keys = screen.getAllByLabelText("Key") as HTMLInputElement[];
+    const values = screen.getAllByLabelText("Value") as HTMLInputElement[];
+    fireEvent.change(keys[1], { target: { value: "1BAD" } });
+    fireEvent.change(values[2], { target: { value: "orphan" } });
+    const rowMsgs = screen.getAllByTestId("env-row-problem");
+    expect(rowMsgs[0].textContent).toContain("Not a valid variable name");
+    expect(rowMsgs[1].textContent).toContain("Key required");
+    expect(rowMsgs.every((m) => m.querySelector("svg"))).toBe(true);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows no inline problem for a clean env, and guards leaving only while dirty", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1" });
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    expect(screen.queryAllByTestId("env-row-problem")).toHaveLength(0);
+    const unload = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+    expect(unload()).toBe(false);
+    fireEvent.change(screen.getByDisplayValue("1"), { target: { value: "2" } });
+    expect(unload()).toBe(true);
+  });
 });

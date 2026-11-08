@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, ChevronsUpDown, SearchX, Server } from "lucide-react";
 import type { ServerView, ServerStatus, FleetTrendRow } from "../lib/types";
@@ -49,7 +49,7 @@ export function ServerTable({
   onStatusChange?: (s: ServerStatus | null) => void;
 }) {
   const t = useT();
-  const router = useRouter();
+  const push = useGuardedPush();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBulk, setShowBulk] = useState(false);
   const [showCleanup, setShowCleanup] = useState(false);
@@ -201,7 +201,7 @@ export function ServerTable({
               <tr
                 key={s.id}
                 className="row-link"
-                onClick={(e) => { if (!clickedInteractive(e)) router.push(`/servers/${s.id}`); }}
+                onClick={(e) => { if (!clickedInteractive(e)) push(`/servers/${s.id}`); }}
                 style={{ borderTop: "1px solid var(--c-bd)", opacity: s.canWrite ? 1 : 0.6 }}
               >
                 <td style={cell}>

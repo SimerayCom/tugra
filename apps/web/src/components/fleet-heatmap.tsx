@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { memo, useMemo, useState } from "react";
 import type { FleetRow } from "../lib/fleet-view";
 import type { FleetTrendRow } from "../lib/types";
@@ -26,9 +26,9 @@ const sameStamps = (a: string[], b: string[]) => a.length === b.length && a.ever
 const HeatRowView = memo(
   function HeatRowView({ hr, stamps, label, noData }: { hr: HeatRow; stamps: string[]; label: string; noData: string }) {
     const t = useT();
-    const router = useRouter();
+    const push = useGuardedPush();
     const s = hr.row.server;
-    const go = () => router.push(`/servers/${enc(s.id)}`);
+    const go = () => push(`/servers/${enc(s.id)}`);
     return (
       <div
         role="row"

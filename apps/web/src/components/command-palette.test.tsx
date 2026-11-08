@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { CommandPalette } from "./command-palette";
+import { ConfirmProvider } from "./confirm";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 import { api } from "../lib/api";
 import type { Application, Database, DomainView, ServerView } from "../lib/types";
 
@@ -81,5 +83,47 @@ describe("CommandPalette", () => {
     expect(servers).not.toHaveBeenCalled();
     expect(dbs).not.toHaveBeenCalled();
     expect(doms).not.toHaveBeenCalled();
+  });
+
+  describe("unsaved-changes guard", () => {
+    function DirtyCard({ dirty }: { dirty: boolean }) {
+      useUnsavedChanges(dirty);
+      return <span>card</span>;
+    }
+    const wrapGuarded = (dirty: boolean) =>
+      render(
+        <QueryClientProvider client={qc}>
+          <I18nProvider>
+            <ConfirmProvider>
+              <DirtyCard dirty={dirty} />
+              <CommandPalette dests={dests} onClose={() => {}} />
+            </ConfirmProvider>
+          </I18nProvider>
+        </QueryClientProvider>,
+      );
+
+    it("prompts before navigating from a dirty page; Stay cancels, Leave navigates", async () => {
+      stubLists();
+      wrapGuarded(true);
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      expect(await screen.findByText("Stay on page")).toBeTruthy();
+      expect(push).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByText("Stay on page"));
+      await waitFor(() => expect(screen.queryByText("Stay on page")).toBeNull());
+      expect(push).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      fireEvent.click(await screen.findByText("Leave without saving"));
+      await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+    });
+
+    it("navigates with no prompt when the page is clean", () => {
+      stubLists();
+      wrapGuarded(false);
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("Stay on page")).toBeNull();
+    });
   });
 });

@@ -42,6 +42,11 @@ export function useConfirm(): ConfirmFn {
   return fn;
 }
 
+/** Like `useConfirm` but returns null instead of throwing when no ConfirmProvider is mounted (isolated card renders/tests). */
+export function useOptionalConfirm(): ConfirmFn | null {
+  return useContext(ConfirmContext);
+}
+
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const t = useT();
   const [state, setState] = useState<{ opts: ConfirmOptions; resolve: (v: boolean) => void } | null>(null);

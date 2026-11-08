@@ -26,6 +26,7 @@ import { ExposeModal } from "../../../../components/expose-modal";
 import { Modal } from "../../../../components/modal";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
+import { useLeaveGuard, useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { CopyRow } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
@@ -355,6 +356,8 @@ export default function AppDetailPage() {
     ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles"), icon: FolderOpen }] : []),
   ];
   const [tab, setTab] = useTabState("overview", tabDefs.map((d) => d.key));
+  // The Deploy -> Logs jump unmounts the config cards (tabs render conditionally), so it leaves them like a tab click does.
+  const guardLeave = useLeaveGuard();
   // Overview/Configuration sub-nav section, deep-linked as ?section=. "overview" is the first section
   // (the summary); the rest are the config groups. Default lands on the summary.
   const [sectionRaw, setSection] = useTabState("overview", ["overview", ...CONFIG_GROUP_KEYS], "section");
@@ -374,7 +377,8 @@ export default function AppDetailPage() {
   if (isError && !appData) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
-  const onDeploy = (opts?: { noCache?: boolean }) => { setOptimisticDeploy(true); deploy.mutate(opts); setTab("logs"); };
+  // Guard BEFORE mutating: with a dirty card, "Stay" must cancel the deploy as well as the jump to Logs.
+  const onDeploy = (opts?: { noCache?: boolean }) => guardLeave(() => { setOptimisticDeploy(true); deploy.mutate(opts); setTab("logs"); });
   const deployingNow = deploy.isPending || optimisticDeploy;
   const isRunning = appData.status === "RUNNING";
   const headerStatus = deployingNow && appData.status !== "RUNNING" ? { label: "DEPLOYING", color: "var(--c-am)" } : { label: appData.status, color: appColor(appData.status) };
@@ -807,9 +811,10 @@ function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: string[] }
   const dirty = parse(text).join("\n") !== watchPaths.join("\n");
   const save = useMutation({
     mutationFn: () => api.setAppWatchPaths(id, parse(text)),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.saved"), "success"); },
+    onSuccess: () => { toast(t("apps.saved"), "success"); return qc.invalidateQueries({ queryKey: ["app", id] }); },
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
   });
+  useUnsavedChanges(dirty && !save.isPending);
   return (
     <SectionCard title={t("apps.watchPaths")} desc={t("apps.watchPathsDesc")}>
       <textarea
@@ -954,9 +959,10 @@ function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id: string
   const dirty = text !== composeFile;
   const save = useMutation({
     mutationFn: () => api.setAppComposeFile(id, text),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); toast(t("apps.composeSaved"), "success"); },
+    onSuccess: () => { toast(t("apps.composeSaved"), "success"); return qc.invalidateQueries({ queryKey: ["app", id] }); },
     onError: (e) => toast((e as Error).message, "error"),
   });
+  useUnsavedChanges(canWrite && dirty && !save.isPending);
 
   if (!canWrite) {
     return (
@@ -1273,12 +1279,13 @@ function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePa
           })
         : api.setAppSource(id, { image: img.trim() }),
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ["app", id] });
       for (const w of res.warnings ?? []) toast(t(`apps.sourceWarn_${w}`), "info");
+      return qc.invalidateQueries({ queryKey: ["app", id] }); // returned: isPending covers the refetch
     },
     meta: { successMessage: t("apps.saved") },
     onError: (e) => toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error"),
   });
+  useUnsavedChanges(dirty && !save.isPending);
 
   return (
     <SectionCard title={t("apps.source")} desc={t("apps.sourceDesc")}>
@@ -1907,10 +1914,8 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: { id: s
     queryFn: () => api.getAppPreviews(id),
     enabled: previewEnabled,
   });
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["appPreviews", id] });
-    qc.invalidateQueries({ queryKey: ["app", id] });
-  };
+  const invalidate = () =>
+    Promise.all([qc.invalidateQueries({ queryKey: ["appPreviews", id] }), qc.invalidateQueries({ queryKey: ["app", id] })]);
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => api.setPreviewEnabled(id, enabled),
     onSuccess: invalidate,
@@ -1920,6 +1925,7 @@ function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: { id: s
     onSuccess: invalidate,
     meta: { successMessage: t("apps.saved") },
   });
+  useUnsavedChanges(excludeDirty && !saveExclude.isPending);
   const del = useMutation({
     mutationFn: (previewId: string) => api.deletePreview(id, previewId),
     onSuccess: invalidate,
@@ -2077,6 +2083,7 @@ function AppDescriptionCard({ id, description }: { id: string; description: stri
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
+  useUnsavedChanges(dirty && !save.isPending);
   return (
     <SectionCard title={t("apps.description")} desc={t("apps.descriptionHint")}>
       <textarea
@@ -2107,6 +2114,7 @@ function NetworkAliasesCard({ id, aliases }: { id: string; aliases: string[] }) 
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
+  useUnsavedChanges(dirty && !save.isPending);
   return (
     <SectionCard title={t("apps.networkAliases")} desc={t("apps.networkAliasesDesc")}>
       <textarea

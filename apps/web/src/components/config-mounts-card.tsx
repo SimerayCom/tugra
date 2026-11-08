@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import type { AppConfigMount } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { useToast } from "./toast";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 import { Btn, SectionCard } from "./ui";
 
 /**
@@ -36,11 +37,17 @@ export function ConfigMountsCard({ id, onDeploy }: { id: string; onDeploy: () =>
   const save = useMutation({
     mutationFn: (m: AppConfigMount) => api.setAppConfigMount(id, { target: m.target, content: drafts[m.target] ?? m.content }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["app-config-mounts", id] });
       toast(t("apps.cfgMounts.saved"), "success");
+      return qc.invalidateQueries({ queryKey: ["app-config-mounts", id] }); // awaited: isPending covers the refetch (no re-dirty flash)
     },
     onError: (e) => toast((e as Error).message, "error"),
   });
+
+  // Any mount with an edit the server doesn't have yet (the one being saved right now excluded).
+  const anyDirty = list.some(
+    (m) => drafts[m.target] !== undefined && drafts[m.target] !== m.content && !(save.isPending && save.variables?.target === m.target),
+  );
+  useUnsavedChanges(anyDirty);
 
   if (mounts.isLoading || list.length === 0) return null;
 

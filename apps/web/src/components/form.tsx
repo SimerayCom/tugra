@@ -3,6 +3,7 @@
 import { Children, cloneElement, isValidElement, useEffect, useId, type CSSProperties, type InputHTMLAttributes, type ReactElement, type Ref, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { useT } from "../i18n/provider";
 import { Btn, SectionCard } from "./ui";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 
 const monoStyle: CSSProperties = { fontFamily: "var(--font-mono, monospace)" };
 
@@ -208,6 +209,9 @@ export function FormActions({
   children?: ReactNode;
 }) {
   const t = useT();
+  // Every dirty-tracking config card renders this footer, so this one call guards them all (extra-ports,
+  // limits, health-check, docker-options, ...). A save in flight is not "unsaved".
+  useUnsavedChanges(!!dirty && !saving);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       {children}

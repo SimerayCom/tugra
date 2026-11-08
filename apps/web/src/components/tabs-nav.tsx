@@ -2,6 +2,7 @@
 
 import { useRef, type KeyboardEvent } from "react";
 import type { LucideIcon } from "lucide-react";
+import { useLeaveGuard } from "../hooks/useUnsavedChanges";
 
 /**
  * Underline tab strip for detail pages. Controlled via `active`/`onChange`.
@@ -14,7 +15,7 @@ import type { LucideIcon } from "lucide-react";
 export function Tabs({
   tabs,
   active,
-  onChange,
+  onChange: onChangeRaw,
   idPrefix,
   label,
 }: {
@@ -25,6 +26,10 @@ export function Tabs({
   label?: string;
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  // Switching tabs unmounts the previous panel, so a half-edited config card would be lost: confirm first
+  // when any card is dirty (a no-op passthrough otherwise).
+  const guard = useLeaveGuard();
+  const onChange = (key: string) => { if (key === active) onChangeRaw(key); else guard(() => onChangeRaw(key)); };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (tabs.length === 0) return;
     // Leave browser/OS shortcuts (e.g. Alt+Arrow history navigation) alone.

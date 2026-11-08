@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useGuardedPush } from "../hooks/useUnsavedChanges";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
 import { Modal } from "./modal";
@@ -28,13 +28,13 @@ export function CloneAppModal({
   onClose: () => void;
 }) {
   const t = useT();
-  const router = useRouter();
+  const push = useGuardedPush();
   const [name, setName] = useState(defaultName);
   const [serverId, setServerId] = useState(currentServerId);
   const { data: servers } = useQuery({ queryKey: ["servers", teamId], queryFn: () => api.listServers({ teamId }) });
   const clone = useMutation({
     mutationFn: () => api.cloneApp(appId, { name: name.trim() || undefined, serverId }),
-    onSuccess: (res) => { onClose(); router.push(`/apps/${res.app.id}`); },
+    onSuccess: (res) => { onClose(); push(`/apps/${res.app.id}`); },
   });
   const options = (servers ?? []).map((s) => ({
     value: s.id,

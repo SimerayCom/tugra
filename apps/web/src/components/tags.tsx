@@ -3,6 +3,7 @@
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { useT } from "../i18n/provider";
 import { Btn, SectionCard } from "./ui";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 
 /** Client-side preview of the server-side normalizeTags (lowercase + hyphenate). */
 function clean(raw: string): string {
@@ -102,6 +103,7 @@ export function TagsCard({
   const [value, setValue] = useState<string[]>(tags);
   const [input, setInput] = useState("");
   const dirty = value.join(",") !== tags.join(",");
+  useUnsavedChanges(canWrite && dirty);
 
   const add = () => {
     const c = clean(input);

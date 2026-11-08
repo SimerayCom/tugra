@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { ArrowDownAZ, Check, Copy, Eye, EyeOff, FileText, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from "react";
+import { AlertCircle, AlertTriangle, ArrowDownAZ, Check, Copy, Eye, EyeOff, FileText, Plus, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
@@ -12,6 +12,7 @@ import { Badge, Btn, SectionCard, Spinner } from "./ui";
 import { ErrorState } from "./error-state";
 import { IconBtn } from "./icon-btn";
 import { useToast } from "./toast";
+import { useUnsavedChanges } from "../hooks/useUnsavedChanges";
 
 // Env vars read best in a monospace field; value is a password field until revealed.
 const envField: CSSProperties = {
@@ -59,6 +60,7 @@ export function EnvCard({
   relatedKey?: unknown[];
 }) {
   const t = useT();
+  const envId = useId();
   const qc = useQueryClient();
   const toast = useToast();
   const envKey = queryKey ?? ["appEnv", id];
@@ -92,8 +94,8 @@ export function EnvCard({
       return saveEnv ? saveEnv(map) : api.setAppEnv(id, map);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: envKey });
-      qc.invalidateQueries({ queryKey: relKey });
+      // Returned so isPending covers the refetch (the card doesn't flash dirty against a stale cache).
+      return Promise.all([qc.invalidateQueries({ queryKey: envKey }), qc.invalidateQueries({ queryKey: relKey })]);
     },
     meta: { successMessage: t("apps.saved") },
   });
@@ -136,10 +138,14 @@ export function EnvCard({
   const dups = duplicateKeys(rows);
   const dupSet = new Set(dups);
   const invalid = invalidKeys(rows);
+  const invalidSet = new Set(invalid);
   // The server replaces the whole env blob on save, so Save must stay disabled until the env has loaded
   // (while loading/errored, rows is still [] and a click would PUT {} and wipe everything) and only
   // enable on a real change.
   const dirty = envDirty(rows, env);
+  // Leave guard: the row edits, or a bulk-edit draft that hasn't been applied yet, are lost on navigation.
+  // A save in flight is not "unsaved". Read-only viewers can't have edits.
+  useUnsavedChanges(canWrite && !save.isPending && (dirty || (bulk && !!env && bulkText !== toDotenv(rows))));
   const keyCount = rows.filter((r) => r.key.trim()).length;
   // A live count so a bulk paste never silently replaces the whole env with nothing (count 0 = wipe).
   const bulkCount = useMemo(() => (bulk ? parseDotenv(bulkText).filter((r) => r.key.trim()).length : 0), [bulk, bulkText]);
@@ -211,16 +217,29 @@ export function EnvCard({
               {shownRows.map(({ r, i }) => {
                 const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
                 const shown = isRevealed(i);
+                const trimmed = r.key.trim();
+                // Per-row problem, surfaced inline. Same rules as before (dup blocks save, invalid is a soft
+                // hint); a value with no key is dropped on save, so flag it too (soft, not blocking).
+                const problem = isDup
+                  ? { level: "error" as const, msg: t("apps.envRowDup", { key: trimmed }) }
+                  : trimmed && invalidSet.has(trimmed)
+                    ? { level: "warn" as const, msg: t("apps.envRowInvalid") }
+                    : !trimmed && r.value !== ""
+                      ? { level: "warn" as const, msg: t("apps.envRowKeyRequired") }
+                      : null;
+                const problemId = `env-row-${envId}-${i}-msg`;
                 return (
                   <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input
-                      style={{ ...envField, flex: "1 1 160px", ...(isDup ? { borderColor: "var(--c-r)" } : {}) }}
+                      style={{ ...envField, flex: "1 1 160px", ...(isDup ? { borderColor: "var(--c-r)" } : problem ? { borderColor: "var(--c-am)" } : {}) }}
                       placeholder={t("apps.envKey")}
                       aria-label={t("apps.envKey")}
                       value={r.key}
                       onChange={(e) => setRow(i, { key: e.target.value })}
                       readOnly={!canWrite}
-                      aria-invalid={isDup}
+                      aria-required={canWrite || undefined}
+                      aria-invalid={!!problem}
+                      aria-describedby={problem ? problemId : undefined}
                       spellCheck={false}
                       autoComplete="off"
                     />
@@ -245,6 +264,16 @@ export function EnvCard({
                       <IconBtn label={t("common.remove")} danger onClick={() => removeRow(i)}>
                         <X size={14} />
                       </IconBtn>
+                    )}
+                    {problem && (
+                      <div
+                        id={problemId}
+                        data-testid="env-row-problem"
+                        style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: problem.level === "error" ? "var(--c-r)" : "var(--c-am)" }}
+                      >
+                        {problem.level === "error" ? <AlertCircle size={13} aria-hidden style={{ flexShrink: 0 }} /> : <AlertTriangle size={13} aria-hidden style={{ flexShrink: 0 }} />}
+                        <span>{problem.msg}</span>
+                      </div>
                     )}
                   </div>
                 );

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useGuardedPush } from "../../../hooks/useUnsavedChanges";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderTree, Plus, SearchX, Settings } from "lucide-react";
@@ -41,7 +41,7 @@ const rowChip: React.CSSProperties = {
 
 export default function ProjectsPage() {
   const t = useT();
-  const router = useRouter();
+  const push = useGuardedPush();
   const qc = useQueryClient();
   const { teamId: scope } = useTeamScope();
   const { data: projects = [], isLoading, isError, refetch } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
@@ -95,7 +95,7 @@ export default function ProjectsPage() {
             const dbs = p.environments.reduce((n, e) => n + e.dbCount, 0);
             return (
               // Whole row navigates on click; the name link below is the keyboard path, so no extra tab stop.
-              <ListRow key={p.id} index={i} onClick={() => router.push(`/projects/${p.id}`)} tabbable={false}>
+              <ListRow key={p.id} index={i} onClick={() => push(`/projects/${p.id}`)} tabbable={false}>
                 <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
                   {projectIconUrl(p.id, p.iconUpdatedAt) ? (
                     <img src={projectIconUrl(p.id, p.iconUpdatedAt)!} alt="" width={36} height={36} style={{ objectFit: "cover" }} />
