@@ -22,6 +22,59 @@ export function filterByStatus(servers: ServerView[], status: ServerStatus | nul
   return status ? servers.filter((s) => s.status === status) : servers;
 }
 
+/** Case-insensitive substring filter over a server's name, hostname and public IP(s). Blank query = all. */
+export function filterByText(servers: ServerView[], query: string): ServerView[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return servers;
+  return servers.filter((s) =>
+    [s.name, s.hostname, s.publicIp, s.publicIpv6].some((v) => v != null && v.toLowerCase().includes(q)),
+  );
+}
+
+export type ServerSortKey = "name" | "status" | "team" | "cpu" | "lastSeen";
+export type SortDir = "asc" | "desc";
+
+/** Numeric columns read best biggest/newest-first; text columns A→Z. */
+export function defaultSortDir(key: ServerSortKey): SortDir {
+  return key === "cpu" || key === "lastSeen" ? "desc" : "asc";
+}
+
+const STATUS_RANK: Record<ServerStatus, number> = { ONLINE: 0, PENDING: 1, OFFLINE: 2 };
+
+/**
+ * Stable sort of the fleet. Rows with no value for a numeric key (never seen, no samples) always sink to
+ * the bottom regardless of direction. Ties keep their incoming order (explicit index tiebreak).
+ */
+export function sortServers(
+  servers: ServerView[],
+  key: ServerSortKey,
+  dir: SortDir,
+  ctx: { teams?: { id: string; name: string }[]; cpu?: (id: string) => number | null | undefined } = {},
+): ServerView[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const numeric = (s: ServerView): number | null => {
+    if (key === "lastSeen") return s.lastSeenAt ? new Date(s.lastSeenAt).getTime() : null;
+    if (key === "cpu") return ctx.cpu?.(s.id) ?? null;
+    return null;
+  };
+  return servers
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      let c = 0;
+      if (key === "name") c = a.s.name.localeCompare(b.s.name, undefined, { sensitivity: "base", numeric: true }) * sign;
+      else if (key === "team") c = teamLabel(ctx.teams ?? [], a.s.teamId).localeCompare(teamLabel(ctx.teams ?? [], b.s.teamId), undefined, { sensitivity: "base" }) * sign;
+      else if (key === "status") c = (STATUS_RANK[a.s.status] - STATUS_RANK[b.s.status]) * sign;
+      else {
+        const x = numeric(a.s);
+        const y = numeric(b.s);
+        if (x == null || y == null) c = x == null && y == null ? 0 : x == null ? 1 : -1;
+        else c = (x - y) * sign;
+      }
+      return c || a.i - b.i;
+    })
+    .map((x) => x.s);
+}
+
 export function groupByTeam(
   servers: ServerView[],
 ): Record<string, ServerView[]> {

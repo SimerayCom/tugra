@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, cloneElement, isValidElement, useEffect, useId, type CSSProperties, type InputHTMLAttributes, type ReactElement, type ReactNode, type TextareaHTMLAttributes } from "react";
+import { Children, cloneElement, isValidElement, useEffect, useId, type CSSProperties, type InputHTMLAttributes, type ReactElement, type Ref, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { useT } from "../i18n/provider";
 import { Btn, SectionCard } from "./ui";
 
@@ -77,7 +77,7 @@ export function TextInput({
   mono,
   style,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { mono?: boolean }) {
+}: InputHTMLAttributes<HTMLInputElement> & { mono?: boolean; ref?: Ref<HTMLInputElement> }) {
   return <input {...rest} style={{ ...fieldStyle, ...(mono ? monoStyle : {}), ...style }} />;
 }
 
