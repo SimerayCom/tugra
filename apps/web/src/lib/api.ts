@@ -51,6 +51,7 @@ import type {
   FleetLatestRow,
   MetricsRange,
   FleetTrendRow,
+  HottestContainerRow,
   AppContainerMetrics,
   ServerContainers,
   HostContainers,
@@ -637,6 +638,12 @@ export const api = {
   // Sparkline source: each visible server's last `minutes` of per-minute CPU/mem %, in one batch call.
   getFleetTrend(minutes = 30) {
     return apiFetch<FleetTrendRow[]>(`/fleet/metrics/trend?minutes=${minutes}`);
+  },
+  // Hottest containers across every server the caller can see (top `limit` by CPU, live only).
+  getFleetHottestContainers(limit = 10, teamId?: string) {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (teamId) qs.set("teamId", teamId);
+    return apiFetch<HottestContainerRow[]>(`/fleet/containers/hottest?${qs}`);
   },
   containerAction(id: string, container: string, action: "start" | "restart" | "stop" | "remove", confirmName?: string) {
     return apiFetch<{ ok: true }>(`/servers/${id}/containers/action`, {

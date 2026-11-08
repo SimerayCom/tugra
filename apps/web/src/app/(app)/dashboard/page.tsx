@@ -18,6 +18,7 @@ import { ErrorState } from "../../../components/error-state";
 import { ListCard, ListRow } from "../../../components/list";
 import { ChartCard, MetricChart, Sparkline } from "../../../components/charts";
 import { TrendCell } from "../../../components/trend-cell";
+import { HottestContainersCard } from "../../../components/hottest-containers-card";
 import { statusLabel } from "../../../lib/status";
 import { Skeleton, SkeletonCard, SkeletonStat, SkeletonTable } from "../../../components/skeleton";
 
@@ -322,6 +323,7 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+      {!serversDown && servers.length > 0 && <HottestContainersCard teamId={teamId} />}
 
       <div style={sectionTitle}>{t("dashboard.resources")}</div>
       <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>

@@ -33,6 +33,7 @@ function mockApi(o: { latest?: unknown[]; trend?: unknown[] } = {}) {
   vi.spyOn(api, "listAudit").mockResolvedValue({ entries: [] } as never);
   vi.spyOn(api, "getFleetMetrics").mockResolvedValue((o.latest ?? []) as never);
   vi.spyOn(api, "getFleetTrend").mockResolvedValue((o.trend ?? []) as never);
+  vi.spyOn(api, "getFleetHottestContainers").mockResolvedValue([]);
 }
 
 describe("DashboardPage fleet cockpit", () => {
@@ -52,6 +53,17 @@ describe("DashboardPage fleet cockpit", () => {
     expect(fleet.compareDocumentPosition(resources) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // the offline server surfaces in the Attention list
     expect(screen.getAllByText("srv-c").length).toBeGreaterThan(0);
+  });
+
+  it("shows the fleet-wide Hottest containers card next to the cockpit", async () => {
+    mockApi();
+    vi.spyOn(api, "getFleetHottestContainers").mockResolvedValue([
+      { serverId: "a", serverName: "srv-a", containerName: "web", label: "web", kind: "other", cpu: 42, memUsed: 1, memTotal: 2, memPct: 50, netRx: 0, netTx: 0, blkRead: 0, blkWrite: 0 },
+    ]);
+    wrap(<DashboardPage />);
+    await ready();
+    expect(await screen.findByRole("table", { name: "Hottest containers" })).toBeTruthy();
+    expect(screen.getByText("42%")).toBeTruthy();
   });
 
   it("makes Online / Pending / Offline real links into the filtered server list", async () => {

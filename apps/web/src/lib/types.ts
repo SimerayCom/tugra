@@ -622,6 +622,25 @@ export interface FleetLatestRow {
   sample: MetricsSample;
 }
 
+/** One row of GET /fleet/containers/hottest: a live container on a visible server, ranked by CPU. */
+export interface HottestContainerRow {
+  serverId: string;
+  serverName: string;
+  containerName: string;
+  label: string; // friendly name ("WordPress · db", "hub-api") — show this, not the raw tugra_ name
+  kind: "app" | "db" | "system" | "other";
+  resourceId?: string;
+  service?: string;
+  cpu: number;
+  memUsed: number;
+  memTotal: number;
+  memPct: number;
+  netRx: number;
+  netTx: number;
+  blkRead: number;
+  blkWrite: number;
+}
+
 export interface ContainerMetricSample {
   ts: number;
   cpu: number;

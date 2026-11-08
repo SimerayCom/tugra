@@ -46,5 +46,10 @@
   "chartDesc": "Average across servers, last {n} min",
   "waitingForData": "Waiting for enough data…",
   "busiestCpu": "{n}% CPU",
-  "busiestEmpty": "No active servers"
+  "busiestEmpty": "No active servers",
+  "hottest": "Hottest containers",
+  "hottestHint": "Top containers by current CPU across your servers",
+  "hottestEmpty": "No running containers are reporting yet",
+  "hottestError": "Couldn't load the hottest containers",
+  "hottestRank": "#"
 }

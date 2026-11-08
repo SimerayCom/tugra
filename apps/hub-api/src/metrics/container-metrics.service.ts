@@ -51,7 +51,11 @@ export function resolveContainerLabel(
   dbs: Map<string, string>,
 ): { label: string; kind: ContainerInventoryRow["kind"]; resourceId?: string; service?: string } {
   let m = /^tugra_db_([a-z0-9]+)$/i.exec(name);
-  if (m) return { label: dbs.get(m[1]) ?? name.replace(/^tugra_db_/, ""), kind: "db", resourceId: m[1] };
+  if (m) {
+    // Link only a database that exists in the queried set (an orphan / out-of-scope container has no page).
+    const known = dbs.has(m[1]);
+    return { label: dbs.get(m[1]) ?? name.replace(/^tugra_db_/, ""), kind: "db", ...(known && { resourceId: m[1] }) };
+  }
   m = /^tugra_([a-z0-9]+)(?:-(.+)-(\d+))?$/i.exec(name);
   if (m && apps.has(m[1])) {
     const appName = apps.get(m[1])!;
@@ -67,6 +71,34 @@ export function resolveContainerLabel(
 
 export interface ServerContainers {
   containers: ContainerInventoryRow[];
+}
+
+/** One row of the cross-fleet "hottest containers" ranking (BigInt byte fields widened to Number). */
+export interface HottestContainerRow {
+  serverId: string;
+  serverName: string;
+  containerName: string;
+  label: string;
+  kind: ContainerInventoryRow["kind"];
+  resourceId?: string;
+  service?: string;
+  cpu: number; // %
+  memUsed: number; // bytes
+  memTotal: number; // bytes
+  memPct: number; // %
+  netRx: number; // B/s
+  netTx: number; // B/s
+  blkRead: number; // B/s
+  blkWrite: number; // B/s
+}
+
+export const HOTTEST_DEFAULT_LIMIT = 10;
+export const HOTTEST_MAX_LIMIT = 50;
+
+/** Clamp a caller-supplied `limit` to 1..HOTTEST_MAX_LIMIT; missing / non-numeric → the default. */
+export function clampHottestLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return HOTTEST_DEFAULT_LIMIT;
+  return Math.min(HOTTEST_MAX_LIMIT, Math.max(1, Math.floor(limit)));
 }
 
 // A container counts as "live" if it reported within this window (the agent samples every 15s, so
@@ -258,6 +290,52 @@ export class ContainerMetricsService {
     }
     const containers = [...latest.values()].sort((a, b) => a.label.localeCompare(b.label));
     return { containers };
+  }
+
+  /**
+   * Cross-fleet "hottest containers": the live containers across `servers`, ranked by CPU desc, top
+   * `limit`. The caller MUST pass only servers the requester may see (ServersService.listForUser) —
+   * this method performs no authorization itself and never reads outside that set. ONE query over the
+   * live window (no per-server round trips); each (server, container) keeps only its newest sample, so
+   * stale/removed containers (no report within LIVE_WINDOW_MS) are excluded.
+   */
+  async hottest(servers: { id: string; name: string }[], limit?: number): Promise<HottestContainerRow[]> {
+    if (servers.length === 0) return [];
+    const serverIds = servers.map((s) => s.id);
+    const [rows, apps, dbs] = await Promise.all([
+      this.prisma.containerMetric.findMany({
+        where: { serverId: { in: serverIds }, ts: { gte: new Date(Date.now() - LIVE_WINDOW_MS) } },
+        orderBy: { ts: "desc" },
+      }),
+      this.prisma.application.findMany({ where: { serverId: { in: serverIds } }, select: { id: true, name: true } }),
+      this.prisma.database.findMany({ where: { serverId: { in: serverIds } }, select: { id: true, name: true } }),
+    ]);
+    // ts desc → the first row seen per (server, container) is its newest sample.
+    const latest = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      const key = `${r.serverId}\u0000${r.containerName}`;
+      if (!latest.has(key)) latest.set(key, r);
+    }
+    const nameById = new Map(servers.map((s) => [s.id, s.name]));
+    const appsById = new Map(apps.map((a) => [a.id, a.name]));
+    const dbsById = new Map(dbs.map((d) => [d.id, d.name]));
+    return [...latest.values()]
+      .sort((a, b) => b.cpu - a.cpu || a.containerName.localeCompare(b.containerName))
+      .slice(0, clampHottestLimit(limit))
+      .map((r) => ({
+        serverId: r.serverId,
+        serverName: nameById.get(r.serverId) ?? r.serverId,
+        containerName: r.containerName,
+        ...resolveContainerLabel(r.containerName, appsById, dbsById),
+        cpu: r.cpu,
+        memUsed: Number(r.memUsed),
+        memTotal: Number(r.memTotal),
+        memPct: r.memPct,
+        netRx: Number(r.netRx),
+        netTx: Number(r.netTx),
+        blkRead: Number(r.blkRead),
+        blkWrite: Number(r.blkWrite),
+      }));
   }
 }
 

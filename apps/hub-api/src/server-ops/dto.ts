@@ -68,6 +68,25 @@ export const FleetTrendRowSchema = z.object({
   points: z.array(z.object({ ts: z.number(), cpu: z.number(), mem: z.number().nullable() })),
 });
 
+// Cross-fleet "hottest containers": the live containers across every visible server, ranked by CPU.
+export const FleetHottestContainerSchema = z.object({
+  serverId: z.string(),
+  serverName: z.string(),
+  containerName: z.string(),
+  label: z.string(),
+  kind: z.enum(["app", "db", "system", "other"]),
+  resourceId: z.string().optional(),
+  service: z.string().optional(),
+  cpu: z.number(),
+  memUsed: z.number(),
+  memTotal: z.number(),
+  memPct: z.number(),
+  netRx: z.number(),
+  netTx: z.number(),
+  blkRead: z.number(),
+  blkWrite: z.number(),
+});
+
 // Lifecycle action on one container from the server's Containers tab. `remove` needs confirmName
 // (type-to-confirm) and is only allowed on foreign containers (service-side guard).
 export const ContainerActionSchema = z.object({

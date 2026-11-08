@@ -1,4 +1,4 @@
-import { ContainerMetricsService, rangeToMs, sampleEvenly, resolveContainerLabel } from "./container-metrics.service";
+import { ContainerMetricsService, rangeToMs, sampleEvenly, resolveContainerLabel, clampHottestLimit } from "./container-metrics.service";
 import type { ContainerMetricsMsg } from "@tugra/shared";
 
 describe("resolveContainerLabel", () => {
@@ -19,8 +19,8 @@ describe("resolveContainerLabel", () => {
   it("leaves a foreign container name as-is", () => {
     expect(resolveContainerLabel("some-other-container", apps, dbs)).toEqual({ label: "some-other-container", kind: "other" });
   });
-  it("falls back to the stripped id when the db is unknown", () => {
-    expect(resolveContainerLabel("tugra_db_gone", apps, dbs)).toEqual({ label: "gone", kind: "db", resourceId: "gone" });
+  it("falls back to the stripped id with no resourceId when the db is unknown", () => {
+    expect(resolveContainerLabel("tugra_db_gone", apps, dbs)).toEqual({ label: "gone", kind: "db" });
   });
 });
 
@@ -320,5 +320,90 @@ describe("ContainerMetricsService", () => {
     expect(row.memTotal).toBe(0n);
     expect(row.netRx).toBe(0n);
     expect(row.blkWrite).toBe(0n);
+  });
+});
+
+describe("clampHottestLimit", () => {
+  it("defaults to 10 for missing / non-finite and clamps to 1..50", () => {
+    expect(clampHottestLimit(undefined)).toBe(10);
+    expect(clampHottestLimit(NaN)).toBe(10);
+    expect(clampHottestLimit(0)).toBe(1);
+    expect(clampHottestLimit(-5)).toBe(1);
+    expect(clampHottestLimit(7.9)).toBe(7);
+    expect(clampHottestLimit(9999)).toBe(50);
+  });
+});
+
+describe("ContainerMetricsService.hottest", () => {
+  const NOW = 1_700_000_000_000;
+  beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(NOW));
+  afterEach(() => jest.restoreAllMocks());
+
+  const servers = [{ id: "s1", name: "alpha" }, { id: "s2", name: "beta" }];
+  const r = (over: Record<string, unknown>) => ({
+    serverId: "s1",
+    containerName: "web",
+    containerId: "c",
+    ts: new Date(NOW - 5_000),
+    cpu: 1,
+    memUsed: 100n,
+    memTotal: 200n,
+    memPct: 50,
+    netRx: 1n,
+    netTx: 2n,
+    blkRead: 3n,
+    blkWrite: 4n,
+    ...over,
+  });
+  function make(rows: unknown[]) {
+    const findMany = jest.fn().mockResolvedValue(rows);
+    const prisma = {
+      containerMetric: { findMany },
+      application: { findMany: jest.fn().mockResolvedValue([{ id: "app1", name: "WordPress" }]) },
+      database: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    return { svc: new ContainerMetricsService(prisma), findMany, prisma };
+  }
+
+  it("queries ONCE, scoped to the given server ids and the 90s live window", async () => {
+    const { svc, findMany, prisma } = make([]);
+    await svc.hottest(servers);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.serverId).toEqual({ in: ["s1", "s2"] });
+    expect(where.ts.gte.getTime()).toBe(NOW - 90_000);
+    expect(prisma.application.findMany.mock.calls[0][0].where.serverId).toEqual({ in: ["s1", "s2"] });
+  });
+
+  it("returns [] without touching the DB when there are no visible servers", async () => {
+    const { svc, findMany } = make([]);
+    expect(await svc.hottest([])).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps only the NEWEST sample per (server, container), ranks by cpu desc, widens BigInt", async () => {
+    // Rows arrive ts desc (as queried): the 95% sample is stale relative to the newer 10% one.
+    const { svc } = make([
+      r({ containerName: "web", cpu: 10, ts: new Date(NOW - 1_000) }),
+      r({ containerName: "web", cpu: 95, ts: new Date(NOW - 30_000) }),
+      r({ containerName: "tugra_app1", cpu: 40, memUsed: 123456789012n }),
+      r({ serverId: "s2", containerName: "web", cpu: 60 }), // same name on another server is a distinct row
+    ]);
+    const out = await svc.hottest(servers);
+    expect(out.map((x) => [x.serverName, x.containerName, x.cpu])).toEqual([
+      ["beta", "web", 60],
+      ["alpha", "tugra_app1", 40],
+      ["alpha", "web", 10],
+    ]);
+    expect(out[1]).toMatchObject({ label: "WordPress", kind: "app", resourceId: "app1", memUsed: 123456789012, netRx: 1, blkWrite: 4 });
+    expect(JSON.stringify(out)).toContain("123456789012"); // no BigInt left → serializes
+  });
+
+  it("applies the limit (clamped) after ranking", async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => r({ containerName: `c${i}`, cpu: i }));
+    const { svc } = make(rows);
+    expect((await svc.hottest(servers, 2)).map((x) => x.containerName)).toEqual(["c4", "c3"]);
+    expect(await svc.hottest(servers, 0)).toHaveLength(1);
+    expect(await svc.hottest(servers)).toHaveLength(5);
   });
 });

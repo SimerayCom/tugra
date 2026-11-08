@@ -38369,6 +38369,177 @@
         ]
       }
     },
+    "/api/v1/fleet/containers/hottest": {
+      "get": {
+        "operationId": "FleetController_hottestContainers",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "teamId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "serverId": {
+                        "type": "string"
+                      },
+                      "serverName": {
+                        "type": "string"
+                      },
+                      "containerName": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "app",
+                          "db",
+                          "system",
+                          "other"
+                        ]
+                      },
+                      "resourceId": {
+                        "type": "string"
+                      },
+                      "service": {
+                        "type": "string"
+                      },
+                      "cpu": {
+                        "type": "number"
+                      },
+                      "memUsed": {
+                        "type": "number"
+                      },
+                      "memTotal": {
+                        "type": "number"
+                      },
+                      "memPct": {
+                        "type": "number"
+                      },
+                      "netRx": {
+                        "type": "number"
+                      },
+                      "netTx": {
+                        "type": "number"
+                      },
+                      "blkRead": {
+                        "type": "number"
+                      },
+                      "blkWrite": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "serverId",
+                      "serverName",
+                      "containerName",
+                      "label",
+                      "kind",
+                      "cpu",
+                      "memUsed",
+                      "memTotal",
+                      "memPct",
+                      "netRx",
+                      "netTx",
+                      "blkRead",
+                      "blkWrite"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
     "/api/v1/fleet/cleanup-config": {
       "post": {
         "operationId": "FleetController_bulkCleanupConfig",

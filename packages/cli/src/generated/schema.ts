@@ -3716,6 +3716,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fleet/containers/hottest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["FleetController_hottestContainers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fleet/cleanup-config": {
         parameters: {
             query?: never;
@@ -26659,6 +26675,83 @@ export interface operations {
                             cpu: number;
                             mem: number | null;
                         }[];
+                    }[];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    FleetController_hottestContainers: {
+        parameters: {
+            query: {
+                limit: string;
+                teamId: string;
+                status: string;
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        serverId: string;
+                        serverName: string;
+                        containerName: string;
+                        label: string;
+                        /** @enum {string} */
+                        kind: "app" | "db" | "system" | "other";
+                        resourceId?: string;
+                        service?: string;
+                        cpu: number;
+                        memUsed: number;
+                        memTotal: number;
+                        memPct: number;
+                        netRx: number;
+                        netTx: number;
+                        blkRead: number;
+                        blkWrite: number;
                     }[];
                 };
             };
