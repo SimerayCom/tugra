@@ -344,6 +344,30 @@ body {
   border-color: var(--c-tx3);
 }
 
+/* Fleet metrics wall: small-multiples grid, one card per server (3 → ~200 servers). */
+.fleet-wall {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 10px;
+}
+.fleet-wall-card {
+  border: 1px solid var(--c-bd);
+  border-radius: var(--r1);
+  background: var(--c-sb);
+  padding: 12px;
+  min-width: 0;
+  /* Off-screen cards skip layout/paint work on a big wall (the placeholder size keeps the scrollbar stable). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 130px;
+}
+.fleet-wall-card:hover,
+.fleet-wall-card:focus-within {
+  border-color: var(--c-tx3);
+}
+
 /* Deployment list rows are the click target that drills into a deployment (Coolify-style). */
 .dep-row:hover {
   background: var(--c-el);

@@ -362,6 +362,8 @@ export function MetricChart({
   peakToggle = false,
   tableToggle = false,
   bare = false,
+  interactive = true,
+  hideHeader = false,
 }: {
   /** Legacy single series. Ignored when a non-empty `series` is given. */
   data?: number[];
@@ -388,6 +390,12 @@ export function MetricChart({
   tableToggle?: boolean;
   /** Drop the outer card chrome (border/padding) so the chart can live inside a `ChartCard`. */
   bare?: boolean;
+  /** Default true. When false the plot is a static drawing: no `role="slider"`, no tab stop, no keyboard/pointer
+   *  hover handlers (for dense small-multiple grids where each chart would otherwise add a same-named tab stop). */
+  interactive?: boolean;
+  /** Default false. When true the chart's own header row (label, axis-max tag, latest value, controls) is not
+   *  drawn — only the plot + axes — for callers that already show the value elsewhere. */
+  hideHeader?: boolean;
 }) {
   const t = useT();
   const [setPlotEl, width] = useElementWidth(FALLBACK_W);
@@ -617,29 +625,31 @@ export function MetricChart({
 
   return (
     <div style={bare ? { minWidth: 0 } : CARD_STYLE}>
-      <div
-        style={
-          legacyHeader
-            ? { display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }
-            : { display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", marginBottom: 8, gap: 8 }
-        }
-      >
-        <span style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
-          <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{label}</span>
-          <span style={{ fontSize: 10, color: "var(--c-tx3)" }} className="mono">
-            {axisMax.toFixed(decimals)}
-            {unit}
+      {!hideHeader && (
+        <div
+          style={
+            legacyHeader
+              ? { display: "flex", justifyContent: "space-between", marginBottom: 8, gap: 8 }
+              : { display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", marginBottom: 8, gap: 8 }
+          }
+        >
+          <span style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+            <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{label}</span>
+            <span style={{ fontSize: 10, color: "var(--c-tx3)" }} className="mono">
+              {axisMax.toFixed(decimals)}
+              {unit}
+            </span>
           </span>
-        </span>
-        {legacyHeader ? (
-          headerValue
-        ) : (
-          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {controls}
-            {headerValue}
-          </span>
-        )}
-      </div>
+          {legacyHeader ? (
+            headerValue
+          ) : (
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {controls}
+              {headerValue}
+            </span>
+          )}
+        </div>
+      )}
       {!lone && (
         <ul
           data-testid="chart-legend"
@@ -734,23 +744,27 @@ export function MetricChart({
             </div>
             <div
               ref={setPlotEl}
-              role="slider"
-              tabIndex={0}
-              aria-label={label}
-              aria-orientation="horizontal"
-              aria-valuemin={0}
-              aria-valuemax={Math.max(n - 1, 0)}
-              aria-valuenow={idx ?? Math.max(n - 1, 0)}
-              aria-valuetext={n === 0 ? t("charts.noData") : valueText(idx ?? n - 1)}
-              onPointerMove={moveToClientX}
-              onPointerDown={moveToClientX}
-              onPointerLeave={(e) => {
-                if (e.pointerType === "mouse") setActive(null);
-              }}
-              onFocus={() => setActive((a) => a ?? (n ? n - 1 : null))}
-              onBlur={() => setActive(null)}
-              onKeyDown={onKeyDown}
-              style={{ position: "relative", flex: 1, minWidth: 0, height, touchAction: "pan-y", cursor: n ? "crosshair" : "default", borderRadius: 4 }}
+              {...(interactive
+                ? {
+                    role: "slider",
+                    tabIndex: 0,
+                    "aria-label": label,
+                    "aria-orientation": "horizontal" as const,
+                    "aria-valuemin": 0,
+                    "aria-valuemax": Math.max(n - 1, 0),
+                    "aria-valuenow": idx ?? Math.max(n - 1, 0),
+                    "aria-valuetext": n === 0 ? t("charts.noData") : valueText(idx ?? n - 1),
+                    onPointerMove: moveToClientX,
+                    onPointerDown: moveToClientX,
+                    onPointerLeave: (e: PointerEvent<HTMLDivElement>) => {
+                      if (e.pointerType === "mouse") setActive(null);
+                    },
+                    onFocus: () => setActive((a) => a ?? (n ? n - 1 : null)),
+                    onBlur: () => setActive(null),
+                    onKeyDown,
+                  }
+                : {})}
+              style={{ position: "relative", flex: 1, minWidth: 0, height, touchAction: "pan-y", cursor: interactive && n ? "crosshair" : "default", borderRadius: 4 }}
             >
               {/* True-pixel drawing: the viewBox is the MEASURED pixel width, so 1 user unit = 1 CSS px — strokes,
                   dots and the hover marker are never stretched. */}

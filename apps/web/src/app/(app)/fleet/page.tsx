@@ -10,6 +10,11 @@ import { statusCounts, filterByStatus } from "../../../lib/fleet";
 import { buildFleetRows, sortFleetRows, matchesFleetSearch, type FleetSortKey, type SortDir } from "../../../lib/fleet-view";
 import { useFleetTrend } from "../../../hooks/useFleetTrend";
 import { FleetTable } from "../../../components/fleet-table";
+import { FleetWall } from "../../../components/fleet-wall";
+import {
+  FLEET_VIEWS, WALL_METRICS, VIEW_KEY, METRIC_KEY, METRIC_SORT_KEY, readPref, writePref,
+  type FleetView, type WallMetric, type WallSort,
+} from "../../../lib/fleet-wall";
 import { ErrorState } from "../../../components/error-state";
 import { SkeletonTable } from "../../../components/skeleton";
 import type { FleetLatestRow, ServerStatus } from "../../../lib/types";
@@ -39,6 +44,13 @@ export default function FleetPage() {
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<FleetSortKey>("cpu");
   const [sortDir, setSortDir] = useState<SortDir>("desc"); // worst-first by default
+  const [view, setViewState] = useState<FleetView>("table"); // Table stays the default; the choice is per-user
+  const [metric, setMetricState] = useState<WallMetric>("cpu");
+  useEffect(() => {
+    // Read after mount (not in the initializer) so server + first client render agree.
+    setViewState(readPref(VIEW_KEY, FLEET_VIEWS, "table"));
+    setMetricState(readPref(METRIC_KEY, WALL_METRICS, "cpu"));
+  }, []);
 
   // A ticking clock so staleness re-evaluates even when the metrics payload is unchanged between polls
   // (a whole-fleet outage returns identical data, so a data-only dep would never flip the stale flag).
@@ -56,10 +68,17 @@ export default function FleetPage() {
   const scoped = useMemo(() => scopeByTeam(servers ?? [], teamId), [servers, teamId]);
   const counts = useMemo(() => statusCounts(scoped), [scoped]);
 
+  // The Table and the Wall keep SEPARATE sort state so switching views never clobbers the other's order.
+  // The wall's order is a tiny control: hottest-first by the plotted metric (follows the metric, incl. on
+  // restore), or by name / status.
+  const [wallSort, setWallSort] = useState<WallSort>("hot");
+  const effKey: FleetSortKey = view === "wall" ? (wallSort === "hot" ? METRIC_SORT_KEY[metric] : wallSort) : sortKey;
+  const effDir: SortDir = view === "wall" ? (wallSort === "hot" ? "desc" : "asc") : sortDir;
+
   const rows = useMemo(() => {
     const built = buildFleetRows(filterByStatus(scoped, status), metrics, nowMs).filter((r) => matchesFleetSearch(r, q));
-    return sortFleetRows(built, sortKey, sortDir);
-  }, [scoped, status, metrics, nowMs, q, sortKey, sortDir]);
+    return sortFleetRows(built, effKey, effDir);
+  }, [scoped, status, metrics, nowMs, q, effKey, effDir]);
 
   const onSort = (k: FleetSortKey) => {
     if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -68,6 +87,16 @@ export default function FleetPage() {
       setSortDir(k === "name" || k === "status" ? "asc" : "desc");
     }
   };
+
+  const setView = (v: FleetView) => {
+    setViewState(v);
+    writePref(VIEW_KEY, v);
+  };
+  const setMetric = (m: WallMetric) => {
+    setMetricState(m);
+    writePref(METRIC_KEY, m);
+  };
+  const metricLabel: Record<WallMetric, string> = { cpu: t("fleet.colCpu"), mem: t("fleet.colMem"), disk: t("fleet.colDisk"), net: t("fleet.colNet") };
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -93,13 +122,46 @@ export default function FleetPage() {
         />
       </div>
 
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+        <Segmented
+          label={t("fleet.view")}
+          value={view}
+          onChange={setView}
+          options={[{ value: "table", label: t("fleet.viewTable") }, { value: "wall", label: t("fleet.viewWall") }]}
+        />
+        {view === "wall" && (
+          <>
+            <Segmented
+              label={t("fleet.wallMetric")}
+              value={metric}
+              onChange={setMetric}
+              options={WALL_METRICS.map((m) => ({ value: m, label: metricLabel[m] }))}
+            />
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-tx3)", marginLeft: "auto" }}>
+              {t("fleet.wallSort")}
+              <select
+                value={wallSort}
+                onChange={(e) => setWallSort(e.target.value as WallSort)}
+                className="fleet-chip"
+                style={{ padding: "6px 8px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 12.5, fontFamily: "inherit" }}
+              >
+                <option value="hot">{t("fleet.sortHot")}</option>
+                <option value="name">{t("fleet.sortName")}</option>
+                <option value="status">{t("fleet.sortStatus")}</option>
+              </select>
+            </label>
+          </>
+        )}
+      </div>
+
       {metricsError && servers && (
         <div role="status" style={{ marginBottom: 10, fontSize: 12.5, color: "var(--c-am)" }}>{t("fleet.metricsError")}</div>
       )}
 
       {isLoading && !servers && <SkeletonTable rows={6} />}
       {isError && !servers && <ErrorState onRetry={() => refetch()} />}
-      {servers && <FleetTable rows={rows} sortKey={sortKey} sortDir={sortDir} onSort={onSort} clusterName={clusterName} trends={trends} />}
+      {servers && view === "wall" && <FleetWall rows={rows} metric={metric} trends={trends} />}
+      {servers && view === "table" && <FleetTable rows={rows} sortKey={sortKey} sortDir={sortDir} onSort={onSort} clusterName={clusterName} trends={trends} />}
     </div>
   );
 }
@@ -119,5 +181,32 @@ function Chip({ active, onClick, color, children }: { active: boolean; onClick: 
     >
       <span style={{ color }}>{children}</span>
     </button>
+  );
+}
+
+/** Segmented control: a labelled group of toggle buttons (aria-pressed), one active. */
+function Segmented<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (v: T) => void; options: { value: T; label: string }[] }) {
+  return (
+    <div role="group" aria-label={label} style={{ display: "inline-flex", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", overflow: "hidden" }}>
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className="fleet-chip"
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+            style={{
+              all: "unset", cursor: "pointer", padding: "6px 12px", fontSize: 12, fontWeight: active ? 600 : 500,
+              color: active ? "var(--c-tx)" : "var(--c-tx3)", background: active ? "var(--c-el)" : "transparent",
+              boxShadow: active ? "inset 0 -2px 0 var(--c-a)" : "none",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }

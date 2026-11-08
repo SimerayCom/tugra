@@ -20,5 +20,16 @@
   "clustered": "In cluster",
   "stale": "data is stale",
   "metricsError": "Live metrics are temporarily unavailable — showing the last known state.",
-  "filterStatus": "Filter by status"
+  "filterStatus": "Filter by status",
+  "view": "Fleet view",
+  "viewTable": "Table",
+  "viewWall": "Wall",
+  "wall": "Fleet metrics wall",
+  "wallMetric": "Wall metric",
+  "wallSort": "Sort wall by",
+  "sortHot": "Hottest first",
+  "sortName": "Name",
+  "sortStatus": "Status",
+  "noRecent": "No recent data",
+  "noTrendMetric": "No trend history for this metric yet."
 }
