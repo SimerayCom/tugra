@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.4] - 2026-11-08
+
+- **Update checks now offer the next beta.** A version-comparison bug meant the panel never showed a
+  newer beta of the same base version (e.g. 0.1.0-beta.2 → 0.1.0-beta.3) as available, so beta testers
+  could not update from the panel. Pre-release versions are now ranked per SemVer §11.4, so the next
+  beta is offered like any other update.
+- **Polish from live-demo feedback.** The dashboard fleet tiles no longer reflow when metrics load; the
+  beta notice banner no longer shows a stale version after an update; and the app header's
+  Restart / Redeploy / Stop actions have clearer, distinct icons and grouping.
+
 ## [0.1.0-beta.3] - 2026-11-08
 
 - **Panel UX overhaul.** A grouped, collapsible sidebar; consistent hover/focus/active states and
