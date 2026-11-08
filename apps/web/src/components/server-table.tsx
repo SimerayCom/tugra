@@ -55,7 +55,8 @@ export function ServerTable({
       <button
         type="button"
         onClick={() => onStatusChange?.(s)}
-        style={{ fontFamily: "inherit", fontSize: 12, cursor: "pointer", border: "1px solid", borderColor: active ? color : "var(--c-bd)", background: active ? `${color}22` : "transparent", color, borderRadius: 999, padding: "3px 11px" }}
+        aria-pressed={active}
+        style={{ fontFamily: "inherit", fontSize: 12, cursor: "pointer", border: "1px solid", borderColor: active ? color : "var(--c-bd)", background: active ? `color-mix(in srgb, ${color} 14%, transparent)` : "transparent", color, borderRadius: 999, padding: "3px 11px" }}
       >
         {label}
       </button>
