@@ -96,7 +96,15 @@ describe("semver comparator", () => {
     it("ranks a release above a pre-release of the same core", () => {
       expect(compareVersions(P("1.0.0"), P("1.0.0-rc.1"))).toBe(1);
       expect(compareVersions(P("1.0.0-rc.1"), P("1.0.0"))).toBe(-1);
-      expect(compareVersions(P("1.0.0-a"), P("1.0.0-b"))).toBe(0); // pre-detail not distinguished
+    });
+    it("orders pre-releases of the same core per SemVer §11.4", () => {
+      expect(compareVersions(P("1.0.0-a"), P("1.0.0-b"))).toBe(-1); // a < b
+      expect(compareVersions(P("0.1.0-beta.3"), P("0.1.0-beta.2"))).toBe(1); // the beta-update case
+      expect(compareVersions(P("0.1.0-beta.2"), P("0.1.0-beta.3"))).toBe(-1);
+      expect(compareVersions(P("0.1.0-beta.10"), P("0.1.0-beta.9"))).toBe(1); // numeric, not lexical
+      expect(compareVersions(P("1.0.0-alpha"), P("1.0.0-alpha.1"))).toBe(-1); // fewer fields < more
+      expect(compareVersions(P("1.0.0-alpha.1"), P("1.0.0-beta"))).toBe(-1); // alpha < beta
+      expect(compareVersions(P("0.1.0-beta.2"), P("0.1.0-beta.2"))).toBe(0); // identical
     });
   });
 

@@ -82,17 +82,36 @@ export function parseVersion(v: string): ParsedVersion | null {
 /**
  * Compare two ALREADY-PARSED versions: -1 (a<b) | 0 (equal precedence) | 1 (a>b). Callers that start
  * from strings must reject nulls FIRST (see isNewer) — this never sees an unparseable input, so its 0
- * unambiguously means "equal precedence" (build metadata and pre-release identifier detail beyond
- * "any pre-release < its release" are intentionally not distinguished; channels are kept separate).
+ * unambiguously means "equal precedence". Pre-release identifiers ARE compared per SemVer §11.4
+ * (so 0.1.0-beta.2 < 0.1.0-beta.3); only build metadata (+suffix) is ignored.
  */
 export function compareVersions(a: ParsedVersion, b: ParsedVersion): -1 | 0 | 1 {
   for (let i = 0; i < 3; i++) {
     if (a.core[i] !== b.core[i]) return a.core[i] < b.core[i] ? -1 : 1;
   }
-  // Equal core: a release (no pre-release) outranks a pre-release of the same core (SemVer §11).
+  // Equal core: a release (no pre-release) outranks a pre-release of the same core (SemVer §11.3).
   const aRel = a.pre.length === 0;
   const bRel = b.pre.length === 0;
   if (aRel !== bRel) return aRel ? 1 : -1;
+  if (aRel && bRel) return 0;
+  // Both pre-releases of the same core: compare identifiers left-to-right (SemVer §11.4) so that, e.g.,
+  // 0.1.0-beta.2 < 0.1.0-beta.3 and a beta tester is offered the next beta through the update check.
+  const n = Math.min(a.pre.length, b.pre.length);
+  for (let i = 0; i < n; i++) {
+    const ai = a.pre[i];
+    const bi = b.pre[i];
+    const aNum = /^\d+$/.test(ai);
+    const bNum = /^\d+$/.test(bi);
+    if (aNum && bNum) {
+      if (ai !== bi) return Number(ai) < Number(bi) ? -1 : 1;
+    } else if (aNum !== bNum) {
+      return aNum ? -1 : 1; // numeric identifiers rank below alphanumeric ones
+    } else if (ai !== bi) {
+      return ai < bi ? -1 : 1;
+    }
+  }
+  // All shared identifiers equal: the longer identifier set has higher precedence.
+  if (a.pre.length !== b.pre.length) return a.pre.length < b.pre.length ? -1 : 1;
   return 0;
 }
 
