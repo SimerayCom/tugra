@@ -469,6 +469,25 @@ export function noticeVisible(notice: InstanceUpdateNotice | null | undefined, d
   return dismissedId !== notice.id;
 }
 
+/** A parenthesised semver such as "(0.1.0-beta.2)" / "(v1.2.3)"; group 1 is the bare version. */
+const PAREN_VERSION = /\s*\(\s*v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\s*\)/g;
+
+/**
+ * The banner text, made version-proof. The notice is signed free text authored at publish time, so a baked-in
+ * self-reference like "(0.1.0-beta.2)" goes stale the moment the instance updates. We therefore (1) replace a
+ * `{version}` placeholder with the ACTUAL running version (when known) and (2) drop ONLY the parenthesised version
+ * that equals the running version (the stale self-reference). A different parenthesised version is an intended
+ * target ("Security fix in (0.1.1), please upgrade") and is kept.
+ */
+export function noticeMessage(message: string, running?: string | null): string {
+  const withVersion = running ? message.replace(/\{version\}/g, running) : message.replace(/\s*\{version\}/g, "");
+  const bare = running ? running.replace(/^v/, "") : null;
+  const stripped = bare
+    ? withVersion.replace(PAREN_VERSION, (m, v: string) => (v === bare ? "" : m))
+    : withVersion;
+  return stripped.replace(/\s{2,}/g, " ").trim();
+}
+
 /**
  * Owner-only, dismissible strip for a signed operator notice delivered through the update manifest
  * (security advisory, "please upgrade to beta.2", etc.). Shares the ["instanceUpdate"] query with the
@@ -524,7 +543,7 @@ function NoticeBanner() {
       }}
     >
       <span style={{ flex: 1, minWidth: 180 }}>
-        <strong style={{ color: tone }}>{label}:</strong> {notice.message}
+        <strong style={{ color: tone }}>{label}:</strong> {noticeMessage(notice.message, data?.current)}
       </span>
       {notice.url && (
         <a href={notice.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-a)", whiteSpace: "nowrap" }}>

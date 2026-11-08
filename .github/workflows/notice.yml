@@ -16,7 +16,7 @@ on:
         description: "Stable notice id (a NEW id re-shows a dismissed banner), e.g. 2026-11-02-beta2"
         required: false
       message:
-        description: "Notice text — plain text, <=500 chars (required unless clearing)"
+        description: "Notice text — plain text, <=500 chars (required unless clearing). Keep it VERSION-AGNOSTIC: do not hard-code the running version (it goes stale after an update); use the {version} placeholder if you need it — the web banner substitutes the actual running version"
         required: false
       severity:
         description: "Severity"

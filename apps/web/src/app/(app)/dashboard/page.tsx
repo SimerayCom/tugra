@@ -36,6 +36,22 @@ const sectionTitle: React.CSSProperties = {
   textTransform: "uppercase", letterSpacing: "0.06em",
 };
 
+/**
+ * Fleet tile grid, shared by the loading skeleton and the loaded cockpit. `auto-fill` (NOT `auto-fit`) keeps the
+ * column tracks identical whether 3 status tiles or 6 tiles are present, so the CPU/RAM tiles landing after the
+ * metrics fetch fill an existing cell instead of reflowing (re-widening) every tile in the row.
+ */
+const FLEET_GRID: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 14 };
+/** Reserved box of the tile's sparkline slot (also its drawn size) — present with or without trend data. */
+const SPARK_W = 72;
+const SPARK_H = 28;
+/**
+ * Shared min-height of EVERY fleet-row tile (status, CPU/RAM, disk) and of the loading skeleton tiles. It is the
+ * natural height of the tallest (health) tile — 18+18 padding, 15 label + 6, 28 value/sparkline, 6 + 16 delta line,
+ * 2 border — rounded up, so the row is identical from first paint to loaded and nothing below shifts vertically.
+ */
+const FLEET_TILE_MIN_H = 112;
+
 export default function DashboardPage() {
   const t = useT();
   const { teamId } = useTeamScope();
@@ -98,8 +114,13 @@ export default function DashboardPage() {
         </div>
 
         <div style={sectionTitle}>{t("dashboard.fleet")}</div>
-        <div style={{ display: "flex", gap: 14, marginBottom: 28, flexWrap: "wrap" }}>
-          <SkeletonStat /><SkeletonStat /><SkeletonStat /><SkeletonStat /><SkeletonStat />
+        <div style={{ ...FLEET_GRID, marginBottom: 28 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} data-testid="fleet-skeleton-tile" style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", padding: 18, minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
+              <Skeleton height={12} width="55%" style={{ marginBottom: 10 }} />
+              <Skeleton height={26} width="40%" />
+            </div>
+          ))}
         </div>
 
         <div style={sectionTitle}>{t("dashboard.resources")}</div>
@@ -133,7 +154,7 @@ export default function DashboardPage() {
 
   const statusTile = (status: ServerStatus, label: string, value: number, color: string, extra?: React.ReactNode) => (
     <Link href={`/servers?status=${status}`} style={{ textDecoration: "none", borderRadius: "var(--r2)", display: "block" }}>
-      <Card style={{ padding: 18, height: "100%" }}>
+      <Card style={{ padding: 18, height: "100%", minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{label}{extra}</div>
         <div style={{ fontSize: 26, fontWeight: 700, color }}>
           {serversDown ? "—" : value}
@@ -156,13 +177,16 @@ export default function DashboardPage() {
     const deltaText = !d ? "" : d.dir === "up" ? t("dashboard.deltaUp", { pts, n: TREND_MINUTES }) : d.dir === "down" ? t("dashboard.deltaDown", { pts, n: TREND_MINUTES }) : t("dashboard.deltaFlat", { n: TREND_MINUTES });
     return (
       <Link href="/fleet" style={{ textDecoration: "none", borderRadius: "var(--r2)", display: "block" }}>
-        <Card style={{ padding: 18, height: "100%" }}>
+        <Card style={{ padding: 18, height: "100%", minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{o.label}</div>
-          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10, minHeight: SPARK_H }}>
             <div style={{ fontSize: 26, fontWeight: 700, color: o.color }}>{o.value}</div>
-            {hasTrend && <Sparkline data={o.series} width={72} height={28} color={o.sparkColor} fixedMax={100} label={o.sparkLabel} />}
+            {/* Fixed-size slot, always mounted: the tile keeps the same box before/after the trend arrives. */}
+            <span data-testid="spark-slot" style={{ width: SPARK_W, height: SPARK_H, flexShrink: 0, display: "block" }}>
+              {hasTrend && <Sparkline data={o.series} width={SPARK_W} height={SPARK_H} color={o.sparkColor} fixedMax={100} label={o.sparkLabel} />}
+            </span>
           </div>
-          <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6, display: "flex", alignItems: "center", gap: 4, minHeight: 16, whiteSpace: "nowrap" }}>
             {d && (
               <span title={deltaText} style={{ display: "inline-flex", alignItems: "center", gap: 2, color: d.dir === "up" ? "var(--c-am)" : d.dir === "down" ? "var(--c-g)" : "var(--c-tx3)", fontWeight: 600 }}>
                 <Arrow size={12} aria-hidden="true" />
@@ -170,7 +194,7 @@ export default function DashboardPage() {
                 <span className="sr-only">{deltaText}</span>
               </span>
             )}
-            <span>{win}</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={win}>{win}</span>
           </div>
         </Card>
       </Link>
@@ -222,31 +246,30 @@ export default function DashboardPage() {
         </ListCard>
       )}
 
-      {/* Fleet cockpit: clickable status tiles + live health tiles (hide-when-empty) + trend chart + busiest servers */}
+      {/* Fleet cockpit: clickable status tiles + live health tiles (placeholder-until-loaded) + trend chart + busiest servers */}
       <div style={sectionTitle}>{t("dashboard.fleet")}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginBottom: 14 }}>
+      <div data-testid="fleet-grid" style={{ ...FLEET_GRID, marginBottom: 14 }}>
         {statusTile("ONLINE", t("dashboard.online"), counts.ONLINE, "var(--c-g)")}
         {statusTile("PENDING", t("dashboard.pending"), counts.PENDING, "var(--c-am)")}
         {statusTile("OFFLINE", t("dashboard.offline"), counts.OFFLINE, counts.OFFLINE > 0 ? "var(--c-r)" : "var(--c-tx3)", counts.OFFLINE > 0 && !serversDown ? <AlertTriangle size={13} color="var(--c-r)" aria-hidden="true" /> : null)}
-        {snap.cpu !== null && healthTile({
-          label: t("dashboard.fleetCpu"), value: `${Math.round(snap.cpu)}%`, color: toneColor(metricTone(snap.cpu)),
+        {/* Always rendered (placeholder value until the metrics land) so the row keeps one height from first paint. */}
+        {healthTile({
+          label: t("dashboard.fleetCpu"), value: snap.cpu !== null ? `${Math.round(snap.cpu)}%` : "—", color: snap.cpu !== null ? toneColor(metricTone(snap.cpu)) : "var(--c-tx3)",
           series: cpuSeries, sparkColor: "var(--c-a)", sparkLabel: t("dashboard.fleetCpuTrend", { n: TREND_MINUTES }),
         })}
-        {snap.mem !== null && healthTile({
-          label: t("dashboard.fleetRam"), value: `${Math.round(snap.mem)}%`, color: toneColor(metricTone(snap.mem)),
+        {healthTile({
+          label: t("dashboard.fleetRam"), value: snap.mem !== null ? `${Math.round(snap.mem)}%` : "—", color: snap.mem !== null ? toneColor(metricTone(snap.mem)) : "var(--c-tx3)",
           series: memSeries, sparkColor: "var(--c-lapis)", sparkLabel: t("dashboard.fleetRamTrend", { n: TREND_MINUTES }),
         })}
-        {snap.diskKnown && (
-          <div style={{ borderRadius: "var(--r2)", display: "block" }}>
-            <Card style={{ padding: 18, height: "100%" }}>
-              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("dashboard.diskPressure")}</div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: snap.diskPressure > 0 ? "var(--c-r)" : "var(--c-g)", display: "flex", alignItems: "center", gap: 8 }}>
-                {snap.diskPressure > 0 && <AlertTriangle size={18} aria-hidden="true" />}{snap.diskPressure}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("dashboard.diskPressureSub", { pct: DISK_PRESSURE_PCT })}</div>
-            </Card>
-          </div>
-        )}
+        <div style={{ borderRadius: "var(--r2)", display: "block" }}>
+          <Card style={{ padding: 18, height: "100%", minHeight: FLEET_TILE_MIN_H, boxSizing: "border-box" }}>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("dashboard.diskPressure")}</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: !snap.diskKnown ? "var(--c-tx3)" : snap.diskPressure > 0 ? "var(--c-r)" : "var(--c-g)", display: "flex", alignItems: "center", gap: 8 }}>
+              {snap.diskKnown && snap.diskPressure > 0 && <AlertTriangle size={18} aria-hidden="true" />}{snap.diskKnown ? snap.diskPressure : "—"}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("dashboard.diskPressureSub", { pct: DISK_PRESSURE_PCT })}</div>
+          </Card>
+        </div>
       </div>
       {(hasChart || busiest.length > 0) && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14, marginBottom: 28, alignItems: "start" }}>

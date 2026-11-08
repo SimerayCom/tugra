@@ -113,6 +113,38 @@ describe("DashboardPage fleet cockpit", () => {
     expect(screen.queryByRole("img", { name: /Fleet CPU trend/ })).toBeNull();
   });
 
+  it("keeps a stable layout: auto-fill grid (never auto-fit) and a reserved sparkline slot with or without trend data", async () => {
+    mockApi({ latest: [{ serverId: "a", sample: sample(20, 85) }] }); // no trend
+    wrap(<DashboardPage />);
+    await screen.findByText("Fleet CPU");
+    const grid = screen.getByTestId("fleet-grid");
+    expect(grid.style.gridTemplateColumns).toContain("auto-fill");
+    expect(grid.style.gridTemplateColumns).not.toContain("auto-fit");
+    const slots = screen.getAllByTestId("spark-slot");
+    expect(slots.length).toBe(2);
+    for (const s of slots) {
+      expect(s.style.width).toBe("72px");
+      expect(s.style.height).toBe("28px"); // empty-trend state reserves the same box the sparkline fills
+      expect(s.querySelector("svg")).toBeNull();
+    }
+  });
+
+  it("renders the sparkline inside the same reserved slot once trend data is present", async () => {
+    mockApi({
+      latest: [{ serverId: "a", sample: sample(20, 85) }],
+      trend: [{ serverId: "a", points: pts([10, 20, 30]) }],
+    });
+    wrap(<DashboardPage />);
+    await screen.findByText("Fleet CPU");
+    const slots = screen.getAllByTestId("spark-slot");
+    expect(slots.length).toBe(2);
+    for (const s of slots) {
+      expect(s.style.width).toBe("72px");
+      expect(s.style.height).toBe("28px");
+      expect(s.querySelector("svg")).not.toBeNull();
+    }
+  });
+
   it("renders a flat trend as ±0 with the steady sentence for screen readers", async () => {
     mockApi({
       latest: [{ serverId: "a", sample: sample(30) }],
@@ -131,17 +163,52 @@ describe("DashboardPage fleet cockpit", () => {
     expect(document.querySelector('a[href="/servers?status=ONLINE"]')).toBeTruthy();
   });
 
-  it("hides the live tiles, chart and busiest list when there is no metrics data", async () => {
+  it("keeps the live tiles as em-dash placeholders (hides only chart/busiest) when there is no metrics data", async () => {
     mockApi();
     wrap(<DashboardPage />);
     await ready();
     await waitFor(() => expect(api.getFleetMetrics).toHaveBeenCalled());
-    expect(screen.queryByText("Fleet CPU")).toBeNull();
-    expect(screen.queryByText("Fleet RAM")).toBeNull();
-    expect(screen.queryByText("Disk pressure")).toBeNull();
+    expect(screen.getByText("Fleet CPU")).toBeTruthy();
+    expect(screen.getByText("Fleet RAM")).toBeTruthy();
+    expect(screen.getByText("Disk pressure")).toBeTruthy();
     expect(screen.queryByText("Busiest servers")).toBeNull();
     expect(screen.queryByText("Fleet CPU & RAM")).toBeNull();
     expect(screen.queryByRole("img", { name: /Fleet CPU trend/ })).toBeNull();
+  });
+
+  it("fleet row has no vertical jump: skeleton, empty and loaded tiles all share one min-height", async () => {
+    const tileMinHeights = () =>
+      Array.from(screen.getByTestId("fleet-grid").children).map((c) => (c.firstElementChild as HTMLElement).style.minHeight);
+
+    // 1) loading skeleton (servers never resolve)
+    mockApi();
+    vi.spyOn(api, "listServers").mockReturnValue(new Promise(() => {}) as never);
+    wrap(<DashboardPage />);
+    const skel = screen.getAllByTestId("fleet-skeleton-tile").map((el) => el.style.minHeight);
+    expect(skel.length).toBe(6);
+    expect(new Set(skel).size).toBe(1);
+    expect(skel[0]).toMatch(/^\d+px$/);
+    cleanup();
+    vi.restoreAllMocks();
+
+    // 2) loaded, no metrics yet: all 6 tiles present (CPU/RAM/disk as placeholders), same height as the skeleton
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi();
+    wrap(<DashboardPage />);
+    await ready();
+    const empty = tileMinHeights();
+    expect(empty.length).toBe(6);
+    expect(new Set(empty).size).toBe(1);
+    expect(empty[0]).toBe(skel[0]);
+    cleanup();
+    vi.restoreAllMocks();
+
+    // 3) loaded with metrics + trend: unchanged
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({ latest: [{ serverId: "a", sample: sample(20, 85) }], trend: [{ serverId: "a", points: pts([10, 20, 30]) }] });
+    wrap(<DashboardPage />);
+    await screen.findByText("20%");
+    expect(tileMinHeights()).toEqual(empty);
   });
 
   it("lists the busiest servers by latest CPU, linking to each server", async () => {

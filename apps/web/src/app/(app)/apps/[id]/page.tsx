@@ -57,7 +57,7 @@ import { useDismiss } from "../../../../lib/use-dismiss";
 import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
-  RotateCw, Play, RefreshCw, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
+  RotateCw, Play, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
   Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, History, ShieldAlert, type LucideIcon,
 } from "lucide-react";
 
@@ -216,6 +216,11 @@ function AppIconCard({ app, onChanged }: { app: Application; onChanged: () => vo
     </SectionCard>
   );
 }
+
+/** App-header action clusters: tight gap inside a group. */
+const actionGroup: React.CSSProperties = { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" };
+/** Groups 2 and 3 carry their own left separator, so a wrap can never strand a free-floating divider. */
+const actionGroupSep: React.CSSProperties = { ...actionGroup, borderLeft: "1px solid var(--c-bd)", paddingLeft: 10, marginLeft: 4 };
 
 export default function AppDetailPage() {
   const t = useT();
@@ -496,25 +501,39 @@ export default function AppDetailPage() {
         actions={
           appData.canWrite ? (
             <>
-              {primary === "restart" && (
-                <Btn icon={RotateCw} iconTone="warn" loading={restart.isPending} onClick={() => restart.mutate()}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
-              )}
-              {primary === "start" && (
-                <Btn icon={Play} iconTone="success" loading={start.isPending} onClick={() => start.mutate()}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
-              )}
-              <Btn icon={appData.status === "NEW" ? Rocket : RefreshCw} variant={primary === "deploy" ? "primary" : "ghost"} iconTone={primary === "deploy" ? undefined : "success"} loading={deploy.isPending} onClick={() => onDeploy()}>
-                {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
-              </Btn>
-              <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={!isRunning} onClick={async () => { if (await confirm({ body: t("apps.stopConfirm"), danger: true })) stop.mutate(); }}>{t("apps.stop")}</Btn>
-              <Btn
-                icon={Terminal}
-                variant="ghost"
-                onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}
-                disabled={!isRunning}
-                title={!isRunning ? t("apps.shellDisabledHint") : undefined}
-              >
-                {t("apps.openShell")}
-              </Btn>
+              {/* Grouped so six controls read as three intents, not one undifferentiated row:
+                  1) ship code  2) lifecycle of the running container  3) tools. Groups 2/3 carry a border-left separator. */}
+              <div role="group" aria-label={t("apps.actionsDeploy")} style={actionGroup}>
+                <Btn
+                  icon={appData.status === "NEW" ? Rocket : CloudUpload}
+                  variant={primary === "deploy" ? "primary" : "ghost"}
+                  iconTone={primary === "deploy" ? undefined : "success"}
+                  loading={deploy.isPending}
+                  title={appData.status === "NEW" ? undefined : t("apps.redeployHint")}
+                  onClick={() => onDeploy()}
+                >
+                  {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
+                </Btn>
+              </div>
+              <div role="group" aria-label={t("apps.actionsLifecycle")} style={actionGroupSep}>
+                {primary === "restart" && (
+                  <Btn icon={RotateCw} iconTone="warn" loading={restart.isPending} title={t("apps.restartHint")} onClick={() => restart.mutate()}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
+                )}
+                {primary === "start" && (
+                  <Btn icon={Play} iconTone="success" loading={start.isPending} onClick={() => start.mutate()}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
+                )}
+                <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={!isRunning} onClick={async () => { if (await confirm({ body: t("apps.stopConfirm"), danger: true })) stop.mutate(); }}>{t("apps.stop")}</Btn>
+              </div>
+              <div role="group" aria-label={t("apps.actionsTools")} style={actionGroupSep}>
+                <Btn
+                  icon={Terminal}
+                  variant="ghost"
+                  onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}
+                  disabled={!isRunning}
+                  title={!isRunning ? t("apps.shellDisabledHint") : undefined}
+                >
+                  {t("apps.openShell")}
+                </Btn>
               <div ref={moreRef} style={{ position: "relative" }}>
                 <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("apps.more")}><Ellipsis size={16} /></Btn>
                 {moreOpen && (
@@ -530,6 +549,7 @@ export default function AppDetailPage() {
                     <Btn role="menuitem" icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("apps.delete")}</Btn>
                   </div>
                 )}
+              </div>
               </div>
             </>
           ) : undefined

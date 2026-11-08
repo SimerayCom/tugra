@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { NAV, DESTS, noticeVisible, Sidebar } from "./shell";
+import { NAV, DESTS, noticeVisible, noticeMessage, Sidebar } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
@@ -119,6 +119,25 @@ describe("notice banner visibility", () => {
   it("hidden once dismissed by id", () => expect(noticeVisible(n(), "n1")).toBe(false));
   it("re-shows when the notice id changes", () => expect(noticeVisible(n({ id: "n2" }), "n1")).toBe(true));
   it("critical is non-dismissible (always shown)", () => expect(noticeVisible(n({ severity: "critical" }), "n1")).toBe(true));
+
+  it("strips only the stale self-version (parenthesised version equal to the running one)", () => {
+    expect(noticeMessage("You're running the Tugra public beta (0.1.0-beta.2). Report issues on GitHub.", "0.1.0-beta.2")).toBe(
+      "You're running the Tugra public beta. Report issues on GitHub.",
+    );
+    expect(noticeMessage("Public beta (v1.2.3) is live", "1.2.3")).toBe("Public beta is live");
+  });
+  it("keeps a parenthesised version that differs from the running one (an intended target)", () => {
+    expect(noticeMessage("Security fix in (0.1.1), please upgrade", "0.1.0")).toBe("Security fix in (0.1.1), please upgrade");
+    expect(noticeMessage("Running (0.1.0) -> upgrade to (0.1.1)", "0.1.0")).toBe("Running -> upgrade to (0.1.1)");
+    expect(noticeMessage("Security fix in (0.1.1)", null)).toBe("Security fix in (0.1.1)");
+  });
+  it("substitutes {version} with the actual running version, or drops it when unknown", () => {
+    expect(noticeMessage("Running {version} — thanks!", "0.1.0-beta.3")).toBe("Running 0.1.0-beta.3 — thanks!");
+    expect(noticeMessage("Running Tugra {version}.", null)).toBe("Running Tugra.");
+  });
+  it("leaves a version-agnostic message untouched", () => {
+    expect(noticeMessage("Please back up before upgrading.", "0.1.0-beta.3")).toBe("Please back up before upgrading.");
+  });
 
   it("every notice severity label resolves in en", () => {
     for (const key of ["noticeInfo", "noticeWarning", "noticeCritical", "noticeDismiss", "noticeLearnMore"]) {
