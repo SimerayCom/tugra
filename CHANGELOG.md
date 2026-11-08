@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.5] - 2026-11-08
+
+- **Cleaner server metric charts.** Metric charts now render two per row (wider and more readable)
+  instead of being packed four or five across; Network in/out and Disk read/write are each combined
+  into a single two-series chart with per-series values in the legend; and the dashboard fleet chart no
+  longer reflows from full-width to two columns as its data loads.
+
 ## [0.1.0-beta.4] - 2026-11-08
 
 - **Update checks now offer the next beta.** A version-comparison bug meant the panel never showed a
