@@ -11,18 +11,31 @@ const RATE_UNITS = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
  */
 export function humanizeRateSeries(values: number[]): { data: number[]; unit: string } {
   const current = values.length ? values[values.length - 1] : 0;
+  const { unit, divisor } = pickRateUnit(current);
+  return { data: scaleBy(values, divisor), unit };
+}
+
+/**
+ * Two paired byte/s series (net in/out, disk read/write) scaled into ONE shared unit so they can overlay in a
+ * single chart. The unit follows the larger of the two current (last) values, same rule as the single-series form.
+ */
+export function humanizeRatePair(a: number[], b: number[]): { a: number[]; b: number[]; unit: string } {
+  const last = (v: number[]) => (v.length ? v[v.length - 1] : 0);
+  const { unit, divisor } = pickRateUnit(Math.max(last(a), last(b)));
+  return { a: scaleBy(a, divisor), b: scaleBy(b, divisor), unit };
+}
+
+function pickRateUnit(current: number): { unit: string; divisor: number } {
   let i = 0;
   let m = current;
   while (m >= 1024 && i < RATE_UNITS.length - 1) {
     m /= 1024;
     i++;
   }
-  const divisor = 1024 ** i;
-  return {
-    data: divisor === 1 ? values.slice() : values.map((v) => v / divisor),
-    unit: RATE_UNITS[i],
-  };
+  return { unit: RATE_UNITS[i], divisor: 1024 ** i };
 }
+
+const scaleBy = (values: number[], divisor: number) => (divisor === 1 ? values.slice() : values.map((v) => v / divisor));
 
 /** Disk-usage % history from the used/total pair every host sample (raw row or rollup bucket) already
  *  carries. Samples with no usable total (0 / missing / non-finite) are skipped, and `times` stays aligned

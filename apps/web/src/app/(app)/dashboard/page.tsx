@@ -52,6 +52,15 @@ const SPARK_H = 28;
  */
 const FLEET_TILE_MIN_H = 112;
 
+/** Keeps a chart/list slot at its final height when it has no data yet, so nothing below it shifts. */
+function SlotPlaceholder({ height, text }: { height: number; text: string }) {
+  return (
+    <div role="status" style={{ minHeight: height, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--c-tx3)", textAlign: "center" }}>
+      {text}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const t = useT();
   const { teamId } = useTeamScope();
@@ -272,9 +281,11 @@ export default function DashboardPage() {
         </div>
       </div>
       {(hasChart || busiest.length > 0) && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14, marginBottom: 28, alignItems: "start" }}>
-          {hasChart && (
-            <ChartCard title={t("dashboard.chartTitle")} description={t("dashboard.chartDesc", { n: TREND_MINUTES })}>
+        // Fixed two-slot grid: BOTH slots are always rendered once the block shows, so the chart keeps one width from
+        // first paint — a late-loading "Busiest" list fills its reserved slot instead of splitting a full-width chart.
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 14, marginBottom: 28, alignItems: "start" }}>
+          <ChartCard title={t("dashboard.chartTitle")} description={t("dashboard.chartDesc", { n: TREND_MINUTES })}>
+            {hasChart ? (
               <MetricChart
                 bare
                 label={t("dashboard.chartTitle")}
@@ -286,12 +297,14 @@ export default function DashboardPage() {
                   { key: "mem", label: t("servers.ram"), values: agg.mem, kind: "line" },
                 ]}
               />
-            </ChartCard>
-          )}
-          {busiest.length > 0 && (
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("dashboard.busiest")}</div>
-              <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--c-tx3)", margin: "2px 0 10px" }}>{t("dashboard.busiestHint")}</div>
+            ) : (
+              <SlotPlaceholder height={140} text={t("dashboard.waitingForData")} />
+            )}
+          </ChartCard>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)" }}>{t("dashboard.busiest")}</div>
+            <div style={{ fontSize: 11, lineHeight: 1.4, color: "var(--c-tx3)", margin: "2px 0 10px" }}>{t("dashboard.busiestHint")}</div>
+            {busiest.length > 0 ? (
               <ListCard>
                 {busiest.map((r, i) => (
                   <ListRow key={r.server.id} index={i} href={`/servers/${r.server.id}`} style={{ padding: "10px 16px" }}>
@@ -301,8 +314,12 @@ export default function DashboardPage() {
                   </ListRow>
                 ))}
               </ListCard>
-            </div>
-          )}
+            ) : (
+              <Card style={{ padding: 16 }}>
+                <SlotPlaceholder height={140} text={t("dashboard.busiestEmpty")} />
+              </Card>
+            )}
+          </div>
         </div>
       )}
 

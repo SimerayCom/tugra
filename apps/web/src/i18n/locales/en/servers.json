@@ -148,6 +148,8 @@
   "temp": "Temperature",
   "gpu": "GPU",
   "battery": "Battery",
+  "net": "Network",
+  "diskIo": "Disk I/O",
   "netIn": "Network In",
   "netOut": "Network Out",
   "diskRead": "Disk Read",

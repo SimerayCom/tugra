@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { humanizeRateSeries, diskPctSeries } from "./metrics";
+import { humanizeRateSeries, humanizeRatePair, diskPctSeries } from "./metrics";
 
 describe("humanizeRateSeries", () => {
   it("keeps a small current value in B/s untouched", () => {
@@ -73,5 +73,23 @@ describe("diskPctSeries (disk-usage history)", () => {
   it("clamps to 0–100 and handles empty input", () => {
     expect(diskPctSeries([{ ts: 1, diskUsed: 150, diskTotal: 100 }]).data).toEqual([100]);
     expect(diskPctSeries([])).toEqual({ times: [], data: [] });
+  });
+});
+
+describe("humanizeRatePair", () => {
+  it("scales both series into one shared unit chosen from the larger current value", () => {
+    const r = humanizeRatePair([100, 2048], [5_000_000, 1024]);
+    expect(r.unit).toBe("KB/s");
+    expect(r.a).toEqual([100 / 1024, 2]);
+    expect(r.b[1]).toBe(1);
+  });
+
+  it("stays in B/s when both are idle and does not mutate inputs", () => {
+    const a = [5_000_000, 0];
+    const r = humanizeRatePair(a, []);
+    expect(r.unit).toBe("B/s");
+    expect(r.a).toEqual([5_000_000, 0]);
+    expect(r.a).not.toBe(a);
+    expect(r.b).toEqual([]);
   });
 });

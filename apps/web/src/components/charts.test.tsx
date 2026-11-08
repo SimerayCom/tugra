@@ -283,8 +283,15 @@ describe("MetricChart v2", () => {
     expect(container.querySelector('[data-testid="chart-line-in"]')!.getAttribute("stroke")).toBe("var(--chart-1)");
     expect(container.querySelector('[data-testid="chart-line-out"]')!.getAttribute("stroke")).toBe("var(--chart-2)");
     expect(within(screen.getByTestId("chart-legend")).getAllByRole("listitem")).toHaveLength(2);
+    // Each legend entry carries that series' latest value (the multi-series header has none).
+    const legendVals = () => within(screen.getByTestId("chart-legend")).getAllByRole("listitem").map((li) => li.textContent);
+    expect(legendVals()).toEqual(["Net in4.0 MB/s", "Net out9.0 MB/s"]);
     expect(screen.queryByTestId("chart-stats")).toBeNull(); // per-series stats are single-series only
     const slider = screen.getByRole("slider", { name: "Network" });
+    fireEvent.keyDown(slider, { key: "Home" }); // legend values follow the hovered point
+    expect(legendVals()).toEqual(["Net in1.0 MB/s", "Net out4.0 MB/s"]);
+    fireEvent.keyDown(slider, { key: "Escape" });
+    expect(legendVals()).toEqual(["Net in4.0 MB/s", "Net out9.0 MB/s"]);
     fireEvent.focus(slider); // newest point: in=4.0, out=9.0
     const rows = within(screen.getByTestId("chart-tooltip")).getAllByTestId("chart-tooltip-row");
     expect(rows.map((r) => r.textContent)).toEqual(["Net out9.0 MB/s", "Net in4.0 MB/s"]); // largest first

@@ -76,7 +76,7 @@ describe("DashboardPage fleet cockpit", () => {
     wrap(<DashboardPage />);
     expect(await screen.findByText("Fleet CPU")).toBeTruthy();
     expect(screen.getByText("Fleet RAM")).toBeTruthy();
-    expect(screen.getByText("50%")).toBeTruthy(); // mean of 20 and 80
+    expect(screen.getAllByText("50%").length).toBeGreaterThanOrEqual(1); // mean of 20 and 80 (tile + chart legend value)
     expect(screen.getAllByText("last 30 min").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole("img", { name: "Fleet CPU trend, last 30 min" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Fleet RAM trend, last 30 min" })).toBeTruthy();

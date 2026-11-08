@@ -14,10 +14,10 @@ import { CopyBtn } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
-import { diskPctSeries, humanizeRateSeries } from "../../../../lib/metrics";
+import { diskPctSeries, humanizeRatePair } from "../../../../lib/metrics";
 import type { MetricsRange, ServerStatus, ServerView, AgentUpdateResponse, LogDrain, LogDrainType } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
-import { MetricChart } from "../../../../components/charts";
+import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
 import { LiveGauges } from "../../../../components/live-gauges";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
@@ -101,12 +101,10 @@ export default function ServerDetailPage() {
   const cpuPeaks = metrics.some((m) => m.cpuMax !== undefined) ? metrics.map((m) => m.cpuMax ?? m.cpu) : undefined;
   const disk = diskPctSeries(metrics); // disk % history from the stored diskUsed/diskTotal (own time axis)
   const ram = metrics.map((m) => pct(m.memUsed, m.memTotal));
-  const netIn = humanizeRateSeries(metrics.map((m) => m.netRx));
-  const netOut = humanizeRateSeries(metrics.map((m) => m.netTx));
+  const net = humanizeRatePair(metrics.map((m) => m.netRx), metrics.map((m) => m.netTx));
   // `?? 0`: an older agent's live SSE sample omits diskRead/diskWrite (undefined) — default it so the
   // rate humanizer picks the right unit and the chart never sees a non-finite value.
-  const diskRead = humanizeRateSeries(metrics.map((m) => m.diskRead ?? 0));
-  const diskWrite = humanizeRateSeries(metrics.map((m) => m.diskWrite ?? 0));
+  const dio = humanizeRatePair(metrics.map((m) => m.diskRead ?? 0), metrics.map((m) => m.diskWrite ?? 0));
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -193,14 +191,32 @@ export default function ServerDetailPage() {
           {metrics.length === 0 ? (
             <Card style={{ padding: 16 }}><EmptyState>{t("servers.noMetrics")}</EmptyState></Card>
           ) : (
-            <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-              <MetricChart data={cpu} peaks={cpuPeaks} times={times} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
-              <MetricChart data={ram} times={times} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
-              <MetricChart data={disk.data} times={disk.times} label={t("servers.diskHistory")} unit="%" color="var(--c-g)" decimals={1} />
-              <MetricChart data={netIn.data} times={times} label={t("servers.netIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
-              <MetricChart data={netOut.data} times={times} label={t("servers.netOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
-              <MetricChart data={diskRead.data} times={times} label={t("servers.diskRead")} unit={" " + diskRead.unit} color="var(--c-lapis)" decimals={1} />
-              <MetricChart data={diskWrite.data} times={times} label={t("servers.diskWrite")} unit={" " + diskWrite.unit} color="var(--c-am)" decimals={1} />
+            <div style={METRIC_GRID_STYLE}>
+              <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
+              <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
+              <MetricChart height={METRIC_CHART_HEIGHT} data={disk.data} times={disk.times} label={t("servers.diskHistory")} unit="%" color="var(--c-g)" decimals={1} />
+              <MetricChart
+                height={METRIC_CHART_HEIGHT}
+                times={times}
+                label={t("servers.net")}
+                unit={" " + net.unit}
+                decimals={1}
+                series={[
+                  { key: "in", label: t("servers.netIn"), values: net.a, color: "var(--c-g)", kind: "area" },
+                  { key: "out", label: t("servers.netOut"), values: net.b, color: "var(--c-am)", kind: "area" },
+                ]}
+              />
+              <MetricChart
+                height={METRIC_CHART_HEIGHT}
+                times={times}
+                label={t("servers.diskIo")}
+                unit={" " + dio.unit}
+                decimals={1}
+                series={[
+                  { key: "read", label: t("servers.diskRead"), values: dio.a, color: "var(--c-lapis)", kind: "area" },
+                  { key: "write", label: t("servers.diskWrite"), values: dio.b, color: "var(--c-am)", kind: "area" },
+                ]}
+              />
             </div>
           )}
         </div>
@@ -286,11 +302,11 @@ function ServerDetailSkeleton() {
         ))}
       </SkeletonCard>
 
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div style={METRIC_GRID_STYLE}>
+        {Array.from({ length: 5 }).map((_, i) => (
           <SkeletonCard key={i}>
             <Skeleton height={12} width={80} style={{ marginBottom: 12 }} />
-            <Skeleton height={120} />
+            <Skeleton height={METRIC_CHART_HEIGHT} />
           </SkeletonCard>
         ))}
       </div>

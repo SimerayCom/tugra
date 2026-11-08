@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { humanizeRateSeries } from "../lib/metrics";
+import { humanizeRatePair } from "../lib/metrics";
 import type { MetricsRange, ContainerMetricSample } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "./ui";
-import { MetricChart } from "./charts";
+import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "./charts";
 
 const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d", "30d"];
 
@@ -67,20 +67,36 @@ function ContainerMetricsSection({ name, samples }: { name: string; samples: Con
   // Long ranges (7d/30d) read rollups, whose points also carry the per-minute peak → faint max band.
   const cpuPeaks = samples.some((s) => s.cpuMax !== undefined) ? samples.map((s) => s.cpuMax ?? s.cpu) : undefined;
   const ram = samples.map((s) => s.memPct);
-  const netIn = humanizeRateSeries(samples.map((s) => s.netRx));
-  const netOut = humanizeRateSeries(samples.map((s) => s.netTx));
-  const blkRead = humanizeRateSeries(samples.map((s) => s.blkRead));
-  const blkWrite = humanizeRateSeries(samples.map((s) => s.blkWrite));
+  const net = humanizeRatePair(samples.map((s) => s.netRx), samples.map((s) => s.netTx));
+  const blk = humanizeRatePair(samples.map((s) => s.blkRead), samples.map((s) => s.blkWrite));
   return (
     <div>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)", marginBottom: 10, wordBreak: "break-all" }} title={name}>{friendlyContainer(name)}</div>
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        <MetricChart data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" />
-        <MetricChart data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} />
-        <MetricChart data={netIn.data} times={times} label={t("apps.metricsNetIn")} unit={" " + netIn.unit} color="var(--c-g)" decimals={1} />
-        <MetricChart data={netOut.data} times={times} label={t("apps.metricsNetOut")} unit={" " + netOut.unit} color="var(--c-am)" decimals={1} />
-        <MetricChart data={blkRead.data} times={times} label={t("apps.metricsBlkRead")} unit={" " + blkRead.unit} color="var(--c-lapis)" decimals={1} />
-        <MetricChart data={blkWrite.data} times={times} label={t("apps.metricsBlkWrite")} unit={" " + blkWrite.unit} color="var(--c-am)" decimals={1} />
+      <div style={METRIC_GRID_STYLE}>
+        <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" />
+        <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} />
+        <MetricChart
+          height={METRIC_CHART_HEIGHT}
+          times={times}
+          label={t("apps.metricsNet")}
+          unit={" " + net.unit}
+          decimals={1}
+          series={[
+            { key: "in", label: t("apps.metricsNetIn"), values: net.a, color: "var(--c-g)", kind: "area" },
+            { key: "out", label: t("apps.metricsNetOut"), values: net.b, color: "var(--c-am)", kind: "area" },
+          ]}
+        />
+        <MetricChart
+          height={METRIC_CHART_HEIGHT}
+          times={times}
+          label={t("apps.metricsBlk")}
+          unit={" " + blk.unit}
+          decimals={1}
+          series={[
+            { key: "read", label: t("apps.metricsBlkRead"), values: blk.a, color: "var(--c-lapis)", kind: "area" },
+            { key: "write", label: t("apps.metricsBlkWrite"), values: blk.b, color: "var(--c-am)", kind: "area" },
+          ]}
+        />
       </div>
     </div>
   );

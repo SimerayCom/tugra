@@ -285,6 +285,15 @@ const CARD_STYLE = {
   minWidth: 0,
 } as const;
 
+/** Stable metric-card grid: cards never narrower than 420px (so ~2 per row on a desktop content area, 3 only on very
+ *  wide screens, 1 on tablet/phone) with a fixed plot height so cards read wide-and-short, never square. */
+export const METRIC_GRID_STYLE = {
+  display: "grid",
+  gap: 16,
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
+} as const;
+export const METRIC_CHART_HEIGHT = 160;
+
 const finite = (v: number) => Number.isFinite(v);
 
 type Item = { key: string; label: string; color: string; kind: ChartSeriesKind; unit: string; vals: number[]; dash?: string };
@@ -665,7 +674,10 @@ export function MetricChart({
                   <line x1={0} x2={20} y1={5} y2={5} stroke={it.color} strokeWidth={2} strokeDasharray={it.dash} />
                 </svg>
               )}
-              {it.label}
+              <span>{it.label}</span>
+              <span className="mono" data-testid="chart-legend-value" style={{ color: "var(--c-tx)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                {fmtItem(it, it.vals[idx ?? n - 1])}
+              </span>
             </li>
           ))}
         </ul>
