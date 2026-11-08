@@ -11,7 +11,7 @@ import type { ContainerInventoryRow, HostContainer } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Card, EmptyState, Spinner, Badge, Btn } from "./ui";
 import { MeterBar } from "./meter-bar";
-import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, Play, RotateCw, Square, ScrollText, Trash2, type LucideIcon } from "lucide-react";
+import { Server, Cpu, MemoryStick, HardDrive, ArrowDownUp, Play, RotateCw, Square, ScrollText, Trash2, Boxes, Database, Box, type LucideIcon } from "lucide-react";
 import { Modal } from "./modal";
 import { LiveLogsCard } from "./live-logs-card";
 import { useToast } from "./toast";
@@ -175,6 +175,7 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
     <tr style={{ borderBottom: "1px solid var(--c-bd)" }}>
       <Td>
         <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <KindIcon kind={row.kind} />
           {href ? (
             <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link>
           ) : (
@@ -228,6 +229,7 @@ function StoppedRow({ row, canWrite, busy, onStart, onRemove }: {
     <tr style={{ borderBottom: "1px solid var(--c-bd)", opacity: 0.8 }}>
       <Td>
         <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+          <KindIcon kind={row.kind} />
           {href ? (
             <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link>
           ) : (
@@ -258,6 +260,19 @@ function StoppedRow({ row, canWrite, busy, onStart, onRemove }: {
       )}
     </tr>
   );
+}
+
+const KIND_ICON: Record<ContainerInventoryRow["kind"], LucideIcon> = {
+  app: Boxes,
+  db: Database,
+  system: Server,
+  other: Box,
+};
+/** Small type glyph (app/db/system/other) before a container's name so the list scans by kind at a glance.
+ *  Decorative: the row's label and badges already carry the same meaning for assistive tech. */
+function KindIcon({ kind }: { kind: ContainerInventoryRow["kind"] }) {
+  const Icon = KIND_ICON[kind] ?? Box;
+  return <Icon size={15} strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.65 }} />;
 }
 
 function Th({ children, icon: Icon }: { children: ReactNode; icon?: LucideIcon }) {
