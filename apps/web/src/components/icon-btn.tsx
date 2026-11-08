@@ -31,17 +31,15 @@ export function IconBtn({
       title={label}
       onClick={onClick}
       disabled={disabled}
+      className="tg-iconbtn"
+      data-danger={danger ? "" : undefined}
       style={{
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        minWidth: 34,
-        minHeight: 34,
         padding: 6,
-        background: pressed ? "var(--c-el)" : "transparent",
-        border: "1px solid " + (pressed ? "var(--c-a)" : "var(--c-bd)"),
+        // min size (34px, 44px on touch) + background / border / colour (rest, hover, active, pressed) live in .tg-iconbtn (CSS).
         borderRadius: "var(--r1)",
-        color: danger ? "var(--c-r)" : pressed ? "var(--c-a)" : "var(--c-tx3)",
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         fontFamily: "inherit",

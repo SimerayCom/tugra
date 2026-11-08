@@ -1,9 +1,47 @@
-import { describe, it, expect } from "vitest";
-import { NAV, DESTS, noticeVisible } from "./shell";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
+import { NAV, DESTS, noticeVisible, Sidebar } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
 import en from "../i18n/locales/en";
+
+let mockPath = "/servers/abc";
+vi.mock("next/navigation", () => ({
+  usePathname: () => mockPath,
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+vi.mock("../lib/auth", () => ({
+  useAuth: () => ({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } }),
+}));
+vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: [] }) }));
+
+afterEach(cleanup);
+
+describe("sidebar active-route semantics", () => {
+  const links = () => screen.getAllByRole("link");
+  it("marks only the current route's link with aria-current=page and the interaction class", () => {
+    mockPath = "/servers/abc";
+    render(<Sidebar openPalette={() => {}} />);
+    const current = links().filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current).toHaveLength(1);
+    expect(current[0].getAttribute("href")).toBe("/servers");
+    for (const a of links()) expect(a.className).toContain("tg-nav-link");
+  });
+
+  it("is also applied in the mobile drawer", () => {
+    mockPath = "/projects";
+    render(<Sidebar openPalette={() => {}} mobile open />);
+    const current = links().filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current.map((a) => a.getAttribute("href"))).toEqual(["/projects"]);
+  });
+
+  it("marks nothing current on an unknown route", () => {
+    mockPath = "/nowhere";
+    render(<Sidebar openPalette={() => {}} />);
+    expect(links().some((a) => a.hasAttribute("aria-current"))).toBe(false);
+  });
+});
 
 describe("sidebar NAV", () => {
   it("defines an icon for every nav item (no bare text entries)", () => {

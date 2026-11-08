@@ -11,7 +11,8 @@ export function BackLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--c-tx3)", fontSize: 13, textDecoration: "none", marginBottom: 14 }}
+      className="tg-link"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 14 }}
     >
       <ArrowLeft size={15} /> {label}
     </Link>

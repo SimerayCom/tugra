@@ -336,3 +336,199 @@ body {
   outline: 2px solid var(--c-lapis);
   outline-offset: 1px;
 }
+
+/* ── Shared interaction states ──────────────────────────────────────────────
+   Inline styles cannot express :hover / :active / :focus-visible, so the shared primitives carry
+   one of these classes for state while keeping their layout/spacing inline. Everything is built
+   from the --c-* tokens (color-mix over --c-tx / --c-a) so it reads in BOTH dark and light and
+   keeps text at WCAG-AA contrast (the hover wash is only 5-9% of the text colour). The focus ring is
+   the global :focus-visible ring (gold) — rows/tabs/nav just inset it so overflow:hidden parents
+   never clip it. */
+:root {
+  --tg-hover: color-mix(in srgb, var(--c-tx) 6%, transparent);
+  --tg-press: color-mix(in srgb, var(--c-tx) 10%, transparent);
+}
+
+/* Sidebar + mobile-drawer nav link. The active route carries aria-current="page". */
+.tg-nav-link {
+  color: var(--c-tx2);
+  background: transparent;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+@media (hover: hover) {
+  .tg-nav-link:hover {
+    background: var(--tg-hover);
+    color: var(--c-tx);
+  }
+}
+.tg-nav-link:active {
+  background: var(--tg-press);
+}
+.tg-nav-link:focus-visible {
+  outline-offset: -2px;
+}
+.tg-nav-link[aria-current="page"] {
+  background: var(--c-ad);
+  color: var(--c-a);
+  font-weight: 600;
+}
+/* Washes kept light (14% hover / 16% press: 4.64:1 / 4.51:1 on #fff; 18% dips to 4.39:1) so the gold text stays >= 4.5:1 AA over the near-white light sidebar. */
+@media (hover: hover) {
+  .tg-nav-link[aria-current="page"]:hover {
+    background: color-mix(in srgb, var(--c-a) 14%, transparent);
+    color: var(--c-a);
+  }
+}
+.tg-nav-link[aria-current="page"]:active {
+  background: color-mix(in srgb, var(--c-a) 16%, transparent);
+}
+
+/* Whole-row hover for list rows that navigate on click and have no other row hover (apps list).
+   Rows that already carry .row-link keep that hover instead. Layout stays inline. */
+.tg-row {
+  transition: background 0.12s ease;
+}
+@media (hover: hover) {
+  .tg-row:hover {
+    background: var(--tg-hover);
+  }
+}
+.tg-row:active {
+  background: var(--tg-press);
+}
+.tg-row:focus-visible {
+  outline-offset: -2px;
+}
+.tg-row[aria-current="true"],
+.tg-row[aria-selected="true"] {
+  background: var(--c-ad);
+}
+
+/* Underline tab strip (components/tabs-nav). */
+.tg-tab {
+  color: var(--c-tx3);
+  font-weight: 500;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+  border-radius: var(--r1) var(--r1) 0 0;
+}
+@media (hover: hover) {
+  .tg-tab:hover {
+    background: var(--tg-hover);
+    color: var(--c-tx);
+  }
+}
+.tg-tab:active {
+  background: var(--tg-press);
+}
+.tg-tab:focus-visible {
+  outline-offset: -2px;
+}
+.tg-tab[aria-selected="true"] {
+  color: var(--c-tx);
+  font-weight: 600;
+  border-bottom-color: var(--c-a);
+}
+/* Icon-only button (components/icon-btn). Tone via data-danger, toggle via aria-pressed. */
+.tg-iconbtn {
+  min-width: 34px;
+  min-height: 34px;
+  color: var(--c-tx3);
+  background: transparent;
+  border: 1px solid var(--c-bd);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.tg-iconbtn[data-danger] {
+  color: var(--c-r);
+}
+@media (hover: hover) {
+  .tg-iconbtn:not(:disabled):hover {
+    background: var(--tg-hover);
+    color: var(--c-tx);
+    border-color: var(--c-tx3);
+  }
+  .tg-iconbtn[data-danger]:not(:disabled):hover {
+    background: color-mix(in srgb, var(--c-r) 12%, transparent);
+    color: var(--c-r);
+    border-color: color-mix(in srgb, var(--c-r) 55%, var(--c-bd));
+  }
+}
+.tg-iconbtn:not(:disabled):active {
+  background: var(--tg-press);
+  transform: translateY(1px);
+}
+.tg-iconbtn[aria-pressed="true"] {
+  background: var(--c-el);
+  color: var(--c-a);
+  border-color: var(--c-a);
+}
+.tg-iconbtn[data-danger][aria-pressed="true"] {
+  color: var(--c-r);
+  border-color: var(--c-r);
+}
+@media (hover: hover) {
+  .tg-iconbtn[aria-pressed="true"]:not(:disabled):hover {
+    background: var(--c-ad);
+    color: var(--c-a);
+    border-color: var(--c-a);
+  }
+  .tg-iconbtn[data-danger][aria-pressed="true"]:not(:disabled):hover {
+    background: color-mix(in srgb, var(--c-r) 12%, var(--c-el));
+    color: var(--c-r);
+    border-color: var(--c-r);
+  }
+}
+
+/* Touch (after the base .tg-iconbtn rule so equal-specificity min-size wins): 44px minimum hit target on coarse pointers only; desktop sizing is untouched. */
+@media (pointer: coarse) {
+  .tg-tab {
+    min-height: 44px;
+  }
+  .tg-iconbtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Text link in muted chrome (breadcrumbs, back links): brighten + underline on hover. */
+.tg-link {
+  color: var(--c-tx3);
+  text-decoration: none;
+  transition: color 0.12s ease;
+}
+@media (hover: hover) {
+  .tg-link:hover {
+    color: var(--c-tx);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+.tg-link:active {
+  color: var(--c-a);
+}
+.tg-link[aria-current="page"] {
+  color: var(--c-tx2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tg-nav-link,
+  .tg-row,
+  .tg-tab,
+  .tg-iconbtn,
+  .tg-link {
+    transition: none;
+  }
+  .tg-iconbtn:not(:disabled):active {
+    transform: none;
+  }
+}

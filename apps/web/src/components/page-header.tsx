@@ -32,11 +32,11 @@ export function PageHeader({
             return (
               <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                 {b.href && !last ? (
-                  <Link href={b.href} style={{ fontSize: 12, color: "var(--c-tx3)", textDecoration: "none" }}>
+                  <Link href={b.href} className="tg-link" style={{ fontSize: 12 }}>
                     {b.label}
                   </Link>
                 ) : (
-                  <span style={{ fontSize: 12, color: last ? "var(--c-tx2)" : "var(--c-tx3)" }}>{b.label}</span>
+                  <span aria-current={last ? "page" : undefined} style={{ fontSize: 12, color: last ? "var(--c-tx2)" : "var(--c-tx3)" }}>{b.label}</span>
                 )}
                 {!last && <ChevronRight size={13} color="var(--c-tx3)" />}
               </span>

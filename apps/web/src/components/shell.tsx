@@ -133,7 +133,7 @@ export function CenteredSpinner() {
   );
 }
 
-function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { openPalette: () => void; mobile?: boolean; open?: boolean; onNavigate?: () => void }) {
+export function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { openPalette: () => void; mobile?: boolean; open?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { logout, user } = useAuth();
   const mode = uiMode(user?.uiMode);
@@ -218,7 +218,9 @@ function Sidebar({ openPalette, mobile = false, open = false, onNavigate }: { op
                   onClick={onNavigate}
                   title={col ? t(`nav.${it.key}`) : undefined}
                   aria-label={col ? t(`nav.${it.key}`) : undefined}
-                  style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, padding: col ? "8px 0" : "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none", background: active ? "var(--c-ad)" : "transparent", color: active ? "var(--c-a)" : "var(--c-tx2)", fontWeight: active ? 600 : 400 }}
+                  aria-current={active ? "page" : undefined}
+                  className="tg-nav-link"
+                  style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, padding: col ? "8px 0" : "6px 10px", borderRadius: "var(--r1)", marginBottom: 1, fontSize: 13, textDecoration: "none" }}
                 >
                   <Icon size={15} strokeWidth={active ? 2.4 : 2} style={{ flexShrink: 0 }} />
                   {!col && <span style={{ flex: 1 }}>{t(`nav.${it.key}`)}</span>}
