@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.6] - 2026-11-08
+
+- **Load average and swap in server monitoring.** The agent now reports 1/5/15-minute load average and
+  swap usage; the server Monitoring tab shows a load-average chart and a swap-usage chart (over the full
+  history range), and the live gauges show a swap meter and a load-average readout. Fields are optional,
+  so older agents keep working and simply omit them.
+- **Container type icons.** Each row in a server's container list now carries a small type glyph
+  (app, database, system, other) so the list scans by kind at a glance.
+
 ## [0.1.0-beta.5] - 2026-11-08
 
 - **Cleaner server metric charts.** Metric charts now render two per row (wider and more readable)
