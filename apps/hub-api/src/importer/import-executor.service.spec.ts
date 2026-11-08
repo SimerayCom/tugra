@@ -1,6 +1,7 @@
 import { ImportExecutorService } from "./import-executor.service";
 import { planImport } from "./import-planner";
-import type { ForeignFleet } from "./foreign-fleet";
+import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
+import * as applyMap from "./apply-map";
 
 // Let the async fan-out (void this.fanout(...)) drain against immediately-resolving mocks.
 const flush = async () => {
@@ -21,7 +22,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock } = {}) {
+function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined> } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -54,11 +55,12 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     fetchSecrets: jest.fn().mockImplementation(async (ref: string) => (over.secrets ? over.secrets(ref) : { values: {}, unresolved: [] })),
     close: jest.fn().mockResolvedValue(undefined),
     ...(over.dbCreds ? { fetchDbCredentials: jest.fn().mockImplementation(async (ref: string) => over.dbCreds!(ref)) } : {}),
+    ...(over.basicAuthCreds ? { fetchBasicAuthCredentials: jest.fn().mockImplementation(async (ref: string) => over.basicAuthCreds!(ref)) } : {}),
   };
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
-  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined) };
+  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined), setExtraDomains: jest.fn().mockResolvedValue(undefined), setDomainOptions: jest.fn().mockResolvedValue(undefined), setContainerPort: jest.fn().mockResolvedValue(undefined), setExtraPorts: jest.fn().mockResolvedValue(undefined), setServiceDomains: jest.fn().mockResolvedValue(undefined), setRedirects: jest.fn().mockResolvedValue(undefined), setBasicAuth: jest.fn().mockResolvedValue(undefined) };
   const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
   // Tree find-or-create: in-memory + idempotent (same name → same ids), like the real ProjectsService.findOrCreateForImport.
   const treeIds = new Map<string, string>();
@@ -87,7 +89,7 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     gitSources as never,
     projects as never,
   );
-  return { svc, prisma, source: source as typeof source & { fetchDbCredentials?: jest.Mock }, apps, dbs, created, gitSources, projects };
+  return { svc, prisma, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock }, apps, dbs, created, gitSources, projects };
 }
 
 function input(f: ForeignFleet = fleet()) {
@@ -556,6 +558,259 @@ describe("ImportExecutorService — post-create setters (L2-APPLY)", () => {
   });
 });
 
+
+describe("ImportExecutorService — ingress apply (L7)", () => {
+  type Ingress = { applied: string[]; unmapped: Array<{ field: string; reason: string }> };
+  const lastResult = (h: ReturnType<typeof harness>) => {
+    const call = h.prisma.bulkTask.update.mock.calls.map((c: unknown[]) => (c[0] as { data: Record<string, unknown> }).data).find((d: Record<string, unknown>) => d.status === "DONE" && d.resourceType === "application")!;
+    return call as { result: { ingress?: Ingress }; output?: string };
+  };
+  const ingressApp: Partial<ForeignApp> = {
+    domains: [
+      { host: "app.example.com", https: true, port: 3000, certType: "le-http", primary: true, path: "/api" },
+      { host: "alt.example.com", https: true, port: 3000, certType: "le-http", path: "/api" },
+    ],
+    ports: [3000],
+    publishedPorts: [{ hostPort: 2222, containerPort: 22, protocol: "tcp" }],
+  };
+  const fleetWith = (over: Partial<ForeignApp>): ForeignFleet => {
+    const base = fleet();
+    return { ...base, databases: [], apps: [{ ...base.apps[0], ...over }] };
+  };
+
+  it("applies extra domains, path options and published ports through the setters, in order, and records the names", async () => {
+    const f = fleetWith(ingressApp);
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.apps.setExtraDomains).toHaveBeenCalledWith("user-1", "app-new", ["alt.example.com"]);
+    expect(h.apps.setDomainOptions).toHaveBeenCalledWith("user-1", "app-new", { pathPrefix: "/api", stripPrefix: false });
+    expect(h.apps.setExtraPorts).toHaveBeenCalledWith("user-1", "app-new", [{ hostPort: 2222, containerPort: 22, protocol: "tcp" }]);
+    expect(h.apps.setServiceDomains).not.toHaveBeenCalled();
+    expect(lastResult(h).result.ingress).toEqual({ applied: ["extraDomains", "domainOptions", "extraPorts"], unmapped: [] });
+  });
+
+  it("is best-effort: a throwing setter becomes unmapped, never fails the task, and its error text is never copied", async () => {
+    const f = fleetWith(ingressApp);
+    const h = harness({ fleet: f });
+    h.apps.setExtraDomains.mockRejectedValue(new Error("hostname in use by SECRET-TEAM-APP"));
+    h.apps.setDomainOptions.mockRejectedValue(new Error("boom"));
+    await run(h, f);
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    const r = lastResult(h);
+    expect(r.result.ingress!.applied).toEqual(["extraPorts"]);
+    expect(r.result.ingress!.unmapped.map((u) => u.field)).toEqual(expect.arrayContaining(["extraDomains:alt.example.com", "domainOptions"]));
+    expect(r.output).toMatch(/ingress not carried:/);
+    expect(JSON.stringify(r)).not.toContain("SECRET-TEAM-APP");
+    expect(h.prisma.bulkTask.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("a batch rejection falls back per-host: the good hostnames still apply, only the clashing one is reported", async () => {
+    const f = fleetWith({
+      domains: [
+        { host: "a.example.com", https: true, port: 80, certType: "le-http", primary: true },
+        { host: "ok.example.com", https: true, port: 80, certType: "le-http" },
+        { host: "taken.example.com", https: true, port: 80, certType: "le-http" },
+      ],
+      ports: [80],
+    });
+    const h = harness({ fleet: f });
+    h.apps.setExtraDomains.mockImplementation(async (_u: string, _id: string, hosts: string[]) => {
+      if (hosts.includes("taken.example.com")) throw new Error("in use");
+    });
+    await run(h, f);
+    const r = lastResult(h);
+    expect(r.result.ingress!.applied).toEqual(["extraDomains"]);
+    expect(r.result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "extraDomains:taken.example.com" })]);
+    // batch (rejected) → ok alone (kept) → ok+taken (rejected): the persisted set is ["ok.example.com"]
+    expect(h.apps.setExtraDomains).toHaveBeenNthCalledWith(2, "user-1", "app-new", ["ok.example.com"]);
+  });
+
+  it("applies the setters in the documented order (extraDomains → domainOptions → containerPort → extraPorts → serviceDomains → redirects → basicAuth)", async () => {
+    const f = fleetWith({
+      ...ingressApp,
+      ports: [8080], // create-time guess differs from the primary's routing port (3000) → setContainerPort
+      redirects: [{ regex: "^https://a/(.*)", replacement: "https://b/$1", permanent: true }],
+      basicAuth: { users: ["admin"] },
+    });
+    const h = harness({ fleet: f, basicAuthCreds: async () => [{ user: "admin", password: "pw" }] });
+    await run(h, f);
+    const order = [h.apps.setExtraDomains, h.apps.setDomainOptions, h.apps.setContainerPort, h.apps.setExtraPorts, h.apps.setRedirects, h.apps.setBasicAuth].map((m) => m.mock.invocationCallOrder[0]);
+    expect(order.every((n) => typeof n === "number")).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(h.apps.setContainerPort).toHaveBeenCalledWith("user-1", "app-new", 3000);
+    expect(lastResult(h).result.ingress!.applied).toEqual(["extraDomains", "domainOptions", "containerPort", "extraPorts", "redirects", "basicAuth"]);
+  });
+
+  it("applies per-service domains for a compose app, with the per-item fallback when the batch is rejected", async () => {
+    const f = fleetWith({
+      kind: "compose",
+      buildPack: "dockercompose",
+      domains: [
+        { host: "a.example.com", primary: true, serviceRef: "web", port: 80 },
+        { host: "api.example.com", serviceRef: "api", port: 8080 },
+        { host: "bad.example.com", serviceRef: "worker", port: 9000 },
+      ],
+    });
+    const h = harness({ fleet: f });
+    h.apps.setServiceDomains.mockImplementation(async (_u: string, _id: string, rows: Array<{ hostname: string }>) => {
+      if (rows.some((r) => r.hostname === "bad.example.com")) throw new Error("clash");
+    });
+    await run(h, f);
+    const r = lastResult(h).result.ingress!;
+    expect(r.applied).toContain("serviceDomains");
+    expect(r.unmapped).toEqual(expect.arrayContaining([expect.objectContaining({ field: "serviceDomains:bad.example.com" })]));
+    // batch (rejected) → api alone (kept) → api+bad (rejected): the persisted set is just the api row
+    expect(h.apps.setServiceDomains).toHaveBeenNthCalledWith(2, "user-1", "app-new", [{ service: "api", hostname: "api.example.com", port: 8080 }]);
+  });
+
+  it("extraPorts falls back per item when the batch is rejected (only the refused mapping is reported)", async () => {
+    const f = fleetWith({
+      publishedPorts: [
+        { hostPort: 2222, containerPort: 22, protocol: "tcp" },
+        { hostPort: 9999, containerPort: 99, protocol: "tcp" },
+      ],
+    });
+    const h = harness({ fleet: f });
+    h.apps.setExtraPorts.mockImplementation(async (_u: string, _id: string, ports: Array<{ hostPort: number }>) => {
+      if (ports.some((p) => p.hostPort === 9999)) throw new Error("port in use");
+    });
+    await run(h, f);
+    const r = lastResult(h).result.ingress!;
+    expect(r.applied).toEqual(["extraPorts"]);
+    expect(r.unmapped).toEqual([expect.objectContaining({ field: "extraPorts:9999/tcp" })]);
+  });
+
+  it("a rejected setContainerPort is reported, not thrown", async () => {
+    const f = fleetWith({ ports: [8080], domains: [{ host: "a.example.com", primary: true, port: 3000, https: true, certType: "le-http" }] });
+    const h = harness({ fleet: f });
+    h.apps.setContainerPort.mockRejectedValue(new Error("nope"));
+    await run(h, f);
+    expect(h.apps.setContainerPort).toHaveBeenCalledWith("user-1", "app-new", 3000);
+    expect(lastResult(h).result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "containerPort" })]);
+  });
+
+  it("carries redirects through setRedirects (classic + compose); a rejected setter is reported", async () => {
+    const redirects = [{ regex: "^http://a/(.*)", replacement: "https://a/$1", permanent: false }];
+    for (const over of [{}, { kind: "compose" as const, buildPack: "dockercompose" as const }]) {
+      const f = fleetWith({ redirects, ...over });
+      const h = harness({ fleet: f });
+      await run(h, f);
+      expect(h.apps.setRedirects).toHaveBeenCalledWith("user-1", "app-new", redirects);
+      expect(lastResult(h).result.ingress).toEqual({ applied: ["redirects"], unmapped: [] });
+    }
+    const f = fleetWith({ redirects });
+    const h = harness({ fleet: f });
+    h.apps.setRedirects.mockRejectedValue(new Error("db"));
+    await run(h, f);
+    expect(lastResult(h).result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "redirects" })]);
+  });
+
+  describe("basic-auth carry (secret-free fleet; passwords fetched server-side)", () => {
+    const PW = "BASICAUTH-PW-SENTINEL-77e1";
+    const gated = { basicAuth: { users: ["admin"] } } satisfies Partial<ForeignApp>;
+
+    it("fetches the credentials from the source by sourceRef and applies them via setBasicAuth (names + counts recorded, never the password)", async () => {
+      const f = fleetWith(gated);
+      const h = harness({ fleet: f, basicAuthCreds: async () => [{ user: "admin", password: PW }] });
+      await run(h, f);
+      expect(h.source.fetchBasicAuthCredentials).toHaveBeenCalledWith("app-1");
+      expect(h.apps.setBasicAuth).toHaveBeenCalledWith("user-1", "app-new", [{ user: "admin", password: PW }]);
+      const r = lastResult(h);
+      expect(r.result.ingress).toEqual({ applied: ["basicAuth"], unmapped: [] });
+      expect(JSON.stringify(r)).not.toContain(PW);
+      // the discovered fleet itself never carried the password
+      expect(JSON.stringify(f)).not.toContain(PW);
+    });
+
+    it.each([
+      ["undefined creds", async () => undefined],
+      ["empty creds", async () => []],
+      ["a read error that echoes a secret", async () => { throw new Error(`boom ${PW}`); }],
+    ])("%s → unmapped 'basicAuth' with a FIXED reason, no password / error text leaked, task not failed", async (_n, creds) => {
+      const f = fleetWith(gated);
+      const h = harness({ fleet: f, basicAuthCreds: creds as never });
+      await run(h, f);
+      expect(h.apps.setBasicAuth).not.toHaveBeenCalled();
+      expect(h.apps.create).toHaveBeenCalledTimes(1);
+      const r = lastResult(h);
+      expect(r.result.ingress!.applied).toEqual([]);
+      expect(r.result.ingress!.unmapped).toEqual([{ field: "basicAuth", reason: "basic-auth not carried — re-protect the app before cutover" }]);
+      expect(r.output).toMatch(/ingress not carried: basicAuth/);
+      expect(JSON.stringify(r)).not.toContain(PW);
+      expect(JSON.stringify(r)).not.toContain("boom");
+      expect(h.prisma.bulkTask.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    });
+
+    it("a source that cannot fetch basic-auth (no method) is reported unmapped, never silently public", async () => {
+      const f = fleetWith(gated);
+      const h = harness({ fleet: f });
+      await run(h, f);
+      expect(h.apps.setBasicAuth).not.toHaveBeenCalled();
+      expect(lastResult(h).result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "basicAuth" })]);
+    });
+
+    it("keeps the Tugra-storable users and reports the rest (a ':' username would corrupt the htpasswd line)", async () => {
+      const f = fleetWith({ basicAuth: { users: ["ok", "bad:user"] } });
+      const h = harness({ fleet: f, basicAuthCreds: async () => [{ user: "ok", password: PW }, { user: "bad:user", password: PW }] });
+      await run(h, f);
+      expect(h.apps.setBasicAuth).toHaveBeenCalledWith("user-1", "app-new", [{ user: "ok", password: PW }]);
+      const r = lastResult(h);
+      expect(r.result.ingress!.applied).toEqual(["basicAuth"]);
+      expect(r.result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "basicAuth users" })]);
+      expect(JSON.stringify(r)).not.toContain(PW);
+    });
+
+    it("caps the stored users at the controller limit (20) and reports the overflow — the app stays gated", async () => {
+      const users = Array.from({ length: 22 }, (_, i) => `u${i}`);
+      const f = fleetWith({ basicAuth: { users } });
+      const h = harness({ fleet: f, basicAuthCreds: async () => users.map((u) => ({ user: u, password: PW })) });
+      await run(h, f);
+      const applied = h.apps.setBasicAuth.mock.calls[0][2] as { user: string }[];
+      expect(applied).toHaveLength(20);
+      const r = lastResult(h);
+      expect(r.result.ingress!.applied).toEqual(["basicAuth"]);
+      expect(r.result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "basicAuth users" })]);
+      expect(JSON.stringify(r)).not.toContain(PW);
+    });
+
+    it("an app without basicAuth never calls the source or the setter", async () => {
+      const f = fleetWith({});
+      const h = harness({ fleet: f, basicAuthCreds: async () => [{ user: "x", password: PW }] });
+      await run(h, f);
+      expect(h.source.fetchBasicAuthCredentials).not.toHaveBeenCalled();
+      expect(h.apps.setBasicAuth).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a throwing foreignAppToIngressPlan yields ONE 'ingress' unmapped entry and the task still succeeds", async () => {
+    const spy = jest.spyOn(applyMap, "foreignAppToIngressPlan").mockImplementation(() => {
+      throw new Error("kaboom");
+    });
+    try {
+      const f = fleetWith(ingressApp);
+      const h = harness({ fleet: f });
+      await run(h, f);
+      expect(h.apps.create).toHaveBeenCalledTimes(1);
+      const r = lastResult(h);
+      expect(r.result.ingress).toEqual({ applied: [], unmapped: [expect.objectContaining({ field: "ingress" })] });
+      expect(JSON.stringify(r)).not.toContain("kaboom");
+      expect(h.prisma.bulkTask.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("reports honest unmapped notes (le-dns) without calling any setter, and omits the key for an app with no extra ingress", async () => {
+    const f = fleetWith({ domains: [{ host: "a.example.com", https: true, port: 80, certType: "le-dns", primary: true }], ports: [80] });
+    const h = harness({ fleet: f });
+    await run(h, f);
+    expect(h.apps.setExtraDomains).not.toHaveBeenCalled();
+    expect(lastResult(h).result.ingress!.unmapped).toEqual([expect.objectContaining({ field: "domain:a.example.com dns-01" })]);
+    const h2 = harness();
+    await run(h2, fleet());
+    expect(lastResult(h2).result).not.toHaveProperty("ingress");
+  });
+});
 
 describe("ImportExecutorService — DB credential carry (L4)", () => {
   const PW = "DB-PASSWORD-SENTINEL-4c1f";

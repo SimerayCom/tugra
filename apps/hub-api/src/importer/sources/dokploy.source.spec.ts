@@ -317,3 +317,41 @@ describe("DokploySource.fetchDbCredentials (L4 secret path)", () => {
     await expect(src.fetchDbCredentials("db-pg1")).rejects.toThrow(/403/);
   });
 });
+
+describe("DokploySource.fetchBasicAuthCredentials (L7 secret path)", () => {
+  const PW = "BASICAUTH-PW-SENTINEL-5d2c";
+  const withSecurity = (security: unknown) => ({ "/application.one?applicationId=app-1": { ...(ROUTES["/application.one?applicationId=app-1"] as object), security } });
+
+  it("returns the ENABLED rows with username + plaintext password, read from application.one by sourceRef", async () => {
+    const client = makeClient(withSecurity([{ username: "admin", password: PW, enabled: true }, { username: "off", password: PW, enabled: false }, { username: "nopw", password: null }, { password: PW }]));
+    const src = new DokploySource(client as unknown as DokployClient);
+    await src.discover();
+    client.get.mockClear();
+    expect(await src.fetchBasicAuthCredentials("web-a1b2c3")).toEqual([{ user: "admin", password: PW }]);
+    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.get).toHaveBeenCalledWith("/application.one?applicationId=app-1");
+  });
+
+  it("never leaks the password into discover() (secret-free fleet) and carries usernames only", async () => {
+    const fleet = await source(withSecurity([{ username: "admin", password: PW, enabled: true }])).discover();
+    expect(JSON.stringify(fleet)).not.toContain(PW);
+    expect(fleet.apps[0].basicAuth).toEqual({ users: ["admin"] });
+  });
+
+  it("is undefined for no security rows, an unknown ref or a database ref", async () => {
+    expect(await source(withSecurity([])).fetchBasicAuthCredentials("web-a1b2c3")).toBeUndefined();
+    expect(await source().fetchBasicAuthCredentials("web-a1b2c3")).toBeUndefined(); // no security key at all
+    const src = source(withSecurity([{ username: "a", password: PW }]));
+    await src.discover();
+    expect(await src.fetchBasicAuthCredentials("nope")).toBeUndefined();
+    expect(await src.fetchBasicAuthCredentials("db-pg1")).toBeUndefined();
+  });
+
+  it("PROPAGATES a read failure (the executor records basicAuth unmapped instead of importing public)", async () => {
+    const client = makeClient();
+    const src = new DokploySource(client as unknown as DokployClient);
+    await src.discover();
+    client.get.mockRejectedValueOnce(new Error("403"));
+    await expect(src.fetchBasicAuthCredentials("web-a1b2c3")).rejects.toThrow(/403/);
+  });
+});

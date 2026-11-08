@@ -62,6 +62,11 @@ export interface ImportSource {
    *  discovered DB's `sourceRef`. `undefined` when unavailable. A source that does not implement it (Coolify,
    *  local-docker) makes the executor mint fresh credentials instead. */
   fetchDbCredentials?(ref: string): Promise<FetchedDbCredentials | undefined>;
+  /** OPTIONAL secret path: an app's HTTP basic-auth credentials (username + plaintext password), re-fetched
+   *  server-side at apply time and keyed by the app's `sourceRef`. NEVER part of discover()/the fleet. `undefined`
+   *  when the app has none. A genuine read error MUST throw (the executor reports it as unmapped rather than
+   *  leaving the app silently public). */
+  fetchBasicAuthCredentials?(ref: string): Promise<Array<{ user: string; password: string }> | undefined>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

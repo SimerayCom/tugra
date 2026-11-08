@@ -12,6 +12,7 @@ import {
   mapEnvBlob,
   mapLimits,
   mapMount,
+  mapPublishedPorts,
   parseDotenv,
   type DokployApplication,
   type DokployDatabase,
@@ -264,5 +265,88 @@ describe("dokploy-map — L1 widened fields", () => {
   it("passes secret-free gitProviders through to the fleet", () => {
     const f: DokployFleetInput = { servers: [], apps: [], composes: [], databases: [], sharedEnvBlobs: [], gitProviders: [{ ref: "gh-1", kind: "github", appSlug: "s" }] };
     expect(buildDokployFleet(f).gitProviders).toEqual([{ ref: "gh-1", kind: "github", appSlug: "s" }]);
+  });
+});
+
+describe("dokploy-map — L7 published ports (lossless host port + protocol)", () => {
+  it("maps publishedPort→hostPort, targetPort→containerPort, normalizes the protocol (default tcp)", () => {
+    expect(mapPublishedPorts([{ publishedPort: 8080, targetPort: 80, protocol: "tcp" }, { publishedPort: 5353, targetPort: 53, protocol: " UDP " }, { publishedPort: 22, targetPort: 22 }, { publishedPort: 9, targetPort: 9, protocol: "sctp" }])).toEqual([
+      { hostPort: 8080, containerPort: 80, protocol: "tcp" },
+      { hostPort: 5353, containerPort: 53, protocol: "udp" },
+      { hostPort: 22, containerPort: 22, protocol: "tcp" },
+      { hostPort: 9, containerPort: 9, protocol: "tcp" },
+    ]);
+  });
+  it("skips rows missing/invalid on either side and collapses a repeated host port+protocol", () => {
+    expect(
+      mapPublishedPorts([
+        { publishedPort: null, targetPort: 80 },
+        { publishedPort: 80, targetPort: undefined },
+        { publishedPort: 0, targetPort: 80 },
+        { publishedPort: 70000, targetPort: 80 },
+        { publishedPort: 8080, targetPort: 80 },
+        { publishedPort: 8080, targetPort: 81 },
+      ]),
+    ).toEqual([{ hostPort: 8080, containerPort: 80, protocol: "tcp" }]);
+    expect(mapPublishedPorts(null)).toEqual([]);
+  });
+  it("mapApplication carries publishedPorts and keeps the container-only ports[] unchanged; omitted when none", () => {
+    const fa = mapApplication(baseApp({ ports: [{ publishedPort: 8080, targetPort: 80, protocol: "tcp" }], domains: [{ host: "a.com", port: 3000 }] }));
+    expect(fa.ports).toEqual([3000, 80]);
+    expect(fa.publishedPorts).toEqual([{ hostPort: 8080, containerPort: 80, protocol: "tcp" }]);
+    expect(mapApplication(baseApp({})).publishedPorts).toBeUndefined();
+  });
+});
+
+describe("dokploy-map — L7 stripPath / redirects / basic-auth carry", () => {
+  it("mapDomain carries stripPath true / false and defaults an absent value to false (Dokploy default)", () => {
+    expect(mapDomain({ host: "a.com", path: "/x", stripPath: true })!.stripPath).toBe(true);
+    expect(mapDomain({ host: "a.com", path: "/x", stripPath: false })!.stripPath).toBe(false);
+    expect(mapDomain({ host: "a.com", path: "/x" })!.stripPath).toBe(false);
+    expect(mapDomain({ host: "a.com", stripPath: null })!.stripPath).toBe(false);
+  });
+
+  it("maps redirects losslessly, skipping rows missing a regex or replacement, permanent normalized to boolean", () => {
+    const fa = mapApplication(
+      baseApp({
+        redirects: [
+          { regex: "^http://a/(.*)", replacement: "https://a/$1", permanent: true },
+          { regex: "^/old", replacement: "/new" },
+          { regex: "", replacement: "/x", permanent: true },
+          { regex: "^/y", replacement: null },
+          { replacement: "/z" },
+        ],
+      }),
+    );
+    expect(fa.redirects).toEqual([
+      { regex: "^http://a/(.*)", replacement: "https://a/$1", permanent: true },
+      { regex: "^/old", replacement: "/new", permanent: false },
+    ]);
+    expect(mapApplication(baseApp({ redirects: [] })).redirects).toBeUndefined();
+    expect(mapApplication(baseApp({})).redirects).toBeUndefined();
+  });
+
+  it("maps ENABLED security rows to basicAuth.users (usernames only) — the password is NEVER present anywhere in the mapped app", () => {
+    const PW = "PLAINTEXT-PW-SENTINEL-31ab";
+    const fa = mapApplication(
+      baseApp({
+        security: [
+          { username: "admin", password: PW, enabled: true },
+          { username: "ops", password: PW }, // enabled absent → enabled
+          { username: "off", password: PW, enabled: false },
+          { password: PW }, // no username
+        ],
+      }),
+    );
+    expect(fa.basicAuth).toEqual({ users: ["admin", "ops"] });
+    expect(JSON.stringify(fa)).not.toContain(PW);
+    expect(mapApplication(baseApp({ security: [] })).basicAuth).toBeUndefined();
+    expect(mapApplication(baseApp({ security: [{ username: "x", enabled: false }] })).basicAuth).toBeUndefined();
+    expect(mapApplication(baseApp({})).basicAuth).toBeUndefined();
+  });
+
+  it("the single-pass published-ports cleanup keeps the same shape (present when rows exist, omitted otherwise)", () => {
+    expect(mapApplication(baseApp({ ports: [{ publishedPort: 1, targetPort: 2 }] })).publishedPorts).toEqual([{ hostPort: 1, containerPort: 2, protocol: "tcp" }]);
+    expect(mapApplication(baseApp({ ports: [{ publishedPort: null, targetPort: 2 }] })).publishedPorts).toBeUndefined();
   });
 });

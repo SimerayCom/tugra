@@ -1,4 +1,4 @@
-import { foreignAppToCreateInput, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { CreateAppSchema, SetVolumesSchema } from "../applications/dto";
 import type { ForeignApp, ForeignVolume } from "./foreign-fleet";
 
@@ -263,5 +263,153 @@ describe("foreignAppToPostCreateConfig", () => {
     const cfg = foreignAppToPostCreateConfig(base({ kind: "compose", buildPack: "dockercompose", containerCommand: ["x"] }));
     expect(cfg.containerCommand).toBeUndefined();
     expect(cfg.unmapped.map((u) => u.field)).toEqual(["containerCommand"]);
+  });
+});
+
+describe("foreignAppToIngressPlan", () => {
+  const d = (host: string, over: Partial<NonNullable<ForeignApp["domains"]>[number]> = {}) => ({ host, https: true, port: 3000, certType: "le-http" as const, ...over });
+
+  it("is empty for an app with no domains / ports", () => {
+    expect(foreignAppToIngressPlan(base({}))).toEqual({ extraDomains: [], serviceDomains: [], extraPorts: [], unmapped: [] });
+    expect(foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true })], ports: [3000] }))).toEqual({ extraDomains: [], serviceDomains: [], extraPorts: [], unmapped: [] });
+  });
+
+  it("a classic multi-domain app carries every non-primary host as an extra domain (normalized, deduped)", () => {
+    const plan = foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true }), d("B.Example.com"), d("b.example.com"), d("c.example.com")] }));
+    expect(plan).toEqual({ extraDomains: ["b.example.com", "c.example.com"], serviceDomains: [], extraPorts: [], unmapped: [] });
+  });
+
+  it("never re-adds the primary's www/bare counterpart (Tugra serves it, the setter rejects it) — reported", () => {
+    const plan = foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true }), d("www.a.com")] }));
+    expect(plan.extraDomains).toEqual([]);
+    expect(plan.unmapped.map((u) => u.field)).toEqual(["domain:www.a.com alias"]);
+  });
+
+  it("a compose app routes serviceRef domains to per-service domains; the rest become extra domains", () => {
+    const plan = foreignAppToIngressPlan(
+      base({
+        kind: "compose",
+        buildPack: "dockercompose",
+        domains: [d("a.com", { primary: true, serviceRef: "web", port: 80 }), d("api.a.com", { serviceRef: "api", port: 8080 }), d("misc.a.com")],
+      }),
+    );
+    expect(plan.serviceDomains).toEqual([{ service: "api", hostname: "api.a.com", port: 8080 }]);
+    expect(plan.extraDomains).toEqual(["misc.a.com"]);
+    // the compose primary keeps create-time (inferred web service) routing — reported, not dropped
+    expect(plan.unmapped.map((u) => u.field)).toEqual(["domain:a.com serviceRef"]);
+  });
+
+  it("a service domain with no routing port or with a path is reported, not applied", () => {
+    const plan = foreignAppToIngressPlan(
+      base({ kind: "compose", buildPack: "dockercompose", domains: [d("a.com", { primary: true }), d("x.a.com", { serviceRef: "x", port: undefined }), d("y.a.com", { serviceRef: "y", port: 81, path: "/p" })] }),
+    );
+    expect(plan.serviceDomains).toEqual([]);
+    expect(plan.unmapped.map((u) => u.field).sort()).toEqual(["domain:x.a.com port", "domain:y.a.com path"]);
+  });
+
+  it("the primary domain's path becomes pathPrefix + stripPrefix (strip is FALSE when the source is silent — Dokploy strips only when set — and honors stripPath)", () => {
+    expect(foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true, path: "/api/" })] })).domainOptions).toEqual({ pathPrefix: "/api", stripPrefix: false });
+    expect(foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true, path: "/v1", stripPath: true })] })).domainOptions).toEqual({ pathPrefix: "/v1", stripPrefix: true });
+    expect(foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true, path: "/v1", stripPath: false })] })).domainOptions).toEqual({ pathPrefix: "/v1", stripPrefix: false });
+    const bad = foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true, path: "/has space" })] }));
+    expect(bad.domainOptions).toBeUndefined();
+    expect(bad.unmapped.map((u) => u.field)).toEqual(["domain:a.com path"]);
+  });
+
+  it("an alias on a different port or path than the primary is reported (Tugra has one port + an app-wide path)", () => {
+    const plan = foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true }), d("p.a.com", { port: 9000 }), d("q.a.com", { path: "/q" }), d("ok.a.com")] }));
+    expect(plan.extraDomains).toEqual(["ok.a.com"]);
+    expect(plan.unmapped.map((u) => u.field).sort()).toEqual(["domain:p.a.com port", "domain:q.a.com path"]);
+  });
+
+  it("publishedPorts become extraPorts minus the HTTP ingress port (reported); a domain-less app keeps all of them", () => {
+    const pub = [
+      { hostPort: 8080, containerPort: 3000, protocol: "tcp" as const },
+      { hostPort: 2222, containerPort: 22, protocol: "tcp" as const },
+      { hostPort: 5353, containerPort: 53, protocol: "udp" as const },
+    ];
+    const withDomain = foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true })], publishedPorts: pub }));
+    expect(withDomain).toEqual({
+      extraDomains: [],
+      serviceDomains: [],
+      extraPorts: [pub[1], pub[2]],
+      unmapped: [{ field: "port:8080/tcp", reason: expect.stringContaining("HTTP ingress port") }],
+    });
+    const noDomain = foreignAppToIngressPlan(base({ ports: [3000], publishedPorts: pub }));
+    expect(noDomain.extraPorts).toEqual(pub);
+  });
+
+  it("a compose app's published ports are reported (declared in its compose file)", () => {
+    const plan = foreignAppToIngressPlan(base({ kind: "compose", buildPack: "dockercompose", publishedPorts: [{ hostPort: 1, containerPort: 2, protocol: "tcp" }] }));
+    expect(plan.extraPorts).toEqual([]);
+    expect(plan.unmapped.map((u) => u.field)).toEqual(["ports"]);
+  });
+
+  it("reports le-dns / custom-cert / https-off / redirect / non-compose serviceRef honestly (carry, never drop)", () => {
+    const plan = foreignAppToIngressPlan(
+      base({
+        ports: [3000],
+        domains: [d("a.com", { primary: true, certType: "le-dns" }), d("b.com", { certType: "custom" }), d("c.com", { https: false, certType: "none" }), d("e.com", { redirectTo: "a.com" }), d("f.com", { serviceRef: "svc" })],
+      }),
+    );
+    expect(plan.unmapped.map((u) => u.field).sort()).toEqual(
+      ["domain:a.com dns-01", "domain:b.com custom-cert", "domain:c.com https", "domain:e.com redirect", "domain:f.com serviceRef"].sort(),
+    );
+    // the hosts themselves are still carried as aliases where Tugra can route them
+    expect(plan.extraDomains).toEqual(["b.com", "c.com", "e.com", "f.com"]);
+  });
+
+  it("corrects the container port when the primary's routing port differs from the create-time guess (classic only)", () => {
+    expect(foreignAppToIngressPlan(base({ ports: [8080], domains: [d("a.com", { primary: true, port: 3000 })] })).containerPort).toBe(3000);
+    expect(foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true, port: 3000 })] })).containerPort).toBeUndefined();
+    expect(foreignAppToIngressPlan(base({ kind: "compose", buildPack: "dockercompose", ports: [8080], domains: [d("a.com", { primary: true, port: 3000 })] })).containerPort).toBeUndefined();
+  });
+
+  it("enforces Tugra's caps (10 extra domains, 20 extra ports) by reporting the overflow", () => {
+    const many = Array.from({ length: 12 }, (_, i) => d(`h${i}.a.com`));
+    const plan = foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true }), ...many] }));
+    expect(plan.extraDomains).toHaveLength(10);
+    expect(plan.unmapped.filter((u) => u.field.endsWith(" limit"))).toHaveLength(2);
+    const ports = Array.from({ length: 22 }, (_, i) => ({ hostPort: 3000 + i, containerPort: 4000 + i, protocol: "tcp" as const }));
+    const pp = foreignAppToIngressPlan(base({ publishedPorts: ports }));
+    expect(pp.extraPorts).toHaveLength(20);
+    expect(pp.unmapped).toHaveLength(2);
+  });
+
+  it("a UDP mapping on the same container number as the TCP ingress port is CARRIED (HTTP ingress is TCP only)", () => {
+    const plan = foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true })], publishedPorts: [{ hostPort: 3000, containerPort: 3000, protocol: "udp" }, { hostPort: 8080, containerPort: 3000, protocol: "tcp" }] }));
+    expect(plan.extraPorts).toEqual([{ hostPort: 3000, containerPort: 3000, protocol: "udp" }]);
+    expect(plan.unmapped.map((u) => u.field)).toEqual(["port:8080/tcp"]);
+  });
+
+  it("a second row for the same host with a different path/port is REPORTED (dup), a true duplicate is dropped silently", () => {
+    const plan = foreignAppToIngressPlan(
+      base({
+        ports: [3000],
+        domains: [d("a.com", { primary: true }), d("x.a.com"), d("X.a.com"), d("x.a.com", { port: 9000 }), d("x.a.com", { path: "/p" }), d("a.com", { path: "/other" })],
+      }),
+    );
+    expect(plan.extraDomains).toEqual(["x.a.com"]);
+    expect(plan.unmapped.map((u) => u.field)).toEqual(["domain:x.a.com dup", "domain:x.a.com dup", "domain:a.com dup"]);
+    expect(plan.unmapped[0].reason).toMatch(/different path\/port\/service/);
+  });
+
+  it("redirects pass through to the plan (validated, capped at 20); an invalid rule is reported and does not cost the valid ones", () => {
+    const r = { regex: "^http://a/(.*)", replacement: "https://a/$1", permanent: true };
+    expect(foreignAppToIngressPlan(base({ redirects: [r] }))).toEqual({ extraDomains: [], serviceDomains: [], extraPorts: [], redirects: [r], unmapped: [] });
+    const mixed = foreignAppToIngressPlan(base({ redirects: [r, { regex: "multi\nline", replacement: "x", permanent: false }] }));
+    expect(mixed.redirects).toEqual([r]);
+    expect(mixed.unmapped.map((u) => u.field)).toEqual(["redirects"]);
+    const many = foreignAppToIngressPlan(base({ redirects: Array.from({ length: 22 }, (_, i) => ({ ...r, regex: `^/${i}` })) }));
+    expect(many.redirects).toHaveLength(20);
+    expect(many.unmapped.map((u) => u.field)).toEqual(["redirects limit"]);
+    expect(foreignAppToIngressPlan(base({})).redirects).toBeUndefined();
+  });
+
+  it("bounds a source-supplied host interpolated into a persisted unmapped field/reason to 200 chars", () => {
+    const long = `${"h".repeat(300)}.example.com`;
+    const plan = foreignAppToIngressPlan(base({ domains: [d("a.com", { primary: true }), d(long, { certType: "custom" })] }));
+    const u = plan.unmapped.find((x) => x.field.endsWith("custom-cert"))!;
+    expect(u.field.length).toBeLessThanOrEqual("domain: custom-cert".length + 200);
   });
 });

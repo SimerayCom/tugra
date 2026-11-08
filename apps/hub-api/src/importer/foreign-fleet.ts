@@ -105,7 +105,17 @@ export interface ForeignApp {
   privileged?: boolean;
   mountsDockerSock?: boolean;
   ports?: number[];
+  /** Raw host-published ports (host:container + protocol), carried LOSSLESSLY alongside {@link ports} (which keeps
+   *  only the container side for the create-time ingress-port guess). Applied via Tugra `setExtraPorts`
+   *  (classic apps only). Only rows with a valid host AND container port (1..65535) are present. */
+  publishedPorts?: Array<{ hostPort: number; containerPort: number; protocol: "tcp" | "udp" }>;
   domains?: ForeignDomain[];
+  /** Custom redirect rules (Tugra `setRedirects`, classic + compose). Not secret. */
+  redirects?: Array<{ regex: string; replacement: string; permanent: boolean }>;
+  /** HTTP basic-auth the source gated this app with: USERNAMES ONLY. Passwords are NEVER in the fleet — the
+   *  presence of this field tells the apply step to fetch them server-side (`ImportSource.fetchBasicAuthCredentials`),
+   *  so a password-gated app is never imported silently public. */
+  basicAuth?: { users: string[] };
   internalHost?: string; // how other apps reach this one on the source (for rewriting their env)
   env?: ForeignEnv[];
   volumes?: ForeignVolume[];

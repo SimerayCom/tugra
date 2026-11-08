@@ -39,6 +39,7 @@ export interface DokployDomain {
   https?: boolean | null;
   port?: number | null; // the container port Traefik routes to
   path?: string | null;
+  stripPath?: boolean | null; // Dokploy strips the matched path prefix only when this is set (default false)
   certificateType?: string | null; // "letsencrypt" | "none" | "custom"
   serviceName?: string | null; // compose: the member service this domain targets
   enabled?: boolean | null;
@@ -58,6 +59,21 @@ export interface DokployPort {
   publishedPort?: number | null;
   targetPort?: number | null; // the container port
   protocol?: string | null;
+}
+
+/** Dokploy `redirects` row (regex / replacement / permanent). Not secret. */
+export interface DokployRedirect {
+  regex?: string | null;
+  replacement?: string | null;
+  permanent?: boolean | null;
+}
+
+/** Dokploy `security` row = HTTP basic-auth credential. The `password` is declared ONLY so mapApplication can be
+ *  proven never to read it — the mapper carries USERNAMES only (the secret-free enforcement point). */
+export interface DokploySecurity {
+  username?: string | null;
+  password?: string | null;
+  enabled?: boolean | null;
 }
 
 export interface DokployApplication {
@@ -120,6 +136,8 @@ export interface DokployApplication {
   domains?: DokployDomain[] | null;
   mounts?: DokployMount[] | null;
   ports?: DokployPort[] | null;
+  redirects?: DokployRedirect[] | null;
+  security?: DokploySecurity[] | null;
 }
 
 export interface DokployCompose {
@@ -362,6 +380,7 @@ export function mapDomain(d: DokployDomain): ForeignDomain | undefined {
     https: d.https ?? undefined,
     port: d.port ?? undefined,
     path: d.path && d.path !== "/" ? d.path : undefined,
+    stripPath: d.stripPath ?? false,
     certType: d.certificateType ? CERT[d.certificateType] : undefined,
     serviceRef: d.serviceName ?? undefined,
     primary: false,
@@ -467,6 +486,45 @@ function appPorts(app: DokployApplication): number[] {
   return [...set];
 }
 
+/** Host-published ports, lossless: publishedPort→hostPort, targetPort→containerPort, protocol normalized to
+ *  tcp/udp (default tcp). Rows missing a valid host or container port (1..65535) are skipped. Duplicate
+ *  host-port+protocol rows collapse to the first (Tugra rejects a repeated host binding). */
+export function mapPublishedPorts(ports?: DokployPort[] | null): NonNullable<ForeignApp["publishedPorts"]> {
+  const valid = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 65535;
+  const out: NonNullable<ForeignApp["publishedPorts"]> = [];
+  const seen = new Set<string>();
+  for (const p of ports ?? []) {
+    if (!valid(p.publishedPort) || !valid(p.targetPort)) continue;
+    const protocol = typeof p.protocol === "string" && p.protocol.trim().toLowerCase() === "udp" ? "udp" : "tcp";
+    const key = `${p.publishedPort}/${protocol}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ hostPort: p.publishedPort, containerPort: p.targetPort, protocol });
+  }
+  return out;
+}
+
+/** Dokploy redirect rules, lossless (not secret). Rows missing a regex or replacement are skipped. */
+export function mapRedirects(rows?: DokployRedirect[] | null): NonNullable<ForeignApp["redirects"]> {
+  const out: NonNullable<ForeignApp["redirects"]> = [];
+  for (const r of rows ?? []) {
+    if (!r || typeof r.regex !== "string" || !r.regex || typeof r.replacement !== "string" || !r.replacement) continue;
+    out.push({ regex: r.regex, replacement: r.replacement, permanent: r.permanent === true });
+  }
+  return out;
+}
+
+/** Basic-auth USERNAMES of the enabled `security` rows. The password is NEVER read here: the discovered fleet is
+ *  secret-free, and the apply step re-fetches passwords server-side via fetchBasicAuthCredentials. */
+export function mapBasicAuth(rows?: DokploySecurity[] | null): ForeignApp["basicAuth"] {
+  const users: string[] = [];
+  for (const r of rows ?? []) {
+    if (!r || r.enabled === false) continue;
+    if (typeof r.username === "string" && r.username && !users.includes(r.username)) users.push(r.username);
+  }
+  return users.length ? { users } : undefined;
+}
+
 function withPrimary(domains: ForeignDomain[]): ForeignDomain[] {
   if (domains.length) domains[0] = { ...domains[0], primary: true };
   return domains;
@@ -477,6 +535,8 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
   const image = kind === "image" ? app.dockerImage ?? undefined : undefined;
   const domains = withPrimary((app.domains ?? []).map(mapDomain).filter((d): d is ForeignDomain => !!d));
   const cmd = mapCommand(app.command, app.args);
+  const pub = mapPublishedPorts(app.ports);
+  const redirects = mapRedirects(app.redirects);
   return {
     sourceRef: app.appName,
     name: app.name ?? app.appName,
@@ -491,7 +551,10 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
     containerCommand: cmd.containerCommand,
     publishDirectory: app.publishDirectory ?? undefined,
     ports: appPorts(app),
+    publishedPorts: pub.length ? pub : undefined,
     domains,
+    redirects: redirects.length ? redirects : undefined,
+    basicAuth: mapBasicAuth(app.security),
     env: [
       ...mapEnvBlob(app.env),
       ...mapEnvBlob(app.buildArgs, { buildTime: true }),

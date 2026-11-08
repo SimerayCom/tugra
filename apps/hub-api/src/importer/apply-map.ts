@@ -1,7 +1,7 @@
 import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetLimitsInput } from "../applications/dto";
-import { SetBuildSchema, SetContainerCommandSchema, SetLimitsSchema, SetVolumesSchema, SetWatchPathsSchema } from "../applications/dto";
+import { SetBuildSchema, SetContainerCommandSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema } from "../applications/dto";
 import type { AppVolume } from "../deploy/deploy-script";
-import type { ForeignApp } from "./foreign-fleet";
+import type { ForeignApp, ForeignDomain } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
 
 /** Options for turning a discovered foreign app into a Tugra app to create. */
@@ -168,6 +168,183 @@ export function foreignAppToPostCreateConfig(app: ForeignApp): PostCreateConfig 
   // Present on the source, but Tugra has no target — surfaced, never silently dropped.
   if (app.dockerContextPath && !/^\.?\/?$/.test(app.dockerContextPath)) skip("dockerContextPath", "Tugra has no separate docker build context (base directory only)");
   if (app.staticSpa === false) skip("staticSpa", "Tugra's static builds always serve an SPA fallback");
+  return out;
+}
+
+/** The ingress configuration an imported app needs beyond the ONE primary domain + guessed port that
+ *  `foreignAppToCreateInput` carries — each part is the exact input of an existing ApplicationsService setter. */
+export interface IngressPlan {
+  /** `setExtraDomains` — classic non-primary hostnames (replace-set; the primary is excluded). */
+  extraDomains: string[];
+  /** `setServiceDomains` — COMPOSE per-service hostnames. */
+  serviceDomains: Array<{ service: string; hostname: string; port: number }>;
+  /** `setDomainOptions` — the primary domain's path routing. */
+  domainOptions?: { pathPrefix: string; stripPrefix: boolean };
+  /** `setContainerPort` — only when the primary domain's routing port differs from the create-time guess. */
+  containerPort?: number;
+  /** `setExtraPorts` — raw host-published ports (classic only), minus the HTTP ingress port. */
+  extraPorts: Array<{ hostPort: number; containerPort: number; protocol: "tcp" | "udp" }>;
+  /** `setRedirects` — custom redirect rules (replace-set; classic + compose). */
+  redirects?: Array<{ regex: string; replacement: string; permanent: boolean }>;
+  /** Source ingress that could NOT be carried — reported, never silently dropped. Field names are
+   *  `domain:<host> <aspect>` / `port:<host>/<proto>`; hosts and port numbers are not secret. */
+  unmapped: Array<{ field: string; reason: string }>;
+}
+
+const MAX_EXTRA_DOMAINS = 10;
+const MAX_SERVICE_DOMAINS = 20;
+const MAX_EXTRA_PORTS = 20;
+const MAX_REDIRECTS = 20;
+
+/**
+ * Pure: derive the setter inputs for a foreign app's ingress beyond create (extra domains, path routing,
+ * compose per-service domains, raw published ports). Hostnames/paths are re-validated against the same Zod
+ * schemas the controller enforces; anything that cannot be carried faithfully is listed in `unmapped` (a
+ * domain Tugra cannot route correctly is NOT applied — a mis-routed host is worse than a reported one).
+ * Out of scope here (reported): DNS-01 / custom-cert bindings and https-off domains.
+ */
+export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
+  const out: IngressPlan = { extraDomains: [], serviceDomains: [], extraPorts: [], unmapped: [] };
+  const skip = (field: string, reason: string) => out.unmapped.push({ field, reason });
+  /** Bound a source-supplied string interpolated into a persisted field/reason. */
+  const cl = (v: string): string => v.slice(0, 200);
+  const isCompose = mapBuildPack(app).source === "COMPOSE";
+  const domains = app.domains ?? [];
+  const primary = domains.find((d) => d.primary) ?? domains[0]; // same pick as foreignAppToCreateInput
+  const lc = (h: string) => h.trim().replace(/\.+$/, "").toLowerCase();
+  const primaryHost = primary ? lc(primary.host) : undefined;
+  const primaryBase = primaryHost?.replace(/^www\./, "");
+  /** "/api/" → "/api"; "" / "/" / undefined → undefined (host root). */
+  const normPath = (p?: string): string | undefined => {
+    const t = p?.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    return t ? `/${t}` : undefined;
+  };
+
+  // ── Per-domain honesty notes (every domain, primary included).
+  for (const d of domains) {
+    if (d.certType === "le-dns") skip(`domain:${cl(d.host)} dns-01`, "uses a DNS-01 certificate — needs a DNS-provider credential binding in Tugra; it will use Let's Encrypt HTTP-01 once DNS points here");
+    else if (d.certType === "custom") skip(`domain:${cl(d.host)} custom-cert`, "uses an uploaded certificate — upload it in Tugra (the certificate itself is not carried yet)");
+    if (d.https === false || d.certType === "none") skip(`domain:${cl(d.host)} https`, "was served without HTTPS — Tugra serves custom domains over HTTPS (Let's Encrypt) and will upgrade it");
+    if (d.redirectTo) skip(`domain:${cl(d.host)} redirect`, `redirects to ${cl(d.redirectTo)} — configure the redirect in Tugra`);
+    if (d.serviceRef && !isCompose) skip(`domain:${cl(d.host)} serviceRef`, "targets a named service, but this is not a compose app — Tugra routes the single app container");
+  }
+
+  // ── Primary path routing (Tugra's pathPrefix is app-wide, so it mirrors the primary domain's path only).
+  let primaryPath: string | undefined;
+  const rawPrimaryPath = normPath(primary?.path);
+  if (primary && rawPrimaryPath) {
+    const stripPrefix = primary.stripPath ?? false; // Dokploy strips the matched prefix only when stripPath is set
+    if (SetDomainOptionsSchema.safeParse({ pathPrefix: rawPrimaryPath, stripPrefix }).success) {
+      primaryPath = rawPrimaryPath;
+      out.domainOptions = { pathPrefix: rawPrimaryPath, stripPrefix };
+    } else {
+      skip(`domain:${cl(primary.host)} path`, "the path is not a valid Tugra path prefix — served at the host root");
+    }
+  }
+
+  // ── Hostnames beyond the primary.
+  // First-seen routing tuple per host: only a TRUE duplicate (same host + path + port + serviceRef) is dropped
+  // silently; a repeat with a different path/port/service is reported (Tugra serves one route per host).
+  const tuple = (d: ForeignDomain): string => `${normPath(d.path) ?? ""}|${d.port ?? ""}|${d.serviceRef?.trim() ?? ""}`;
+  const seen = new Map<string, string>();
+  if (primary && primaryHost) seen.set(primaryHost, tuple(primary));
+  const primaryPort = primary?.port;
+  for (const d of domains) {
+    if (d === primary) continue;
+    const key = lc(d.host);
+    const first = seen.get(key);
+    if (first !== undefined) {
+      if (first !== tuple(d)) skip(`domain:${cl(d.host)} dup`, "same host with a different path/port/service — Tugra serves one route per host");
+      continue;
+    }
+    seen.set(key, tuple(d));
+    const hostParsed = SetExtraDomainsSchema.safeParse({ domains: [d.host] });
+    if (!hostParsed.success) {
+      skip(`domain:${cl(d.host)} host`, "not a hostname Tugra can serve");
+      continue;
+    }
+    const host = hostParsed.data.domains[0];
+    // Tugra already serves the primary's www/bare counterpart, and rejects it as an extra/service domain.
+    if (host === primaryBase || host === `www.${primaryBase}`) {
+      skip(`domain:${cl(d.host)} alias`, "is the www/bare counterpart of the primary domain — Tugra already serves it there");
+      continue;
+    }
+    if (isCompose && d.serviceRef) {
+      const svc = d.serviceRef.trim();
+      if (!d.port || !Number.isInteger(d.port) || d.port < 1 || d.port > 65535) {
+        skip(`domain:${cl(d.host)} port`, "no routing port on the source — add this service domain in Tugra");
+      } else if (d.path) {
+        skip(`domain:${cl(d.host)} path`, "per-service domains have no path routing in Tugra — add it manually");
+      } else if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/.test(svc)) {
+        skip(`domain:${cl(d.host)} serviceRef`, "not a valid compose service name");
+      } else if (out.serviceDomains.length >= MAX_SERVICE_DOMAINS) {
+        skip(`domain:${cl(d.host)} limit`, `Tugra allows at most ${MAX_SERVICE_DOMAINS} service domains`);
+      } else {
+        out.serviceDomains.push({ service: svc, hostname: host, port: d.port });
+      }
+      continue;
+    }
+    // Plain alias host (classic app, or a compose domain with no service binding).
+    if (!isCompose && primaryPort !== undefined && d.port !== undefined && d.port !== primaryPort) {
+      skip(`domain:${cl(d.host)} port`, `routes to container port ${d.port}, but Tugra serves one container port per app (${primaryPort})`);
+      continue;
+    }
+    if (normPath(d.path) !== primaryPath) {
+      skip(`domain:${cl(d.host)} path`, "uses a different path than the primary domain — Tugra's path prefix is app-wide");
+      continue;
+    }
+    if (out.extraDomains.length >= MAX_EXTRA_DOMAINS) {
+      skip(`domain:${cl(d.host)} limit`, `Tugra allows at most ${MAX_EXTRA_DOMAINS} extra domains`);
+      continue;
+    }
+    out.extraDomains.push(host);
+  }
+  // ── Compose primary bound to a named service: create-time routing uses the compose-inferred web service.
+  if (isCompose && primary?.serviceRef) {
+    skip(`domain:${cl(primary.host)} serviceRef`, `bound to compose service "${cl(primary.serviceRef)}" — Tugra routes the primary domain to the web service it infers from the compose file; verify it`);
+  }
+
+  // ── Corrected ingress container port (IMAGE/GIT only; COMPOSE infers it from its YAML).
+  if (!isCompose && primary?.port && Number.isInteger(primary.port) && primary.port >= 1 && primary.port <= 65535 && primary.port !== app.ports?.[0]) {
+    out.containerPort = primary.port;
+  }
+
+  // ── Raw host-published ports.
+  const published = app.publishedPorts ?? [];
+  if (isCompose) {
+    if (published.length) skip("ports", "a compose app declares its published ports in its compose file");
+  } else {
+    // The HTTP ingress port is already published by the proxy; re-publishing it on the host is skipped (a
+    // domain-less app has no ingress, so its first published port is kept).
+    const httpPort = primary ? out.containerPort ?? app.ports?.[0] : undefined;
+    const taken = new Set<string>();
+    for (const p of published) {
+      const field = `port:${p.hostPort}/${p.protocol}`;
+      if (httpPort !== undefined && p.protocol === "tcp" && p.containerPort === httpPort) {
+        skip(field, `container port ${p.containerPort} is the HTTP ingress port, already served through the proxy — publish it on the host manually if it is needed`);
+      } else if (taken.has(`${p.hostPort}/${p.protocol}`)) {
+        skip(field, "host port + protocol already published by another mapping");
+      } else if (out.extraPorts.length >= MAX_EXTRA_PORTS) {
+        skip(field, `Tugra allows at most ${MAX_EXTRA_PORTS} extra published ports`);
+      } else {
+        taken.add(`${p.hostPort}/${p.protocol}`);
+        out.extraPorts.push({ hostPort: p.hostPort, containerPort: p.containerPort, protocol: p.protocol });
+      }
+    }
+  }
+  // ── Custom redirect rules (not secret) — validated against the real Tugra schema; carried losslessly.
+  if (app.redirects?.length) {
+    const parsed = SetRedirectsSchema.safeParse({ redirects: app.redirects.slice(0, MAX_REDIRECTS) });
+    if (parsed.success) {
+      out.redirects = parsed.data.redirects;
+    } else {
+      // One invalid rule must not cost the rest: keep each rule that validates on its own.
+      const good = app.redirects.slice(0, MAX_REDIRECTS).filter((r) => SetRedirectsSchema.safeParse({ redirects: [r] }).success);
+      if (good.length) out.redirects = good;
+      skip("redirects", "some redirect rules are not valid in Tugra (single-line regex/replacement, max 1024 chars) — re-create them manually");
+    }
+    if (app.redirects.length > MAX_REDIRECTS) skip("redirects limit", `Tugra allows at most ${MAX_REDIRECTS} redirect rules`);
+  }
   return out;
 }
 

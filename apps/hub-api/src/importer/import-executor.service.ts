@@ -13,7 +13,7 @@ import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
-import { foreignAppToCreateInput, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
@@ -27,6 +27,7 @@ import type { DatabaseView } from "../databases/databases.service";
 /** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
  *  is skipped by a plan blocker, but we re-check here so a bad engine never reaches DatabasesService. */
 const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
+import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials } from "./import-source";
 import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind } from "./dto";
 
@@ -386,6 +387,9 @@ export class ImportExecutorService {
       // Post-create config the create schema cannot carry (build target, watch paths, auto-deploy, limits, exec-form
       // command, replicas). Same best-effort contract as setVolumes: a setter failure NEVER reaches the outer catch.
       const postCreate = await this.applyPostCreateConfig(userId, created.id, app, targetServerId);
+      // Ingress beyond create's one primary domain + guessed port (extra domains, path routing, compose service
+      // domains, raw published ports). Same best-effort, never-throw contract as applyPostCreateConfig.
+      const ingress = await this.applyIngress(userId, created.id, app, source);
       // Surface a declare FAILURE or skipped mounts on the task itself (the view renders `output` as the task
       // message) — otherwise a silently-empty app contradicts the plan's "a volume is declared" promise. A clean
       // declare (or a no-volume app) leaves `output` unset, so those rows stay byte-identical to before.
@@ -396,7 +400,10 @@ export class ImportExecutorService {
       const cfgNote = postCreate.unmapped.length
         ? `config not carried: ${postCreate.unmapped.map((u) => u.field).join(", ")}`
         : undefined;
-      const note = [volNote, cfgNote].filter(Boolean).join("; ") || undefined;
+      const ingressNote = ingress.unmapped.length
+        ? `ingress not carried: ${ingress.unmapped.map((u) => u.field).join(", ")}`
+        : undefined;
+      const note = [volNote, cfgNote, ingressNote].filter(Boolean).join("; ") || undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
@@ -404,7 +411,7 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}) },
+          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
           ...(note ? { output: note } : {}),
           finishedAt: new Date(),
         },
@@ -477,6 +484,96 @@ export class ImportExecutorService {
       // registry) — far too surprising to apply silently during an import. Carry it as unmapped; the planner
       // surfaces replicas as an explicit choice (next slice).
       unmapped.push({ field: "replicas", reason: "replicas convert the app to a swarm service — set the replica count explicitly in Tugra after import" });
+    }
+    return { applied, unmapped };
+  }
+
+  /** Apply {@link foreignAppToIngressPlan} through the ApplicationsService setters, in order: extra domains →
+   *  path options → corrected container port → raw published ports → compose service domains. Best-effort like
+   *  {@link applyPostCreateConfig}: a setter failure is recorded as `unmapped` and NEVER thrown (a throw would
+   *  orphan the created app and a retry would duplicate it). The two replace-set host lists fall back to
+   *  one-by-one on a batch rejection, so a single clashing hostname costs only itself. Summary = field names,
+   *  hostnames and port numbers + fixed reasons — never an env/credential value. */
+  private async applyIngress(
+    userId: string,
+    appId: string,
+    app: ForeignApp,
+    source: ImportSource,
+  ): Promise<{ applied: string[]; unmapped: Array<{ field: string; reason: string }> }> {
+    const applied: string[] = [];
+    let plan: ReturnType<typeof foreignAppToIngressPlan>;
+    try {
+      plan = foreignAppToIngressPlan(app);
+    } catch {
+      return { applied, unmapped: [{ field: "ingress", reason: "the source ingress could not be interpreted — configure domains and ports manually" }] };
+    }
+    const unmapped = [...plan.unmapped];
+    const rejected = "Tugra rejected the setting — set it manually";
+    const run = async (field: string, fn: () => Promise<unknown>, reason = rejected) => {
+      try {
+        await fn();
+        applied.push(field);
+      } catch {
+        // FIXED reason only — never the error text (it could echo a credential).
+        unmapped.push({ field, reason });
+      }
+    };
+    /** Replace-set list: try it whole; if rejected, rebuild it item by item (each call replaces the whole set,
+     *  so the growing prefix is valid) and report only the items Tugra refuses. */
+    const runList = async <T>(field: string, items: T[], label: (t: T) => string, set: (items: T[]) => Promise<unknown>) => {
+      if (!items.length) return;
+      try {
+        await set(items);
+        applied.push(field);
+        return;
+      } catch {
+        /* fall through to per-item */
+      }
+      const kept: T[] = [];
+      for (const it of items) {
+        try {
+          await set([...kept, it]);
+          kept.push(it);
+        } catch {
+          unmapped.push({ field: `${field}:${label(it)}`, reason: rejected });
+        }
+      }
+      if (kept.length) applied.push(field);
+    };
+    await runList("extraDomains", plan.extraDomains, (h) => h, (hosts) => this.apps.setExtraDomains(userId, appId, hosts));
+    if (plan.domainOptions) await run("domainOptions", () => this.apps.setDomainOptions(userId, appId, plan.domainOptions!));
+    if (plan.containerPort !== undefined) await run("containerPort", () => this.apps.setContainerPort(userId, appId, plan.containerPort!));
+    await runList("extraPorts", plan.extraPorts, (p) => `${p.hostPort}/${p.protocol}`, (ports) => this.apps.setExtraPorts(userId, appId, ports));
+    await runList("serviceDomains", plan.serviceDomains, (r) => r.hostname, (rows) => this.apps.setServiceDomains(userId, appId, rows));
+    if (plan.redirects?.length) await run("redirects", () => this.apps.setRedirects(userId, appId, plan.redirects!));
+    // Basic-auth: the fleet carries usernames only; the passwords are fetched server-side here, bcrypt-hashed by
+    // setBasicAuth, and never persisted/returned in plaintext. Any failure (no creds / read error) is an unmapped
+    // 'basicAuth' with a FIXED reason — a password-gated app must be re-protected before cutover.
+    if (app.basicAuth?.users?.length) {
+      let dropped = 0;
+      await run(
+        "basicAuth",
+        async () => {
+          const creds = await source.fetchBasicAuthCredentials?.(app.sourceRef);
+          if (!creds || !creds.length) throw new Error("no basic-auth credentials");
+          // Only credentials Tugra can faithfully store (an htpasswd-unsafe username would corrupt the whole
+          // auth line); keep each valid one so the app stays gated, and report the rest.
+          const seenUsers = new Set<string>();
+          const usable = creds.filter((c) => {
+            const ok = !seenUsers.has(c.user) && SetBasicAuthSchema.safeParse({ users: [c] }).success;
+            if (ok) seenUsers.add(c.user);
+            return ok;
+          });
+          dropped = creds.length - usable.length;
+          if (!usable.length) throw new Error("no storable basic-auth credentials");
+          // Enforce the controller's per-app cap (SetBasicAuthSchema caps users at 20); setBasicAuth does not revalidate.
+          const capped = usable.slice(0, 20);
+          dropped += usable.length - capped.length;
+          await this.apps.setBasicAuth(userId, appId, capped);
+        },
+        "basic-auth not carried — re-protect the app before cutover",
+      );
+      if (dropped > 0) unmapped.push({ field: "basicAuth users", reason: "some basic-auth users could not be stored in Tugra — re-add them before cutover" });
     }
     return { applied, unmapped };
   }

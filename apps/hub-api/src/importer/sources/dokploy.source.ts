@@ -386,6 +386,34 @@ export class DokploySource implements ImportSource {
     return { user: str(row.databaseUser), password, rootPassword, database: str(row.databaseName) };
   }
 
+  /**
+   * An application's HTTP basic-auth credentials at apply time (server-side only — SECRET path, never part of
+   * discover()). Re-locates the app via the refIndex, GETs `application.one` and reads its `security` rows
+   * (plaintext to an owner key). Returns the ENABLED rows that have both a username and a password; undefined when
+   * the app is not located / has no security at all. A failed read PROPAGATES so the executor records the app's
+   * basic-auth as unmapped instead of silently leaving a password-gated app public.
+   */
+  async fetchBasicAuthCredentials(ref: string): Promise<Array<{ user: string; password: string }> | undefined> {
+    let target = this.refIndex.get(ref);
+    if (!target) {
+      await this.discover().catch(() => undefined);
+      target = this.refIndex.get(ref);
+    }
+    if (!target || target.kind !== "application") return undefined;
+    const row = await this.client.get<{ security?: Array<{ username?: unknown; password?: unknown; enabled?: unknown }> | null } | null>(
+      `/application.one?applicationId=${enc(target.id)}`,
+    );
+    if (!row || typeof row !== "object" || !Array.isArray(row.security) || !row.security.length) return undefined;
+    const creds: Array<{ user: string; password: string }> = [];
+    for (const r of row.security) {
+      if (!r || r.enabled === false) continue;
+      const user = str(r.username);
+      const password = str(r.password);
+      if (user && password) creds.push({ user, password });
+    }
+    return creds.length ? creds : undefined;
+  }
+
   private async fetchGitProviderSecrets(githubId: string): Promise<FetchedSecrets> {
     const none: FetchedSecrets = { values: Object.create(null), unresolved: [] };
     if (!githubId) return none;
