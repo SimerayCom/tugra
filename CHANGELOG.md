@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.3] - 2026-11-08
+
+- **Panel UX overhaul.** A grouped, collapsible sidebar; consistent hover/focus/active states and
+  accessible tabs across the panel; shared list cards with skeleton loaders and localized status
+  labels; a sortable, filterable, paginated server table; a resize-aware multi-series chart
+  primitive; a fleet-cockpit dashboard; fleet **Wall** and **Heatmap** metric views; and an
+  unsaved-changes guard that warns before you navigate away from a config edit in progress.
+- **Dokploy import now carries ingress.** Importing from Dokploy brings over domains, TLS / cert
+  type, path routing, redirects and HTTP basic-auth (fetched secret-free), not just the app itself.
+
 - **Fixed: an agent could permanently brick its own identity on a transient hub rejection.** On any
   rejected reconnect with an enroll token set, the agent used to erase its stored identity and fall back
   to enrollment — which cannot succeed for an already-enrolled server, so a mid-handshake hub restart or
