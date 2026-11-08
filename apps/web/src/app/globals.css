@@ -27,6 +27,17 @@
   --chart-3: #199e70;
   --chart-4: #c98500;
   --chart-5: #d55181;
+  /* Sequential heat ramp (fleet heatmap), 9 steps low -> high, ONE hue (blue, dataviz palette steps 100-700).
+     Dark surface: magnitude reads as LUMINANCE, so the anchor flips - low is the deep step, high the light one. */
+  --heat-0: #0d366b;
+  --heat-1: #184f95;
+  --heat-2: #1c5cab;
+  --heat-3: #256abf;
+  --heat-4: #2a78d6;
+  --heat-5: #3987e5;
+  --heat-6: #6da7ec;
+  --heat-7: #9ec5f4;
+  --heat-8: #cde2fb;
   --r1: 8px;
   --r2: 12px;
   --r3: 16px;
@@ -67,6 +78,16 @@
   --chart-3: #1baf7a;
   --chart-4: #eda100;
   --chart-5: #e87ba4;
+  /* Heat ramp, light surface: low = lightest (recedes toward the white card), high = darkest. */
+  --heat-0: #cde2fb;
+  --heat-1: #9ec5f4;
+  --heat-2: #6da7ec;
+  --heat-3: #3987e5;
+  --heat-4: #2a78d6;
+  --heat-5: #256abf;
+  --heat-6: #1c5cab;
+  --heat-7: #184f95;
+  --heat-8: #0d366b;
 }
 
 * {
@@ -304,6 +325,7 @@ body {
 .fleet-sort:focus-visible,
 .fleet-chip:focus-visible,
 .fleet-namelink:focus-visible,
+.fleet-heat-name:focus-visible,
 .fleet-clusterlink:focus-visible {
   /* !important: fleet-sort/fleet-chip carry inline `all:unset`; an inline style outranks this rule, so
      without !important the keyboard focus ring never appears (WCAG 2.4.7). */
@@ -366,6 +388,87 @@ body {
 .fleet-wall-card:hover,
 .fleet-wall-card:focus-within {
   border-color: var(--c-tx3);
+}
+
+/* Fleet heatmap: rows = servers, columns = minutes. Plain divs on a CSS grid (no per-cell component). */
+.fleet-heat {
+  border: 1px solid var(--c-bd);
+  border-radius: var(--r1);
+  background: var(--c-sb);
+  overflow-x: auto;
+  /* extra right padding: the last time-axis label is centred on the last column and overhangs it */
+  padding: 10px 28px 12px 12px;
+}
+.fleet-heat-inner {
+  min-width: calc(150px + var(--heat-cols, 30) * 11px);
+}
+.fleet-heat-row {
+  /* content-visibility:auto contains layout, so the row is the containing block for positioned descendants */
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(110px, 190px) 1fr;
+  column-gap: 10px;
+  align-items: center;
+  margin-bottom: 2px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 24px;
+}
+/* The heatmap name link is a NORMAL link covering only the name (not the stretched-link overlay the table
+   uses): an inset:0 overlay would cover the cell strip and swallow cell hover/title/click. */
+.fleet-heat-name {
+  display: block;
+  min-width: 0;
+  color: var(--c-tx);
+}
+.fleet-heat-row:hover .fleet-heat-name,
+.fleet-heat-row:focus-within .fleet-heat-name {
+  color: var(--c-a);
+}
+.fleet-heat-strip {
+  display: grid;
+  grid-template-columns: repeat(var(--heat-cols, 30), minmax(0, 1fr));
+  gap: 1px;
+  height: 22px;
+  cursor: pointer;
+}
+.fleet-heat-cell {
+  border-radius: 2px;
+  min-width: 0;
+}
+.fleet-heat-cell:hover {
+  outline: 2px solid var(--c-tx);
+  outline-offset: -1px;
+}
+/* No data: transparent + diagonal hatch, so it differs from EVERY ramp step by pattern, not just by colour. */
+.fleet-heat-empty {
+  background: repeating-linear-gradient(135deg, transparent 0 3px, var(--c-bd) 3px 4px);
+  box-shadow: inset 0 0 0 1px var(--c-bd);
+}
+.fleet-heat-axis {
+  position: relative;
+  height: 16px;
+  font-size: 11px;
+  color: var(--c-tx3);
+}
+.fleet-heat-axis > span {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+}
+.fleet-heat-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 11.5px;
+  color: var(--c-tx3);
+}
+.fleet-heat-swatch {
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
 }
 
 /* Deployment list rows are the click target that drills into a deployment (Coolify-style). */

@@ -4,12 +4,12 @@ import type { FleetRow, FleetSortKey } from "./fleet-view";
 /** What every wall card plots. Only cpu + mem have a per-server trend today (the batch /fleet/metrics/trend
  *  rows carry cpu + mem points); disk + net render as live-value tiles until #M2b adds their series. */
 export type WallMetric = "cpu" | "mem" | "disk" | "net";
-export type FleetView = "table" | "wall";
+export type FleetView = "table" | "wall" | "heatmap";
 /** The wall's own order: hottest-first by the plotted metric, or by name / status (separate from the table sort). */
 export type WallSort = "hot" | "name" | "status";
 
 export const WALL_METRICS: readonly WallMetric[] = ["cpu", "mem", "disk", "net"];
-export const FLEET_VIEWS: readonly FleetView[] = ["table", "wall"];
+export const FLEET_VIEWS: readonly FleetView[] = ["table", "wall", "heatmap"];
 
 export const VIEW_KEY = "tugra.fleetview";
 export const METRIC_KEY = "tugra.fleetwallmetric";

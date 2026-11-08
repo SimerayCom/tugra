@@ -8,9 +8,10 @@ import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { statusCounts, filterByStatus } from "../../../lib/fleet";
 import { buildFleetRows, sortFleetRows, matchesFleetSearch, type FleetSortKey, type SortDir } from "../../../lib/fleet-view";
-import { useFleetTrend } from "../../../hooks/useFleetTrend";
+import { useFleetTrendState } from "../../../hooks/useFleetTrend";
 import { FleetTable } from "../../../components/fleet-table";
 import { FleetWall } from "../../../components/fleet-wall";
+import { FleetHeatmap } from "../../../components/fleet-heatmap";
 import {
   FLEET_VIEWS, WALL_METRICS, VIEW_KEY, METRIC_KEY, METRIC_SORT_KEY, readPref, writePref,
   type FleetView, type WallMetric, type WallSort,
@@ -37,7 +38,7 @@ export default function FleetPage() {
     select: (d) => (Array.isArray(d) ? d : EMPTY_METRICS),
     refetchInterval: 5000,
   });
-  const trends = useFleetTrend();
+  const { trends, isLoading: trendsLoading } = useFleetTrendState();
   const { data: clusters = [] } = useQuery({ queryKey: ["clusters"], queryFn: () => api.listClusters(), staleTime: 30_000 });
 
   const [status, setStatus] = useState<ServerStatus | null>(null);
@@ -68,12 +69,12 @@ export default function FleetPage() {
   const scoped = useMemo(() => scopeByTeam(servers ?? [], teamId), [servers, teamId]);
   const counts = useMemo(() => statusCounts(scoped), [scoped]);
 
-  // The Table and the Wall keep SEPARATE sort state so switching views never clobbers the other's order.
-  // The wall's order is a tiny control: hottest-first by the plotted metric (follows the metric, incl. on
-  // restore), or by name / status.
+  // The Table keeps its OWN sort state so switching views never clobbers its order. The Wall and the Heatmap
+  // share one tiny order control: hottest-first by the plotted metric (follows the metric, incl. on restore),
+  // or by name / status.
   const [wallSort, setWallSort] = useState<WallSort>("hot");
-  const effKey: FleetSortKey = view === "wall" ? (wallSort === "hot" ? METRIC_SORT_KEY[metric] : wallSort) : sortKey;
-  const effDir: SortDir = view === "wall" ? (wallSort === "hot" ? "desc" : "asc") : sortDir;
+  const effKey: FleetSortKey = view !== "table" ? (wallSort === "hot" ? METRIC_SORT_KEY[metric] : wallSort) : sortKey;
+  const effDir: SortDir = view !== "table" ? (wallSort === "hot" ? "desc" : "asc") : sortDir;
 
   const rows = useMemo(() => {
     const built = buildFleetRows(filterByStatus(scoped, status), metrics, nowMs).filter((r) => matchesFleetSearch(r, q));
@@ -127,9 +128,9 @@ export default function FleetPage() {
           label={t("fleet.view")}
           value={view}
           onChange={setView}
-          options={[{ value: "table", label: t("fleet.viewTable") }, { value: "wall", label: t("fleet.viewWall") }]}
+          options={[{ value: "table", label: t("fleet.viewTable") }, { value: "wall", label: t("fleet.viewWall") }, { value: "heatmap", label: t("fleet.viewHeatmap") }]}
         />
-        {view === "wall" && (
+        {view !== "table" && (
           <>
             <Segmented
               label={t("fleet.wallMetric")}
@@ -161,6 +162,7 @@ export default function FleetPage() {
       {isLoading && !servers && <SkeletonTable rows={6} />}
       {isError && !servers && <ErrorState onRetry={() => refetch()} />}
       {servers && view === "wall" && <FleetWall rows={rows} metric={metric} trends={trends} />}
+      {servers && view === "heatmap" && <FleetHeatmap key={`${teamId ?? ""}|${status}|${q}|${metric}`} rows={rows} metric={metric} trends={trends} loading={trendsLoading} />}
       {servers && view === "table" && <FleetTable rows={rows} sortKey={sortKey} sortDir={sortDir} onSort={onSort} clusterName={clusterName} trends={trends} />}
     </div>
   );

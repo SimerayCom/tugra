@@ -12,7 +12,13 @@ const EMPTY: FleetTrendRow[] = []; // stable identity → keeps the memo below f
  *  sparkline columns of the fleet and server tables; refreshes slowly (the points are per-minute) and a
  *  failure just leaves the cells as "—" — the trend is decoration, never a reason to break the table. */
 export function useFleetTrend(enabled = true): Map<string, FleetTrendRow> {
-  const { data = EMPTY } = useQuery({
+  return useFleetTrendState(enabled).trends;
+}
+
+/** Same query as {@link useFleetTrend}, plus `isLoading` (first fetch in flight) so a view can tell "still
+ *  loading" apart from "loaded, nothing there". */
+export function useFleetTrendState(enabled = true): { trends: Map<string, FleetTrendRow>; isLoading: boolean } {
+  const { data = EMPTY, isLoading } = useQuery({
     queryKey: ["fleetTrend"],
     queryFn: () => api.getFleetTrend(30),
     select: (d) => (Array.isArray(d) ? d : EMPTY),
@@ -21,5 +27,6 @@ export function useFleetTrend(enabled = true): Map<string, FleetTrendRow> {
     retry: false,
     enabled,
   });
-  return useMemo(() => trendByServer(data), [data]);
+  const trends = useMemo(() => trendByServer(data), [data]);
+  return { trends, isLoading };
 }

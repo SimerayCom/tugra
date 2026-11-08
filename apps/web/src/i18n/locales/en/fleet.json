@@ -31,5 +31,15 @@
   "sortName": "Name",
   "sortStatus": "Status",
   "noRecent": "No recent data",
-  "noTrendMetric": "No trend history for this metric yet."
+  "noTrendMetric": "No trend history for this metric yet.",
+  "viewHeatmap": "Heatmap",
+  "heatmap": "Fleet heatmap",
+  "heatLegend": "Heatmap colour scale",
+  "heatLoading": "Loading heatmap…",
+  "heatNoData": "No data",
+  "heatCell": "{server}, {time}: {metric} {value}",
+  "heatCellEmpty": "{server}, {time}: no data",
+  "heatRow": "{server}: latest {latest}, peak {peak}",
+  "heatShowing": "Showing {shown} of {total} servers",
+  "heatShowMore": "Show more servers"
 }
