@@ -17,6 +17,14 @@ export function teamLabel(teams: { id: string; name: string }[], id: string): st
   return teams.find((t) => t.id === id)?.name ?? id.slice(0, 6);
 }
 
+const SERVER_STATUSES: readonly ServerStatus[] = ["ONLINE", "PENDING", "OFFLINE"];
+
+/** `?status=ONLINE|PENDING|OFFLINE` (the dashboard status tiles deep-link to /servers with it) → the initial
+ *  status filter. Anything else (missing, wrong case, junk) = null = all. */
+export function statusFromParam(v: string | null | undefined): ServerStatus | null {
+  return SERVER_STATUSES.find((s) => s === v) ?? null;
+}
+
 /** Filter the fleet to a single status (null = all). */
 export function filterByStatus(servers: ServerView[], status: ServerStatus | null): ServerView[] {
   return status ? servers.filter((s) => s.status === status) : servers;

@@ -27,5 +27,22 @@
   "noServers": "Connect a server to deploy your first app.",
   "addResource": "New resource",
   "settings": "Settings",
-  "addServer": "Add your first server →"
+  "addServer": "Add your first server →",
+  "onlineOf": "of {n} servers",
+  "window": "last {n} min",
+  "fleetCpu": "Fleet CPU",
+  "fleetRam": "Fleet RAM",
+  "fleetAvgHint": "Average of online servers",
+  "fleetCpuTrend": "Fleet CPU trend, last {n} min",
+  "fleetRamTrend": "Fleet RAM trend, last {n} min",
+  "deltaUp": "Up {pts} pts over the last {n} min",
+  "deltaDown": "Down {pts} pts over the last {n} min",
+  "deltaFlat": "Steady over the last {n} min",
+  "diskPressure": "Disk pressure",
+  "diskPressureSub": "servers at {pct}%+ disk",
+  "busiest": "Busiest servers",
+  "busiestHint": "Top servers by current CPU",
+  "chartTitle": "Fleet CPU & RAM",
+  "chartDesc": "Average across servers, last {n} min",
+  "busiestCpu": "{n}% CPU"
 }

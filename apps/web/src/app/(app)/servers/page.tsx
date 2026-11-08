@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
@@ -12,12 +13,23 @@ import { TagFilter } from "../../../components/tags";
 import { Btn } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { scopeByTeam } from "../../../lib/team-scope";
+import { statusFromParam } from "../../../lib/fleet";
 import { useTeamScope } from "../../../components/team-scope";
 import type { ServerStatus } from "../../../lib/types";
 import { SkeletonTable } from "../../../components/skeleton";
 
 export default function ServersPage() {
+  // useSearchParams needs a Suspense boundary for the static prerender.
+  return (
+    <Suspense fallback={<div style={{ padding: "var(--page-pad)" }}><SkeletonTable rows={6} /></div>}>
+      <ServersPageInner />
+    </Suspense>
+  );
+}
+
+function ServersPageInner() {
   const t = useT();
+  const sp = useSearchParams();
   const { teamId } = useTeamScope();
   const { data: servers, isLoading, isError, refetch } = useQuery({
     queryKey: ["servers"],
@@ -26,7 +38,7 @@ export default function ServersPage() {
   const trends = useFleetTrend();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [status, setStatus] = useState<ServerStatus | null>(null);
+  const [status, setStatus] = useState<ServerStatus | null>(() => statusFromParam(sp.get("status")));
   const scoped = scopeByTeam(servers ?? [], teamId);
   const allTags = [...new Set(scoped.flatMap((s) => s.tags))].sort();
   const visible = scoped.filter((s) => selectedTags.every((tag) => s.tags.includes(tag)));
