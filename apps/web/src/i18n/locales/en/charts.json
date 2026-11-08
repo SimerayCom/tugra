@@ -3,5 +3,14 @@
   "avg": "Avg",
   "max": "Max",
   "peak": "Peak",
-  "noData": "No data in this range"
+  "noData": "No data in this range",
+  "total": "Total",
+  "time": "Time",
+  "point": "Point",
+  "legend": "Legend",
+  "table": "Table",
+  "viewAsTable": "View as table",
+  "valueMode": "Value shown",
+  "noPoint": "No data",
+  "gap": "Gap in data"
 }

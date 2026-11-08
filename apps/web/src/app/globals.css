@@ -19,6 +19,14 @@
   --c-g: #34c759; /* brand kit green */
   --c-am: #f5a623; /* brand kit amber */
   --c-r: #ff4d4f; /* brand kit red */
+  /* Chart categorical slots 1-5 (fixed order, never cycled) — blue/orange/aqua/yellow/magenta stepped for the
+     dark surface; validated (dataviz validate_palette --mode dark, surface #121218): adjacent CVD dE >= 8.4,
+     normal-vision >= 19.3, all >= 3:1 contrast. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
   --r1: 8px;
   --r2: 12px;
   --r3: 16px;
@@ -50,6 +58,15 @@
   --c-am: #b45309;
   --c-r: #dc2626;
   --c-lapis: #2563eb;
+  /* Chart categorical slots 1-5, light steps (validate_palette --mode light, surface #ffffff): adjacent CVD
+     dE >= 9.1, normal-vision >= 19.6. Slots 3-5 sit below 3:1 on white, so multi-series charts ALWAYS carry a
+     non-colour encoding too (a per-slot stroke dash on lines + legend swatch) plus legend and tooltip values —
+     identity is never colour-alone, in either theme. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
 }
 
 * {
