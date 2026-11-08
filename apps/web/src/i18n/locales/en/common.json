@@ -22,5 +22,23 @@
   "edit": "Edit",
   "remove": "Remove",
   "deleteConfirm": "This can't be undone.",
-  "typeToConfirm": "Type {text} to confirm."
+  "typeToConfirm": "Type {text} to confirm.",
+  "status": {
+    "NEW": "New",
+    "RUNNING": "Running",
+    "STOPPED": "Stopped",
+    "FAILED": "Failed",
+    "ONLINE": "Online",
+    "OFFLINE": "Offline",
+    "PENDING": "Pending",
+    "UP": "Up",
+    "DOWN": "Down",
+    "QUEUED": "Queued",
+    "SUCCESS": "Success",
+    "CANCELLED": "Cancelled"
+  },
+  "noResults": "No results",
+  "noResultsHint": "Nothing matches your search or filters.",
+  "clearFilters": "Clear filters",
+  "noneInScope": "None in the current team scope. Switch team scope to see others."
 }

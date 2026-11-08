@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
@@ -15,6 +16,9 @@ import { Field, Select, TextInput } from "../../../components/form";
 import { MonitorFavicon } from "../../../components/monitor-favicon";
 import { MonitorChannelsBulkModal } from "../../../components/monitor-channels-bulk-modal";
 import { SkeletonTable } from "../../../components/skeleton";
+import { ListCard, ListRow } from "../../../components/list";
+import { PageTitle } from "../../../components/page-header";
+import { statusLabel } from "../../../lib/status";
 
 const formGrid: React.CSSProperties = {
   display: "grid",
@@ -26,6 +30,7 @@ const formGrid: React.CSSProperties = {
 export default function MonitorsPage() {
   const t = useT();
   const qc = useQueryClient();
+  const router = useRouter();
   const { data: monitors = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["monitors"],
     queryFn: () => api.listMonitors(),
@@ -96,8 +101,7 @@ export default function MonitorsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("monitors.title")}</h1>
-      <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("monitors.subtitle")}</p>
+      <PageTitle title={t("monitors.title")} subtitle={t("monitors.subtitle")} />
 
       <Card style={{ padding: 16, marginBottom: 20 }}>
         <form
@@ -193,11 +197,12 @@ export default function MonitorsPage() {
       {isError && monitors.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <SkeletonTable />
+        <SkeletonTable detailed />
       ) : (
-        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-          {monitors.map((m) => (
-            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)" }}>
+        <ListCard>
+          {monitors.map((m, i) => (
+            // Whole row navigates on click; the name link inside is the keyboard path, so no extra tab stop.
+            <ListRow key={m.id} index={i} onClick={() => router.push(`/monitors/${m.id}`)} tabbable={false}>
               <input
                 type="checkbox"
                 disabled={!m.canWrite}
@@ -216,14 +221,14 @@ export default function MonitorsPage() {
                   </div>
                   <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{m.type} · {m.target}</div>
                 </div>
-                <span style={{ fontSize: 12, color: monitorColor(m.status), fontWeight: 600 }}>{m.status}</span>
+                <span style={{ fontSize: 12, color: monitorColor(m.status), fontWeight: 600 }}>{statusLabel(t, m.status)}</span>
               </Link>
-            </div>
+            </ListRow>
           ))}
           {monitors.length === 0 && (
             <EmptyState icon={Activity} title={t("monitors.emptyTitle")}>{t("monitors.empty")}</EmptyState>
           )}
-        </div>
+        </ListCard>
       )}
 
       {selected.size > 0 && (

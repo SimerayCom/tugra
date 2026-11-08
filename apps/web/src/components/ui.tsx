@@ -19,37 +19,18 @@ export function BackLink({ href, label }: { href: string; label: string }) {
   );
 }
 
-export function Btn({
-  variant = "primary",
-  // Default to "button" so a <Btn onClick> inside a <form> doesn't ALSO submit
-  // the form (that double-fired mutations). Submit buttons pass type="submit".
-  type = "button",
-  icon: Icon,
-  iconTone,
-  loading = false,
-  children,
-  style,
-  className,
-  ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "ghost" | "danger" | "dangerGhost";
-  // Optional leading lucide icon, rendered before the label (decorative, aria-hidden).
-  icon?: LucideIcon;
-  // Tint ONLY the leading icon with a semantic hue so a lifecycle action reads at a glance, while
-  // the button chrome stays quiet (Coolify-style coloured icons without a shouting fill).
-  iconTone?: "success" | "warn" | "danger";
-  // Show a spinner in place of the icon and mark the button aria-busy + disabled (keeps the label).
-  loading?: boolean;
-}) {
-  const isDisabled = rest.disabled || loading;
+type BtnVariant = "primary" | "ghost" | "danger" | "dangerGhost";
+
+/** Button chrome shared by Btn and LinkBtn so a link styled as a button never drifts from a real one. */
+function btnChrome(variant: BtnVariant, disabled: boolean): CSSProperties {
   const base: CSSProperties = {
     fontFamily: "inherit",
     fontSize: 13,
     fontWeight: 600,
     padding: "8px 14px",
     borderRadius: "var(--r1)",
-    cursor: isDisabled ? "not-allowed" : "pointer",
-    opacity: isDisabled ? 0.5 : 1,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
     border: "1px solid transparent",
     transition: "filter .15s, transform .05s",
     display: "inline-flex",
@@ -57,7 +38,6 @@ export function Btn({
     justifyContent: "center",
     gap: 6,
   };
-  const toneColor = iconTone === "success" ? "var(--c-g)" : iconTone === "warn" ? "var(--c-am)" : iconTone === "danger" ? "var(--c-r)" : undefined;
   const variants: Record<string, CSSProperties> = {
     primary: { background: "var(--c-a)", color: "var(--c-on-a)" },
     ghost: {
@@ -77,8 +57,36 @@ export function Btn({
       border: "1px solid color-mix(in srgb, var(--c-r) 35%, var(--c-bd))",
     },
   };
+  return { ...base, ...variants[variant] };
+}
+
+export function Btn({
+  variant = "primary",
+  // Default to "button" so a <Btn onClick> inside a <form> doesn't ALSO submit
+  // the form (that double-fired mutations). Submit buttons pass type="submit".
+  type = "button",
+  icon: Icon,
+  iconTone,
+  loading = false,
+  children,
+  style,
+  className,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: BtnVariant;
+  // Optional leading lucide icon, rendered before the label (decorative, aria-hidden).
+  icon?: LucideIcon;
+  // Tint ONLY the leading icon with a semantic hue so a lifecycle action reads at a glance, while
+  // the button chrome stays quiet (Coolify-style coloured icons without a shouting fill).
+  iconTone?: "success" | "warn" | "danger";
+  // Show a spinner in place of the icon and mark the button aria-busy + disabled (keeps the label).
+  loading?: boolean;
+}) {
+  const isDisabled = rest.disabled || loading;
+  const toneColor = iconTone === "success" ? "var(--c-g)" : iconTone === "warn" ? "var(--c-am)" : iconTone === "danger" ? "var(--c-r)" : undefined;
+  const chrome = btnChrome(variant, isDisabled);
   return (
-    <button type={type} className={["tg-btn", className].filter(Boolean).join(" ")} aria-busy={loading || undefined} style={{ ...base, ...variants[variant], ...style }} {...rest} disabled={isDisabled}>
+    <button type={type} className={["tg-btn", className].filter(Boolean).join(" ")} aria-busy={loading || undefined} style={{ ...chrome, ...style }} {...rest} disabled={isDisabled}>
       {loading ? (
         <span aria-hidden style={{ width: 14, height: 14, flexShrink: 0, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite", opacity: 0.85 }} />
       ) : (
@@ -86,6 +94,25 @@ export function Btn({
       )}
       {children}
     </button>
+  );
+}
+
+/** A real <a> (next/link) with Btn chrome — for "New X" calls to action that navigate. */
+export function LinkBtn({
+  href,
+  variant = "primary",
+  children,
+  style,
+}: {
+  href: string;
+  variant?: Exclude<BtnVariant, "danger" | "dangerGhost">;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  return (
+    <Link href={href} className="tg-btn" style={{ ...btnChrome(variant, false), textDecoration: "none", ...style }}>
+      {children}
+    </Link>
   );
 }
 

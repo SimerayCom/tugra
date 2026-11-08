@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { StatusPill } from "./ui";
 
 /** Detail-page header: breadcrumb + title + status + actions, with an optional meta row. */
@@ -57,6 +57,33 @@ export function PageHeader({
         {actions && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{actions}</div>}
       </div>
       {children && <div style={{ marginTop: 8 }}>{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * List/index-page title block: h1 + optional subtitle on the left, an optional right-aligned actions
+ * slot (primary "New X" button etc.). Sibling of PageHeader (the detail-page header) — same h1 weight,
+ * so every top-level page opens the same way. Wraps on narrow screens instead of squeezing the title.
+ */
+export function PageTitle({
+  title,
+  subtitle,
+  actions,
+  style,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  style?: CSSProperties;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 22, ...style }}>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: subtitle ? "0 0 4px" : 0 }}>{title}</h1>
+        {subtitle && <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: 0 }}>{subtitle}</p>}
+      </div>
+      {actions && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flexShrink: 0 }}>{actions}</div>}
     </div>
   );
 }

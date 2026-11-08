@@ -8,6 +8,7 @@
   "team": "Team",
   "emptyTitle": "No projects yet",
   "empty": "Create a project to organize apps and databases by environment.",
+  "noneInScope": "No projects in the selected team — switch the team scope to see the others.",
   "environments": "Environments",
   "renameEnvironment": "Rename environment",
   "cloneEnvironment": "Clone environment",

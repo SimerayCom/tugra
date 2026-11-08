@@ -7,7 +7,11 @@ import { api } from "../../../lib/api";
 import { appColor } from "../../../lib/apps";
 import type { DomainView } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
-import { Card, EmptyState, Spinner } from "../../../components/ui";
+import { EmptyState } from "../../../components/ui";
+import { ListCard, ListRow } from "../../../components/list";
+import { PageTitle } from "../../../components/page-header";
+import { SkeletonTable } from "../../../components/skeleton";
+import { statusLabel } from "../../../lib/status";
 import { ErrorState } from "../../../components/error-state";
 
 function sslColor(state: DomainView["ssl"]["state"]): string {
@@ -26,18 +30,17 @@ export default function DomainsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("domains.title")}</h1>
-      <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("domains.subtitle")}</p>
+      <PageTitle title={t("domains.title")} subtitle={t("domains.subtitle")} />
 
       {isError && domains.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <Spinner />
+        <SkeletonTable />
       ) : domains.length === 0 ? (
-        <Card><EmptyState icon={Globe} title={t("domains.emptyTitle")}>{t("domains.empty")}</EmptyState></Card>
+        <ListCard><EmptyState icon={Globe} title={t("domains.emptyTitle")}>{t("domains.empty")}</EmptyState></ListCard>
       ) : (
-        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-          {domains.map((d) => {
+        <ListCard>
+          {domains.map((d, i) => {
             const ssl = d.ssl;
             const sslText =
               ssl.state === "error"
@@ -46,14 +49,14 @@ export default function DomainsPage() {
                   ? t("domains.daysLeft", { n: ssl.daysRemaining })
                   : "—";
             return (
-              <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)" }}>
+              <ListRow key={d.id} index={i}>
                 <span style={{ width: 9, height: 9, borderRadius: "50%", background: sslColor(ssl.state) }} />
                 <div style={{ flex: 1 }}>
                   <a href={d.url ?? `https://${d.domain}`} target="_blank" rel="noreferrer" style={{ fontWeight: 600, fontSize: 14, color: "var(--c-lapis)", textDecoration: "none" }}>
                     {d.domain}
                   </a>
                   <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                    <span title={d.appStatus} style={{ width: 7, height: 7, borderRadius: "50%", background: appColor(d.appStatus), flexShrink: 0 }} />
+                    <span title={statusLabel(t, d.appStatus)} style={{ width: 7, height: 7, borderRadius: "50%", background: appColor(d.appStatus), flexShrink: 0 }} />
                     <Link href={`/apps/${d.appId}`} style={{ color: "var(--c-tx2)", textDecoration: "none" }}>{d.name}</Link>
                     {(d.domainRedirect || d.securityHeaders) && (
                       <span>
@@ -67,10 +70,10 @@ export default function DomainsPage() {
                   <div style={{ fontSize: 12, color: sslColor(ssl.state), fontWeight: 600 }}>{sslText}</div>
                   {ssl.issuer && <div style={{ fontSize: 10, color: "var(--c-tx3)" }}>{ssl.issuer}</div>}
                 </div>
-              </div>
+              </ListRow>
             );
           })}
-        </div>
+        </ListCard>
       )}
     </div>
   );

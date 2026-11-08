@@ -1,13 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Box } from "lucide-react";
+import { Box, SearchX } from "lucide-react";
 import { api, appIconUrl } from "../../../lib/api";
 import { appColor, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
-import { Btn, EmptyState, Spinner, StatusPill } from "../../../components/ui";
+import { Btn, EmptyState, LinkBtn, StatusPill } from "../../../components/ui";
+import { ListCard, ListRow } from "../../../components/list";
+import { PageTitle } from "../../../components/page-header";
+import { SkeletonTable } from "../../../components/skeleton";
+import { statusLabel } from "../../../lib/status";
 import { AppLogo } from "../../../components/app-logo";
 import { TextInput } from "../../../components/form";
 import { ErrorState } from "../../../components/error-state";
@@ -35,59 +38,66 @@ export default function AppsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 22 }}>
-        <div style={{ flex: 1 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("apps.title")}</h1>
-          <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: 0 }}>{t("apps.subtitle")}</p>
-        </div>
-        <Link href="/resources/new?kind=app" style={{ background: "var(--c-a)", color: "var(--c-on-a)", fontWeight: 600, fontSize: 13, padding: "9px 14px", borderRadius: "var(--r1)", textDecoration: "none" }}>
-          {t("apps.newApp")}
-        </Link>
-      </div>
+      <PageTitle
+        title={t("apps.title")}
+        subtitle={t("apps.subtitle")}
+        actions={<LinkBtn href="/resources/new?kind=app">{t("apps.newApp")}</LinkBtn>}
+      />
 
       {isError && apps.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <Spinner />
+        <SkeletonTable detailed />
       ) : (
         <>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
             <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("apps.searchApps")} aria-label={t("apps.searchApps")} style={{ maxWidth: 260 }} />
             <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
           </div>
-          <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-            {visibleApps.map((a) => {
-              return (
-                <Link key={a.id} href={`/apps/${a.id}`} className="tg-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
-                  <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <AppLogo iconUrl={appIconUrl(a.id, a.iconUpdatedAt)} templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                      {a.name}
-                      <TagChips tags={a.tags} />
-                    </div>
-                    <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{appSourceSummary(a)}</div>
+          <ListCard>
+            {visibleApps.map((a, i) => (
+              <ListRow key={a.id} index={i} href={`/apps/${a.id}`}>
+                <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <AppLogo iconUrl={appIconUrl(a.id, a.iconUpdatedAt)} templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                    {a.name}
+                    <TagChips tags={a.tags} />
                   </div>
-                  {a.projectName && (
-                    <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>
-                      {a.projectName} / {a.environmentName}
-                    </span>
-                  )}
-                  <StatusPill label={a.status} color={appColor(a.status)} />
-                </Link>
-              );
-            })}
-            {visibleApps.length === 0 && (
-              <EmptyState
-                icon={Box}
-                title={t("apps.emptyTitle")}
-                action={<Link href="/resources/new?kind=app"><Btn>{t("apps.newApp")}</Btn></Link>}
-              >
-                {t("apps.empty")}
-              </EmptyState>
-            )}
-          </div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{appSourceSummary(a)}</div>
+                </div>
+                {a.projectName && (
+                  <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {a.projectName} / {a.environmentName}
+                  </span>
+                )}
+                <StatusPill label={statusLabel(t, a.status)} color={appColor(a.status)} />
+              </ListRow>
+            ))}
+            {visibleApps.length === 0 &&
+              (apps.length === 0 ? (
+                <EmptyState
+                  icon={Box}
+                  title={t("apps.emptyTitle")}
+                  action={<LinkBtn href="/resources/new?kind=app">{t("apps.newApp")}</LinkBtn>}
+                >
+                  {t("apps.empty")}
+                </EmptyState>
+              ) : scoped.length === 0 ? (
+                <EmptyState icon={SearchX} title={t("common.noResults")}>
+                  {t("common.noneInScope")}
+                </EmptyState>
+              ) : (
+                <EmptyState
+                  icon={SearchX}
+                  title={t("common.noResults")}
+                  action={<Btn variant="ghost" onClick={() => { setQ(""); setSelectedTags([]); }}>{t("common.clearFilters")}</Btn>}
+                >
+                  {t("common.noResultsHint")}
+                </EmptyState>
+              ))}
+          </ListCard>
         </>
       )}
     </div>

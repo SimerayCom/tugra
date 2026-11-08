@@ -12,6 +12,8 @@ import type { ServerStatus } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, StatusPill } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
+import { ListCard, ListRow } from "../../../components/list";
+import { statusLabel } from "../../../lib/status";
 import { Skeleton, SkeletonCard, SkeletonStat, SkeletonTable } from "../../../components/skeleton";
 
 const serverColor = (s: ServerStatus) =>
@@ -143,24 +145,24 @@ export default function DashboardPage() {
         </Card>
         )
       ) : (
-        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden", marginBottom: 28 }}>
-          {attention.map((it) => {
+        <ListCard style={{ marginBottom: 28 }}>
+          {attention.map((it, i) => {
             const href = it.kind === "server" ? `/servers/${it.id}` : it.kind === "monitor" ? `/monitors/${it.id}` : `/apps/${it.id}`;
             const amber = it.kind === "domain" && it.status === "expiring";
             const color = amber ? "var(--c-am)" : "var(--c-r)";
             const label = it.kind === "server" ? t("dashboard.attentionServer") : it.kind === "monitor" ? t("dashboard.attentionMonitor") : amber ? t("dashboard.attentionSslExpiring") : t("dashboard.attentionSslError");
             return (
-              <Link key={`${it.kind}-${it.id}`} href={href} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+              <ListRow key={`${it.kind}-${it.id}`} index={i} href={href} style={{ gap: 10, padding: "11px 16px" }}>
                 <AlertTriangle size={15} color={color} style={{ flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{it.name}</div>
                   <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{label}</div>
                 </div>
-                <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.status}</span>
-              </Link>
+                <span style={{ fontSize: 12, color, fontWeight: 600 }}>{it.kind === "domain" ? (amber ? t("domains.expiring") : t("domains.noCert")) : statusLabel(t, it.status)}</span>
+              </ListRow>
             );
           })}
-        </div>
+        </ListCard>
       )}
 
       {/* Projects (Coolify-style cards with quick actions) */}
@@ -206,16 +208,16 @@ export default function DashboardPage() {
 
       {/* Servers */}
       <div style={sectionTitle}>{t("dashboard.servers")}</div>
-      <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-        {servers.map((s) => (
-          <Link key={s.id} href={`/servers/${s.id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", borderTop: "1px solid var(--c-bd)", textDecoration: "none", color: "var(--c-tx)" }}>
+      <ListCard>
+        {servers.map((s, i) => (
+          <ListRow key={s.id} index={i} href={`/servers/${s.id}`} style={{ padding: "11px 16px" }}>
             <span style={logoBox}><Server size={18} color="var(--c-a)" /></span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{s.name}</div>
               {s.hostname && <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{s.hostname}</div>}
             </div>
-            <StatusPill label={s.status} color={serverColor(s.status)} />
-          </Link>
+            <StatusPill label={statusLabel(t, s.status)} color={serverColor(s.status)} />
+          </ListRow>
         ))}
         {serversDown ? (
           <ErrorState onRetry={() => refetchServers()} />
@@ -228,7 +230,7 @@ export default function DashboardPage() {
             {t("dashboard.noServers")}
           </EmptyState>
         )}
-      </div>
+      </ListCard>
 
       <div style={{ ...sectionTitle, marginTop: 28, display: "flex", alignItems: "center", gap: 8 }}>
         {t("dashboard.recentActivity")}

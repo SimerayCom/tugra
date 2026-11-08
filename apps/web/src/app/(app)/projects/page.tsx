@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderTree, Plus, Settings } from "lucide-react";
+import { FolderTree, Plus, SearchX, Settings } from "lucide-react";
 import { api, projectIconUrl } from "../../../lib/api";
-import { clickedInteractive } from "../../../lib/row-nav";
 import { useT } from "../../../i18n/provider";
-import { Badge, Card, EmptyState, Spinner } from "../../../components/ui";
+import { Badge, Card, EmptyState } from "../../../components/ui";
+import { ListCard, ListRow } from "../../../components/list";
+import { PageTitle } from "../../../components/page-header";
+import { SkeletonTable } from "../../../components/skeleton";
 import { ErrorState } from "../../../components/error-state";
 import { TeamBadge, useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
@@ -62,8 +64,7 @@ export default function ProjectsPage() {
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("projects.title")}</h1>
-      <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("projects.subtitle")}</p>
+      <PageTitle title={t("projects.title")} subtitle={t("projects.subtitle")} />
 
       <Card style={{ padding: 16, marginBottom: 20 }}>
         <form
@@ -86,19 +87,15 @@ export default function ProjectsPage() {
       {isError && projects.length === 0 ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
-        <Spinner />
+        <SkeletonTable detailed />
       ) : (
-        <div style={{ border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden" }}>
-          {visible.map((p) => {
+        <ListCard>
+          {visible.map((p, i) => {
             const apps = p.environments.reduce((n, e) => n + e.appCount, 0);
             const dbs = p.environments.reduce((n, e) => n + e.dbCount, 0);
             return (
-              <div
-                key={p.id}
-                className="row-link"
-                onClick={(e) => { if (!clickedInteractive(e)) router.push(`/projects/${p.id}`); }}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--c-bd)", color: "var(--c-tx)" }}
-              >
+              // Whole row navigates on click; the name link below is the keyboard path, so no extra tab stop.
+              <ListRow key={p.id} index={i} onClick={() => router.push(`/projects/${p.id}`)} tabbable={false}>
                 <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
                   {projectIconUrl(p.id, p.iconUpdatedAt) ? (
                     <img src={projectIconUrl(p.id, p.iconUpdatedAt)!} alt="" width={36} height={36} style={{ objectFit: "cover" }} />
@@ -117,13 +114,17 @@ export default function ProjectsPage() {
                 </div>
                 <Link href={`/resources/new?project=${p.id}&env=${p.environments[0]?.id ?? ""}`} style={rowChip}><Plus size={13} /> {t("dashboard.addResource")}</Link>
                 <Link href={`/projects/${p.id}`} style={rowChip}><Settings size={13} /> {t("dashboard.settings")}</Link>
-              </div>
+              </ListRow>
             );
           })}
-          {visible.length === 0 && (
-            <EmptyState icon={FolderTree} title={t("projects.emptyTitle")}>{t("projects.empty")}</EmptyState>
-          )}
-        </div>
+          {visible.length === 0 &&
+            (projects.length === 0 ? (
+              <EmptyState icon={FolderTree} title={t("projects.emptyTitle")}>{t("projects.empty")}</EmptyState>
+            ) : (
+              // Projects exist, but the global team scope hides them all — not a first-run state.
+              <EmptyState icon={SearchX} title={t("common.noResults")}>{t("projects.noneInScope")}</EmptyState>
+            ))}
+        </ListCard>
       )}
     </div>
   );
