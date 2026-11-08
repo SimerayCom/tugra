@@ -106,6 +106,17 @@ export default function ServerDetailPage() {
   // rate humanizer picks the right unit and the chart never sees a non-finite value.
   const dio = humanizeRatePair(metrics.map((m) => m.diskRead ?? 0), metrics.map((m) => m.diskWrite ?? 0));
 
+  // Load average (1/5/15 min) + swap are optional: older agents omit them, so a missing point is NaN ("no data"
+  // → a gap in the line, and an entirely-absent series is dropped). The Load chart only renders when at least
+  // one point exists; the Swap chart only when the host has swap (swapTotal > 0).
+  const num = (v: number | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const load1 = metrics.map((m) => num(m.load1));
+  const load5 = metrics.map((m) => num(m.load5));
+  const load15 = metrics.map((m) => num(m.load15));
+  const hasLoad = [load1, load5, load15].some((s) => s.some((v) => Number.isFinite(v)));
+  const swap = metrics.map((m) => (typeof m.swapTotal === "number" && m.swapTotal > 0 && Number.isFinite(m.swapUsed) ? pct(m.swapUsed as number, m.swapTotal) : NaN));
+  const hasSwap = swap.some((v) => Number.isFinite(v));
+
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
@@ -195,6 +206,30 @@ export default function ServerDetailPage() {
               <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("servers.cpu")} unit="%" color="var(--c-a)" />
               <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("servers.ram")} unit="%" color="var(--c-lapis)" />
               <MetricChart height={METRIC_CHART_HEIGHT} data={disk.data} times={disk.times} label={t("servers.diskHistory")} unit="%" color="var(--c-g)" decimals={1} />
+              {hasLoad && (
+                <MetricChart
+                  height={METRIC_CHART_HEIGHT}
+                  times={times}
+                  label={t("servers.loadAvg")}
+                  unit=""
+                  decimals={2}
+                  series={[
+                    { key: "load1", label: t("servers.load1"), values: load1, color: "var(--c-a)", kind: "line" },
+                    { key: "load5", label: t("servers.load5"), values: load5, color: "var(--c-lapis)", kind: "line" },
+                    { key: "load15", label: t("servers.load15"), values: load15, color: "var(--c-am)", kind: "line" },
+                  ]}
+                />
+              )}
+              {hasSwap && (
+                <MetricChart
+                  height={METRIC_CHART_HEIGHT}
+                  times={times}
+                  label={t("servers.swapHistory")}
+                  unit="%"
+                  decimals={1}
+                  series={[{ key: "swap", label: t("servers.swap"), values: swap, color: "var(--c-g)", kind: "area" }]}
+                />
+              )}
               <MetricChart
                 height={METRIC_CHART_HEIGHT}
                 times={times}

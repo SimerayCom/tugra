@@ -36,6 +36,29 @@ function bigOrNull(n: number | null): bigint | null {
 }
 
 /**
+ * Clean the OPTIONAL load-average + swap fields of an untrusted sample. An older agent (or a host that
+ * can't report them) omits them → NULL columns / absent wire fields, never a fake 0. Never throws.
+ */
+export function sanitizeLoadSwap(sample: MetricsSample): {
+  load1: number | null; load5: number | null; load15: number | null;
+  swapUsed: bigint | null; swapTotal: bigint | null;
+  wire: Partial<MetricsSample>;
+} {
+  const load1 = finiteIn(sample.load1, 0, 1e6);
+  const load5 = finiteIn(sample.load5, 0, 1e6);
+  const load15 = finiteIn(sample.load15, 0, 1e6);
+  const swapUsed = finiteIn(sample.swapUsed, 0, Number.MAX_SAFE_INTEGER);
+  const swapTotal = finiteIn(sample.swapTotal, 0, Number.MAX_SAFE_INTEGER);
+  const wire: Partial<MetricsSample> = {};
+  if (load1 != null) wire.load1 = load1;
+  if (load5 != null) wire.load5 = load5;
+  if (load15 != null) wire.load15 = load15;
+  if (swapUsed != null) wire.swapUsed = swapUsed;
+  if (swapTotal != null) wire.swapTotal = swapTotal;
+  return { load1, load5, load15, swapUsed: bigOrNull(swapUsed), swapTotal: bigOrNull(swapTotal), wire };
+}
+
+/**
  * Clean + bound the OPTIONAL sensor fields of an untrusted agent sample. The agent JSON is not schema-
  * validated upstream and the live sample is relayed verbatim to browsers, so every string is sliced and
  * every number clamped here. Returns the scalar DB columns (gpu* are aggregates over all GPUs), a capped
@@ -115,6 +138,7 @@ export class MetricsService {
 
   async ingest(serverId: string, sample: MetricsSample): Promise<void> {
     const sens = sanitizeSensors(sample);
+    const ls = sanitizeLoadSwap(sample);
     await this.prisma.metric.create({
       data: {
         serverId,
@@ -131,6 +155,12 @@ export class MetricsService {
         // (disconnecting the agent every tick). Coerce undefined/NaN/Infinity → 0.
         diskRead: BigInt(Math.round(Number.isFinite(sample.diskRead) ? sample.diskRead : 0)),
         diskWrite: BigInt(Math.round(Number.isFinite(sample.diskWrite) ? sample.diskWrite : 0)),
+        // Load average + swap — nullable; an older agent leaves them NULL.
+        load1: ls.load1,
+        load5: ls.load5,
+        load15: ls.load15,
+        swapUsed: ls.swapUsed,
+        swapTotal: ls.swapTotal,
         // Optional sensors — all nullable; an older agent / sensorless host leaves them NULL.
         temp: sens.temp,
         gpuUtil: sens.gpuUtil,
@@ -155,6 +185,7 @@ export class MetricsService {
       netTx: sample.netTx,
       diskRead: Number.isFinite(sample.diskRead) ? sample.diskRead : 0,
       diskWrite: Number.isFinite(sample.diskWrite) ? sample.diskWrite : 0,
+      ...ls.wire,
       ...sens.wire,
     };
     await this.redis.client.publish(`metrics:${serverId}`, JSON.stringify(clean)).catch(() => undefined);
@@ -173,6 +204,7 @@ export class MetricsService {
   private toSample(r: {
     ts: Date; cpu: number; memUsed: bigint; memTotal: bigint; diskUsed: bigint; diskTotal: bigint;
     netRx: bigint; netTx: bigint; diskRead: bigint; diskWrite: bigint;
+    load1?: number | null; load5?: number | null; load15?: number | null; swapUsed?: bigint | null; swapTotal?: bigint | null;
     temp?: number | null; gpuUtil?: number | null; gpuMemUsed?: bigint | null; gpuMemTotal?: bigint | null;
     gpuTemp?: number | null; batteryPct?: number | null; batteryState?: string | null; detail?: unknown;
   }): MetricsSample {
@@ -188,7 +220,12 @@ export class MetricsService {
       diskRead: Number(r.diskRead),
       diskWrite: Number(r.diskWrite),
     };
-    // Optional sensors — NULL columns stay absent (undefined), so the UI renders "—" not 0.
+    // Optional load/swap + sensors — NULL columns stay absent (undefined), so the UI renders "—" not 0.
+    if (r.load1 != null) s.load1 = r.load1;
+    if (r.load5 != null) s.load5 = r.load5;
+    if (r.load15 != null) s.load15 = r.load15;
+    if (r.swapUsed != null) s.swapUsed = Number(r.swapUsed);
+    if (r.swapTotal != null) s.swapTotal = Number(r.swapTotal);
     if (r.temp != null) s.temp = r.temp;
     if (r.batteryPct != null) s.battery = { percent: r.batteryPct, state: r.batteryState ?? "Unknown" };
     const d = (r.detail ?? null) as { sensors?: Record<string, number>; gpus?: GpuStat[] } | null;
@@ -241,6 +278,11 @@ export class MetricsService {
         netTx: Number(r.avgNetTx),
         diskRead: Number(r.avgDiskRead),
         diskWrite: Number(r.avgDiskWrite),
+        ...(r.avgLoad1 != null && { load1: r.avgLoad1 }),
+        ...(r.avgLoad5 != null && { load5: r.avgLoad5 }),
+        ...(r.avgLoad15 != null && { load15: r.avgLoad15 }),
+        ...(r.avgSwapUsed != null && { swapUsed: Number(r.avgSwapUsed) }),
+        ...(r.avgSwapTotal != null && { swapTotal: Number(r.avgSwapTotal) }),
         ...(Number.isFinite(r.maxCpu) && { cpuMax: r.maxCpu }),
       }));
     } else {

@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +89,46 @@ func TestVerifySigRoundTripAndTamper(t *testing.T) {
 	}
 	if VerifySig(parsed, CanonicalAgentUpdate("u1", "0.2.0", "ghcr.io/simeraycom/tugra-agent:0.2.0", "deadbeef", "deploy"), auSig) {
 		t.Fatal("tampered sha256 verified — digest not bound to signature")
+	}
+}
+
+// A measured zero (idle load, swap configured but unused) must stay on the wire; an unreported value
+// (old agent / unsupported OS) must be absent so the hub stores NULL, never a fake 0.
+func TestMetricsSampleLoadSwapZeroVsAbsent(t *testing.T) {
+	zero, total := 0.0, 4e9
+	b, err := json.Marshal(MetricsSample{SwapUsed: &zero, SwapTotal: &total, Load15: &zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := m["swapUsed"]; !ok || v.(float64) != 0 {
+		t.Fatalf("swapUsed=0 must be present on the wire: %s", b)
+	}
+	if v, ok := m["load15"]; !ok || v.(float64) != 0 {
+		t.Fatalf("load15=0 must be present on the wire: %s", b)
+	}
+	if m["swapTotal"].(float64) != total {
+		t.Fatalf("swapTotal lost: %s", b)
+	}
+	for _, k := range []string{"load1", "load5"} {
+		if _, ok := m[k]; ok {
+			t.Fatalf("%s unreported must be absent: %s", k, b)
+		}
+	}
+	empty, _ := json.Marshal(MetricsSample{})
+	for _, k := range []string{"load1", "load5", "load15", "swapUsed", "swapTotal"} {
+		if strings.Contains(string(empty), `"`+k+`"`) {
+			t.Fatalf("%s must be absent when unreported: %s", k, empty)
+		}
+	}
+	var back MetricsSample
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.SwapUsed == nil || *back.SwapUsed != 0 || back.SwapTotal == nil || *back.SwapTotal != total {
+		t.Fatalf("round-trip lost swap: %+v", back)
 	}
 }

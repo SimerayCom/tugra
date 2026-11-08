@@ -38082,6 +38082,21 @@
                           "diskWrite": {
                             "type": "number"
                           },
+                          "load1": {
+                            "type": "number"
+                          },
+                          "load5": {
+                            "type": "number"
+                          },
+                          "load15": {
+                            "type": "number"
+                          },
+                          "swapUsed": {
+                            "type": "number"
+                          },
+                          "swapTotal": {
+                            "type": "number"
+                          },
                           "temp": {
                             "type": "number"
                           },

@@ -63,6 +63,25 @@ describe("MetricsRollupRunnerService", () => {
     expect(metricCreateMany.mock.calls[0][0].skipDuplicates).toBe(true); // idempotent re-run
   });
 
+  it("load/swap: averaged over only the reporting samples; NULL when none reported", async () => {
+    const { svc, metricCreateMany } = make({
+      metricRows: [
+        hostRow({ ts: new Date(BUCKET_MS), load1: 1, swapUsed: 100n, swapTotal: 1000n }),
+        hostRow({ ts: new Date(BUCKET_MS + 15_000), load1: 3, swapUsed: 300n, swapTotal: 1000n }),
+        hostRow({ ts: new Date(BUCKET_MS + 30_000) }), // old-agent sample: no load/swap
+        hostRow({ ts: new Date(BUCKET_MS + 60_000) }), // next minute: nothing reported
+      ],
+    });
+    await svc.roll();
+    const data = metricCreateMany.mock.calls[0][0].data;
+    expect(data[0].avgLoad1).toBe(2);
+    expect(data[0].avgLoad5).toBeNull();
+    expect(data[0].avgSwapUsed).toBe(200n);
+    expect(data[0].avgSwapTotal).toBe(1000n);
+    expect(data[1].avgLoad1).toBeNull();
+    expect(data[1].avgSwapUsed).toBeNull();
+  });
+
   it("splits rows in different minutes into separate buckets, and different servers", async () => {
     const { svc, metricCreateMany } = make({
       metricRows: [

@@ -153,3 +153,30 @@ func TestCollectorSecondSampleNonNegative(t *testing.T) {
 		t.Fatalf("expected non-negative disk rate, got read=%v write=%v", s.DiskRead, s.DiskWrite)
 	}
 }
+
+func TestCollectLoadAndSwap(t *testing.T) {
+	s, err := Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Load avg and swap are optional (unsupported OS → nil), but never negative, and swap in use can
+	// never exceed the swap total when both are reported.
+	for name, v := range map[string]*float64{"load1": s.Load1, "load5": s.Load5, "load15": s.Load15, "swapUsed": s.SwapUsed, "swapTotal": s.SwapTotal} {
+		if v != nil && *v < 0 {
+			t.Fatalf("%s must be non-negative, got %v", name, *v)
+		}
+	}
+	if s.SwapTotal != nil && s.SwapUsed != nil && *s.SwapUsed > *s.SwapTotal {
+		t.Fatalf("swapUsed %v exceeds swapTotal %v", *s.SwapUsed, *s.SwapTotal)
+	}
+}
+
+func TestSampleCarriesLoadAndSwap(t *testing.T) {
+	s, err := NewCollector().Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if (s.Load1 != nil && *s.Load1 < 0) || (s.SwapUsed != nil && *s.SwapUsed < 0) || (s.SwapTotal != nil && *s.SwapTotal < 0) {
+		t.Fatalf("load/swap must be non-negative: %+v", s)
+	}
+}

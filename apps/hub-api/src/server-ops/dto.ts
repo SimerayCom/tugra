@@ -45,6 +45,11 @@ export const MetricsSampleSchema = z.object({
   netTx: z.number(),
   diskRead: z.number(),
   diskWrite: z.number(),
+  load1: z.number().optional(),
+  load5: z.number().optional(),
+  load15: z.number().optional(),
+  swapUsed: z.number().optional(),
+  swapTotal: z.number().optional(),
   temp: z.number().optional(),
   sensors: z.record(z.number()).optional(),
   gpus: z

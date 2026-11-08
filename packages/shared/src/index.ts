@@ -201,6 +201,12 @@ export interface MetricsSample {
   netTx: number; // bytes/s
   diskRead: number; // bytes/s (physical-disk read throughput)
   diskWrite: number; // bytes/s
+  // Optional load average + swap — absent from older agents / hosts that can't report them.
+  load1?: number;
+  load5?: number;
+  load15?: number;
+  swapUsed?: number; // bytes
+  swapTotal?: number; // bytes (0/absent = no swap)
   // Optional sensor metrics — absent when the host exposes none (most cloud VMs).
   temp?: number; // hottest CPU-ish sensor, °C
   sensors?: Record<string, number>; // per-sensor °C

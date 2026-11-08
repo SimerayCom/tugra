@@ -39,6 +39,20 @@ export function buildGauges(s: MetricsSample, t: (k: string, v?: Record<string, 
     text: memPct === null ? "—" : `${Math.round(memPct)}%${memTotal ? ` · ${fmtBytes(memUsed ?? 0)}/${fmtBytes(memTotal)}` : ""}`,
   });
 
+  // Swap only when the host actually has some — a swapless host (swapTotal 0/absent) shows no gauge.
+  const swapUsed = fin(s.swapUsed);
+  const swapTotal = fin(s.swapTotal);
+  if (swapTotal !== null && swapTotal > 0) {
+    const swapPct = swapUsed !== null ? pct(swapUsed, swapTotal) : null;
+    rows.push({
+      key: "swap",
+      label: t("servers.swap"),
+      value: swapPct,
+      tone: metricTone(swapPct),
+      text: swapPct === null ? "—" : `${Math.round(swapPct)}% · ${fmtBytes(swapUsed ?? 0)}/${fmtBytes(swapTotal)}`,
+    });
+  }
+
   const diskUsed = fin(s.diskUsed);
   const diskTotal = fin(s.diskTotal);
   const diskPct = diskUsed !== null && diskTotal !== null && diskTotal > 0 ? pct(diskUsed, diskTotal) : null;
@@ -87,6 +101,15 @@ export function buildGauges(s: MetricsSample, t: (k: string, v?: Record<string, 
   return rows;
 }
 
+/** Load average (1/5/15 min) as "0.52 · 0.40 · 0.31". Load is unbounded (not a 0..100 fill), so it is shown as a
+ *  text stat rather than a bar. null when the host reported none of the three (older agent / unsupported OS);
+ *  a single missing window renders "—". Exported for testing. */
+export function buildLoadText(s: MetricsSample): string | null {
+  const vals = [fin(s.load1), fin(s.load5), fin(s.load15)];
+  if (vals.every((v) => v === null)) return null;
+  return vals.map((v) => (v === null ? "—" : v.toFixed(2))).join(" · ");
+}
+
 /**
  * Live gauges for the server Overview: CPU, memory and disk as progress bars — plus temperature, GPU
  * and battery when the host exposes them. Reads the same ["metrics", id] live cache the monitoring tab
@@ -105,6 +128,7 @@ export function LiveGauges({ id, nowMs, canWrite = false, onOpenMaintenance }: {
   const ts = fin(s.ts);
   const stale = ts === null || nowMs - ts > FLEET_STALE_MS;
   const gauges = buildGauges(s, t);
+  const loadText = buildLoadText(s);
   // Surface disk pressure explicitly (not colour-only): warn/crit → a strip under the gauges with a CTA into
   // the Maintenance tab where cleanup lives. Uses the disk gauge's own tone (metricTone: warn>=80, crit>=90).
   const disk = gauges.find((g) => g.key === "disk");
@@ -123,6 +147,12 @@ export function LiveGauges({ id, nowMs, canWrite = false, onOpenMaintenance }: {
             <MeterBar grow value={g.value} tone={g.tone} text={g.text} stale={stale} label={g.label} showToneIcon />
           </div>
         ))}
+        {loadText && (
+          <div style={{ minWidth: 0 }} title={t("servers.loadAvgHint")}>
+            <div style={{ fontSize: 11, color: "var(--c-tx3)", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("servers.loadAvg")}</div>
+            <div className="mono" aria-label={`${t("servers.loadAvg")}: ${t("servers.loadAvgHint")}`} style={{ fontSize: 13, color: stale ? "var(--c-tx3)" : "var(--c-tx)" }}>{loadText}</div>
+          </div>
+        )}
       </div>
       {diskAlert && (
         <div

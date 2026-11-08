@@ -461,6 +461,12 @@ model Metric {
   netTx     BigInt
   diskRead  BigInt @default(0) // bytes/s; @default so the additive migration needs no backfill
   diskWrite BigInt @default(0)
+  // Load average + swap — NULL when an older agent / host doesn't report them (no fake 0).
+  load1     Float?
+  load5     Float?
+  load15    Float?
+  swapUsed  BigInt?
+  swapTotal BigInt?
   // Optional sensor metrics — NULL (not 0) when the host exposes none (most cloud VMs), so the UI can
   // render "—" rather than a fake reading. gpu* are aggregates over all GPUs (max util/temp, summed
   // VRAM); `detail` keeps the per-sensor map + per-GPU list for the detail view.
@@ -570,6 +576,12 @@ model MetricRollup {
   avgNetTx     BigInt
   avgDiskRead  BigInt
   avgDiskWrite BigInt
+  // Nullable: averaged over only the samples that reported them; NULL when none did.
+  avgLoad1     Float?
+  avgLoad5     Float?
+  avgLoad15    Float?
+  avgSwapUsed  BigInt?
+  avgSwapTotal BigInt?
 
   @@unique([serverId, bucket])
   @@index([bucket]) // for the rollup retention prune (deleteMany where bucket < cutoff)

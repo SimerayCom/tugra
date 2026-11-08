@@ -1,0 +1,13 @@
+-- AlterTable
+ALTER TABLE "Metric" ADD COLUMN     "load1" DOUBLE PRECISION,
+ADD COLUMN     "load15" DOUBLE PRECISION,
+ADD COLUMN     "load5" DOUBLE PRECISION,
+ADD COLUMN     "swapTotal" BIGINT,
+ADD COLUMN     "swapUsed" BIGINT;
+
+-- AlterTable
+ALTER TABLE "MetricRollup" ADD COLUMN     "avgLoad1" DOUBLE PRECISION,
+ADD COLUMN     "avgLoad15" DOUBLE PRECISION,
+ADD COLUMN     "avgLoad5" DOUBLE PRECISION,
+ADD COLUMN     "avgSwapTotal" BIGINT,
+ADD COLUMN     "avgSwapUsed" BIGINT;

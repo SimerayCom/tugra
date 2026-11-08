@@ -26570,6 +26570,11 @@ export interface operations {
                             netTx: number;
                             diskRead: number;
                             diskWrite: number;
+                            load1?: number;
+                            load5?: number;
+                            load15?: number;
+                            swapUsed?: number;
+                            swapTotal?: number;
                             temp?: number;
                             sensors?: {
                                 [key: string]: number;

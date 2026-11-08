@@ -15,6 +15,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/load"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 )
@@ -31,9 +32,18 @@ func Collect() (protocol.MetricsSample, error) {
 		s.MemUsed = float64(vm.Used)
 		s.MemTotal = float64(vm.Total)
 	}
+	if sw, err := mem.SwapMemory(); err == nil && sw != nil {
+		used, total := float64(sw.Used), float64(sw.Total)
+		s.SwapUsed, s.SwapTotal = &used, &total
+	}
 	if du, err := disk.Usage(diskProbePath()); err == nil {
 		s.DiskUsed = float64(du.Used)
 		s.DiskTotal = float64(du.Total)
+	}
+	// Load average is unsupported on some OSes (error) — leave it nil/omitted, never fail the sample.
+	if la, err := load.Avg(); err == nil && la != nil {
+		l1, l5, l15 := la.Load1, la.Load5, la.Load15
+		s.Load1, s.Load5, s.Load15 = &l1, &l5, &l15
 	}
 	return s, nil
 }

@@ -47,6 +47,50 @@ describe("MetricsService", () => {
     expect(data.diskWrite).toBe(BigInt(0));
   });
 
+  it("ingest persists load/swap (swap as BigInt) and publishes them", async () => {
+    const { svc, create, publish } = make();
+    await svc.ingest("s1", { ...sample, load1: 0.5, load5: 0.4, load15: 0.3, swapUsed: 1024.4, swapTotal: 4096 });
+    const data = create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ load1: 0.5, load5: 0.4, load15: 0.3, swapUsed: BigInt(1024), swapTotal: BigInt(4096) });
+    expect(publish).toHaveBeenCalledWith("metrics:s1", expect.stringContaining('"swapTotal":4096'));
+  });
+
+  it("ingest keeps a measured zero (idle load, unused swap) as 0, not NULL", async () => {
+    const { svc, create, publish } = make();
+    await svc.ingest("s1", { ...sample, load1: 0, load5: 0, load15: 0, swapUsed: 0, swapTotal: 4096 });
+    const data = create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ load1: 0, load15: 0, swapUsed: BigInt(0), swapTotal: BigInt(4096) });
+    expect(publish).toHaveBeenCalledWith("metrics:s1", expect.stringContaining('"swapUsed":0'));
+  });
+
+  it("ingest of an old sample (no load/swap) writes NULLs and omits them from the live payload", async () => {
+    const { svc, create, publish } = make();
+    await svc.ingest("s1", sample);
+    const data = create.mock.calls[0][0].data;
+    expect(data.load1).toBeNull();
+    expect(data.swapUsed).toBeNull();
+    expect(data.swapTotal).toBeNull();
+    expect(publish.mock.calls[0][1]).not.toContain("load1");
+  });
+
+  it("raw + rollup reads map load/swap, and stay absent for NULL columns", async () => {
+    const raw = make([
+      { ts: new Date(1000), cpu: 1, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n, load1: 1.5, load5: 1, load15: 0.5, swapUsed: 10n, swapTotal: 20n },
+      { ts: new Date(2000), cpu: 1, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 0n, diskWrite: 0n, load1: null, swapUsed: null, swapTotal: null },
+    ]);
+    const out = await raw.svc.history("s1", "1h");
+    expect(out[0]).toMatchObject({ load1: 1.5, load5: 1, load15: 0.5, swapUsed: 10, swapTotal: 20 });
+    expect(out[1]).not.toHaveProperty("load1");
+    expect(out[1]).not.toHaveProperty("swapTotal");
+    const roll = make([], [
+      { bucket: new Date(60_000), avgCpu: 2, maxCpu: 3, avgMemUsed: 1n, avgMemTotal: 2n, avgDiskUsed: 0n, avgDiskTotal: 0n, avgNetRx: 0n, avgNetTx: 0n, avgDiskRead: 0n, avgDiskWrite: 0n, avgLoad1: 0.7, avgLoad5: 0.6, avgLoad15: 0.5, avgSwapUsed: 5n, avgSwapTotal: 50n },
+      { bucket: new Date(120_000), avgCpu: 2, maxCpu: 3, avgMemUsed: 1n, avgMemTotal: 2n, avgDiskUsed: 0n, avgDiskTotal: 0n, avgNetRx: 0n, avgNetTx: 0n, avgDiskRead: 0n, avgDiskWrite: 0n, avgLoad1: null, avgSwapTotal: null },
+    ]);
+    const r = await roll.svc.history("s1", "7d");
+    expect(r[0]).toMatchObject({ load1: 0.7, load5: 0.6, load15: 0.5, swapUsed: 5, swapTotal: 50 });
+    expect(r[1]).not.toHaveProperty("load1");
+  });
+
   it("recent widens BigInt disk rates back to Number (oldest-first)", async () => {
     const { svc } = make([
       { ts: new Date(2000), cpu: 1, memUsed: 1n, memTotal: 2n, diskUsed: 0n, diskTotal: 0n, netRx: 0n, netTx: 0n, diskRead: 2049n, diskWrite: 4096n },

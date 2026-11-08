@@ -23,6 +23,14 @@ type MetricsSample struct {
 	NetTx     float64 `json:"netTx"`
 	DiskRead  float64 `json:"diskRead"`  // bytes/s (physical-disk read throughput)
 	DiskWrite float64 `json:"diskWrite"` // bytes/s
+	// Optional load average + swap — pointers so "host reported 0" (idle load, swap configured but
+	// unused) stays on the wire, while "can't report" (unsupported OS, old agents) is ABSENT, never a
+	// fake 0. SwapTotal is 0 on a host with no swap; consumers must guard the divide.
+	Load1     *float64 `json:"load1,omitempty"`
+	Load5     *float64 `json:"load5,omitempty"`
+	Load15    *float64 `json:"load15,omitempty"`
+	SwapUsed  *float64 `json:"swapUsed,omitempty"`  // bytes
+	SwapTotal *float64 `json:"swapTotal,omitempty"` // bytes
 	// Optional sensor metrics — nil / omitted when the host exposes none (most cloud VMs). A pointer
 	// plus omitempty keeps "no sensor" ABSENT on the wire, never a misleading 0.
 	Temp    *float64           `json:"temp,omitempty"`    // hottest CPU-ish sensor, °C

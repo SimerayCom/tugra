@@ -3,7 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
-import { buildGauges, LiveGauges } from "./live-gauges";
+import { buildGauges, buildLoadText, LiveGauges } from "./live-gauges";
 import { api } from "../lib/api";
 import type { MetricsSample } from "../lib/types";
 
@@ -74,6 +74,25 @@ describe("buildGauges", () => {
     const g = buildGauges({ ...base, cpu: NaN as unknown as number }, t);
     expect(g[0].text).toBe("—");
     expect(g[0].value).toBeNull();
+  });
+});
+
+describe("swap gauge + load text", () => {
+  it("adds a swap gauge (percent of swapTotal) only when the host has swap", () => {
+    const g = buildGauges({ ...base, swapUsed: 1024 ** 3, swapTotal: 4 * 1024 ** 3 }, t).find((x) => x.key === "swap")!;
+    expect(g.value).toBe(25);
+    expect(g.text).toContain("25%");
+  });
+
+  it("no swap gauge when swapTotal is 0 or absent (no divide-by-zero)", () => {
+    expect(buildGauges({ ...base, swapUsed: 0, swapTotal: 0 }, t).some((x) => x.key === "swap")).toBe(false);
+    expect(buildGauges(base, t).some((x) => x.key === "swap")).toBe(false);
+  });
+
+  it("formats load 1/5/15 and is null when none reported", () => {
+    expect(buildLoadText({ ...base, load1: 0.5, load5: 0.4, load15: 0.31 })).toBe("0.50 · 0.40 · 0.31");
+    expect(buildLoadText({ ...base, load1: 2 })).toBe("2.00 · — · —");
+    expect(buildLoadText(base)).toBeNull();
   });
 });
 

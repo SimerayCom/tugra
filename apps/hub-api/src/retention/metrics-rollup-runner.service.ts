@@ -13,6 +13,18 @@ function big(n: number): bigint {
   return Number.isFinite(n) ? BigInt(Math.round(n)) : 0n;
 }
 
+/** Running sum + count of an optional (nullable) column. */
+type Opt = { sum: number; n: number };
+function addOpt(o: Opt, v: number | bigint | null | undefined): void {
+  if (v == null) return;
+  const x = Number(v);
+  if (!Number.isFinite(x)) return;
+  o.sum += x;
+  o.n++;
+}
+const avgOpt = (o: Opt): number | null => (o.n > 0 ? o.sum / o.n : null);
+const avgOptBig = (o: Opt): bigint | null => (o.n > 0 ? big(o.sum / o.n) : null);
+
 /**
  * Rolls raw Metric / ContainerMetric rows into 1-minute average/max buckets so long-range charts
  * survive past the raw retention window. Only COMPLETE minutes are rolled (the current partial minute
@@ -54,12 +66,14 @@ export class MetricsRollupRunnerService {
       serverId: string; bucket: Date; n: number; cpu: number; maxCpu: number;
       memUsed: number; memTotal: number; diskUsed: number; diskTotal: number;
       netRx: number; netTx: number; diskRead: number; diskWrite: number;
+      // Optional load/swap: summed + counted over ONLY the samples that reported them (NULL otherwise).
+      load1: Opt; load5: Opt; load15: Opt; swapUsed: Opt; swapTotal: Opt;
     }>();
     for (const r of rows) {
       const bucket = floorMinute(r.ts.getTime());
       const key = `${r.serverId}|${bucket.getTime()}`;
       let a = acc.get(key);
-      if (!a) acc.set(key, (a = { serverId: r.serverId, bucket, n: 0, cpu: 0, maxCpu: 0, memUsed: 0, memTotal: 0, diskUsed: 0, diskTotal: 0, netRx: 0, netTx: 0, diskRead: 0, diskWrite: 0 }));
+      if (!a) acc.set(key, (a = { serverId: r.serverId, bucket, n: 0, cpu: 0, maxCpu: 0, memUsed: 0, memTotal: 0, diskUsed: 0, diskTotal: 0, netRx: 0, netTx: 0, diskRead: 0, diskWrite: 0, load1: { sum: 0, n: 0 }, load5: { sum: 0, n: 0 }, load15: { sum: 0, n: 0 }, swapUsed: { sum: 0, n: 0 }, swapTotal: { sum: 0, n: 0 } }));
       a.n++;
       a.cpu += r.cpu;
       a.maxCpu = Math.max(a.maxCpu, r.cpu);
@@ -71,6 +85,11 @@ export class MetricsRollupRunnerService {
       a.netTx += Number(r.netTx);
       a.diskRead += Number(r.diskRead);
       a.diskWrite += Number(r.diskWrite);
+      addOpt(a.load1, r.load1);
+      addOpt(a.load5, r.load5);
+      addOpt(a.load15, r.load15);
+      addOpt(a.swapUsed, r.swapUsed);
+      addOpt(a.swapTotal, r.swapTotal);
     }
     const data = [...acc.values()].map((a) => ({
       serverId: a.serverId,
@@ -85,6 +104,11 @@ export class MetricsRollupRunnerService {
       avgNetTx: big(a.netTx / a.n),
       avgDiskRead: big(a.diskRead / a.n),
       avgDiskWrite: big(a.diskWrite / a.n),
+      avgLoad1: avgOpt(a.load1),
+      avgLoad5: avgOpt(a.load5),
+      avgLoad15: avgOpt(a.load15),
+      avgSwapUsed: avgOptBig(a.swapUsed),
+      avgSwapTotal: avgOptBig(a.swapTotal),
     }));
     if (data.length === 0) return 0;
     await this.prisma.metricRollup.createMany({ data, skipDuplicates: true });
