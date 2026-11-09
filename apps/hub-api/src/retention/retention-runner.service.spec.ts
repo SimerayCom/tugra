@@ -13,6 +13,8 @@ describe("RetentionRunnerService", () => {
       notificationDelivery: [[]],
       auditLog: [[]],
       containerEvent: [[]],
+      trafficMetric: [[]],
+      trafficPath: [[]],
     };
     const model = (name: string) => ({
       findMany: jest.fn().mockImplementation(() => Promise.resolve(pages[name].shift() ?? [])),
@@ -28,6 +30,8 @@ describe("RetentionRunnerService", () => {
       notificationDelivery: model("notificationDelivery"),
       auditLog: model("auditLog"),
       containerEvent: model("containerEvent"),
+      trafficMetric: model("trafficMetric"),
+      trafficPath: model("trafficPath"),
     } as any;
     const config = { get: jest.fn((k: string) => cfg[k]) } as any;
     return { svc: new RetentionRunnerService(prisma, config), prisma, pages };
@@ -69,7 +73,7 @@ describe("RetentionRunnerService", () => {
     const { svc, prisma } = make();
     const res = await svc.prune();
     expect(prisma.metric.deleteMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0 });
+    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0 });
   });
 
   it("prunes only terminal, non-rollbackable deployments (QUEUED/RUNNING and rollbackable rows are kept)", async () => {

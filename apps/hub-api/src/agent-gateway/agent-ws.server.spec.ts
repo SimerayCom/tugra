@@ -16,7 +16,7 @@ function harness() {
   const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(ALL_CAPS), touch: jest.fn() } as any;
   const metrics = { ingest: jest.fn() } as any;
   const containerMetrics = { ingest: jest.fn() } as any;
-  const server = new AgentWsServer({} as any, servers, metrics, containerMetrics, hubSign);
+  const server = new AgentWsServer({} as any, servers, metrics, containerMetrics, hubSign, {} as any);
   const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any; // 1 === WebSocket.OPEN
   (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
   (server as any).sockets.set("s1", socket);
@@ -72,7 +72,7 @@ describe("AgentWsServer command streaming", () => {
 
   it("refuses to sign a command for a capability the server hasn't granted", async () => {
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "database"]) } as any;
-    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign);
+    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
     (server as any).sockets.set("s1", socket);
     // "terminal" is not in the granted set → rejected BEFORE any signing/send
@@ -86,7 +86,7 @@ describe("AgentWsServer command streaming", () => {
 
   it("fail-safe: an empty grant denies every capability (never means 'all')", async () => {
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
-    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign);
+    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
     (server as any).sockets.set("s1", socket);
     await expect(server.sendCommand("s1", "deploy.sh", "deploy", 5000)).rejects.toThrow(/not granted/);
@@ -178,7 +178,7 @@ describe("AgentWsServer terminal relay", () => {
 
     it("returns false (no send) when the deploy capability is not granted (fail-closed)", async () => {
       const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["logs"]) } as any;
-      const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign);
+      const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
       const socket = { readyState: 1, send: jest.fn() } as any;
       (server as any).sockets.set("s1", socket);
       expect(await server.sendAgentUpdate("s1", "0.2.0", "img", "sha")).toBe(false);
@@ -220,7 +220,7 @@ describe("AgentWsServer live container-log streams", () => {
   it("refuses to start a log stream when the 'logs' capability is not granted", async () => {
     // A server whose granted set excludes "logs".
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]) } as any;
-    const s2 = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign);
+    const s2 = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
     (s2 as any).sockets.set("s1", socket);
     await expect(
@@ -255,7 +255,7 @@ describe("AgentWsServer live container-log streams", () => {
   it("ends the stream at once if the agent drops during the capability await (no 30-min listener leak)", async () => {
     let resolveCaps!: (v: string[]) => void;
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn(() => new Promise<string[]>((r) => (resolveCaps = r))) } as any;
-    const s = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign);
+    const s = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
     (s as any).sockets.set("s1", socket);
     const listener = { onChunk: jest.fn(), onExit: jest.fn() };
@@ -273,7 +273,7 @@ describe("AgentWsServer file ops", () => {
   // A server whose granted set includes "files" (default-off capability).
   function fsHarness(caps: string[] = [...ALL_CAPS, "files"]) {
     const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
-    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign);
+    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
     (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
     (server as any).sockets.set("s1", socket);
@@ -369,7 +369,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
       enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
       grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "backup"]),
     } as any;
-    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign);
+    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
     (server as any).state.set(socket, { nonce: "n", authed: false });
     await (server as any).onMessage(socket, JSON.stringify({ type: "enroll", token: "t", publicKey: "pk", agentVersion: "1", hostname: "h" }));
@@ -383,7 +383,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
     const servers = { markOffline: jest.fn(), setCapabilityPusher } as any;
     const fakeHttp = { on: jest.fn() };
     const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
-    const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign);
+    const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign, {} as any);
     server.onApplicationBootstrap();
     expect(setCapabilityPusher).toHaveBeenCalledTimes(1);
     // The registered pusher forwards to the connected agent as an unsigned "capabilities" message.
@@ -397,7 +397,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
 
 describe("AgentWsServer keepalive sweep (half-open detection)", () => {
   const makeServer = () =>
-    new AgentWsServer({} as any, { markOffline: jest.fn(), grantedCapabilities: jest.fn(), touch: jest.fn() } as any, {} as any, {} as any, hubSign);
+    new AgentWsServer({} as any, { markOffline: jest.fn(), grantedCapabilities: jest.fn(), touch: jest.fn() } as any, {} as any, {} as any, hubSign, {} as any);
 
   it("terminates a socket that missed its pong (dead/half-open) and pings a live one", () => {
     const server = makeServer();
@@ -436,6 +436,7 @@ describe("AgentWsServer auth-rejection signaling (no agent self-brick)", () => {
       {} as any,
       {} as any,
       hubSign,
+      {} as any,
     );
   const drive = async (authResult: "unknown" | "bad_signature") => {
     const server = serverWith(authResult);
@@ -465,7 +466,7 @@ describe("AgentWsServer auth-rejection signaling (no agent self-brick)", () => {
 describe("AgentWsServer pre-auth handshake deadline", () => {
   const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
   const makeServer = (authenticate = jest.fn().mockResolvedValue("ok")) =>
-    new AgentWsServer({} as any, { authenticate, grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any, {} as any, {} as any, hubSign);
+    new AgentWsServer({} as any, { authenticate, grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any, {} as any, {} as any, hubSign, {} as any);
 
   it("closes a socket still unauthenticated when the deadline fires (1008)", () => {
     const server = makeServer();
@@ -502,5 +503,33 @@ describe("AgentWsServer pre-auth handshake deadline", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe("AgentWsServer traffic_metrics routing", () => {
+  const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
+  const make = () => {
+    const traffic = { ingest: jest.fn().mockResolvedValue(undefined) };
+    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
+    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, traffic as any);
+    return { server, traffic };
+  };
+  const body = { type: "traffic_metrics", ts: 1, windowSec: 60, domains: [{ host: "a.com", requests: 1, s2xx: 1, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 1, paths: [] }], serverId: "attacker-chosen" };
+
+  it("ingests with the AUTHENTICATED socket's serverId, never one from the message body", async () => {
+    const { server, traffic } = make();
+    const sock = mockSocket();
+    (server as any).state.set(sock, { nonce: "n", authed: true, serverId: "real-server", isAlive: true });
+    await (server as any).onMessage(sock, JSON.stringify(body));
+    expect(traffic.ingest).toHaveBeenCalledTimes(1);
+    expect(traffic.ingest.mock.calls[0][0]).toBe("real-server");
+  });
+
+  it("rejects (and ingests nothing) from an unauthenticated socket", async () => {
+    const { server, traffic } = make();
+    const sock = mockSocket();
+    (server as any).state.set(sock, { nonce: "n", authed: false, isAlive: true });
+    await (server as any).onMessage(sock, JSON.stringify(body));
+    expect(traffic.ingest).not.toHaveBeenCalled();
   });
 });

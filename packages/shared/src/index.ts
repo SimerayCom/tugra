@@ -322,6 +322,31 @@ export interface ContainerMetricsMsg {
   samples: ContainerStat[];
 }
 
+/** One host's per-minute request aggregate (counts only; never raw client IPs). */
+export interface TrafficDomainStat {
+  host: string; // request Host header (lowercased by the hub on ingest)
+  requests: number;
+  s2xx: number;
+  s3xx: number;
+  s4xx: number;
+  s5xx: number;
+  bytes: number; // response bytes
+  paths: { p: string; n: number; b: number }[]; // top paths: path, requests, bytes
+  countries?: { c: string; n: number }[]; // reserved (ISO country code, requests); empty until GeoIP
+}
+
+/**
+ * Agent -> Hub: pre-aggregated visitor traffic for one window (typically 60s). The hub sums into per-minute
+ * rows (additive, not idempotent), so windows must be disjoint and each reported at most once: the agent
+ * must never replay a window after a reconnect.
+ */
+export interface TrafficMetricsMsg {
+  type: "traffic_metrics";
+  ts: number; // unix ms the window ended
+  windowSec: number;
+  domains: TrafficDomainStat[];
+}
+
 /** Liveness ping. */
 export interface HeartbeatMsg {
   type: "heartbeat";
@@ -514,6 +539,7 @@ export type AgentMessage =
   | AuthMsg
   | MetricsMsg
   | ContainerMetricsMsg
+  | TrafficMetricsMsg
   | HeartbeatMsg
   | HostInfoMsg
   | CommandLogMsg

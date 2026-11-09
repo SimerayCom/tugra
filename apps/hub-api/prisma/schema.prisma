@@ -356,6 +356,8 @@ model Server {
   containerEvents      ContainerEvent[]
   metricRollups        MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
+  trafficMetrics       TrafficMetric[]
+  trafficPaths         TrafficPath[]
   logDrains            LogDrain[]
   proxyDynamicConfigs  ProxyDynamicConfig[]
   tunnel               ServerTunnel?
@@ -605,6 +607,47 @@ model ContainerMetricRollup {
   avgBlkWrite   BigInt
 
   @@unique([serverId, containerName, bucket])
+  @@index([bucket])
+}
+
+// Visitor-traffic aggregates pushed by the agent, already summed per (host, minute) — so there is no
+// raw/rollup split. `domain` is the lowercased request host as the agent saw it; `appId` is the owning
+// Application resolved on the hub from THIS server's apps only (null = unmatched host). Counts only: no
+// client IPs are stored. Rows are upsert-incremented (additive, NOT idempotent): the agent reports disjoint
+// windows, each at most once. Unmatched hosts beyond a small per-bucket cap fold into one "(unmatched)" row.
+model TrafficMetric {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  appId    String?
+  bucket   DateTime // minute-floored
+  requests Int
+  s2xx     Int
+  s3xx     Int
+  s4xx     Int
+  s5xx     Int
+  bytes    BigInt
+
+  @@unique([serverId, domain, bucket])
+  @@index([bucket])
+  @@index([serverId, bucket])
+}
+
+// Top request paths per (server, host, minute) — query string stripped, capped per bucket with the
+// overflow folded into a single "(other)" row.
+model TrafficPath {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  bucket   DateTime
+  path     String
+  requests Int
+  bytes    BigInt
+
+  @@unique([serverId, domain, bucket, path])
+  @@index([serverId, domain, bucket])
   @@index([bucket])
 }
 

@@ -3,6 +3,7 @@ import type {
   MetricsSample,
   EnrollMsg,
   ContainerMetricsMsg,
+  TrafficMetricsMsg,
   AgentMessage,
   HubMessage,
   LogStartMsg,
@@ -114,6 +115,22 @@ describe("shared protocol", () => {
     expect(asAgentMsg.type).toBe("container_metrics");
     expect(msg.samples[0].name).toBe("web");
     // additive: the protocol version must NOT change for a new agent->hub message type
+    expect(PROTOCOL_VERSION).toBe(2);
+  });
+
+  it("shapes a traffic_metrics message (additive, countries optional, no version bump)", () => {
+    const msg: TrafficMetricsMsg = {
+      type: "traffic_metrics",
+      ts: 1_700_000_000_000,
+      windowSec: 60,
+      domains: [
+        { host: "a.example.com", requests: 3, s2xx: 2, s3xx: 0, s4xx: 1, s5xx: 0, bytes: 900, paths: [{ p: "/", n: 3, b: 900 }] },
+        { host: "b.example.com", requests: 1, s2xx: 1, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 10, paths: [], countries: [{ c: "TR", n: 1 }] },
+      ],
+    };
+    const asAgentMsg: AgentMessage = msg;
+    expect(asAgentMsg.type).toBe("traffic_metrics");
+    expect(msg.domains[0].countries).toBeUndefined();
     expect(PROTOCOL_VERSION).toBe(2);
   });
 });

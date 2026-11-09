@@ -34,6 +34,7 @@ export interface TerminalDelegate {
 }
 import { MetricsService } from "../metrics/metrics.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
+import { TrafficMetricsService } from "../traffic/traffic-metrics.service";
 import { ServersService } from "../servers/servers.service";
 import { observedIp } from "../common/observed-ip";
 
@@ -110,6 +111,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly metrics: MetricsService,
     private readonly containerMetrics: ContainerMetricsService,
     private readonly hubSign: HubSigningService,
+    private readonly traffic: TrafficMetricsService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -295,6 +297,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
         case "container_metrics": {
           if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
           await this.containerMetrics.ingest(st.serverId, msg);
+          return;
+        }
+        case "traffic_metrics": {
+          if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
+          // serverId is the authenticated socket's, never the message body's. ingest() never throws.
+          await this.traffic.ingest(st.serverId, msg);
           return;
         }
         case "heartbeat": {

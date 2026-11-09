@@ -132,3 +132,60 @@ func TestMetricsSampleLoadSwapZeroVsAbsent(t *testing.T) {
 		t.Fatalf("round-trip lost swap: %+v", back)
 	}
 }
+
+// The traffic_metrics wire shape is a contract with the hub (packages/shared TrafficMetricsMsg): lock the
+// json tags and the round-trip, including the reserved optional countries field.
+func TestTrafficMetricsRoundTrip(t *testing.T) {
+	in := TrafficMetrics{
+		Type:      "traffic_metrics",
+		Ts:        1731153600000,
+		WindowSec: 60,
+		Domains: []TrafficDomainStat{{
+			Host: "a.example.com", Requests: 10, S2xx: 7, S3xx: 1, S4xx: 1, S5xx: 1, Bytes: 4096,
+			Paths:     []TrafficPathStat{{P: "/", N: 6, B: 2048}, {P: "/api", N: 4, B: 2048}},
+			Countries: []TrafficCountryStat{{C: "TR", N: 8}},
+		}},
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"type", "ts", "windowSec", "domains"} {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("missing top-level key %q: %s", k, b)
+		}
+	}
+	d := m["domains"].([]any)[0].(map[string]any)
+	for _, k := range []string{"host", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "paths", "countries"} {
+		if _, ok := d[k]; !ok {
+			t.Fatalf("missing domain key %q: %s", k, b)
+		}
+	}
+	p := d["paths"].([]any)[0].(map[string]any)
+	for _, k := range []string{"p", "n", "b"} {
+		if _, ok := p[k]; !ok {
+			t.Fatalf("missing path key %q: %s", k, b)
+		}
+	}
+	if m["type"] != "traffic_metrics" {
+		t.Fatalf("type tag wrong: %s", b)
+	}
+	var out TrafficMetrics
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Ts != in.Ts || out.WindowSec != 60 || len(out.Domains) != 1 || out.Domains[0].Host != "a.example.com" ||
+		out.Domains[0].Bytes != 4096 || len(out.Domains[0].Paths) != 2 || out.Domains[0].Paths[1].P != "/api" ||
+		out.Domains[0].Countries[0].C != "TR" {
+		t.Fatalf("round-trip mismatch: %+v", out)
+	}
+	// countries is optional: omitted when empty, so the wire shape matches `countries?` in the shared type.
+	e, _ := json.Marshal(TrafficDomainStat{Host: "x", Paths: []TrafficPathStat{}})
+	if strings.Contains(string(e), `"countries"`) {
+		t.Fatalf("empty countries must be omitted: %s", e)
+	}
+}

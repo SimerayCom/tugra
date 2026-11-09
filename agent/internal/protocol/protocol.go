@@ -101,6 +101,41 @@ type ContainerMetrics struct {
 	Samples []ContainerStat `json:"samples"`
 }
 
+// TrafficPathStat is one path's request count + response bytes within a window.
+type TrafficPathStat struct {
+	P string `json:"p"`
+	N int64  `json:"n"`
+	B int64  `json:"b"`
+}
+
+// TrafficCountryStat is a per-country request count (reserved; empty until GeoIP).
+type TrafficCountryStat struct {
+	C string `json:"c"`
+	N int64  `json:"n"`
+}
+
+// TrafficDomainStat is one host's aggregate for a window (mirrors packages/shared).
+type TrafficDomainStat struct {
+	Host      string               `json:"host"`
+	Requests  int64                `json:"requests"`
+	S2xx      int64                `json:"s2xx"`
+	S3xx      int64                `json:"s3xx"`
+	S4xx      int64                `json:"s4xx"`
+	S5xx      int64                `json:"s5xx"`
+	Bytes     int64                `json:"bytes"`
+	Paths     []TrafficPathStat    `json:"paths"`
+	Countries []TrafficCountryStat `json:"countries,omitempty"`
+}
+
+// TrafficMetrics is the agent->hub per-window visitor traffic aggregate. The hub sums it additively (no
+// dedupe), so windows must be disjoint and each sent at most once: never replay a window after a reconnect.
+type TrafficMetrics struct {
+	Type      string              `json:"type"`
+	Ts        int64               `json:"ts"`
+	WindowSec int                 `json:"windowSec"`
+	Domains   []TrafficDomainStat `json:"domains"`
+}
+
 type Heartbeat struct {
 	Type string `json:"type"`
 	Ts   int64  `json:"ts"`
