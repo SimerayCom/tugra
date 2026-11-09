@@ -93,6 +93,7 @@ export const ServerViewSchema = z.object({
   capabilities: z.array(z.string()), // granted agent capabilities the hub may act on; [] = none (fail-safe)
   isLocal: z.boolean(), // the box the hub itself runs on (auto-provisioned at first-owner reg on a turnkey install)
   proxyBind: z.string(), // how the reverse proxy publishes :80/:443 — "public" | "loopback" | "none"
+  trafficAnalytics: z.boolean(), // Traffic Analytics opt-in: the proxy writes a JSON access log (default off)
   provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
   providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
   canWrite: z.boolean(),
@@ -701,6 +702,7 @@ export class ServersService {
       capabilities?: string[];
       isLocal?: boolean;
       proxyBind?: string;
+      trafficAnalytics?: boolean;
       provider?: string | null;
       providerServerId?: string | null;
     },
@@ -748,6 +750,7 @@ export class ServersService {
       capabilities: s.capabilities ?? [],
       isLocal: s.isLocal ?? false,
       proxyBind: s.proxyBind ?? "public",
+      trafficAnalytics: s.trafficAnalytics ?? false,
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
       canWrite,

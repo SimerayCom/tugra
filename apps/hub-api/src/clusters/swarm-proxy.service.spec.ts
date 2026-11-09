@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ConfigService } from "@nestjs/config";
 
-interface OtherMember { id: string; name: string; status: string; swarmNodeId: string | null; publicIp?: string | null }
+interface OtherMember { id: string; name: string; status: string; swarmNodeId: string | null; publicIp?: string | null; trafficAnalytics?: boolean }
 function make(opts: {
   swarmStatus?: string;
   swarmManagerId?: string | null;
@@ -20,6 +20,7 @@ function make(opts: {
   classicProxyOutput?: string; // buildClassicProxyRunningScript output (any server)
   classicProxyOnServer?: string; // a classic tugra-proxy runs only on THIS serverId
   proxyReplicas?: string; // buildSwarmProxyStatusScript output
+  trafficAnalytics?: boolean; // the manager's Traffic Analytics flag
   certMode?: string;
   dnsProvider?: string | null;
   dnsCredsEnc?: string | null;
@@ -41,6 +42,7 @@ function make(opts: {
         certMode: opts.certMode ?? "http",
         dnsProvider: opts.dnsProvider ?? null,
         dnsCredsEnc: opts.dnsCredsEnc ?? null,
+        trafficAnalytics: opts.trafficAnalytics ?? false,
       }),
       findFirst: jest.fn().mockResolvedValue(opts.backupManagerId ? { id: opts.backupManagerId } : null),
       // Two shapes: resolveIngressPool's extra-members query (where.status === "ONLINE"), else ensure()'s
@@ -51,7 +53,7 @@ function make(opts: {
             .filter((o) => o.status === "ONLINE" && o.swarmNodeId)
             .sort((a, b) => (a.id < b.id ? -1 : 1))
             .slice(0, args.take ?? others.length)
-            .map((o) => ({ id: o.id, name: o.name, swarmNodeId: o.swarmNodeId, publicIp: o.publicIp ?? null }));
+            .map((o) => ({ id: o.id, name: o.name, swarmNodeId: o.swarmNodeId, publicIp: o.publicIp ?? null, trafficAnalytics: o.trafficAnalytics ?? false }));
         }
         return [{ id: "mgr", name: managerName, swarmNodeId }, ...others]
           .filter((s) => s.swarmNodeId)
@@ -230,6 +232,57 @@ describe("SwarmProxyService ingress HA", () => {
     expect(h1).toBeTruthy();
     expect(h2).toBeTruthy();
     expect(h1).not.toBe(h2); // pool change is detected → rm+recreate, not silently skipped
+  });
+
+  it("Traffic Analytics: toggling the flag changes the confighash (forces the rm+recreate) and adds the access log + mount", async () => {
+    const off = make({ trafficAnalytics: false });
+    await off.svc.ensure("c1");
+    const on = make({ trafficAnalytics: true });
+    await on.svc.ensure("c1");
+    expect(confighashFromSend(off.send)).toBeTruthy();
+    expect(confighashFromSend(on.send)).toBeTruthy();
+    expect(confighashFromSend(on.send)).not.toBe(confighashFromSend(off.send));
+    expect(ensureScript(on.send)).toContain("--accesslog=true");
+    expect(ensureScript(on.send)).toContain("--mount type=bind,src=/etc/tugra/proxy-logs,dst=/var/log/traefik");
+    expect(ensureScript(off.send)).not.toContain("accesslog");
+    expect(ensureScript(off.send)).not.toContain("proxy-logs");
+  });
+
+  it("Traffic Analytics OFF keeps the pre-existing confighash (no needless ingress recreate on upgrade)", async () => {
+    const { createHash } = await import("node:crypto");
+    const { svc, send } = make({ trafficAnalytics: false, certMode: "http" });
+    await svc.ensure("c1");
+    const legacy = createHash("sha256").update("ops@x.io|http|1|node_1").digest("hex").slice(0, 12);
+    expect(confighashFromSend(send)).toBe(legacy);
+  });
+
+  it("Traffic Analytics is ON when ANY ingress pool node opted in, and every other pool node gets the logs dir mkdir", async () => {
+    const { svc, send } = make({
+      ingressReplicas: 2,
+      otherMembers: [member({ trafficAnalytics: true })],
+      proxyReplicas: "2/2",
+      ...leDns,
+    });
+    await svc.ensure("c1");
+    expect(ensureScript(send)).toContain("--accesslog=true");
+    // the per-node cert-dir fan-out (non-manager pool node w1) also creates the access-log dir
+    const fanout = send.mock.calls.filter((c) => c[0] === "w1").map((c) => c[1] as string);
+    expect(fanout.some((cmd) => cmd.includes("mkdir -p /etc/tugra/proxy-logs") && cmd.includes("letsencrypt-swarm"))).toBe(true);
+  });
+
+  it("Traffic Analytics OFF: the per-node fan-out does NOT create the logs dir", async () => {
+    const { svc, send } = make({ ingressReplicas: 2, otherMembers: [member()], proxyReplicas: "2/2", ...leDns });
+    await svc.ensure("c1");
+    const fanout = send.mock.calls.filter((c) => c[0] === "w1").map((c) => c[1] as string);
+    expect(fanout.some((cmd) => cmd.includes("proxy-logs"))).toBe(false);
+  });
+
+  it("accessLogState(): pool membership + effective cluster-wide value (ANY pool node ON)", async () => {
+    const a = make({ ingressReplicas: 2, trafficAnalytics: true, otherMembers: [member()] });
+    expect(await a.svc.accessLogState("c1", "w1")).toEqual({ inPool: true, effective: true });
+    // a member beyond ingressReplicas is NOT in the pool; its own flag cannot matter
+    const b = make({ ingressReplicas: 1, otherMembers: [member({ trafficAnalytics: true })] });
+    expect(await b.svc.accessLogState("c1", "w1")).toEqual({ inPool: false, effective: false });
   });
 
   it("ingressInfo() returns the resolved pool (manager first, capped at ingressReplicas)", async () => {

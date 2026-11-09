@@ -5,6 +5,7 @@ import { MetricsModule } from "../metrics/metrics.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { ServersModule } from "../servers/servers.module";
+import { ClustersModule } from "../clusters/clusters.module";
 import { ServerOpsController } from "./server-ops.controller";
 import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
@@ -19,7 +20,7 @@ import { ContainerHealthRunnerService } from "./container-health.runner.service"
 import { ContainerHealthSchedulerService } from "./container-health.scheduler.service";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule],
   controllers: [ServerOpsController, FleetController],
   providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService],
 })

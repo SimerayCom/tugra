@@ -3408,6 +3408,9 @@
                       "proxyBind": {
                         "type": "string"
                       },
+                      "trafficAnalytics": {
+                        "type": "boolean"
+                      },
                       "provider": {
                         "type": "string",
                         "nullable": true
@@ -3460,6 +3463,7 @@
                       "capabilities",
                       "isLocal",
                       "proxyBind",
+                      "trafficAnalytics",
                       "provider",
                       "providerServerId",
                       "canWrite"
@@ -3790,6 +3794,9 @@
                     "proxyBind": {
                       "type": "string"
                     },
+                    "trafficAnalytics": {
+                      "type": "boolean"
+                    },
                     "provider": {
                       "type": "string",
                       "nullable": true
@@ -3842,6 +3849,7 @@
                     "capabilities",
                     "isLocal",
                     "proxyBind",
+                    "trafficAnalytics",
                     "provider",
                     "providerServerId",
                     "canWrite"
@@ -37306,6 +37314,145 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/traffic-analytics": {
+      "put": {
+        "operationId": "ServerOpsController_setTrafficAnalytics",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "trafficAnalytics": {
+                      "type": "boolean"
+                    },
+                    "apply": {
+                      "type": "string",
+                      "enum": [
+                        "applied",
+                        "deferred",
+                        "failed",
+                        "not-in-pool",
+                        "cluster-shared"
+                      ]
+                    },
+                    "applyError": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "trafficAnalytics",
+                    "apply",
+                    "applyError"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",

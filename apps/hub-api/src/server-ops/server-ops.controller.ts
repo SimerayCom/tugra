@@ -15,7 +15,7 @@ import {
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
-import { ApiZodBody } from "../openapi/openapi";
+import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -37,6 +37,9 @@ import {
   CreateLogDrainSchema,
   SetProxyDynamicConfigInput,
   SetProxyDynamicConfigSchema,
+  SetTrafficAnalyticsInput,
+  SetTrafficAnalyticsSchema,
+  TrafficAnalyticsStateSchema,
   UpdateLogDrainInput,
   UpdateLogDrainSchema,
 } from "./dto";
@@ -179,6 +182,20 @@ export class ServerOpsController {
   async proxyDynamicDelete(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("name") name: string) {
     await this.proxy.deleteDynamicConfig(user.userId, id, name);
     return { ok: true };
+  }
+
+  // Per-server Traffic Analytics (proxy access log) toggle — servers:manage like the other server settings;
+  // re-applies the proxy so it takes effect now (see ProxyOpsService.setTrafficAnalytics).
+  @Put("traffic-analytics")
+  @HttpCode(200)
+  @ApiZodBody(SetTrafficAnalyticsSchema)
+  @ApiZodResponse(TrafficAnalyticsStateSchema)
+  setTrafficAnalytics(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetTrafficAnalyticsSchema)) body: SetTrafficAnalyticsInput,
+  ) {
+    return this.proxy.setTrafficAnalytics(user.userId, id, body.enabled);
   }
 
   @Get("log-drains")

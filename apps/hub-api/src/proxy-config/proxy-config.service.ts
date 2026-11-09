@@ -13,6 +13,8 @@ export interface ResolvedProxyConfig {
   // Panel-TLS (DİLİM 1): a {domain, resolver} for the LOCAL server when panel TLS is on and valid; otherwise
   // undefined (leave the panel file untouched). Removal of the router is a separate, explicit op.
   panel?: { domain: string; resolver: PanelResolver };
+  // Traffic Analytics: true when the server opted in — the proxy then writes a JSON access log to the host.
+  accessLog?: boolean; // always set by resolveFor; optional only so hand-built fixtures stay valid
 }
 
 /**
@@ -47,7 +49,7 @@ export class ProxyConfigService implements OnApplicationBootstrap {
     const s = await this.prisma.server
       .findUnique({
         where: { id: serverId },
-        select: { isLocal: true, certMode: true, dnsProvider: true, dnsCredsEnc: true, proxyBind: true },
+        select: { isLocal: true, certMode: true, dnsProvider: true, dnsCredsEnc: true, proxyBind: true, trafficAnalytics: true },
       })
       .catch(() => null);
     const bind = s?.proxyBind;
@@ -84,7 +86,7 @@ export class ProxyConfigService implements OnApplicationBootstrap {
     }
 
     const panel = await this.resolvePanel(s?.isLocal === true, acmeEmail, dnsUsable);
-    return { acmeEmail, bind, dnsProvider, dnsCreds, ...(panel ? { panel } : {}) };
+    return { acmeEmail, bind, dnsProvider, dnsCreds, accessLog: s?.trafficAnalytics === true, ...(panel ? { panel } : {}) };
   }
 
   /** The panel config — ONLY for the local server, when a panel domain is set AND the ACME email is valid.

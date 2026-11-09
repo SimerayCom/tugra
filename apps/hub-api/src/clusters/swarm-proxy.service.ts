@@ -26,6 +26,7 @@ interface ManagerRow {
   dnsProvider: string | null;
   dnsCredsEnc: string | null;
   ingressReplicas: number;
+  trafficAnalytics: boolean;
 }
 
 /** One node in the resolved ingress pool (manager first, then online joined members). */
@@ -34,6 +35,7 @@ interface IngressPoolNode {
   name: string;
   swarmNodeId: string | null;
   publicIp: string | null;
+  trafficAnalytics: boolean;
 }
 
 /**
@@ -68,7 +70,7 @@ export class SwarmProxyService {
     if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
     const mgr = await this.prisma.server.findUnique({
       where: { id: cluster.swarmManagerId },
-      select: { id: true, name: true, status: true, publicIp: true, swarmNodeId: true, certMode: true, dnsProvider: true, dnsCredsEnc: true },
+      select: { id: true, name: true, status: true, publicIp: true, swarmNodeId: true, certMode: true, dnsProvider: true, dnsCredsEnc: true, trafficAnalytics: true },
     });
     if (!mgr) throw new ServiceUnavailableException("swarm manager server not found");
     return {
@@ -81,6 +83,7 @@ export class SwarmProxyService {
       dnsProvider: mgr.dnsProvider,
       dnsCredsEnc: mgr.dnsCredsEnc,
       ingressReplicas: cluster.ingressReplicas,
+      trafficAnalytics: mgr.trafficAnalytics,
     };
   }
 
@@ -90,7 +93,7 @@ export class SwarmProxyService {
    *  hasn't grown into the requested count yet. Re-derived fresh on every call (never snapshotted). */
   private async resolveIngressPool(clusterId: string): Promise<{ mgr: ManagerRow; pool: IngressPoolNode[] }> {
     const mgr = await this.primary(clusterId);
-    const pool: IngressPoolNode[] = [{ id: mgr.id, name: mgr.name, swarmNodeId: mgr.swarmNodeId, publicIp: mgr.publicIp }];
+    const pool: IngressPoolNode[] = [{ id: mgr.id, name: mgr.name, swarmNodeId: mgr.swarmNodeId, publicIp: mgr.publicIp, trafficAnalytics: mgr.trafficAnalytics }];
     if (mgr.ingressReplicas > 1) {
       const extra = await this.prisma.server.findMany({
         // MANAGERS only: Traefik's swarm provider needs the manager-only Docker API, so a worker replica
@@ -98,7 +101,7 @@ export class SwarmProxyService {
         where: { clusterId, id: { not: mgr.id }, status: "ONLINE", swarmNodeId: { not: null }, swarmRole: "MANAGER", capabilities: { has: "swarm" } },
         orderBy: { id: "asc" },
         take: mgr.ingressReplicas - 1,
-        select: { id: true, name: true, swarmNodeId: true, publicIp: true },
+        select: { id: true, name: true, swarmNodeId: true, publicIp: true, trafficAnalytics: true },
       });
       pool.push(...extra);
     }
@@ -110,6 +113,14 @@ export class SwarmProxyService {
   async ingressInfo(clusterId: string): Promise<IngressView> {
     const { pool } = await this.resolveIngressPool(clusterId);
     return { replicas: pool.length, nodes: pool.map((p) => ({ id: p.id, name: p.name, ip: p.publicIp })) };
+  }
+
+  /** Traffic Analytics is ONE cluster ingress service: logging is on when ANY ingress-pool node has the flag.
+   *  Reports whether `serverId` is a pool member (a worker / non-pool manager's flag has no effect) and the
+   *  effective cluster-wide value, so the toggle can say what it really did. */
+  async accessLogState(clusterId: string, serverId: string): Promise<{ inPool: boolean; effective: boolean }> {
+    const { pool } = await this.resolveIngressPool(clusterId);
+    return { inPool: pool.some((p) => p.id === serverId), effective: pool.some((p) => p.trafficAnalytics) };
   }
 
   /** Pick the manager to DISPATCH a cluster-wide read (`docker service …`) to: the primary if it's online, else
@@ -192,20 +203,26 @@ export class SwarmProxyService {
     // one. Uses full DB node ids (docker node update accepts them); pool nodes are never in this set.
     const poolNodeIdSet = new Set(nodeIds);
     const unlabelNodeIds = joined.map((s) => s.swarmNodeId).filter((x): x is string => !!x && !poolNodeIdSet.has(x));
+    // Traffic Analytics: the ONE ingress service is shared by the whole pool, so the access log is ON when ANY
+    // pool node opted in (toggling a pool member's flag therefore takes effect). It is folded into the confighash
+    // — only when ON, so every pre-existing ingress keeps its hash and is NOT needlessly recreated on upgrade —
+    // so a toggle forces the rm+recreate branch; without it the running service would never pick the flag up.
+    const accessLog = pool.some((p) => p.trafficAnalytics);
+    const alKey = accessLog ? "|accesslog" : "";
     let dns: SwarmProxyDns | null = null;
     let confighash: string;
     if (dnsCfg) {
       const credsB64 = envFileB64(dnsCfg.dnsCreds);
-      confighash = createHash("sha256").update(`${email}|${dnsCfg.dnsProvider}|${credsB64}|ledns|${pool.length}|${poolKey}`).digest("hex").slice(0, 12);
+      confighash = createHash("sha256").update(`${email}|${dnsCfg.dnsProvider}|${credsB64}|ledns|${pool.length}|${poolKey}${alKey}`).digest("hex").slice(0, 12);
       dns = { provider: dnsCfg.dnsProvider, credsB64, secretName: `${secretPrefix}-${confighash}` };
     } else {
-      confighash = createHash("sha256").update(`${email}|http|${pool.length}|${poolKey}`).digest("hex").slice(0, 12);
+      confighash = createHash("sha256").update(`${email}|http|${pool.length}|${poolKey}${alKey}`).digest("hex").slice(0, 12);
     }
     // The Traefik service bind-mounts a NODE-LOCAL ACME dir; a missing source makes the task fail to start
     // on that node, so every replica node needs it. The manager's ensure script creates it for itself —
     // prepare every OTHER pool node first (idempotent; a no-op for the single-node pool). Fail loudly rather
     // than let the service sit at <N/N replicas with nothing in the deploy log.
-    const certDirScript = buildSwarmProxyCertDirScript(!!dns);
+    const certDirScript = buildSwarmProxyCertDirScript(!!dns, accessLog);
     await Promise.all(
       pool.slice(1).map(async (p) => {
         const r = await this.agentWs.sendCommand(p.id, certDirScript, "swarm").catch(() => ({ exitCode: 1, output: "" }));
@@ -216,7 +233,7 @@ export class SwarmProxyService {
     );
     await this.agentWs.sendCommand(
       mgr.id,
-      buildSwarmProxyEnsureScript({ nodeIds, unlabelNodeIds, replicas: pool.length, acmeEmail: email, confighash, secretPrefix, dns }),
+      buildSwarmProxyEnsureScript({ nodeIds, unlabelNodeIds, replicas: pool.length, acmeEmail: email, confighash, secretPrefix, dns, accessLog }),
       "swarm",
       60_000,
     );

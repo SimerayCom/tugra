@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import type { SwarmProxyService } from "../clusters/swarm-proxy.service";
 import type { ProxyConfigService, ResolvedProxyConfig } from "../proxy-config/proxy-config.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
@@ -40,7 +41,7 @@ function make(role: Role | null, send: jest.Mock, cfg: ResolvedProxyConfig = { a
   } as unknown as TeamAccessService;
   const agentWs = { sendCommand: send } as unknown as AgentWsServer;
   const proxyConfig = { resolveFor: jest.fn().mockResolvedValue(cfg) } as unknown as ProxyConfigService;
-  return new ProxyOpsService(prisma, access, audit, agentWs, proxyConfig);
+  return new ProxyOpsService(prisma, access, audit, agentWs, proxyConfig, {} as unknown as SwarmProxyService);
 }
 
 describe("ProxyOpsService", () => {
@@ -116,7 +117,7 @@ describe("ProxyOpsService", () => {
       teamRole: jest.fn().mockResolvedValue(Role.OWNER),
       requirePermission: jest.fn().mockResolvedValue(undefined),
     } as unknown as TeamAccessService;
-    const ops = new ProxyOpsService(opsPrisma, opsAccess, audit, { sendCommand: opsSend } as unknown as AgentWsServer, proxyConfig);
+    const ops = new ProxyOpsService(opsPrisma, opsAccess, audit, { sendCommand: opsSend } as unknown as AgentWsServer, proxyConfig, {} as unknown as SwarmProxyService);
     await ops.start("u1", "s1");
 
     const appSend = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
@@ -150,7 +151,7 @@ describe("ProxyOpsService dynamic configs", () => {
         perms.has(perm) ? Promise.resolve(undefined) : Promise.reject(new ForbiddenException("insufficient role for this team")),
       ),
     } as unknown as TeamAccessService;
-    const svc = new ProxyOpsService(prisma, access, audit, { sendCommand: send } as unknown as AgentWsServer, {} as unknown as ProxyConfigService);
+    const svc = new ProxyOpsService(prisma, access, audit, { sendCommand: send } as unknown as AgentWsServer, {} as unknown as ProxyConfigService, {} as unknown as SwarmProxyService);
     return { svc, prisma };
   }
 
@@ -197,5 +198,179 @@ describe("ProxyOpsService dynamic configs", () => {
 
   it("forbids a viewer from writing a dynamic config", async () => {
     await expect(makeDyn(Role.VIEWER, jest.fn()).svc.putDynamicConfig("u1", "s1", "mw", "http: {}")).rejects.toThrow(/insufficient role/);
+  });
+});
+
+describe("ProxyOpsService.setTrafficAnalytics", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const classicServer = { id: "s1", teamId: "t1", clusterId: null, swarmNodeId: null, cluster: null };
+  const swarmServer = { id: "s1", teamId: "t1", clusterId: "c1", swarmNodeId: "n1", cluster: { swarmStatus: "ACTIVE" } };
+
+  function makeToggle(
+    role: Role | null,
+    srv: unknown,
+    send: jest.Mock,
+    swarm: Partial<Record<"status" | "ensure" | "accessLogState", jest.Mock>> = {},
+    cfg: ResolvedProxyConfig = { acmeEmail: "me@x.com", bind: "public", accessLog: true },
+  ) {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(srv), update } } as unknown as PrismaService;
+    const perms = new Set(role === Role.OWNER || role === Role.ADMIN ? ALL_PERMS : []);
+    const access = {
+      teamRole: jest.fn().mockResolvedValue(role),
+      requirePermission: jest.fn((_u: string, _t: string, perm: string) =>
+        perms.has(perm) ? Promise.resolve(undefined) : Promise.reject(new ForbiddenException("insufficient role for this team")),
+      ),
+    } as unknown as TeamAccessService;
+    const proxyConfig = { resolveFor: jest.fn().mockResolvedValue(cfg) } as unknown as ProxyConfigService;
+    const swarmSvc = {
+      status: jest.fn(),
+      ensure: jest.fn(),
+      accessLogState: jest.fn().mockResolvedValue({ inPool: true, effective: true }),
+      ...swarm,
+    } as unknown as SwarmProxyService;
+    const svc = new ProxyOpsService(prisma, access, audit, { sendCommand: send } as unknown as AgentWsServer, proxyConfig, swarmSvc);
+    return { svc, update, access, swarmSvc };
+  }
+
+  it("rejects a viewer (no servers:manage) without writing the flag or touching the proxy", async () => {
+    const send = jest.fn();
+    const { svc, update } = makeToggle(Role.VIEWER, classicServer, send);
+    await expect(svc.setTrafficAnalytics("u1", "s1", true)).rejects.toThrow(/insufficient role/);
+    expect(update).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("is gated by servers:manage (the server-settings gate)", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "running\n" });
+    const { svc, access } = makeToggle(Role.OWNER, classicServer, send);
+    await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "servers:manage");
+  });
+
+  it("404s an unknown server", async () => {
+    const { svc } = makeToggle(Role.OWNER, null, jest.fn());
+    await expect(svc.setTrafficAnalytics("u1", "nope", true)).rejects.toThrow(/not found/);
+  });
+
+  it("classic: persists the flag, then recreates the proxy WITH the access log, and audits", async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "running\n" }) // status probe (proxy exists)
+      .mockResolvedValueOnce({ exitCode: 0, output: "" }); // recreate
+    const { svc, update } = makeToggle(Role.OWNER, classicServer, send);
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { trafficAnalytics: true } });
+    expect(send.mock.calls[1][1]).toContain("--accesslog=true");
+    expect(send.mock.calls[1][1]).toContain("-v /etc/tugra/proxy-logs:/var/log/traefik");
+    expect(r).toEqual({ trafficAnalytics: true, apply: "applied", applyError: null });
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "server.traffic_analytics.update", meta: { enabled: true, apply: "applied" } }),
+    );
+  });
+
+  it("classic OFF: the recreate carries no access-log flags", async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "running\n" })
+      .mockResolvedValueOnce({ exitCode: 0, output: "" })
+      .mockResolvedValueOnce({ exitCode: 0, output: "" }); // cleanup
+    const { svc } = makeToggle(Role.OWNER, classicServer, send, {}, { acmeEmail: "me@x.com", bind: "public", accessLog: false });
+    const r = await svc.setTrafficAnalytics("u1", "s1", false);
+    expect(send.mock.calls[1][1]).not.toContain("accesslog");
+    expect(send.mock.calls[1][1]).not.toContain("proxy-logs");
+    // the old log (client IPs) + rotation config are removed after a successful OFF recreate
+    expect(send.mock.calls[2][1]).toContain("rm -f /etc/tugra/proxy-logs/access.json");
+    expect(r.apply).toBe("applied");
+    expect(r.trafficAnalytics).toBe(false);
+  });
+
+  it("classic with no proxy yet: flag saved, re-apply deferred (no recreate)", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" }); // status => absent
+    const { svc, update } = makeToggle(Role.OWNER, classicServer, send);
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(update).toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(r.apply).toBe("deferred");
+  });
+
+  it("classic with a STOPPED proxy: flag saved, deferred, the container is left alone (never resurrected)", async () => {
+    const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "exited\n" });
+    const { svc, update } = makeToggle(Role.OWNER, classicServer, send);
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(update).toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1); // status probe only — no docker rm / run
+    expect(r.apply).toBe("deferred");
+  });
+
+  it("classic re-apply failure: flag stays saved, failure is surfaced (not silent) and audited", async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "running\n" })
+      .mockResolvedValueOnce({ exitCode: 1, output: "port taken" });
+    const { svc, update } = makeToggle(Role.OWNER, classicServer, send);
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { trafficAnalytics: true } });
+    expect(r.trafficAnalytics).toBe(true);
+    expect(r.apply).toBe("failed");
+    expect(r.applyError).toContain("port taken");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ meta: { enabled: true, apply: "failed" } }));
+  });
+
+  it("offline agent (command rejects) is reported as failed, flag still saved", async () => {
+    const send = jest.fn().mockRejectedValue(new Error("agent offline"));
+    const { svc } = makeToggle(Role.OWNER, classicServer, send);
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(r).toEqual({ trafficAnalytics: true, apply: "failed", applyError: "agent offline" });
+  });
+
+  it("swarm member: re-ensures the CLUSTER ingress (not the classic proxy)", async () => {
+    const send = jest.fn();
+    const status = jest.fn().mockResolvedValue({ exitCode: 0, output: "1/1\n" });
+    const ensure = jest.fn().mockResolvedValue(undefined);
+    const { svc, swarmSvc } = makeToggle(Role.OWNER, swarmServer, send, { status, ensure });
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(swarmSvc.ensure).toHaveBeenCalledWith("c1");
+    expect(send).not.toHaveBeenCalled();
+    expect(r.apply).toBe("applied");
+  });
+
+  it("swarm: a server OUTSIDE the ingress pool is flagged not-in-pool and ensure() is NOT run", async () => {
+    const status = jest.fn().mockResolvedValue({ exitCode: 0, output: "1/1\n" });
+    const ensure = jest.fn();
+    const accessLogState = jest.fn().mockResolvedValue({ inPool: false, effective: false });
+    const { svc } = makeToggle(Role.OWNER, swarmServer, jest.fn(), { status, ensure, accessLogState });
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(ensure).not.toHaveBeenCalled();
+    expect(r).toEqual({ trafficAnalytics: true, apply: "not-in-pool", applyError: null });
+  });
+
+  it("swarm: turning OFF a pool member while another pool node is ON reports cluster-shared (logging continues)", async () => {
+    const status = jest.fn().mockResolvedValue({ exitCode: 0, output: "2/2\n" });
+    const ensure = jest.fn().mockResolvedValue(undefined);
+    const accessLogState = jest.fn().mockResolvedValue({ inPool: true, effective: true });
+    const { svc } = makeToggle(Role.OWNER, swarmServer, jest.fn(), { status, ensure, accessLogState });
+    const r = await svc.setTrafficAnalytics("u1", "s1", false);
+    expect(ensure).toHaveBeenCalledWith("c1");
+    expect(r.trafficAnalytics).toBe(false);
+    expect(r.apply).toBe("cluster-shared");
+  });
+
+  it("swarm member with no ingress yet: deferred, ensure() NOT called (a toggle never creates ingress)", async () => {
+    const status = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const ensure = jest.fn();
+    const { svc } = makeToggle(Role.OWNER, swarmServer, jest.fn(), { status, ensure });
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(ensure).not.toHaveBeenCalled();
+    expect(r.apply).toBe("deferred");
+  });
+
+  it("swarm ensure failure is surfaced as failed", async () => {
+    const status = jest.fn().mockResolvedValue({ exitCode: 0, output: "1/1\n" });
+    const ensure = jest.fn().mockRejectedValue(new Error("swarm manager is offline"));
+    const { svc } = makeToggle(Role.OWNER, swarmServer, jest.fn(), { status, ensure });
+    const r = await svc.setTrafficAnalytics("u1", "s1", true);
+    expect(r).toEqual({ trafficAnalytics: true, apply: "failed", applyError: "swarm manager is offline" });
   });
 });

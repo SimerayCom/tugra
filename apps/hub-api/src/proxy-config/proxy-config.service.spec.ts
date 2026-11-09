@@ -33,6 +33,17 @@ function make(o: Opts = {}) {
 
 const localHttp = { isLocal: true, certMode: "http", dnsProvider: null, dnsCredsEnc: null, proxyBind: "public" };
 
+describe("ProxyConfigService.resolveFor — accessLog", () => {
+  it("reads Server.trafficAnalytics: true => accessLog true", async () => {
+    const { svc } = make({ serverRow: { ...localHttp, isLocal: false, trafficAnalytics: true } });
+    expect((await svc.resolveFor("s1")).accessLog).toBe(true);
+  });
+  it("defaults to false when the flag is off or the server row is missing", async () => {
+    expect((await make({ serverRow: { ...localHttp, trafficAnalytics: false } }).svc.resolveFor("s1")).accessLog).toBe(false);
+    expect((await make({ serverRow: null }).svc.resolveFor("s1")).accessLog).toBe(false);
+  });
+});
+
 describe("ProxyConfigService.resolveFor — panel decision", () => {
   it("returns a panel for a LOCAL server with a panel domain + valid email (resolver 'le')", async () => {
     const { svc } = make({ serverRow: localHttp, panelDomain: "app.example.com" });

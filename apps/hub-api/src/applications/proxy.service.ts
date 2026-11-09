@@ -38,6 +38,7 @@ export class ProxyService {
         dnsProvider: cfg.dnsProvider,
         dnsCreds: cfg.dnsCreds,
         panel: cfg.panel,
+        accessLog: cfg.accessLog,
       }),
       "deploy",
       60_000,

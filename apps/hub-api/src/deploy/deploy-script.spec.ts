@@ -6,6 +6,7 @@ import {
   buildRestartScript,
   buildStartScript,
   buildProxySetupScript,
+  buildProxyAccessLogCleanupScript,
   buildPanelRouterWriteScript,
   buildProxyLogsScript,
   buildProxyRestartScript,
@@ -1430,6 +1431,46 @@ describe("deploy-script", () => {
     expect(s).not.toContain("le-dns");
     expect(s).not.toContain("--env-file");
     expect(s).not.toContain("acme-dns.json");
+  });
+
+  it("accessLog ON: bind-mounts the host log dir, enables the minimal JSON access log, and mkdirs the dir BEFORE docker run", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", accessLog: true });
+    expect(s).toContain("-v /etc/tugra/proxy-logs:/var/log/traefik");
+    expect(s).toContain("--accesslog=true");
+    expect(s).toContain("--accesslog.format=json");
+    expect(s).toContain("--accesslog.filepath=/var/log/traefik/access.json");
+    expect(s).toContain("--accesslog.fields.defaultmode=drop");
+    // query strings are a separate Traefik switch (default KEEP) — must be dropped so RequestPath has no `?token=`
+    expect(s).toContain("--accesslog.fields.queryparameters.defaultmode=drop");
+    const kept = ["ClientHost", "RequestHost", "RequestPath", "RequestMethod", "DownstreamStatus", "DownstreamContentSize", "Duration", "StartUTC", "RouterName", "EntryPointName"];
+    for (const f of kept) expect(s).toContain(`--accesslog.fields.names.${f}=keep`);
+    // exactly the allow-list, and no header is kept
+    expect(s.match(/--accesslog\.fields\.names\.\w+=keep/g)).toHaveLength(kept.length);
+    expect(s).not.toContain("accesslog.fields.headers");
+    expect(s.indexOf("mkdir -p /etc/tugra/proxy-logs")).toBeGreaterThan(-1);
+    expect(s.indexOf("mkdir -p /etc/tugra/proxy-logs")).toBeLessThan(s.indexOf("docker run -d"));
+  });
+
+  it("accessLog ON: installs a size-bounded logrotate drop-in (copytruncate); OFF cleanup removes log + config", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", accessLog: true });
+    expect(s).toContain("/etc/logrotate.d/tugra-proxy-access");
+    expect(s).toContain("copytruncate");
+    expect(s).toContain("size 50M");
+    expect(s).toContain("rotate 3");
+    expect(s.indexOf("logrotate")).toBeLessThan(s.indexOf("docker run -d"));
+    const c = buildProxyAccessLogCleanupScript();
+    expect(c).toContain("/etc/tugra/proxy-logs/access.json");
+    expect(c).toContain("/etc/logrotate.d/tugra-proxy-access");
+  });
+
+  it("accessLog OFF/undefined: NO access-log flag, mount or mkdir (default script unchanged)", () => {
+    const def = buildProxySetupScript({ acmeEmail: "me@x.com" });
+    for (const s of [def, buildProxySetupScript({ acmeEmail: "me@x.com", accessLog: false })]) {
+      expect(s).not.toContain("accesslog");
+      expect(s).not.toContain("proxy-logs");
+      expect(s).not.toContain("/var/log/traefik");
+    }
+    expect(buildProxySetupScript({ acmeEmail: "me@x.com", accessLog: false })).toBe(def);
   });
 
   it("adds a DNS-01 wildcard resolver and passes creds via a 0600 --env-file (never -e)", () => {

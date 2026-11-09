@@ -1549,6 +1549,68 @@ export function buildImageRemoveScriptForTags(appId: string, tags: Array<string 
 export const PROXY_DNS_ENV_DIR = "/etc/tugra/proxy";
 export const PROXY_DNS_ENV_PATH = `${PROXY_DNS_ENV_DIR}/dns.env`;
 
+// Traffic Analytics: host dir the proxy writes its JSON access log into (bind-mounted at the in-container
+// dir below) so the agent can read the file. Only mounted/created when the server's analytics flag is ON.
+export const PROXY_ACCESSLOG_DIR = "/etc/tugra/proxy-logs";
+export const PROXY_ACCESSLOG_CONTAINER_DIR = "/var/log/traefik";
+export const PROXY_ACCESSLOG_FILE = `${PROXY_ACCESSLOG_CONTAINER_DIR}/access.json`;
+// The ONLY access-log fields kept (Traefik v3 static config). Everything else — notably every request/response
+// header — stays dropped by default, and query strings are stripped from RequestPath (Traefik keeps them
+// unless fields.queryparameters is dropped too) — privacy: no cookies/tokens/user-agents/?token=... on disk.
+export const PROXY_ACCESSLOG_FIELDS = [
+  "ClientHost",
+  "RequestHost",
+  "RequestPath",
+  "RequestMethod",
+  "DownstreamStatus",
+  "DownstreamContentSize",
+  "Duration",
+  "StartUTC",
+  "RouterName",
+  "EntryPointName",
+] as const;
+
+/** Traefik v3 static flags that turn on the field-minimal JSON access log. Shared by the classic and swarm proxies. */
+export function proxyAccessLogFlags(): string[] {
+  return [
+    "--accesslog=true",
+    "--accesslog.format=json",
+    `--accesslog.filepath=${PROXY_ACCESSLOG_FILE}`,
+    "--accesslog.fields.defaultmode=drop",
+    // Separate switch from fields.defaultmode: query parameters default to KEEP, which would leave
+    // `?token=...` in RequestPath and make path cardinality unbounded.
+    "--accesslog.fields.queryparameters.defaultmode=drop",
+    ...PROXY_ACCESSLOG_FIELDS.map((f) => `--accesslog.fields.names.${f}=keep`),
+  ];
+}
+
+// Traefik never rotates its access log and the container log driver does not see the file, so the host
+// owns the size bound: a logrotate drop-in (copytruncate — Traefik appends, no USR1 needed). Best-effort:
+// a host without logrotate just skips it (never fails the proxy script).
+export const PROXY_ACCESSLOG_LOGROTATE_PATH = "/etc/logrotate.d/tugra-proxy-access";
+
+/** Shell lines that install the size-bounded rotation for the proxy access log. Only used when analytics is ON. */
+export function proxyAccessLogRotateSteps(): string[] {
+  const conf = [
+    `${PROXY_ACCESSLOG_DIR}/access.json {`,
+    "  size 50M",
+    "  rotate 3",
+    "  compress",
+    "  missingok",
+    "  notifempty",
+    "  copytruncate",
+    "}",
+  ];
+  return [
+    `if command -v logrotate >/dev/null 2>&1 && [ -d /etc/logrotate.d ]; then printf '%s\\n' ${conf.map(shq).join(" ")} > ${PROXY_ACCESSLOG_LOGROTATE_PATH} || true; fi`,
+  ];
+}
+
+/** Remove the access log (it holds client IPs) + its rotation config. Run after Traffic Analytics is turned OFF. */
+export function buildProxyAccessLogCleanupScript(): string {
+  return `rm -f ${PROXY_ACCESSLOG_DIR}/access.json ${PROXY_ACCESSLOG_DIR}/access.json.* ${PROXY_ACCESSLOG_LOGROTATE_PATH}`;
+}
+
 /**
  * Idempotent setup of the Traefik proxy on a server: always a Let's Encrypt HTTP-01
  * resolver `le`, and — when the server has DNS-01 creds — a second `le-dns` resolver
@@ -1561,6 +1623,9 @@ export function buildProxySetupScript(
     dnsProvider?: string | null;
     dnsCreds?: Record<string, string> | null;
     bind?: string | null;
+    // Traffic Analytics: when true the proxy writes a JSON access log to PROXY_ACCESSLOG_DIR on the host.
+    // Default (undefined/false) emits none of it — the script is byte-identical to before.
+    accessLog?: boolean;
     // Panel-TLS (DİLİM 1): object => (re)write the panel router file; null => remove it; undefined => leave it.
     panel?: { domain: string; resolver?: PanelResolver } | null;
   } = {},
@@ -1584,6 +1649,8 @@ export function buildProxySetupScript(
   const portPublish =
     bind === "none" ? [] : [bind === "loopback" ? "-p 127.0.0.1:80:80 -p 127.0.0.1:443:443" : "-p 80:80 -p 443:443"];
 
+  const accessLog = opts.accessLog === true;
+
   const runArgs = [
     `docker run -d --name ${PROXY_NAME} --restart unless-stopped`,
     LOG_ROTATION_ARGS,
@@ -1593,6 +1660,7 @@ export function buildProxySetupScript(
     "-v /etc/tugra/letsencrypt:/letsencrypt",
     // Panel (+ future dynamic) routers live here, read-only, hot-reloaded by the file provider below.
     `-v ${PROXY_DYNAMIC_DIR}:/dynamic:ro`,
+    ...(accessLog ? [`-v ${PROXY_ACCESSLOG_DIR}:${PROXY_ACCESSLOG_CONTAINER_DIR}`] : []),
     // DNS creds via a 0600 env-file, never -e — kept off the process list / docker inspect.
     ...(dns ? [`--env-file ${PROXY_DNS_ENV_PATH}`] : []),
     PROXY_IMAGE,
@@ -1608,6 +1676,7 @@ export function buildProxySetupScript(
     "--providers.file.watch=true",
     "--entrypoints.web.address=:80",
     "--entrypoints.websecure.address=:443",
+    ...(accessLog ? proxyAccessLogFlags() : []),
     `--certificatesresolvers.le.acme.email=${shq(email)}`,
     "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json",
     "--certificatesresolvers.le.acme.httpchallenge=true",
@@ -1652,6 +1721,7 @@ export function buildProxySetupScript(
     `docker network create ${PROXY_NETWORK} 2>/dev/null || true`,
     `docker rm -f ${PROXY_NAME} 2>/dev/null || true`,
     `mkdir -p ${PROXY_DYNAMIC_DIR}`,
+    ...(accessLog ? [`mkdir -p ${PROXY_ACCESSLOG_DIR}`, ...proxyAccessLogRotateSteps()] : []),
     "mkdir -p /etc/tugra/letsencrypt && touch /etc/tugra/letsencrypt/acme.json && chmod 600 /etc/tugra/letsencrypt/acme.json",
     ...(dns
       ? [

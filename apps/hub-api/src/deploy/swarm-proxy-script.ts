@@ -32,7 +32,13 @@
  *    operator config change). Docker secrets are immutable, so a creds change mints a new hash-named secret;
  *    stale ones are pruned.
  */
-import { PROXY_IMAGE } from "./deploy-script";
+import {
+  PROXY_ACCESSLOG_CONTAINER_DIR,
+  PROXY_ACCESSLOG_DIR,
+  PROXY_IMAGE,
+  proxyAccessLogFlags,
+  proxyAccessLogRotateSteps,
+} from "./deploy-script";
 import { SWARM_OVERLAY, buildOverlayEnsureScript } from "./service-script";
 
 function shq(v: string): string {
@@ -61,9 +67,11 @@ export interface SwarmProxyDns {
  *  the dir plus acme.json (and acme-dns.json when DNS-01 is on), chmod 600. A bind mount whose source is
  *  missing makes swarm tasks fail to start on that node, so this MUST run on EVERY ingress pool node before
  *  `docker service create` — the manager gets it inside buildSwarmProxyEnsureScript, the other pool nodes
- *  via a per-node command. */
-export function buildSwarmProxyCertDirScript(withDns: boolean): string {
+ *  via a per-node command. With `accessLog` it also creates the host access-log dir the service bind-mounts
+ *  (Traffic Analytics) — the same missing-source failure mode applies to that mount. */
+export function buildSwarmProxyCertDirScript(withDns: boolean, accessLog = false): string {
   return [
+    ...(accessLog ? [`mkdir -p ${PROXY_ACCESSLOG_DIR}`, ...proxyAccessLogRotateSteps()] : []),
     `mkdir -p ${SWARM_PROXY_CERT_DIR} && touch ${SWARM_PROXY_CERT_DIR}/acme.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme.json`,
     ...(withDns ? [`touch ${SWARM_PROXY_CERT_DIR}/acme-dns.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme-dns.json`] : []),
   ].join("\n");
@@ -86,6 +94,9 @@ export function buildSwarmProxyEnsureScript(opts: {
    *  service schedule a replica onto an unintended node. Safe to pass full ids (docker node update accepts them);
    *  must NOT overlap nodeIds. */
   unlabelNodeIds?: string[];
+  /** Traffic Analytics: emit the JSON access log to PROXY_ACCESSLOG_DIR on each ingress node. Callers MUST fold
+   *  this into `confighash` (swarm-proxy.service does) or a toggle would never recreate the running service. */
+  accessLog?: boolean;
 }): string {
   const email = opts.acmeEmail || "admin@example.com";
   const ids = opts.nodeIds ?? [];
@@ -96,6 +107,7 @@ export function buildSwarmProxyEnsureScript(opts: {
   // even if the caller passes something odd for the degenerate empty-pool case.
   const replicas = pinByLabel ? Math.max(1, opts.replicas) : 1;
   const dns = opts.dns ?? null;
+  const accessLog = opts.accessLog === true;
 
   // Flags passed to Traefik as argv (after `traefik` in the wrapper) — static ones bare, user values shq'd.
   const traefikFlags = [
@@ -107,6 +119,7 @@ export function buildSwarmProxyEnsureScript(opts: {
     `--providers.swarm.network=${shq(SWARM_OVERLAY)}`,
     `--entrypoints.web.address=:80`,
     `--entrypoints.websecure.address=:443`,
+    ...(accessLog ? proxyAccessLogFlags() : []),
     `--certificatesresolvers.le.acme.email=${shq(email)}`,
     `--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json`,
     `--certificatesresolvers.le.acme.httpchallenge=true`,
@@ -130,6 +143,7 @@ export function buildSwarmProxyEnsureScript(opts: {
     `--network ${shq(SWARM_OVERLAY)}`,
     `--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,ro`,
     `--mount type=bind,src=${SWARM_PROXY_CERT_DIR},dst=/letsencrypt`,
+    ...(accessLog ? [`--mount type=bind,src=${PROXY_ACCESSLOG_DIR},dst=${PROXY_ACCESSLOG_CONTAINER_DIR}`] : []),
     `--label ${SWARM_PROXY_CONFIGHASH_LABEL}=${shq(opts.confighash)}`,
     ...(dns ? [`--secret source=${shq(dns.secretName)},target=${DNS_SECRET_MOUNT}`] : []),
     `--entrypoint sh`,
@@ -142,7 +156,7 @@ export function buildSwarmProxyEnsureScript(opts: {
   return [
     "set -e",
     buildOverlayEnsureScript(SWARM_OVERLAY),
-    buildSwarmProxyCertDirScript(!!dns),
+    buildSwarmProxyCertDirScript(!!dns, accessLog),
     // Strip the label from nodes that left the pool FIRST (best-effort), then (re)add it to every current pool
     // node — so after a scale-down the constraint only matches the intended nodes.
     ...unlabel.map((nid) => `docker node update --label-rm ${SWARM_PROXY_NODE_LABEL} ${shq(nid)} >/dev/null 2>&1 || true`),

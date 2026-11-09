@@ -1,4 +1,5 @@
 import {
+  buildSwarmProxyCertDirScript,
   buildSwarmProxyEnsureScript,
   buildSwarmProxyStatusScript,
   buildClassicProxyRunningScript,
@@ -19,6 +20,37 @@ function ensure(over: Partial<EnsureOpts> = {}): string {
 }
 
 describe("swarm-proxy-script builders", () => {
+  it("ensure WITH accessLog: json access-log flags (only the allow-listed fields) + the logs bind mount + mkdir", () => {
+    const s = ensure({ accessLog: true });
+    expect(s).toContain("--accesslog=true");
+    expect(s).toContain("--accesslog.format=json");
+    expect(s).toContain("--accesslog.filepath=/var/log/traefik/access.json");
+    expect(s).toContain("--accesslog.fields.defaultmode=drop");
+    expect(s).toContain("--accesslog.fields.queryparameters.defaultmode=drop");
+    for (const f of ["ClientHost", "RequestHost", "RequestPath", "RequestMethod", "DownstreamStatus", "DownstreamContentSize", "Duration", "StartUTC", "RouterName", "EntryPointName"]) {
+      expect(s).toContain(`--accesslog.fields.names.${f}=keep`);
+    }
+    expect(s).not.toContain("accesslog.fields.headers"); // headers stay dropped
+    expect(s).toContain("--mount type=bind,src=/etc/tugra/proxy-logs,dst=/var/log/traefik");
+    expect(s).toContain("mkdir -p /etc/tugra/proxy-logs");
+  });
+
+  it("ensure WITHOUT accessLog (default): none of the access-log flags, mount or mkdir", () => {
+    for (const s of [ensure(), ensure({ accessLog: false })]) {
+      expect(s).not.toContain("accesslog");
+      expect(s).not.toContain("proxy-logs");
+      expect(s).not.toContain("/var/log/traefik");
+    }
+  });
+
+  it("cert-dir script creates the logs dir only when accessLog is on", () => {
+    expect(buildSwarmProxyCertDirScript(false, true)).toContain("mkdir -p /etc/tugra/proxy-logs");
+    expect(buildSwarmProxyCertDirScript(false, true)).toContain("copytruncate"); // bounded on every pool node
+    expect(buildSwarmProxyCertDirScript(false)).not.toContain("logrotate");
+    expect(buildSwarmProxyCertDirScript(false)).not.toContain("proxy-logs");
+    expect(buildSwarmProxyCertDirScript(true, false)).not.toContain("proxy-logs");
+  });
+
   it("ensure: overlay + node-label pin + swarm-provider Traefik as a routing-mesh service", () => {
     const s = ensure();
     expect(s).toContain("docker network create -d overlay --opt encrypted --attachable 'tugra-swarm'");

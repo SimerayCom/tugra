@@ -130,3 +130,12 @@ export const SetProxyDynamicConfigSchema = z
   .object({ content: z.string().min(1).max(64_000) })
   .strict();
 export type SetProxyDynamicConfigInput = z.infer<typeof SetProxyDynamicConfigSchema>;
+
+// Traffic Analytics (proxy access log) per-server toggle. The response says whether the proxy re-apply landed.
+export const SetTrafficAnalyticsSchema = z.object({ enabled: z.boolean() }).strict();
+export type SetTrafficAnalyticsInput = z.infer<typeof SetTrafficAnalyticsSchema>;
+export const TrafficAnalyticsStateSchema = z.object({
+  trafficAnalytics: z.boolean(),
+  apply: z.enum(["applied", "deferred", "failed", "not-in-pool", "cluster-shared"]),
+  applyError: z.string().nullable(),
+});
