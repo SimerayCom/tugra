@@ -17,6 +17,8 @@ type Collector struct {
 	tail *tailer
 	geo  *geo
 	agg  *aggregator
+	// ipMode gates the client-address derived dimensions (city, anonymized network); see loadIPMode.
+	ipMode string
 }
 
 // NewCollector reads AccessLogPath and the GeoIP database (TUGRA_GEOIP_DB or DefaultGeoIPPath, optional).
@@ -25,7 +27,7 @@ func NewCollector() *Collector {
 }
 
 func newCollector(path string, g *geo, now time.Time) *Collector {
-	return &Collector{tail: newTailer(path), geo: g, agg: newAggregator(now)}
+	return &Collector{tail: newTailer(path), geo: g, agg: newAggregator(now), ipMode: loadIPMode(ipModeFile)}
 }
 
 // Close releases the GeoIP database.
@@ -41,8 +43,19 @@ func (c *Collector) ingestNew() {
 		if !ok {
 			return
 		}
-		// The client address is consumed here and goes no further than the country code.
-		c.agg.addRecord(rec.host, rec.path, rec.status, rec.bytes, c.geo.country(rec.clientIP), rec.unrouted)
+		// The client address is consumed here and goes no further than a country code, a city name and an
+		// anonymized network (/24 or /48); the latter two only in "anonymized" IP mode.
+		wantIP := c.ipMode != ipModeOff
+		country, city := c.geo.lookup(rec.clientIP, wantIP)
+		x := dims{
+			hasUA: rec.hasUA, browser: rec.browser, os: rec.os, device: rec.device, bot: rec.bot,
+			referrer: rec.referrer, hasLat: rec.hasLat, lat: rec.lat,
+		}
+		if wantIP {
+			x.city = city
+			x.network = anonymizeNetwork(rec.clientIP)
+		}
+		c.agg.addFull(rec.host, rec.path, rec.status, rec.bytes, country, rec.unrouted, x)
 	})
 	if d := c.tail.dropped - before; d > 0 {
 		log.Printf("traffic: access-log backlog exceeded the per-pass bound; dropped %d span(s) of the oldest entries (counts for this window are low)", d)

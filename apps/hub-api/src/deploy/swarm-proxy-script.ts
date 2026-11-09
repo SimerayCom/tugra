@@ -37,7 +37,7 @@ import {
   PROXY_ACCESSLOG_DIR,
   PROXY_IMAGE,
   proxyAccessLogFlags,
-  proxyAccessLogRotateSteps,
+  proxyAccessLogDirSteps,
 } from "./deploy-script";
 import { SWARM_OVERLAY, buildOverlayEnsureScript } from "./service-script";
 
@@ -71,7 +71,7 @@ export interface SwarmProxyDns {
  *  (Traffic Analytics) — the same missing-source failure mode applies to that mount. */
 export function buildSwarmProxyCertDirScript(withDns: boolean, accessLog = false): string {
   return [
-    ...(accessLog ? [`mkdir -p ${PROXY_ACCESSLOG_DIR}`, ...proxyAccessLogRotateSteps()] : []),
+    ...(accessLog ? proxyAccessLogDirSteps() : []),
     `mkdir -p ${SWARM_PROXY_CERT_DIR} && touch ${SWARM_PROXY_CERT_DIR}/acme.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme.json`,
     ...(withDns ? [`touch ${SWARM_PROXY_CERT_DIR}/acme-dns.json && chmod 600 ${SWARM_PROXY_CERT_DIR}/acme-dns.json`] : []),
   ].join("\n");

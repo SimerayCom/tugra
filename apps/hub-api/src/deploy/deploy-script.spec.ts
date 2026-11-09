@@ -1444,9 +1444,13 @@ describe("deploy-script", () => {
     expect(s).toContain("--accesslog.fields.queryparameters.defaultmode=drop");
     const kept = ["ClientHost", "RequestHost", "RequestPath", "RequestMethod", "DownstreamStatus", "DownstreamContentSize", "Duration", "StartUTC", "RouterName", "EntryPointName"];
     for (const f of kept) expect(s).toContain(`--accesslog.fields.names.${f}=keep`);
-    // exactly the allow-list, and no header is kept
+    // exactly the allow-list; headers: default drop, only User-Agent + Referer kept (processed locally by the agent)
     expect(s.match(/--accesslog\.fields\.names\.\w+=keep/g)).toHaveLength(kept.length);
-    expect(s).not.toContain("accesslog.fields.headers");
+    expect(s).toContain("--accesslog.fields.headers.defaultmode=drop");
+    expect(s).toContain("--accesslog.fields.headers.names.User-Agent=keep");
+    expect(s).toContain("--accesslog.fields.headers.names.Referer=keep");
+    expect(s.match(/--accesslog\.fields\.headers\.names\.[\w-]+=keep/g)).toHaveLength(2);
+    expect(s).not.toMatch(/headers\.names\.(Cookie|Authorization)/i);
     expect(s.indexOf("mkdir -p /etc/tugra/proxy-logs")).toBeGreaterThan(-1);
     expect(s.indexOf("mkdir -p /etc/tugra/proxy-logs")).toBeLessThan(s.indexOf("docker run -d"));
   });
@@ -1461,6 +1465,20 @@ describe("deploy-script", () => {
     const c = buildProxyAccessLogCleanupScript();
     expect(c).toContain("/etc/tugra/proxy-logs/access.json");
     expect(c).toContain("/etc/logrotate.d/tugra-proxy-access");
+  });
+
+  it("accessLog ON: the access-log dir/file are locked down to root (0700/0600) BEFORE the proxy starts (raw UA/Referer on disk)", () => {
+    const s = buildProxySetupScript({ acmeEmail: "me@x.com", accessLog: true });
+    const run = s.indexOf("docker run -d");
+    for (const step of [
+      "chmod 700 /etc/tugra/proxy-logs",
+      "touch /etc/tugra/proxy-logs/access.json && chmod 600 /etc/tugra/proxy-logs/access.json",
+      "chmod 600 /etc/tugra/proxy-logs/access.json.*",
+    ]) {
+      expect(s).toContain(step);
+      expect(s.indexOf(step)).toBeLessThan(run);
+    }
+    expect(s.indexOf("mkdir -p /etc/tugra/proxy-logs")).toBeLessThan(s.indexOf("chmod 700 /etc/tugra/proxy-logs"));
   });
 
   it("accessLog OFF/undefined: NO access-log flag, mount or mkdir (default script unchanged)", () => {

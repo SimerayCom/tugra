@@ -498,13 +498,14 @@ func TestCollectorEndToEndNoIPLeak(t *testing.T) {
 		t.Fatalf("countries=%+v", d.Countries)
 	}
 
-	// Privacy: the serialized message carries only host, counts, paths and country codes.
+	// Privacy: the serialized message carries only host, counts, paths, country codes and anonymized
+	// aggregates (a /24 network, never a full address; see TestCollectorDimensionsNoRawLeak).
 	b, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, forbidden := range []string{"81.2.69", "89.160.20", "10.0.0.5", "127.0.0.1", "secret", "token", "ClientHost", "clientIP", "User-Agent", "Cookie", ":443"} {
+	for _, forbidden := range []string{"81.2.69.10", "89.160.20.7", "10.0.0.5", "127.0.0.1", "secret", "token", "ClientHost", "clientIP", "User-Agent", "Cookie", ":443"} {
 		if strings.Contains(s, forbidden) {
 			t.Fatalf("message leaks %q: %s", forbidden, s)
 		}
@@ -523,7 +524,8 @@ func TestCollectorEndToEndNoIPLeak(t *testing.T) {
 	dom := generic["domains"].([]any)[0].(map[string]any)
 	for k := range dom {
 		switch k {
-		case "host", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "paths", "countries":
+		case "host", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "paths", "countries",
+			"browsers", "os", "devices", "referrers", "cities", "networks", "bots", "latency":
 		default:
 			t.Fatalf("unexpected domain field %q", k)
 		}

@@ -322,7 +322,24 @@ export interface ContainerMetricsMsg {
   samples: ContainerStat[];
 }
 
-/** One host's per-minute request aggregate (counts only; never raw client IPs). */
+/**
+ * Fixed latency histogram bucket upper bounds in MILLISECONDS (inclusive). A request of d ms lands in the
+ * first bucket with d <= bound; the extra last count is the overflow (> 10000 ms), so a `latency` array has
+ * TRAFFIC_LATENCY_BUCKETS_MS.length + 1 = 14 counts. The hub recovers p95 by cumulative interpolation.
+ * Mirrored in agent/internal/protocol (TrafficLatencyBucketsMs).
+ */
+export const TRAFFIC_LATENCY_BUCKETS_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000] as const;
+
+/** A dimension value and its request count (already capped; the remainder is folded into "(other)"). */
+export interface TrafficKeyCount {
+  k: string;
+  n: number;
+}
+
+/**
+ * One host's per-minute request aggregate (counts only). Every dimension below is computed LOCALLY by the
+ * agent; no raw client IP, User-Agent string, Referer URL or cookie is ever carried.
+ */
 export interface TrafficDomainStat {
   host: string; // request Host header (lowercased by the hub on ingest)
   requests: number;
@@ -333,6 +350,15 @@ export interface TrafficDomainStat {
   bytes: number; // response bytes
   paths: { p: string; n: number; b: number }[]; // top paths: path, requests, bytes
   countries?: { c: string; n: number }[]; // ISO-3166 alpha-2 country code, requests ("ZZ" = unknown/overflow)
+  browsers?: TrafficKeyCount[]; // browser family name ("Chrome", "Firefox", ...)
+  os?: TrafficKeyCount[]; // OS name ("Windows", "iOS", ...)
+  devices?: TrafficKeyCount[]; // device class: desktop | mobile | tablet | bot | other
+  referrers?: TrafficKeyCount[]; // referrer HOST only ("(direct)" = none / same host)
+  cities?: TrafficKeyCount[]; // city name from the local GeoIP City DB (omitted when IP mode is off)
+  networks?: TrafficKeyCount[]; // ANONYMIZED network: IPv4 /24 ("1.2.3.0/24") or IPv6 /48 (omitted when IP mode is off)
+  bots?: { human: number; bot: number };
+  latency?: number[]; // counts per TRAFFIC_LATENCY_BUCKETS_MS bucket + overflow (length 14)
+  unique?: string; // RESERVED for a later unique-visitors (HyperLogLog) slice; agents leave it empty
 }
 
 /**

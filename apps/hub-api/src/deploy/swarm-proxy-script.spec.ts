@@ -30,7 +30,11 @@ describe("swarm-proxy-script builders", () => {
     for (const f of ["ClientHost", "RequestHost", "RequestPath", "RequestMethod", "DownstreamStatus", "DownstreamContentSize", "Duration", "StartUTC", "RouterName", "EntryPointName"]) {
       expect(s).toContain(`--accesslog.fields.names.${f}=keep`);
     }
-    expect(s).not.toContain("accesslog.fields.headers"); // headers stay dropped
+    // headers: default drop, only User-Agent + Referer kept (lockstep with the classic proxy)
+    expect(s).toContain("--accesslog.fields.headers.defaultmode=drop");
+    expect(s).toContain("--accesslog.fields.headers.names.User-Agent=keep");
+    expect(s).toContain("--accesslog.fields.headers.names.Referer=keep");
+    expect(s.match(/--accesslog\.fields\.headers\.names\.[\w-]+=keep/g)).toHaveLength(2);
     expect(s).toContain("--mount type=bind,src=/etc/tugra/proxy-logs,dst=/var/log/traefik");
     expect(s).toContain("mkdir -p /etc/tugra/proxy-logs");
   });
@@ -45,6 +49,8 @@ describe("swarm-proxy-script builders", () => {
 
   it("cert-dir script creates the logs dir only when accessLog is on", () => {
     expect(buildSwarmProxyCertDirScript(false, true)).toContain("mkdir -p /etc/tugra/proxy-logs");
+    expect(buildSwarmProxyCertDirScript(false, true)).toContain("chmod 700 /etc/tugra/proxy-logs");
+    expect(buildSwarmProxyCertDirScript(false, true)).toContain("chmod 600 /etc/tugra/proxy-logs/access.json");
     expect(buildSwarmProxyCertDirScript(false, true)).toContain("copytruncate"); // bounded on every pool node
     expect(buildSwarmProxyCertDirScript(false)).not.toContain("logrotate");
     expect(buildSwarmProxyCertDirScript(false)).not.toContain("proxy-logs");

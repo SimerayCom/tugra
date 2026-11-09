@@ -10,7 +10,8 @@ import (
 )
 
 // record is the privacy-reduced view of one access-log line. The client address is carried only as far
-// as the country lookup and is never stored in an aggregate or sent anywhere.
+// as the country/city/network derivation and is never stored in an aggregate or sent anywhere. The raw
+// User-Agent and Referer are consumed inside parseLine: only the derived labels below survive.
 type record struct {
 	host     string // normalized request host
 	path     string // query/fragment/params stripped, identifier-like segments collapsed, length-bounded
@@ -18,6 +19,13 @@ type record struct {
 	bytes    int64
 	clientIP string
 	unrouted bool // no router matched (empty RouterName): a 404 for a host Tugra does not serve
+
+	hasUA               bool   // a User-Agent was present (so browser/os/device/bot are meaningful)
+	browser, os, device string // whitelisted labels from the local UA parse, never the UA text
+	bot                 bool
+	referrer            string // referrer HOST only, or refDirect
+	hasLat              bool   // Duration was present
+	lat                 int    // index into protocol.TrafficLatencyBucketsMs (len = overflow)
 }
 
 // rawLine mirrors the Traefik v3 JSON access-log fields we keep. Everything is `any` so a value of an
@@ -29,6 +37,13 @@ type rawLine struct {
 	DownstreamStatus      any `json:"DownstreamStatus"`
 	DownstreamContentSize any `json:"DownstreamContentSize"`
 	RouterName            any `json:"RouterName"`
+	Duration              any `json:"Duration"` // nanoseconds
+
+	// Kept request headers (Traefik v3 writes them flat as request_<Header>). A nested "request" object
+	// is accepted too. Used only to derive labels locally; the values are never stored.
+	RequestUserAgent any `json:"request_User-Agent"`
+	RequestReferer   any `json:"request_Referer"`
+	Request          any `json:"request"`
 }
 
 const maxPathLen = 200
@@ -49,14 +64,58 @@ func parseLine(line []byte) (rec record, ok bool) {
 	if host == "" {
 		return record{}, false
 	}
-	return record{
+	rec = record{
 		host:     host,
 		path:     normalizePath(asString(raw.RequestPath)),
 		status:   int(clampInt(asFloat(raw.DownstreamStatus), 0, 999)),
 		bytes:    clampInt(asFloat(raw.DownstreamContentSize), 0, math.MaxInt32*64),
 		clientIP: asString(raw.ClientHost),
 		unrouted: router == "",
-	}, true
+	}
+	if ua := headerValue(raw.RequestUserAgent, raw.Request, "User-Agent"); ua != "" {
+		rec.hasUA = true
+		rec.browser, rec.os, rec.device, rec.bot = classifyUA(ua)
+	}
+	rec.referrer = refererHost(headerValue(raw.RequestReferer, raw.Request, "Referer"), host)
+	if ns, present := asNumber(raw.Duration); present {
+		rec.hasLat = true
+		rec.lat = latencyBucket(ns)
+	}
+	return rec, true
+}
+
+// headerValue returns a kept request header from the flat key (already decoded into flat) or, failing that,
+// from a nested "request" object (case-insensitive name). A list value yields its first element.
+func headerValue(flat, nested any, name string) string {
+	if s := headerString(flat); s != "" {
+		return s
+	}
+	if m, ok := nested.(map[string]any); ok {
+		for k, v := range m {
+			if strings.EqualFold(k, name) {
+				return headerString(v)
+			}
+		}
+	}
+	return ""
+}
+
+func headerString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case []any:
+		if len(t) > 0 {
+			s, _ := t[0].(string)
+			return s
+		}
+	}
+	return ""
+}
+
+func asNumber(v any) (float64, bool) {
+	f, ok := v.(float64)
+	return f, ok
 }
 
 // Router names Tugra emits for redirect-only routers. Traefik always reports a router as

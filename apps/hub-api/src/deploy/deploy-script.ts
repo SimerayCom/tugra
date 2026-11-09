@@ -1555,8 +1555,11 @@ export const PROXY_ACCESSLOG_DIR = "/etc/tugra/proxy-logs";
 export const PROXY_ACCESSLOG_CONTAINER_DIR = "/var/log/traefik";
 export const PROXY_ACCESSLOG_FILE = `${PROXY_ACCESSLOG_CONTAINER_DIR}/access.json`;
 // The ONLY access-log fields kept (Traefik v3 static config). Everything else — notably every request/response
-// header — stays dropped by default, and query strings are stripped from RequestPath (Traefik keeps them
-// unless fields.queryparameters is dropped too) — privacy: no cookies/tokens/user-agents/?token=... on disk.
+// header except the two in PROXY_ACCESSLOG_HEADERS — stays dropped by default, and query strings are stripped
+// from RequestPath (Traefik keeps them unless fields.queryparameters is dropped too) — privacy: no
+// cookies/tokens/?token=... on disk. The two kept headers (User-Agent, Referer) ARE written raw to the host
+// access log, so that log is root-only (see proxyAccessLogDirSteps) and size-rotated; only the agent's
+// locally computed aggregates ever leave the host.
 export const PROXY_ACCESSLOG_FIELDS = [
   "ClientHost",
   "RequestHost",
@@ -1570,6 +1573,12 @@ export const PROXY_ACCESSLOG_FIELDS = [
   "EntryPointName",
 ] as const;
 
+// The ONLY request headers kept. They are written (raw) to the on-host, root-only (0700 dir / 0600 file),
+// size-rotated access log and processed
+// LOCALLY by the agent (browser/OS/device/bot and referrer host); they are never forwarded anywhere —
+// only the agent's aggregates leave the host. Cookie / Authorization / everything else stays dropped.
+export const PROXY_ACCESSLOG_HEADERS = ["User-Agent", "Referer"] as const;
+
 /** Traefik v3 static flags that turn on the field-minimal JSON access log. Shared by the classic and swarm proxies. */
 export function proxyAccessLogFlags(): string[] {
   return [
@@ -1581,6 +1590,9 @@ export function proxyAccessLogFlags(): string[] {
     // `?token=...` in RequestPath and make path cardinality unbounded.
     "--accesslog.fields.queryparameters.defaultmode=drop",
     ...PROXY_ACCESSLOG_FIELDS.map((f) => `--accesslog.fields.names.${f}=keep`),
+    // Headers: drop all, keep exactly the allow-list above (never forwarded; read locally by the agent).
+    "--accesslog.fields.headers.defaultmode=drop",
+    ...PROXY_ACCESSLOG_HEADERS.map((h) => `--accesslog.fields.headers.names.${h}=keep`),
   ];
 }
 
@@ -1588,6 +1600,23 @@ export function proxyAccessLogFlags(): string[] {
 // owns the size bound: a logrotate drop-in (copytruncate — Traefik appends, no USR1 needed). Best-effort:
 // a host without logrotate just skips it (never fails the proxy script).
 export const PROXY_ACCESSLOG_LOGROTATE_PATH = "/etc/logrotate.d/tugra-proxy-access";
+
+/**
+ * Shell lines that create the access-log dir and lock it down BEFORE the proxy starts: the raw User-Agent and
+ * Referer URL (path/query) land in access.json, so dir 0700 + file 0600 (root only; the agent reads it as root
+ * in its container). The file is pre-created so Traefik appends to it instead of creating it with its default
+ * (group/world-readable) mode; logrotate's copytruncate copies keep the source file's mode, and the 0700 dir
+ * keeps the rotated .gz files root-only as well. Idempotent: also tightens a dir/file from an older install.
+ */
+export function proxyAccessLogDirSteps(): string[] {
+  return [
+    `mkdir -p ${PROXY_ACCESSLOG_DIR}`,
+    `chmod 700 ${PROXY_ACCESSLOG_DIR}`,
+    `touch ${PROXY_ACCESSLOG_DIR}/access.json && chmod 600 ${PROXY_ACCESSLOG_DIR}/access.json`,
+    `chmod 600 ${PROXY_ACCESSLOG_DIR}/access.json.* 2>/dev/null || true`,
+    ...proxyAccessLogRotateSteps(),
+  ];
+}
 
 /** Shell lines that install the size-bounded rotation for the proxy access log. Only used when analytics is ON. */
 export function proxyAccessLogRotateSteps(): string[] {
@@ -1721,7 +1750,7 @@ export function buildProxySetupScript(
     `docker network create ${PROXY_NETWORK} 2>/dev/null || true`,
     `docker rm -f ${PROXY_NAME} 2>/dev/null || true`,
     `mkdir -p ${PROXY_DYNAMIC_DIR}`,
-    ...(accessLog ? [`mkdir -p ${PROXY_ACCESSLOG_DIR}`, ...proxyAccessLogRotateSteps()] : []),
+    ...(accessLog ? proxyAccessLogDirSteps() : []),
     "mkdir -p /etc/tugra/letsencrypt && touch /etc/tugra/letsencrypt/acme.json && chmod 600 /etc/tugra/letsencrypt/acme.json",
     ...(dns
       ? [

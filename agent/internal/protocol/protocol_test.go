@@ -144,6 +144,14 @@ func TestTrafficMetricsRoundTrip(t *testing.T) {
 			Host: "a.example.com", Requests: 10, S2xx: 7, S3xx: 1, S4xx: 1, S5xx: 1, Bytes: 4096,
 			Paths:     []TrafficPathStat{{P: "/", N: 6, B: 2048}, {P: "/api", N: 4, B: 2048}},
 			Countries: []TrafficCountryStat{{C: "TR", N: 8}},
+			Browsers:  []TrafficKeyCount{{K: "Chrome", N: 9}},
+			OS:        []TrafficKeyCount{{K: "Windows", N: 9}},
+			Devices:   []TrafficKeyCount{{K: "desktop", N: 9}},
+			Referrers: []TrafficKeyCount{{K: "(direct)", N: 10}},
+			Cities:    []TrafficKeyCount{{K: "Istanbul", N: 5}},
+			Networks:  []TrafficKeyCount{{K: "1.2.3.0/24", N: 10}},
+			Bots:      &TrafficBots{Human: 9, Bot: 1},
+			Latency:   make([]int64, len(TrafficLatencyBucketsMs)+1),
 		}},
 	}
 	b, err := json.Marshal(in)
@@ -160,7 +168,8 @@ func TestTrafficMetricsRoundTrip(t *testing.T) {
 		}
 	}
 	d := m["domains"].([]any)[0].(map[string]any)
-	for _, k := range []string{"host", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "paths", "countries"} {
+	for _, k := range []string{"host", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "paths", "countries",
+		"browsers", "os", "devices", "referrers", "cities", "networks", "bots", "latency"} {
 		if _, ok := d[k]; !ok {
 			t.Fatalf("missing domain key %q: %s", k, b)
 		}
@@ -183,9 +192,25 @@ func TestTrafficMetricsRoundTrip(t *testing.T) {
 		out.Domains[0].Countries[0].C != "TR" {
 		t.Fatalf("round-trip mismatch: %+v", out)
 	}
+	od := out.Domains[0]
+	if od.Browsers[0].K != "Chrome" || od.Networks[0].K != "1.2.3.0/24" || od.Bots == nil || od.Bots.Bot != 1 || len(od.Latency) != 14 {
+		t.Fatalf("round-trip lost the extended dimensions: %+v", od)
+	}
+	bk := d["bots"].(map[string]any)
+	if _, ok := bk["human"]; !ok {
+		t.Fatalf("bots tag wrong: %s", b)
+	}
+	if _, ok := d["unique"]; ok {
+		t.Fatalf("reserved unique must be omitted while empty: %s", b)
+	}
+	if len(TrafficLatencyBucketsMs) != 13 || TrafficLatencyBucketsMs[12] != 10000 {
+		t.Fatalf("latency bucket constant drifted from packages/shared")
+	}
 	// countries is optional: omitted when empty, so the wire shape matches `countries?` in the shared type.
 	e, _ := json.Marshal(TrafficDomainStat{Host: "x", Paths: []TrafficPathStat{}})
-	if strings.Contains(string(e), `"countries"`) {
-		t.Fatalf("empty countries must be omitted: %s", e)
+	for _, k := range []string{"countries", "browsers", "os", "devices", "referrers", "cities", "networks", "bots", "latency", "unique"} {
+		if strings.Contains(string(e), `"`+k+`"`) {
+			t.Fatalf("empty %s must be omitted: %s", k, e)
+		}
 	}
 }

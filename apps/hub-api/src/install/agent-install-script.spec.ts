@@ -57,6 +57,9 @@ describe("renderAgentInstallScript", () => {
     expect(script).toContain("--restart unless-stopped");
     expect(script).toContain('-e TUGRA_HUB="$HUB"');
     expect(script).toContain('-e TUGRA_TOKEN="$TOKEN"');
+    // optional traffic IP-mode knob: persisted under /etc/tugra and forwarded only when set
+    expect(script).toContain("/etc/tugra/traffic-ip-mode");
+    expect(script).toContain('${TUGRA_TRAFFIC_IP_MODE:+-e "TUGRA_TRAFFIC_IP_MODE=$TUGRA_TRAFFIC_IP_MODE"}');
   });
 
   it("is idempotent — removes any existing container first (volume keeps the agent identity)", () => {

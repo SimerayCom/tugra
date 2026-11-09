@@ -114,6 +114,24 @@ type TrafficCountryStat struct {
 	N int64  `json:"n"`
 }
 
+// TrafficLatencyBucketsMs are the fixed latency histogram upper bounds in milliseconds (mirrors
+// TRAFFIC_LATENCY_BUCKETS_MS in packages/shared). A latency array has len+1 = 14 counts, the last being the
+// overflow (> 10000 ms); the hub recovers p95 by cumulative interpolation.
+var TrafficLatencyBucketsMs = [...]int64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+
+// TrafficKeyCount is a dimension value (browser, OS, referrer host, city, anonymized network, ...) with its
+// request count. Keys are locally derived labels, never a raw IP, User-Agent or Referer.
+type TrafficKeyCount struct {
+	K string `json:"k"`
+	N int64  `json:"n"`
+}
+
+// TrafficBots splits a domain's requests into human and bot traffic.
+type TrafficBots struct {
+	Human int64 `json:"human"`
+	Bot   int64 `json:"bot"`
+}
+
 // TrafficDomainStat is one host's aggregate for a window (mirrors packages/shared).
 type TrafficDomainStat struct {
 	Host      string               `json:"host"`
@@ -125,6 +143,17 @@ type TrafficDomainStat struct {
 	Bytes     int64                `json:"bytes"`
 	Paths     []TrafficPathStat    `json:"paths"`
 	Countries []TrafficCountryStat `json:"countries,omitempty"`
+
+	// Additive, optional dimensions computed locally by the agent (aggregates only).
+	Browsers  []TrafficKeyCount `json:"browsers,omitempty"`
+	OS        []TrafficKeyCount `json:"os,omitempty"`
+	Devices   []TrafficKeyCount `json:"devices,omitempty"`
+	Referrers []TrafficKeyCount `json:"referrers,omitempty"`
+	Cities    []TrafficKeyCount `json:"cities,omitempty"`
+	Networks  []TrafficKeyCount `json:"networks,omitempty"`
+	Bots      *TrafficBots      `json:"bots,omitempty"`
+	Latency   []int64           `json:"latency,omitempty"` // len(TrafficLatencyBucketsMs)+1 counts
+	Unique    string            `json:"unique,omitempty"`  // RESERVED for the unique-visitors (HyperLogLog) slice; left empty
 }
 
 // TrafficMetrics is the agent->hub per-window visitor traffic aggregate. The hub sums it additively (no
@@ -214,11 +243,11 @@ type AgentUpdateResult struct {
 
 // Hub -> Agent (one struct covers all; unused fields stay empty)
 type ServerMsg struct {
-	Type      string `json:"type"`
-	Nonce     string `json:"nonce"`
-	ServerID  string `json:"serverId"`
-	Seal      string `json:"seal"`
-	Message   string `json:"message"`
+	Type     string `json:"type"`
+	Nonce    string `json:"nonce"`
+	ServerID string `json:"serverId"`
+	Seal     string `json:"seal"`
+	Message  string `json:"message"`
 	// Code is an optional machine-readable reason on a rejection. "reenroll" is the ONLY signal that
 	// tells an already-enrolled agent its stored identity is genuinely gone (server row deleted / never
 	// enrolled) and a fresh enroll is the correct recovery. Absent on generic/transient rejections.

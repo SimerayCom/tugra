@@ -1,9 +1,10 @@
-import { PROTOCOL_VERSION, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
+import { PROTOCOL_VERSION, TRAFFIC_LATENCY_BUCKETS_MS, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
 import type {
   MetricsSample,
   EnrollMsg,
   ContainerMetricsMsg,
   TrafficMetricsMsg,
+  TrafficDomainStat,
   AgentMessage,
   HubMessage,
   LogStartMsg,
@@ -131,6 +132,28 @@ describe("shared protocol", () => {
     const asAgentMsg: AgentMessage = msg;
     expect(asAgentMsg.type).toBe("traffic_metrics");
     expect(msg.domains[0].countries).toBeUndefined();
+    expect(PROTOCOL_VERSION).toBe(2);
+  });
+
+  it("extends TrafficDomainStat with optional aggregate-only dimensions (additive, no version bump)", () => {
+    expect(TRAFFIC_LATENCY_BUCKETS_MS).toHaveLength(13);
+    expect([...TRAFFIC_LATENCY_BUCKETS_MS]).toEqual([1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]);
+    const latency = new Array(TRAFFIC_LATENCY_BUCKETS_MS.length + 1).fill(0);
+    latency[3] = 2;
+    const d: TrafficDomainStat = {
+      host: "a.example.com", requests: 2, s2xx: 2, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 10, paths: [],
+      browsers: [{ k: "Chrome", n: 2 }],
+      os: [{ k: "Windows", n: 2 }],
+      devices: [{ k: "desktop", n: 2 }],
+      referrers: [{ k: "(direct)", n: 2 }],
+      cities: [{ k: "Istanbul", n: 1 }],
+      networks: [{ k: "1.2.3.0/24", n: 2 }],
+      bots: { human: 2, bot: 0 },
+      latency,
+    };
+    const msg: TrafficMetricsMsg = { type: "traffic_metrics", ts: 1, windowSec: 60, domains: [d] };
+    expect(msg.domains[0].latency).toHaveLength(14);
+    expect(msg.domains[0].unique).toBeUndefined(); // reserved for the HyperLogLog slice
     expect(PROTOCOL_VERSION).toBe(2);
   });
 });
