@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { TrafficMetricsMsg } from "@tugra/shared";
-import { TrafficMetricsService, OTHER_PATH, UNMATCHED_HOST, cleanPath } from "./traffic-metrics.service";
+import { TrafficMetricsService, OTHER_PATH, UNMATCHED_HOST, UNKNOWN_COUNTRY, cleanPath, cleanCountry } from "./traffic-metrics.service";
 import { HostResolverService } from "./host-resolver.service";
 
 function make(owners: Record<string, { appId: string; teamId: string }> = {}) {
@@ -14,7 +14,8 @@ function make(owners: Record<string, { appId: string; teamId: string }> = {}) {
   const svc = new TrafficMetricsService(prisma, resolver);
   const metricCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficMetric"`));
   const pathCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficPath"`));
-  return { svc, prisma, forServer, metricCalls, pathCalls };
+  const countryCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficCountry"`));
+  return { svc, prisma, forServer, metricCalls, pathCalls, countryCalls };
 }
 // metric row = 11 params: id, serverId, domain, appId, bucket, requests, s2xx, s3xx, s4xx, s5xx, bytes
 const metricRows = (c: Prisma.Sql) => {
@@ -28,6 +29,13 @@ const pathRows = (c: Prisma.Sql) => {
   const v = c.values as unknown[];
   const rows: unknown[][] = [];
   for (let i = 0; i < v.length; i += 7) rows.push(v.slice(i, i + 7));
+  return rows;
+};
+// country row = 6 params: id, serverId, domain, bucket, country, requests
+const countryRows = (c: Prisma.Sql) => {
+  const v = c.values as unknown[];
+  const rows: unknown[][] = [];
+  for (let i = 0; i < v.length; i += 6) rows.push(v.slice(i, i + 6));
   return rows;
 };
 const msg = (domains: any[], ts = Date.now()): TrafficMetricsMsg => ({ type: "traffic_metrics", ts, windowSec: 60, domains });
@@ -196,10 +204,90 @@ describe("TrafficMetricsService.ingest", () => {
     expect(row.slice(5)).toEqual([0, 0, 0, 0, 2, 0n]);
   });
 
-  it("ignores countries (reserved) and never writes them", async () => {
-    const { svc, prisma } = make();
-    await svc.ingest("srv1", msg([stat({ countries: [{ c: "TR", n: 10 }] })]));
-    expect(JSON.stringify(prisma.$executeRaw.mock.calls, (_k, v) => (typeof v === "bigint" ? v.toString() : v))).not.toContain("TR");
+  describe("countries", () => {
+    it("stores per-country counts with an additive upsert in the same transaction as metric/path writes", async () => {
+      const { svc, prisma, countryCalls } = make();
+      await svc.ingest("srv1", msg([stat({ paths: [{ p: "/a", n: 1, b: 1 }], countries: [{ c: "TR", n: 7 }, { c: "DE", n: 3 }] })]));
+      const [call] = countryCalls();
+      expect(call.sql).toContain(`ON CONFLICT ("serverId", "domain", "bucket", "country") DO UPDATE SET`);
+      expect(call.sql).toContain(`"requests" = "TrafficCountry"."requests" + EXCLUDED."requests"`);
+      const rows = countryRows(call);
+      expect(rows.map((r) => [r[1], r[2], r[4], r[5]])).toEqual([["srv1", "a.com", "TR", 7], ["srv1", "a.com", "DE", 3]]);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(3); // metric + path + country chunk
+    });
+
+    it("a resent bucket hits the same conflict key (sums, never overwrites); duplicate codes in a batch are merged", async () => {
+      const ts = Math.floor(Date.now() / 60_000) * 60_000 + 5_000;
+      const { svc, countryCalls } = make();
+      await svc.ingest("srv1", msg([stat({ countries: [{ c: "TR", n: 2 }, { c: "TR", n: 3 }] })], ts));
+      await svc.ingest("srv1", msg([stat({ countries: [{ c: "TR", n: 4 }] })], ts + 20_000));
+      const [a, b] = countryCalls().map((c) => countryRows(c));
+      expect(a).toHaveLength(1);
+      expect(a[0][5]).toBe(5);
+      expect([a[0][1], a[0][2], a[0][3], a[0][4]]).toEqual([b[0][1], b[0][2], b[0][3], b[0][4]]); // identical conflict key
+      expect(b[0][5]).toBe(4);
+      expect(countryCalls()[1].sql).toContain(`"requests" = "TrafficCountry"."requests" + EXCLUDED."requests"`);
+    });
+
+    it("invalid codes fold into ZZ (and merge with a literal ZZ)", async () => {
+      expect(cleanCountry("TR")).toBe("TR");
+      for (const bad of ["tr", "USA", "T", "", "1X", "T1", "T\u0000", 5, null, undefined, {}]) expect(cleanCountry(bad)).toBe(UNKNOWN_COUNTRY);
+      const { svc, countryCalls } = make();
+      await svc.ingest("srv1", msg([stat({ countries: [{ c: "TR", n: 5 }, { c: "usa", n: 2 }, { c: "9!", n: 3 }, { c: "ZZ", n: 4 }, { c: 7, n: 1 }] })]));
+      const rows = countryRows(countryCalls()[0]);
+      expect(rows.map((r) => [r[4], r[5]])).toEqual([["TR", 5], ["ZZ", 10]]);
+    });
+
+    it("keeps the top 50 per (domain, bucket) and folds the overflow into one ZZ row", async () => {
+      const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      const countries: { c: string; n: number }[] = [];
+      for (let i = 0; i < 60; i++) countries.push({ c: A[Math.floor(i / 26)] + A[i % 26], n: 100 - i }); // AA..CH, n = 100..41
+      const { svc, countryCalls } = make({ "a.com": { appId: "app1", teamId: "t1" } });
+      await svc.ingest("srv1", msg([stat({ countries })]));
+      const rows = countryRows(countryCalls()[0]);
+      expect(rows.filter((r) => r[4] !== "ZZ")).toHaveLength(50);
+      const kept = new Set(rows.map((r) => r[4]));
+      expect(kept.has("AA")).toBe(true);
+      expect(kept.has(A[Math.floor(49 / 26)] + A[49 % 26])).toBe(true); // n=51 last survivor
+      expect(kept.has(A[Math.floor(50 / 26)] + A[50 % 26])).toBe(false);
+      let expected = 0;
+      for (let n = 41; n <= 50; n++) expected += n; // the 10 lowest
+      expect(rows.find((r) => r[4] === "ZZ")![5]).toBe(expected);
+    });
+
+    it("guards numbers: negative / NaN / Infinity / non-number add nothing, and zero-only entries write no row", async () => {
+      const { svc, countryCalls } = make();
+      await svc.ingest("srv1", msg([stat({ countries: [{ c: "TR", n: -5 }, { c: "DE", n: Number.NaN }, { c: "FR", n: Infinity }, { c: "ES", n: "9" }, { c: "IT", n: 2.9 }] })]));
+      expect(countryRows(countryCalls()[0]).map((r) => [r[4], r[5]])).toEqual([["IT", 2]]);
+    });
+
+    it("empty / absent / malformed countries write nothing and do not break the metric+path writes", async () => {
+      const { svc, prisma, metricCalls, countryCalls } = make();
+      await svc.ingest("srv1", msg([stat({ countries: [] })]));
+      await svc.ingest("srv1", msg([stat()])); // older agent: field absent
+      await svc.ingest("srv1", msg([stat({ countries: "nope" }), stat({ host: "b.com", countries: [null, 1, "x", { c: "TR" }, { n: 3 }] })]));
+      expect(metricCalls()).toHaveLength(3);
+      expect(countryCalls().flatMap(countryRows).map((r) => [r[2], r[4], r[5]])).toEqual([["b.com", "ZZ", 3]]); // { n: 3 } has no valid code -> ZZ
+      expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(1); // metric only
+    });
+
+    it("never throws on malformed countries and a failing transaction is swallowed", async () => {
+      const { svc, prisma } = make();
+      for (const countries of [null, 5, "x", {}, [undefined], [[]], [{ c: { toString: 1 }, n: {} }]]) {
+        await expect(svc.ingest("srv1", msg([stat({ countries })]))).resolves.toBeUndefined();
+      }
+      prisma.$transaction.mockRejectedValue(new Error("deadlock"));
+      await expect(svc.ingest("srv1", msg([stat({ countries: [{ c: "TR", n: 1 }] })]))).resolves.toBeUndefined();
+    });
+
+    it("caps a kept unmatched host at 10 countries", async () => {
+      const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      const countries = Array.from({ length: 30 }, (_, i) => ({ c: "A" + A[i % 26] + "", n: 1 })).filter((c) => c.c.length === 2);
+      const { svc, countryCalls } = make();
+      await svc.ingest("srv1", msg([stat({ host: "unknown.net", countries })]));
+      expect(countryRows(countryCalls()[0]).filter((r) => r[4] !== "ZZ").length).toBeLessThanOrEqual(10);
+    });
   });
 
   it("drops a window that is far in the past or the future", async () => {

@@ -332,7 +332,7 @@ export interface TrafficDomainStat {
   s5xx: number;
   bytes: number; // response bytes
   paths: { p: string; n: number; b: number }[]; // top paths: path, requests, bytes
-  countries?: { c: string; n: number }[]; // reserved (ISO country code, requests); empty until GeoIP
+  countries?: { c: string; n: number }[]; // ISO-3166 alpha-2 country code, requests ("ZZ" = unknown/overflow)
 }
 
 /**

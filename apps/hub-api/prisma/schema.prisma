@@ -361,6 +361,7 @@ model Server {
   containerMetricRollups ContainerMetricRollup[]
   trafficMetrics       TrafficMetric[]
   trafficPaths         TrafficPath[]
+  trafficCountries     TrafficCountry[]
   logDrains            LogDrain[]
   proxyDynamicConfigs  ProxyDynamicConfig[]
   tunnel               ServerTunnel?
@@ -650,6 +651,21 @@ model TrafficPath {
   bytes    BigInt
 
   @@unique([serverId, domain, bucket, path])
+  @@index([serverId, domain, bucket])
+  @@index([bucket])
+}
+
+// Requests per visitor country (ISO-3166 alpha-2, "ZZ" = unknown/overflow) per (server, host, minute).
+model TrafficCountry {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  bucket   DateTime
+  country  String
+  requests Int
+
+  @@unique([serverId, domain, bucket, country])
   @@index([serverId, domain, bucket])
   @@index([bucket])
 }

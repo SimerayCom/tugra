@@ -27,6 +27,11 @@ const pathRows = [
   { serverId: "srv-bob", domain: "bob-secret.com", bucket, path: "/bob-secret", requests: 500, bytes: 5n },
   { serverId: "srv-bob", domain: "alice.com", bucket, path: "/a", requests: 7000, bytes: 70n },
 ];
+const countryRows = [
+  { serverId: "srv-alice", domain: "alice.com", bucket, country: "TR", requests: 3 },
+  { serverId: "srv-bob", domain: "bob-secret.com", bucket, country: "KP", requests: 500 },
+  { serverId: "srv-bob", domain: "alice.com", bucket, country: "TR", requests: 7000 },
+];
 const inScope = (r: any, w: any) =>
   w.serverId.in.includes(r.serverId) && r.bucket >= w.bucket.gte && (!w.domain || r.domain === w.domain);
 
@@ -64,6 +69,17 @@ function build() {
         return Promise.resolve([...acc.values()]);
       }),
       aggregate: jest.fn(() => Promise.resolve({ _sum: { requests: null, bytes: null } })),
+    },
+    trafficCountry: {
+      groupBy: jest.fn(({ where }: any) => {
+        const acc = new Map<string, any>();
+        for (const r of countryRows.filter((x) => inScope(x, where))) {
+          const a = acc.get(r.country) ?? { country: r.country, _sum: { requests: 0 } };
+          a._sum.requests += r.requests;
+          acc.set(r.country, a);
+        }
+        return Promise.resolve([...acc.values()]);
+      }),
     },
     application: {
       findMany: jest.fn(({ where }: any) =>
@@ -121,6 +137,7 @@ describe("traffic reads: a user can never read another team's traffic", () => {
     expect(s.totals.requests).toBe(0);
     const p = await ctrl.paths(as("alice"), { teamId: "team-bob" });
     expect(p.paths).toEqual([]);
+    expect((await ctrl.countries(as("alice"), { teamId: "team-bob" })).countries).toEqual([]);
   });
 
   it("?domain=<victim-only host> reads nothing; ?domain=<shared host> counts only the caller's server", async () => {
@@ -131,6 +148,8 @@ describe("traffic reads: a user can never read another team's traffic", () => {
     const shared = await ctrl.paths(as("alice"), { domain: "alice.com" });
     expect(shared.paths).toEqual([{ path: "/a", requests: 3, bytes: 30 }]); // not 3 + 7000
     expect((await ctrl.summary(as("alice"), { domain: "alice.com" })).totals.requests).toBe(11); // not 5011
+    expect((await ctrl.countries(as("alice"), { domain: "bob-secret.com" })).countries).toEqual([]);
+    expect((await ctrl.countries(as("alice"), { domain: "alice.com" })).countries).toEqual([{ country: "TR", requests: 3 }]); // not 3 + 7000
   });
 
   it("a user in no team reads nothing from any endpoint, and the traffic tables are never queried", async () => {
@@ -140,7 +159,18 @@ describe("traffic reads: a user can never read another team's traffic", () => {
     expect((await ctrl.paths(as("mallory"), { domain: "alice.com" })).paths).toEqual([]);
     expect(prisma.trafficMetric.groupBy).not.toHaveBeenCalled();
     expect(prisma.trafficPath.groupBy).not.toHaveBeenCalled();
+    expect((await ctrl.countries(as("mallory"), {})).countries).toEqual([]);
+    expect(prisma.trafficCountry.groupBy).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("countries: alice never sees bob's countries (unfiltered), bob sees only his", async () => {
+    const { ctrl } = build();
+    const alice = await ctrl.countries(as("alice"), {});
+    expect(alice.countries).toEqual([{ country: "TR", requests: 3 }]);
+    expect(JSON.stringify(alice)).not.toContain("KP");
+    const bob = await ctrl.countries(as("bob"), {});
+    expect(bob.countries.map((c) => c.country).sort()).toEqual(["KP", "TR"]);
   });
 
   it("bob sees only bob's side (symmetry)", async () => {

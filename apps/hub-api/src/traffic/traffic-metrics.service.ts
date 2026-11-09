@@ -11,6 +11,9 @@ const MAX_UNMATCHED_PATHS = 10; // distinct paths kept for a kept unmatched host
 const MAX_RAW_HOST_LEN = 1024; // longer raw Host values are discarded before any string work
 const MAX_RAW_PATHS = 2000; // incoming path entries examined per domain
 const MAX_PATHS = 50; // distinct paths kept per (domain, bucket); the rest fold into OTHER_PATH
+const MAX_RAW_COUNTRIES = 500; // incoming country entries examined per domain
+const MAX_COUNTRIES = 50; // distinct country codes kept per (domain, bucket); the rest fold into UNKNOWN_COUNTRY
+const MAX_UNMATCHED_COUNTRIES = 10; // same, for a kept unmatched (attacker-controlled) host
 const MAX_PATH_LEN = 200;
 const MAX_HOST_LEN = 253;
 const MAX_INT = 2_147_483_647;
@@ -18,6 +21,8 @@ const MAX_AGE_MS = 24 * 3600_000; // a window older than this (or far in the fut
 const MAX_FUTURE_MS = 5 * 60_000;
 const ROW_CHUNK = 500; // rows per multi-row INSERT (parameter-count bound)
 export const OTHER_PATH = "(other)";
+export const UNKNOWN_COUNTRY = "ZZ"; // invalid codes and the overflow beyond the per-bucket country cap
+const COUNTRY_RE = /^[A-Z]{2}$/;
 export const UNMATCHED_HOST = "(unmatched)"; // aggregate row for unmatched hosts beyond the per-bucket cap (appId null, no paths)
 
 interface Counters {
@@ -46,6 +51,11 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 /** Drops NUL/control characters (Postgres TEXT rejects 0x00) and replaces lone surrogates (invalid JSON/UTF-8). */
 function sanitizeText(s: string): string {
   return s.replace(CONTROL_CHARS, "").replace(LONE_SURROGATE, "\uFFFD");
+}
+
+/** ISO-3166 alpha-2-shaped code (two uppercase letters) as-is; anything else → "ZZ". */
+export function cleanCountry(raw: unknown): string {
+  return typeof raw === "string" && COUNTRY_RE.test(raw) ? raw : UNKNOWN_COUNTRY;
 }
 
 /** Path without its query string / fragment, sanitized, bounded in length (never splitting a surrogate pair); empty → "/". */
@@ -158,6 +168,7 @@ export class TrafficMetricsService {
 
     const metricRows: Prisma.Sql[] = [];
     const pathRows: Prisma.Sql[] = [];
+    const countryRows: Prisma.Sql[] = [];
     const bucketLit = tsLiteral(bucket);
     for (const { host, appId, c, src, maxPaths } of plan) {
       metricRows.push(
@@ -197,9 +208,31 @@ export class TrafficMetricsService {
           Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${bucketLit}::timestamp, ${path}, ${a.n}::int, ${BigInt(a.b)}::bigint)`,
         );
       }
+
+      // Countries: invalid codes -> "ZZ"; top-N by requests, the overflow (and any literal "ZZ") folds into one "ZZ" row.
+      const countries = new Map<string, number>();
+      for (const d of src) {
+        if (!Array.isArray(d.countries)) continue;
+        for (const e of d.countries.slice(0, MAX_RAW_COUNTRIES)) {
+          if (!e || typeof e !== "object") continue;
+          const cc = cleanCountry(e.c);
+          countries.set(cc, Math.min(MAX_INT, (countries.get(cc) ?? 0) + count(e.n)));
+        }
+      }
+      const rankedC = [...countries.entries()].filter(([cc]) => cc !== UNKNOWN_COUNTRY).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+      const maxCountries = maxPaths === MAX_PATHS ? MAX_COUNTRIES : MAX_UNMATCHED_COUNTRIES;
+      const keepC = rankedC.slice(0, maxCountries);
+      let unknown = countries.get(UNKNOWN_COUNTRY) ?? 0;
+      for (const [, n] of rankedC.slice(maxCountries)) unknown += n;
+      const cRows: [string, number][] = [...keepC];
+      if (unknown > 0) cRows.push([UNKNOWN_COUNTRY, Math.min(MAX_INT, unknown)]);
+      for (const [cc, n] of cRows) {
+        if (n <= 0) continue;
+        countryRows.push(Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${bucketLit}::timestamp, ${cc}, ${n}::int)`);
+      }
     }
 
-    // One transaction for every chunk of both tables: a failure leaves neither (no metric/path divergence).
+    // One transaction for every chunk of all three tables: a failure leaves neither (no metric/path divergence).
     const ops: Prisma.PrismaPromise<number>[] = [];
     for (let i = 0; i < metricRows.length; i += ROW_CHUNK) {
       ops.push(this.prisma.$executeRaw(Prisma.sql`
@@ -221,6 +254,13 @@ export class TrafficMetricsService {
         ON CONFLICT ("serverId", "domain", "bucket", "path") DO UPDATE SET
           "requests" = "TrafficPath"."requests" + EXCLUDED."requests",
           "bytes" = "TrafficPath"."bytes" + EXCLUDED."bytes"`));
+    }
+    for (let i = 0; i < countryRows.length; i += ROW_CHUNK) {
+      ops.push(this.prisma.$executeRaw(Prisma.sql`
+        INSERT INTO "TrafficCountry" ("id", "serverId", "domain", "bucket", "country", "requests")
+        VALUES ${Prisma.join(countryRows.slice(i, i + ROW_CHUNK))}
+        ON CONFLICT ("serverId", "domain", "bucket", "country") DO UPDATE SET
+          "requests" = "TrafficCountry"."requests" + EXCLUDED."requests"`));
     }
     await this.prisma.$transaction(ops);
   }

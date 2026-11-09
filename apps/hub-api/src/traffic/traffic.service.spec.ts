@@ -17,6 +17,14 @@ const pathRows = [
   { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), path: "(other)", requests: 4, bytes: 40n },
   { serverId: "other-team", domain: "secret.com", bucket: new Date(NOW - 60_000), path: "/secret", requests: 500, bytes: 5n },
 ];
+const countryRows = [
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), country: "TR", requests: 6 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 120_000), country: "TR", requests: 4 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), country: "DE", requests: 3 },
+  { serverId: "mine", domain: "z.com", bucket: new Date(NOW - 60_000), country: "US", requests: 20 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 40 * 86_400_000), country: "JP", requests: 99 }, // outside any range
+  { serverId: "other-team", domain: "secret.com", bucket: new Date(NOW - 60_000), country: "KP", requests: 500 },
+];
 const inScope = (r: any, where: any) =>
   where.serverId.in.includes(r.serverId) && r.bucket >= where.bucket.gte && (!where.domain || r.domain === where.domain);
 
@@ -48,6 +56,17 @@ function make(queryRows: any[] = []) {
       aggregate: jest.fn(({ where }: any) => {
         const rs = pathRows.filter((x) => inScope(x, { ...where }) && x.path === where.path);
         return Promise.resolve({ _sum: { requests: rs.reduce((n, r) => n + r.requests, 0) || null, bytes: rs.reduce((n, r) => n + r.bytes, 0n) || null } });
+      }),
+    },
+    trafficCountry: {
+      groupBy: jest.fn(({ where, take }: any) => {
+        const acc = new Map<string, any>();
+        for (const r of countryRows.filter((x) => inScope(x, where))) {
+          const a = acc.get(r.country) ?? { country: r.country, _sum: { requests: 0 } };
+          a._sum.requests += r.requests;
+          acc.set(r.country, a);
+        }
+        return Promise.resolve([...acc.values()].sort((a, b) => b._sum.requests - a._sum.requests).slice(0, take));
       }),
     },
     application: {
@@ -87,6 +106,16 @@ describe("TrafficService", () => {
       expect(prisma.trafficPath.aggregate.mock.calls[0][0].where.serverId).toEqual({ in: ["mine"] });
       expect(out.paths.map((p) => p.path)).toEqual(["/home", "/about"]);
       expect(JSON.stringify(out)).not.toContain("secret");
+    });
+
+    it("countries: constrained to the visible ids; other teams' countries never appear; no ids -> empty without a read", async () => {
+      const { svc, prisma } = make();
+      const out = await svc.countries(["mine"], "24h");
+      expect(prisma.trafficCountry.groupBy.mock.calls[0][0].where.serverId).toEqual({ in: ["mine"] });
+      expect(out.countries.map((c) => c.country)).toEqual(["US", "TR", "DE"]);
+      expect(JSON.stringify(out)).not.toContain("KP");
+      expect((await svc.countries([], "24h")).countries).toEqual([]);
+      expect(prisma.trafficCountry.groupBy).toHaveBeenCalledTimes(1);
     });
 
     it("summary: the SQL is bound to exactly the visible ids (never another server's id)", async () => {
@@ -172,6 +201,37 @@ describe("TrafficService", () => {
       expect(prisma.trafficPath.groupBy.mock.calls[1][0].take).toBe(1);
       await svc.paths(["mine"], "24h");
       expect(prisma.trafficPath.groupBy.mock.calls[2][0].take).toBe(20);
+    });
+  });
+
+  describe("countries", () => {
+    it("aggregates across buckets within the range and orders by requests desc", async () => {
+      const { svc } = make();
+      const out = await svc.countries(["mine"], "24h");
+      expect(out.range).toBe("24h");
+      expect(out.countries).toEqual([
+        { country: "US", requests: 20 },
+        { country: "TR", requests: 10 },
+        { country: "DE", requests: 3 },
+      ]); // JP (40 days old) is outside the range
+    });
+
+    it("honors the domain filter (normalized) and only narrows within scope", async () => {
+      const { svc, prisma } = make();
+      const out = await svc.countries(["mine"], "24h", "A.com:443");
+      expect(prisma.trafficCountry.groupBy.mock.calls[0][0].where.domain).toBe("a.com");
+      expect(out.countries).toEqual([{ country: "TR", requests: 10 }, { country: "DE", requests: 3 }]);
+      expect((await svc.countries(["mine"], "24h", "secret.com")).countries).toEqual([]); // another team's host
+    });
+
+    it("clamps the limit", async () => {
+      const { svc, prisma } = make();
+      await svc.countries(["mine"], "24h", undefined, 100000);
+      expect(prisma.trafficCountry.groupBy.mock.calls[0][0].take).toBe(250);
+      await svc.countries(["mine"], "24h", undefined, -3);
+      expect(prisma.trafficCountry.groupBy.mock.calls[1][0].take).toBe(1);
+      await svc.countries(["mine"], "24h");
+      expect(prisma.trafficCountry.groupBy.mock.calls[2][0].take).toBe(50);
     });
   });
 });

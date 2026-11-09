@@ -15,6 +15,7 @@ describe("RetentionRunnerService", () => {
       containerEvent: [[]],
       trafficMetric: [[]],
       trafficPath: [[]],
+      trafficCountry: [[]],
     };
     const model = (name: string) => ({
       findMany: jest.fn().mockImplementation(() => Promise.resolve(pages[name].shift() ?? [])),
@@ -32,6 +33,7 @@ describe("RetentionRunnerService", () => {
       containerEvent: model("containerEvent"),
       trafficMetric: model("trafficMetric"),
       trafficPath: model("trafficPath"),
+      trafficCountry: model("trafficCountry"),
     } as any;
     const config = { get: jest.fn((k: string) => cfg[k]) } as any;
     return { svc: new RetentionRunnerService(prisma, config), prisma, pages };
@@ -73,7 +75,7 @@ describe("RetentionRunnerService", () => {
     const { svc, prisma } = make();
     const res = await svc.prune();
     expect(prisma.metric.deleteMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0 });
+    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0, trafficCountry: 0 });
   });
 
   it("prunes only terminal, non-rollbackable deployments (QUEUED/RUNNING and rollbackable rows are kept)", async () => {
@@ -119,5 +121,22 @@ describe("RetentionRunnerService", () => {
     expect(prisma.metricRollup.deleteMany.mock.calls[0][0].where.id.in).toEqual(["r1", "r2"]);
     expect(res.metricRollup).toBe(2);
     expect(res.containerMetricRollup).toBe(1);
+  });
+
+  it("prunes traffic metric/path/country rows by bucket < the traffic cutoff", async () => {
+    const { svc, prisma, pages } = make({ TRAFFIC_RETENTION_DAYS: 30 });
+    pages.trafficMetric = [[{ id: "tm1" }]];
+    pages.trafficPath = [[{ id: "tp1" }, { id: "tp2" }]];
+    pages.trafficCountry = [[{ id: "tc1" }, { id: "tc2" }, { id: "tc3" }]];
+    const res = await svc.prune();
+    for (const m of ["trafficMetric", "trafficPath", "trafficCountry"]) {
+      const where = prisma[m].findMany.mock.calls[0][0].where;
+      expect(where.bucket.lt).toBeInstanceOf(Date);
+      expect(where.ts).toBeUndefined();
+    }
+    expect(prisma.trafficCountry.deleteMany.mock.calls[0][0].where.id.in).toEqual(["tc1", "tc2", "tc3"]);
+    expect(res.trafficMetric).toBe(1);
+    expect(res.trafficPath).toBe(2);
+    expect(res.trafficCountry).toBe(3);
   });
 });

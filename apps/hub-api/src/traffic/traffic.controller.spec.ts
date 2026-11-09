@@ -1,5 +1,5 @@
 import { TrafficController } from "./traffic.controller";
-import { TrafficQuerySchema, TrafficPathsQuerySchema } from "./dto";
+import { TrafficQuerySchema, TrafficPathsQuerySchema, TrafficCountriesQuerySchema } from "./dto";
 
 function make(visible: { id: string }[]) {
   const servers = { listForUser: jest.fn().mockResolvedValue(visible) } as any;
@@ -7,6 +7,7 @@ function make(visible: { id: string }[]) {
     domains: jest.fn().mockResolvedValue([]),
     summary: jest.fn().mockResolvedValue({}),
     paths: jest.fn().mockResolvedValue({}),
+    countries: jest.fn().mockResolvedValue({}),
   } as any;
   return { ctrl: new TrafficController(servers, traffic), servers, traffic };
 }
@@ -18,11 +19,13 @@ describe("TrafficController AUTHZ", () => {
     await ctrl.domains(user, { teamId: "t1", range: "7d" });
     await ctrl.summary(user, { teamId: "t1", range: "1h", domain: "a.com" });
     await ctrl.paths(user, { teamId: "t1", range: "1h", domain: "a.com", limit: 5 });
-    expect(servers.listForUser).toHaveBeenCalledTimes(3);
+    await ctrl.countries(user, { teamId: "t1", range: "1h", domain: "a.com", limit: 5 });
+    expect(servers.listForUser).toHaveBeenCalledTimes(4);
     for (const c of servers.listForUser.mock.calls) expect(c).toEqual(["u1", { teamId: "t1" }]);
     expect(traffic.domains).toHaveBeenCalledWith(["s1", "s2"], "7d");
     expect(traffic.summary).toHaveBeenCalledWith(["s1", "s2"], "1h", "a.com");
     expect(traffic.paths).toHaveBeenCalledWith(["s1", "s2"], "1h", "a.com", 5);
+    expect(traffic.countries).toHaveBeenCalledWith(["s1", "s2"], "1h", "a.com", 5);
   });
 
   it("a user who can see no server (e.g. a foreign ?teamId) gets an empty id set — nothing to read", async () => {
@@ -48,5 +51,11 @@ describe("traffic query DTOs", () => {
     expect(TrafficPathsQuerySchema.parse({ limit: "10" }).limit).toBe(10);
     expect(TrafficPathsQuerySchema.safeParse({ limit: "0" }).success).toBe(false);
     expect(TrafficPathsQuerySchema.safeParse({ limit: "101" }).success).toBe(false);
+  });
+  it("coerces and bounds the countries limit", () => {
+    expect(TrafficCountriesQuerySchema.parse({ limit: "10" }).limit).toBe(10);
+    expect(TrafficCountriesQuerySchema.safeParse({ limit: "0" }).success).toBe(false);
+    expect(TrafficCountriesQuerySchema.safeParse({ limit: "251" }).success).toBe(false);
+    expect(TrafficCountriesQuerySchema.safeParse({ range: "90d" }).success).toBe(false);
   });
 });

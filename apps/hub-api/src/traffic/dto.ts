@@ -15,6 +15,11 @@ export const TrafficPathsQuerySchema = TrafficQuerySchema.extend({
 });
 export type TrafficPathsQuery = z.infer<typeof TrafficPathsQuerySchema>;
 
+export const TrafficCountriesQuerySchema = TrafficQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(250).optional(),
+});
+export type TrafficCountriesQuery = z.infer<typeof TrafficCountriesQuerySchema>;
+
 export const TrafficDomainsQuerySchema = z.object({
   range: z.enum(RANGES).optional(),
   teamId: z.string().min(1).max(64).optional(),
@@ -56,4 +61,10 @@ export const TrafficPathsSchema = z.object({
   paths: z.array(z.object({ path: z.string(), requests: z.number(), bytes: z.number() })),
   // Everything the agent folded into "(other)" (overflow beyond its per-minute top-N), reported separately.
   other: z.object({ requests: z.number(), bytes: z.number() }),
+});
+
+export const TrafficCountriesSchema = z.object({
+  range: z.string(),
+  // ISO-3166 alpha-2 codes; "ZZ" = unknown (unresolved or beyond the agent's per-minute top-N).
+  countries: z.array(z.object({ country: z.string(), requests: z.number() })),
 });

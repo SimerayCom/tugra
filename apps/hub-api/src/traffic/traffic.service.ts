@@ -9,6 +9,8 @@ const MAX_SERVERS = 500;
 const MAX_DOMAINS = 500;
 const DEFAULT_PATH_LIMIT = 20;
 const MAX_PATH_LIMIT = 100;
+const DEFAULT_COUNTRY_LIMIT = 50;
+const MAX_COUNTRY_LIMIT = 250;
 
 // Chart bucket width per range — minute rows are rolled up at query time so every series stays bounded
 // (<= ~720 points) however long the range.
@@ -159,5 +161,26 @@ export class TrafficService {
       paths: rows.map((p) => ({ path: p.path, requests: p._sum.requests ?? 0, bytes: Number(p._sum.bytes ?? 0) })),
       other: { requests: other._sum.requests ?? 0, bytes: Number(other._sum.bytes ?? 0) },
     };
+  }
+
+  /** Requests per visitor country over the range, highest first ("ZZ" = unknown/overflow). */
+  async countries(serverIds: string[], range?: string, domain?: string, limit?: number) {
+    const ids = serverIds.slice(0, MAX_SERVERS);
+    const r = rangeToMs(range ?? "24h");
+    const take = limit !== undefined && Number.isFinite(limit) ? Math.min(MAX_COUNTRY_LIMIT, Math.max(1, Math.floor(limit))) : DEFAULT_COUNTRY_LIMIT;
+    if (ids.length === 0) return { range: r.range, countries: [] as { country: string; requests: number }[] };
+    const host = domain ? normalizeHost(domain) : "";
+    const rows = await this.prisma.trafficCountry.groupBy({
+      by: ["country"],
+      where: {
+        serverId: { in: ids },
+        bucket: { gte: new Date(r.sinceMs) },
+        ...(host ? { domain: host } : {}),
+      },
+      _sum: { requests: true },
+      orderBy: [{ _sum: { requests: "desc" } }, { country: "asc" }],
+      take,
+    });
+    return { range: r.range, countries: rows.map((c) => ({ country: c.country, requests: c._sum.requests ?? 0 })) };
   }
 }

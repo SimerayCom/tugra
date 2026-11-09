@@ -9,6 +9,9 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ServersService } from "../servers/servers.service";
 import { TrafficService } from "./traffic.service";
 import {
+  TrafficCountriesQuery,
+  TrafficCountriesQuerySchema,
+  TrafficCountriesSchema,
   TrafficDomainRowSchema,
   TrafficDomainsQuery,
   TrafficDomainsQuerySchema,
@@ -68,5 +71,15 @@ export class TrafficController {
     @Query(new ZodValidationPipe(TrafficPathsQuerySchema)) q: TrafficPathsQuery,
   ) {
     return this.traffic.paths(await this.visibleServerIds(user.userId, q.teamId), q.range, q.domain, q.limit);
+  }
+
+  // Requests per visitor country over the range, ordered by requests.
+  @Get("countries")
+  @ApiZodResponse(TrafficCountriesSchema)
+  async countries(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(TrafficCountriesQuerySchema)) q: TrafficCountriesQuery,
+  ) {
+    return this.traffic.countries(await this.visibleServerIds(user.userId, q.teamId), q.range, q.domain, q.limit);
   }
 }
