@@ -42,6 +42,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   capabilities: [],
   isLocal: false,
   proxyBind: "public",
+  trafficAnalytics: false,
   provider: null,
   providerServerId: null,
   canWrite,

@@ -406,6 +406,7 @@ export interface ServerView {
   capabilities: string[]; // granted agent capabilities; [] = all
   isLocal: boolean; // the box the hub runs on (auto-provisioned on a turnkey single-box install)
   proxyBind: string; // how the reverse proxy publishes :80/:443 — "public" | "loopback" | "none"
+  trafficAnalytics: boolean; // Traffic Analytics opt-in: the proxy writes a local JSON access log (default off)
   provider: string | null; // cloud provider that created this VM (null = manually enrolled)
   providerServerId: string | null; // provider-side id (present once created; enables destroy-VM)
   canWrite: boolean;
@@ -1542,4 +1543,48 @@ export interface DiskUsage {
   containers: DiskUsageRow;
   volumes: DiskUsageRow;
   buildCache: DiskUsageRow;
+}
+
+// ── Traffic Analytics (proxy access-log based, read-level, team-scoped) ─────────────────────────────
+export interface TrafficTotals {
+  requests: number;
+  s2xx: number;
+  s3xx: number;
+  s4xx: number;
+  s5xx: number;
+  bytes: number;
+}
+/** GET /traffic/summary: index i of every series is the bucket starting at times[i] (unix ms). */
+export interface TrafficSummary {
+  range: string;
+  stepSec: number;
+  times: number[];
+  requests: number[];
+  s2xx: number[];
+  s3xx: number[];
+  s4xx: number[];
+  s5xx: number[];
+  bytes: number[];
+  totals: TrafficTotals;
+}
+export interface TrafficPaths {
+  range: string;
+  paths: { path: string; requests: number; bytes: number }[];
+  other: { requests: number; bytes: number }; // overflow the agent folded into "(other)"
+}
+export interface TrafficCountries {
+  range: string;
+  countries: { country: string; requests: number }[]; // ISO-3166 alpha-2; "ZZ" = overflow bucket (countries beyond the per-minute top set) or an invalid code; requests with no resolved country are not counted here
+}
+export interface TrafficDomainRow {
+  domain: string;
+  appId: string | null;
+  appName: string | null;
+  requests: number;
+}
+export type TrafficApplyState = "applied" | "deferred" | "failed" | "not-in-pool" | "cluster-shared";
+export interface TrafficAnalyticsState {
+  trafficAnalytics: boolean;
+  apply: TrafficApplyState;
+  applyError: string | null;
 }

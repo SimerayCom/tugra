@@ -17,6 +17,7 @@ import { TeamScopeSelect } from "./team-scope";
 import { BrandMark } from "./branding";
 import {
   Activity,
+  BarChart3,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -66,6 +67,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "home", href: "/home", icon: Home, home: true, fleet: false },
       { key: "dashboard", href: "/dashboard", icon: LayoutDashboard },
       { key: "fleet", href: "/fleet", icon: Gauge },
+      { key: "traffic", href: "/traffic", icon: BarChart3 },
       { key: "uptime", href: "/monitors", icon: Activity },
     ],
   },

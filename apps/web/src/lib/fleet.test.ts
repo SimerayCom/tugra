@@ -47,6 +47,7 @@ const s = (
   capabilities: [],
   isLocal: false,
   proxyBind: "public",
+  trafficAnalytics: false,
   provider: null,
   providerServerId: null,
   canWrite,

@@ -71,6 +71,11 @@ import type {
   FleetPatchApplyResult,
   AgentUpdateResponse,
   ProxyStatus,
+  TrafficSummary,
+  TrafficPaths,
+  TrafficCountries,
+  TrafficDomainRow,
+  TrafficAnalyticsState,
   PublicUser,
   Project,
   Role,
@@ -262,6 +267,17 @@ export async function apiFetch<T>(
 }
 
 // ── typed endpoints ────────────────────────────────────────────────
+
+/** `?range=&teamId=&domain=&limit=` for the /traffic endpoints; unset/empty params are omitted. */
+function trafficQuery(p: { range?: string; teamId?: string | null; domain?: string | null; limit?: number }): string {
+  const q = new URLSearchParams();
+  if (p.range) q.set("range", p.range);
+  if (p.teamId) q.set("teamId", p.teamId);
+  if (p.domain) q.set("domain", p.domain);
+  if (p.limit) q.set("limit", String(p.limit));
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
 
 export const api = {
   async register(email: string, password: string, name?: string, setupCode?: string) {
@@ -618,6 +634,22 @@ export const api = {
   },
   getDatabaseContainerMetrics(id: string, range: MetricsRange) {
     return apiFetch<AppContainerMetrics>(`/databases/${id}/metrics/containers?range=${range}`);
+  },
+  // Traffic Analytics (read-level): team-scoped aggregates of the proxy access log.
+  getTrafficSummary(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null } = {}) {
+    return apiFetch<TrafficSummary>(`/traffic/summary${trafficQuery(p)}`);
+  },
+  getTrafficPaths(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
+    return apiFetch<TrafficPaths>(`/traffic/paths${trafficQuery(p)}`);
+  },
+  getTrafficCountries(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
+    return apiFetch<TrafficCountries>(`/traffic/countries${trafficQuery(p)}`);
+  },
+  getTrafficDomains(p: { range?: MetricsRange; teamId?: string | null } = {}) {
+    return apiFetch<TrafficDomainRow[]>(`/traffic/domains${trafficQuery(p)}`);
+  },
+  setServerTrafficAnalytics(id: string, enabled: boolean) {
+    return apiFetch<TrafficAnalyticsState>(`/servers/${id}/traffic-analytics`, { method: "PUT", body: JSON.stringify({ enabled }) });
   },
   getServerContainers(id: string) {
     return apiFetch<ServerContainers>(`/servers/${id}/metrics/containers`);

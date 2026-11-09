@@ -26,6 +26,7 @@ import { fieldStyle } from "../../../../components/form";
 import { TerminalPanel } from "../../../../components/terminal-panel";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
+import { TrafficAnalyticsCard } from "../../../../components/traffic-analytics-card";
 import { Badge, Btn, Card, EmptyState, SectionCard, Spinner, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import type { ProxyStatus } from "../../../../lib/types";
@@ -272,6 +273,7 @@ export default function ServerDetailPage() {
         <>
           <TagsCard tags={server.tags} canWrite={server.canWrite} onSave={(next) => tags.mutate(next)} />
           <ProxyCard id={id} canWrite={server.canWrite} />
+          <TrafficAnalyticsCard id={id} enabled={server.trafficAnalytics} canWrite={server.canWrite} />
           <ProxyDynamicCard id={id} canWrite={server.canWrite} />
           {server.canWrite && <NetworkCard id={id} server={server} />}
           <TunnelCard id={id} server={server} />

@@ -148,7 +148,7 @@ describe("notice banner visibility", () => {
 
 describe("grouped, collapsible sidebar nav", () => {
   const GROUPS = {
-    monitor: ["home", "dashboard", "fleet", "uptime"],
+    monitor: ["home", "dashboard", "fleet", "traffic", "uptime"],
     build: ["projects", "appStore", "import", "sources", "registries"],
     infrastructure: ["servers", "clusters", "terminal", "destinations", "domains"],
     integrations: ["cloudCredentials", "secretProviders", "sharedVars"],
