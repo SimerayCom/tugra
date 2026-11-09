@@ -24,6 +24,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
 	"github.com/SimerayCom/tugra/agent/internal/selfupdate"
 	"github.com/SimerayCom/tugra/agent/internal/terminal"
+	"github.com/SimerayCom/tugra/agent/internal/traffic"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -32,6 +33,7 @@ const (
 	metricsInterval        = 5 * time.Second
 	containerStatsInterval = 15 * time.Second // per-container `docker stats` — slower than host metrics
 	commandTimeout         = 20 * time.Second
+	trafficInterval        = 60 * time.Second // proxy access-log -> per-domain traffic summary window
 	hostInfoInterval       = 12 * time.Hour   // refresh hardware/OS inventory periodically
 	fsOpTimeout            = 30 * time.Second // hard wall-clock bound on one sandboxed file op
 
@@ -452,6 +454,28 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 			case <-csTicker.C:
 				if samples, err := csColl.Sample(loopCtx); err == nil && len(samples) > 0 {
 					_ = send(protocol.ContainerMetrics{Type: "container_metrics", Ts: time.Now().UnixMilli(), Samples: samples})
+				}
+			}
+		}
+	}()
+
+	// Visitor-traffic summaries get their OWN goroutine and ticker: tailing + aggregating the access log
+	// must never run on the 5s heartbeat loop below. Best-effort send, same as container_metrics. The
+	// collector is per-connection (dies with loopCtx) and starts at the end of an existing log, so a
+	// reconnect never replays a window; the hub sums windows additively.
+	go func() {
+		tc := traffic.NewCollector()
+		defer tc.Close()
+		tTicker := time.NewTicker(trafficInterval)
+		defer tTicker.Stop()
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-tTicker.C:
+				tc.IngestNew()
+				if sum := tc.Flush(); sum != nil {
+					_ = send(*sum)
 				}
 			}
 		}
