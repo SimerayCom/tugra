@@ -36,3 +36,13 @@ dashboard-icons project.
   License: Apache License 2.0
 Individual brand logos are trademarks of their respective owners and are used
 here only to identify the corresponding software.
+
+IP geolocation database
+-----------------------
+The agent container image bundles the DB-IP Lite Country database
+(/usr/share/tugra/geoip/country.mmdb), downloaded at image build time and read
+locally by the agent; it is never fetched at runtime.
+  Source:  https://db-ip.com (IP Geolocation by DB-IP)
+  Data:    Copyright (c) 2019-2026 DB-IP
+  License: Creative Commons Attribution 4.0 International (CC BY 4.0),
+           https://creativecommons.org/licenses/by/4.0/

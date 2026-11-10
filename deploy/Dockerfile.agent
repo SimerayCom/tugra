@@ -17,6 +17,33 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 
 FROM docker:27-cli AS dockercli
 
+# GeoIP: bake the DB-IP Lite Country database (MaxMind mmdb format) into the image at BUILD time only, so
+# Traffic Analytics country geo works out of the box. The agent reads it from local disk and never fetches
+# anything at runtime (no phone-home). The data is architecture-independent, so this stage runs on the build
+# platform once for every target arch. Pin DBIP_COUNTRY_URL to a monthly file for a reproducible build; bump
+# it to refresh. Best-effort: if the download, gunzip or size sanity check fails the build still succeeds with a
+# warning and an empty /out (the agent then simply reports no country). DB-IP Lite is CC-BY-4.0, see NOTICE.
+FROM --platform=$BUILDPLATFORM alpine:3.20 AS geoip
+ARG DBIP_COUNTRY_URL=https://download.db-ip.com/free/dbip-country-lite-2026-11.mmdb.gz
+# GEOIP_REQUIRED=1 (set by the release pipeline) turns a failed bake into a hard build error, so a signed
+# release image is never shipped silently without geo. Default 0 keeps local/dev builds best-effort.
+ARG GEOIP_REQUIRED=0
+# Bump GEOIP_CACHE_BUST (e.g. to the release version/month) to force a re-download when the URL is unchanged,
+# so a layer cached from a failed or offline build is not silently reused.
+ARG GEOIP_CACHE_BUST=0
+RUN mkdir -p /out /tmp/geoip \
+ && echo "geoip cache bust=${GEOIP_CACHE_BUST}" >/dev/null \
+ && if wget -q -T 30 -O /tmp/geoip/country.mmdb.gz "${DBIP_COUNTRY_URL}" \
+      && gunzip -c /tmp/geoip/country.mmdb.gz > /tmp/geoip/country.mmdb \
+      && [ "$(wc -c < /tmp/geoip/country.mmdb)" -gt 1000000 ]; then \
+      mv /tmp/geoip/country.mmdb /out/country.mmdb; \
+    elif [ "${GEOIP_REQUIRED}" = "1" ]; then \
+      echo "ERROR: GEOIP_REQUIRED=1 but could not fetch a valid DB-IP Lite Country database from ${DBIP_COUNTRY_URL}" >&2; \
+      exit 1; \
+    else \
+      echo "WARNING: could not fetch a valid DB-IP Lite Country database from ${DBIP_COUNTRY_URL}; building without a baked GeoIP database" >&2; \
+    fi
+
 FROM debian:bookworm-slim
 # OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
 LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
@@ -40,4 +67,7 @@ COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 COPY --from=build /tugra-agent /usr/local/bin/tugra-agent
+# Baked DB-IP Lite Country database (may be absent if the build-time download failed; copying the directory
+# contents never fails on an empty source). Path must match traffic.BakedGeoIPPath.
+COPY --from=geoip /out/ /usr/share/tugra/geoip/
 ENTRYPOINT ["tugra-agent"]

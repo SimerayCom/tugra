@@ -107,6 +107,14 @@ describe("TrafficPage", () => {
     expect(screen.queryByText("No traffic data yet")).toBeNull();
   });
 
+  it("credits DB-IP for the geolocation data with a link (CC-BY attribution)", async () => {
+    mockApi();
+    wrap();
+    const link = await screen.findByText("IP geolocation by DB-IP");
+    expect(link.closest("a")?.getAttribute("href")).toBe("https://db-ip.com");
+    expect(link.closest("a")?.getAttribute("rel")).toContain("noopener");
+  });
+
   it("computes each country's percentage from the SUM of the countries, not the total request count", async () => {
     mockApi(); // summary total = 1000, countries sum = 100
     wrap();

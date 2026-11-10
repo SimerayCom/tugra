@@ -21,7 +21,7 @@ type Collector struct {
 	ipMode string
 }
 
-// NewCollector reads AccessLogPath and the GeoIP database (TUGRA_GEOIP_DB or DefaultGeoIPPath, optional).
+// NewCollector reads AccessLogPath and the GeoIP database (see geoIPCandidates for the lookup order; optional).
 func NewCollector() *Collector {
 	return newCollector(AccessLogPath, loadGeo(), time.Now())
 }

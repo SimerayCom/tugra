@@ -47,6 +47,7 @@
   "otherCountry": "Other",
   "countriesCoverage": "{located} of {total} requests have a known country.",
   "noCountries": "No country data in this range.",
+  "geoCredit": "IP geolocation by DB-IP",
   "breakdownTitle": "Visitor breakdown",
   "breakdownDesc": "Top values per dimension. Share is out of all of this dimension's requests; values not listed are grouped under Everything else.",
   "breakdownDim": "Breakdown dimension",

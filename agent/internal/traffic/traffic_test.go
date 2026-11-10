@@ -437,6 +437,7 @@ func TestGeoNoDBAndBadInput(t *testing.T) {
 	if openGeo(bad) != nil {
 		t.Fatal("corrupt DB must yield nil")
 	}
+	useGeoDefaults(t) // hermetic: ignore any real /etc or /usr/share database on the host
 	t.Setenv(geoIPEnv, filepath.Join(t.TempDir(), "nope.mmdb"))
 	if loadGeo() != nil {
 		t.Fatal("env path absent -> nil")
@@ -550,5 +551,113 @@ func TestCollectorIdleWhenLogMissing(t *testing.T) {
 	c.ingestNew()
 	if c.flushAt(time.Now()) != nil {
 		t.Fatal("no log -> nothing to send")
+	}
+}
+
+// useGeoDefaults points the post-env lookup order at the given paths for one test.
+func useGeoDefaults(t *testing.T, paths ...string) {
+	t.Helper()
+	prev := geoIPDefaults
+	geoIPDefaults = paths
+	t.Cleanup(func() { geoIPDefaults = prev })
+}
+
+func TestGeoCandidatesOrder(t *testing.T) {
+	got := geoIPCandidates("/x/env.mmdb")
+	want := []string{"/x/env.mmdb", CityGeoIPPath, DefaultGeoIPPath, BakedGeoIPPath}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	}
+	if got := geoIPCandidates(""); len(got) != 3 || got[0] != CityGeoIPPath || got[2] != BakedGeoIPPath {
+		t.Fatalf("no env: %v", got)
+	}
+	if BakedGeoIPPath != "/usr/share/tugra/geoip/country.mmdb" {
+		t.Fatal("baked path must match the Dockerfile")
+	}
+}
+
+func TestGeoPathPreferenceOrder(t *testing.T) {
+	dir := t.TempDir()
+	cp := func(name, fixture string) string {
+		b, err := os.ReadFile(filepath.Join("testdata", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	envP := cp("env.mmdb", "country.mmdb")         // country-only: no city
+	cityP := cp("city.mmdb", "city.mmdb")          // city-capable
+	countryP := cp("country.mmdb", "country.mmdb") // country-only
+	bakedP := cp("baked.mmdb", "country.mmdb")     // country-only
+	missing := filepath.Join(dir, "missing.mmdb")
+	useGeoDefaults(t, cityP, countryP, bakedP)
+	hasCity := func(g *geo) bool {
+		if g == nil {
+			t.Fatal("expected a database")
+		}
+		defer g.close()
+		_, city := g.lookup("81.2.69.10", true)
+		return city == "London"
+	}
+
+	// env wins over everything, even the city edition.
+	t.Setenv(geoIPEnv, envP)
+	if hasCity(loadGeo()) {
+		t.Fatal("env (country-only) must win over the city edition")
+	}
+	// no env: city edition wins over country + baked.
+	t.Setenv(geoIPEnv, "")
+	if !hasCity(loadGeo()) {
+		t.Fatal("city edition must be preferred when no env")
+	}
+	// env pointing at a missing file falls through to the next candidate (city).
+	t.Setenv(geoIPEnv, missing)
+	if !hasCity(loadGeo()) {
+		t.Fatal("missing env path must fall through to the city edition")
+	}
+	// city absent: operator country wins over baked; both are country-only, so use distinguishable paths.
+	if g := loadGeoFrom([]string{missing, countryP, bakedP}); g == nil {
+		t.Fatal("operator country should load")
+	} else {
+		g.close()
+	}
+	// a corrupt operator file is skipped in favour of the baked default.
+	bad := filepath.Join(dir, "bad.mmdb")
+	if err := os.WriteFile(bad, []byte("not an mmdb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := loadGeoFrom([]string{missing, bad, bakedP})
+	if g == nil {
+		t.Fatal("corrupt file must fall through to the baked default")
+	}
+	if cc := g.country("81.2.69.10"); cc != "GB" {
+		t.Fatalf("baked fallback lookup = %q", cc)
+	}
+	g.close()
+	// only the baked default present.
+	useGeoDefaults(t, missing, missing, bakedP)
+	t.Setenv(geoIPEnv, "")
+	if g := loadGeo(); g == nil {
+		t.Fatal("baked default alone must load")
+	} else {
+		g.close()
+	}
+	// nothing present: nil, no crash.
+	useGeoDefaults(t, missing, missing, missing)
+	if g := loadGeo(); g != nil {
+		t.Fatal("all absent must yield nil")
+	}
+	var nilGeo *geo
+	if cc, city := nilGeo.lookup("81.2.69.10", true); cc != "" || city != "" {
+		t.Fatal("nil geo must stay empty")
 	}
 }

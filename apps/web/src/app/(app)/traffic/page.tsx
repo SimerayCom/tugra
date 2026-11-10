@@ -399,6 +399,10 @@ function CountriesList({ rows, totalRequests, lang }: { rows: { country: string;
           {t("traffic.countriesCoverage", { located: nf.format(located), total: nf.format(totalRequests) })}
         </p>
       )}
+      {/* CC-BY attribution for the bundled DB-IP Lite database. */}
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "12px 0 0" }}>
+        <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer" className="tg-link">{t("traffic.geoCredit")}</a>
+      </p>
     </ChartCard>
   );
 }

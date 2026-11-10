@@ -13,10 +13,29 @@ const maxCityLen = 64
 
 const (
 	// DefaultGeoIPPath is where an operator drops a MaxMind-format country database (a DB-IP Lite
-	// Country mmdb works too; a City edition additionally yields the city dimension). TUGRA_GEOIP_DB overrides it.
+	// Country mmdb works too). TUGRA_GEOIP_DB overrides the whole lookup order.
 	DefaultGeoIPPath = "/etc/tugra/geoip/country.mmdb"
-	geoIPEnv         = "TUGRA_GEOIP_DB"
+	// CityGeoIPPath is where an operator drops a City edition database; it additionally yields the city
+	// dimension and wins over the country databases.
+	CityGeoIPPath = "/etc/tugra/geoip/city.mmdb"
+	// BakedGeoIPPath is the DB-IP Lite Country database baked into the agent image at build time, so country
+	// geo works out of the box. It is read-only data on local disk; nothing is ever fetched at runtime.
+	BakedGeoIPPath = "/usr/share/tugra/geoip/country.mmdb"
+	geoIPEnv       = "TUGRA_GEOIP_DB"
 )
+
+// geoIPDefaults is the lookup order after the TUGRA_GEOIP_DB override: an operator-supplied City edition, an
+// operator-supplied country database, then the baked-in default. A variable so tests can point it at temp files.
+var geoIPDefaults = []string{CityGeoIPPath, DefaultGeoIPPath, BakedGeoIPPath}
+
+// geoIPCandidates is the full lookup order: the TUGRA_GEOIP_DB override (when set), then geoIPDefaults.
+func geoIPCandidates(envPath string) []string {
+	c := make([]string, 0, 1+len(geoIPDefaults))
+	if envPath != "" {
+		c = append(c, envPath)
+	}
+	return append(c, geoIPDefaults...)
+}
 
 // geo resolves an IP to an ISO-3166 alpha-2 country code against a LOCAL database. The lookup never
 // touches the network. A nil *geo (no database) is valid and resolves everything to "" (unknown).
@@ -35,14 +54,21 @@ type countryRecord struct {
 	} `maxminddb:"city"`
 }
 
-// loadGeo opens the country database once. It returns nil when the database is absent or unreadable,
-// which just disables the country breakdown.
+// loadGeo opens the first database in the lookup order (see geoIPCandidates) that exists and is readable.
+// It returns nil when none is, which just disables the geo breakdowns.
 func loadGeo() *geo {
-	path := os.Getenv(geoIPEnv)
-	if path == "" {
-		path = DefaultGeoIPPath
+	return loadGeoFrom(geoIPCandidates(os.Getenv(geoIPEnv)))
+}
+
+// loadGeoFrom returns the first candidate that opens as a valid database. An unreadable or corrupt file is
+// skipped, so a broken operator file falls through to the next candidate instead of disabling geo.
+func loadGeoFrom(paths []string) *geo {
+	for _, p := range paths {
+		if g := openGeo(p); g != nil {
+			return g
+		}
 	}
-	return openGeo(path)
+	return nil
 }
 
 func openGeo(path string) *geo {
